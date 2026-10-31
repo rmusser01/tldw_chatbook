@@ -25,6 +25,7 @@ from unstaged, so every "did this file get committed" assertion below goes
 through `git show --name-only`, `git diff`/`git diff --cached`, or
 `git ls-files --others` instead.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -151,9 +152,7 @@ class _Harness(App[None]):
 
     def on_mount(self) -> None:
         self.push_screen(
-            ChangeReviewScreen(
-                self._provider, workspace_roots=self._workspace_roots
-            )
+            ChangeReviewScreen(self._provider, workspace_roots=self._workspace_roots)
         )
 
 
@@ -246,9 +245,7 @@ async def _enter_current_mode(pilot, app) -> ChangeReviewScreen:
     """Open the screen and switch it to the REAL working tree."""
     screen = await _open_screen(pilot, app)
     await _wait_for_detection(pilot, screen)
-    screen.query_one("#change-review-turn-select", Select).value = (
-        CURRENT_MODE_SENTINEL
-    )
+    screen.query_one("#change-review-turn-select", Select).value = CURRENT_MODE_SENTINEL
     await _wait_for(
         pilot,
         lambda: screen._current_mode_active() or None,
@@ -309,9 +306,13 @@ async def _submit_modal(
 def _make_provider(tmp_path, conversation_id, **kwargs):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
-    return AgentRunsChangeReviewProvider(
-        db=db, service=service, conversation_id=conversation_id, **kwargs
-    ), db, service
+    return (
+        AgentRunsChangeReviewProvider(
+            db=db, service=service, conversation_id=conversation_id, **kwargs
+        ),
+        db,
+        service,
+    )
 
 
 @pytest.fixture()
@@ -332,7 +333,10 @@ def turn_fixture(tmp_path):
     tracker = ChangeTurnTracker(service=service)
     run1 = db.create_run(conversation_id="conv-turn", agent_kind="primary")
     _record_turn(
-        db, tracker, repo, run1,
+        db,
+        tracker,
+        repo,
+        run1,
         lambda: (repo / "turn_one.txt").write_text("one\n"),
     )
     (repo / "a.txt").write_text("changed\n")
@@ -345,9 +349,7 @@ def turn_fixture(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_commit_button_is_offered_only_in_current_mode(
-    monkeypatch, turn_fixture
-):
+async def test_commit_button_is_offered_only_in_current_mode(monkeypatch, turn_fixture):
     """Spec §5: `Commit…` is visible/enabled ONLY against the working tree."""
     _patch_git_actions(monkeypatch, True)
     provider, repo, run1 = turn_fixture
@@ -523,9 +525,9 @@ async def test_modal_checklist_comes_from_a_fresh_status_read(
         screen = await _enter_current_mode(pilot, app)
         await _wait_for(
             pilot,
-            lambda: (
-                lambda ls: ls if any("a.txt" in item for item in ls) else None
-            )(_tree_labels(screen.query_one(Tree))),
+            lambda: (lambda ls: ls if any("a.txt" in item for item in ls) else None)(
+                _tree_labels(screen.query_one(Tree))
+            ),
             "the working tree's files",
         )
 
@@ -666,9 +668,7 @@ async def test_detached_head_warning_is_rendered(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_modal_names_the_repository_it_will_act_on(
-    monkeypatch, commit_fixture
-):
+async def test_modal_names_the_repository_it_will_act_on(monkeypatch, commit_fixture):
     """Spec §6: the confirm modal always NAMES its target root."""
     _patch_git_actions(monkeypatch, True)
     provider, repo = commit_fixture
@@ -685,9 +685,7 @@ async def test_modal_names_the_repository_it_will_act_on(
 
 
 @pytest.mark.asyncio
-async def test_an_unstaged_rename_commits_as_its_two_real_rows(
-    monkeypatch, tmp_path
-):
+async def test_an_unstaged_rename_commits_as_its_two_real_rows(monkeypatch, tmp_path):
     """A shell `mv` is a deletion + an untracked add — and commits whole."""
     _patch_git_actions(monkeypatch, True)
     repo = _init_repo(tmp_path / "moved_repo")
@@ -765,11 +763,7 @@ async def test_a_path_absent_from_the_worktree_still_commits(
         screen = await _enter_current_mode(pilot, app)
         modal = await _open_commit_modal(pilot, app, screen)
 
-        staged_row = [
-            box
-            for box in modal.query(Checkbox)
-            if "a.txt" in box.file_paths
-        ]
+        staged_row = [box for box in modal.query(Checkbox) if "a.txt" in box.file_paths]
         assert len(staged_row) == 1, "the staged change is ONE row"
         assert sorted(staged_row[0].file_paths) == row_paths, (
             f"the row must carry its real pathspec; got {staged_row[0].file_paths!r}"
@@ -897,9 +891,9 @@ async def test_commit_lands_notifies_the_sha_and_reloads_the_view(
         screen = await _enter_current_mode(pilot, app)
         await _wait_for(
             pilot,
-            lambda: (
-                lambda ls: ls if any("brand_new.txt" in i for i in ls) else None
-            )(_tree_labels(screen.query_one(Tree))),
+            lambda: (lambda ls: ls if any("brand_new.txt" in i for i in ls) else None)(
+                _tree_labels(screen.query_one(Tree))
+            ),
             "the working tree's files",
         )
         notes: list[tuple] = []
@@ -984,9 +978,7 @@ async def test_create_branch_first_checks_out_the_new_branch(
 
 
 @pytest.mark.asyncio
-async def test_a_failing_step_is_named_with_its_git_error(
-    monkeypatch, commit_fixture
-):
+async def test_a_failing_step_is_named_with_its_git_error(monkeypatch, commit_fixture):
     """Spec §5 step 5: failures name the STEP + the excerpt, never "git failed"."""
     _patch_git_actions(monkeypatch, True)
     provider, repo = commit_fixture
@@ -1099,9 +1091,9 @@ async def test_merge_in_progress_refuses_with_copy_and_commits_nothing(
         await pilot.pause()
 
         messages = [str(call[0][0]) for call in notes]
-        assert any(
-            "merge/rebase/cherry-pick" in message for message in messages
-        ), f"the refusal reason must be shown; got {messages!r}"
+        assert any("merge/rebase/cherry-pick" in message for message in messages), (
+            f"the refusal reason must be shown; got {messages!r}"
+        )
         assert _commit_count(repo) == before, "no commit may land mid-merge"
         assert _git_ok(repo, "rev-parse", "--verify", "-q", "MERGE_HEAD") == 0, (
             "the merge must still be in progress"
@@ -1134,9 +1126,7 @@ async def test_buttons_are_disabled_while_the_commit_worker_runs(
 
         # Commit only ONE file, so the tree still has changes afterwards and
         # "re-enabled" is a real assertion rather than the clean-tree state.
-        await _submit_modal(
-            pilot, modal, "one file only", uncheck=("brand_new.txt",)
-        )
+        await _submit_modal(pilot, modal, "one file only", uncheck=("brand_new.txt",))
         await _wait_for(pilot, lambda: entered.is_set() or None, "the commit worker")
         await pilot.pause()
 
@@ -1164,7 +1154,7 @@ async def test_buttons_are_disabled_while_the_commit_worker_runs(
 async def test_the_outcome_copy_counts_checked_rows_not_pathspec_entries(
     monkeypatch, tmp_path
 ):
-    """"N file(s)" must mean what the user checked (review fix 4).
+    """ "N file(s)" must mean what the user checked (review fix 4).
 
     A rename is ONE checked row carrying TWO pathspec entries, so counting
     `files` would report "2 file(s)" for a single checkbox. The count is
@@ -1199,8 +1189,7 @@ async def test_the_outcome_copy_counts_checked_rows_not_pathspec_entries(
 
         _result, file_count = landed[0]
         assert file_count == 1, (
-            f"one checked row must read as 1 file, not {file_count} pathspec "
-            "entries"
+            f"one checked row must read as 1 file, not {file_count} pathspec entries"
         )
 
 
@@ -1241,11 +1230,7 @@ async def test_the_commit_worker_never_rides_the_status_read_group(
         assert GIT_ACTION_WORKER_GROUP != "change-review-current", (
             "the git-action group must be distinct from the status-read group"
         )
-        live = [
-            w
-            for w in app.workers
-            if w.state.name in ("PENDING", "RUNNING")
-        ]
+        live = [w for w in app.workers if w.state.name in ("PENDING", "RUNNING")]
         groups = {w.group for w in live}
         assert GIT_ACTION_WORKER_GROUP in groups, (
             f"the in-flight commit must ride its own group; got {groups!r}"
@@ -1253,9 +1238,7 @@ async def test_the_commit_worker_never_rides_the_status_read_group(
         assert "change-review-current" not in groups, (
             f"a commit must never run in the status-read group; got {groups!r}"
         )
-        commit_worker = next(
-            w for w in live if w.group == GIT_ACTION_WORKER_GROUP
-        )
+        commit_worker = next(w for w in live if w.group == GIT_ACTION_WORKER_GROUP)
 
         # A real status read over the top of the in-flight commit.
         screen._load_current_mode()
@@ -1361,9 +1344,9 @@ async def test_a_stale_diff_is_not_served_after_the_commit_reload(
         screen = await _enter_current_mode(pilot, app)
         await _wait_for(
             pilot,
-            lambda: (
-                lambda ls: ls if any("a.txt" in i for i in ls) else None
-            )(_tree_labels(screen.query_one(Tree))),
+            lambda: (lambda ls: ls if any("a.txt" in i for i in ls) else None)(
+                _tree_labels(screen.query_one(Tree))
+            ),
             "the working tree's files",
         )
         screen.select_file("a.txt")
@@ -1404,9 +1387,7 @@ async def test_a_stale_diff_is_not_served_after_the_commit_reload(
 
 
 @pytest.mark.asyncio
-async def test_a_bug_inside_commit_submit_reports_itself(
-    monkeypatch, commit_fixture
-):
+async def test_a_bug_inside_commit_submit_reports_itself(monkeypatch, commit_fixture):
     """TASK-19703 AC #2: a bug inside `_submit` must not leave the confirm
     button silently inert.
 

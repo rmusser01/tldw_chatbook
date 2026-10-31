@@ -21,6 +21,21 @@ DiscoveryErrorKind = Literal[
     "invalid_response",
 ]
 
+#: The top-level listing fields capability inference reads
+#: (``model_discovery_merge._metadata_has_positive_capability``). The listing
+#: normaliser drops these last when a model's metadata has to shrink to fit
+#: its bounds, so an oversized listing keeps its hint (TASK-34402).
+CAPABILITY_HINT_KEYS = frozenset(
+    {
+        "vision",
+        "supports_image_input",
+        "capabilities",
+        "modalities",
+        "input_modalities",
+        "architecture",
+    }
+)
+
 
 def _freeze_metadata_value(value: Any) -> Any:
     """Return an immutable copy of JSON-like discovery metadata."""

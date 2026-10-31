@@ -23,6 +23,7 @@ The pure helpers (`parity_text`, `classify`) are importable without the
 `RAG_EVAL` gate so `Tests/RAG_Eval/test_granularity_census.py` can pin them;
 the gate guards `main`, which builds a real index.
 """
+
 from __future__ import annotations
 
 import os
@@ -42,11 +43,11 @@ if str(REPO) not in sys.path:
 # helpers stay importable (and testable) without building a retrieval stack.
 from Tests.RAG_Eval.harness.canonicalize import canonical_source_type  # noqa: E402
 
-CHUNK_SIZE = 384          # hybrid_basic profile, the harness's own
+CHUNK_SIZE = 384  # hybrid_basic profile, the harness's own
 CHUNK_OVERLAP = 64
-K = 10                    # run_eval's default
-BAR = 5                   # inherited verbatim from PRF clause 1 + the clarification gate
-MODES = ("semantic", "hybrid")   # `plain` returns whole items: no chunks, no granularity
+K = 10  # run_eval's default
+BAR = 5  # inherited verbatim from PRF clause 1 + the clarification gate
+MODES = ("semantic", "hybrid")  # `plain` returns whole items: no chunks, no granularity
 
 #: Reasons a missed query still cannot be rescued by freeing a top-k slot.
 EXCLUDED_NEGATIVE = "negative: no target to find"
@@ -176,7 +177,9 @@ def main() -> int:
         support a NULL, so no verdict is claimed).
     """
     if os.environ.get("RAG_EVAL") != "1":
-        raise SystemExit("refusing to run without RAG_EVAL=1 (this builds a real index)")
+        raise SystemExit(
+            "refusing to run without RAG_EVAL=1 (this builds a real index)"
+        )
 
     # One contiguous local-import group. These are deferred to call time
     # rather than module scope so the pure helpers above stay importable
@@ -259,10 +262,12 @@ def main() -> int:
                     scope = build_query_scope(runtime.slug_to_source, q)
                     try:
                         result = runtime.run(
-                            seam.search(q.query, SOURCE_TYPES, "rag", top_k=K, scope=scope)
+                            seam.search(
+                                q.query, SOURCE_TYPES, "rag", top_k=K, scope=scope
+                            )
                         )
                         rows, _backend, err = _extract_rows(result)
-                    except Exception as exc:                      # noqa: BLE001
+                    except Exception as exc:  # noqa: BLE001
                         rows, err = [], f"{type(exc).__name__}: {exc}"
                     if err:
                         # A skipped query SHRINKS the population, and a
@@ -336,8 +341,12 @@ def main() -> int:
         )
     best = max(rescuable_by_mode.values())
     exposure = {m: sum(1 for e in any_dup[m] if ",HIT)" in e) for m in MODES}
-    print(f"  exposure (currently-HIT queries a reorder could only move DOWN): {exposure}")
-    print(f"  errors: 0 -- population COMPLETE ({len(golden)} queries x {len(MODES)} modes)")
+    print(
+        f"  exposure (currently-HIT queries a reorder could only move DOWN): {exposure}"
+    )
+    print(
+        f"  errors: 0 -- population COMPLETE ({len(golden)} queries x {len(MODES)} modes)"
+    )
     print(f"  BEST-MODE RESCUABLE: {best}  vs BAR {BAR}")
     print(
         f"  RESULT: {'CLEARS' if best >= BAR else 'BELOW'} bar -> "

@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/committed_static.py",
+    "8fbec5a3a3943003b357e02e619291876e096b90"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {
+    "TLDW_TEST_GC_EVERY": "1"
+  },
+  "returncode": 0,
+  "elapsed_s": 8.276419878005981,
+  "output": "HEAD8fbec5a3a3943003b357e02e619291876e096b90: 64 owned Python files match committed bytes and pass fatal Ruff; all owned stage paths match; three obsolete additions absent.\n"
+}

@@ -1,0 +1,50 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                            Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                  │ Conversation | Say hi in five words.                                                                                                                     │
+                       Context ◂  │   Say hi in five wor…  ✕    New tab     Temporary                                                                                                        │
+   Terminal                   ╭─ Switch model · now: OpenAI · tts-1-hd-1106 ─────────────────────────────────────────────────────────────────────────────────────────────╮                   │
+ ─────────────────────────────│ Find type to search 21 models in 4 providers · Enter applies                                                                             │                   │
+ Workspaces                  ▸│ RECENT · your last 50 chats                                                                                                              │                   │
+ ─────────────────────────────│ ▶ tts-1-hd-1106                OpenAI                 ~4k  Ready · not tested           ● CURRENT                                        │                   │
+ Conversations               ▾│ READY PROVIDERS · top 3 each · typing searches every provider's catalog                                                                  │                   │
+       Archive this chat      │   gpt-5.6-terra                OpenAI                 ~4k  Ready · not tested                                                            │                   │
+         Archived chats       │   gpt-5.6-sol                  OpenAI                 ~4k  Ready · not tested                                                            │                   │
+       Search all chats…      │   gpt-5.6-luna                 OpenAI                 ~4k  Ready · not tested                                                            │                   │
+   Say hi in five words.      │     … 11 more OpenAI models                                                                                                              │                   │
+                              │     MLX-LM (Apple silicon) · no models reported · type its name and an id                                                                │                   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear│   tabby-model                  TabbyAPI              ~32k  Ready · not tested                                                            │                   │
+  ▊  Filter visible   ▎       │   tabby-model-2                TabbyAPI              ~32k  Ready · not tested                                                            │                   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎       │   tabby-model-3                TabbyAPI              ~32k  Ready · not tested                                                            │                   │
+                              │   vllm-model-z                 vLLM                  ~32k  Ready · not tested                                                            │                   │
+  Chats                      ▾│   vllm-model-x                 vLLM                  ~32k  Ready · not tested                                                            │                   │
+   Say hi in five words.    ⛔│   vllm-model-y                 vLLM                  ~32k  Ready · not tested                                                            │                   │
+   Blocked                    │     … 1 more vLLM models                                                                                                                 │                   │◂ Inspect
+                              │ NEEDS SETUP · Enter opens the fix or explains it                                                                                         │                   │
+ ─────────────────────────────│   (any model)                  Anthropic                   Not ready · no key           Enter: add key in Settings                       │─────────────────  │
+ Character · No chats        ▸│   (any model)                  Arcee AI                    Not ready · no key           Enter: add key in Settings                       │                   │
+ ─────────────────────────────│   (any model)                  Azure OpenAI                Not ready · no key           Enter: add key in Settings                       │                   │
+ Model                       ▸│   (any model)                  Baidu Qianfan               Not ready · no key           Enter: add key in Settings                       │─────────────────  │
+ ─────────────────────────────│   (any model)                  Baseten                     Not ready · no key           Enter: add key in Settings                       │                   │
+ Agent                       ▸│   (any model)                  ByteDance Seed (…us)        Not ready · no key           Enter: add key in Settings                       │                   │
+ ─────────────────────────────│   (any model)                  Cerebras                    Not ready · no key           Enter: add key in Settings                       │                   │
+ Details                     ▸│   (any model)                  Cloudflare Worke… AI        Not ready · no key           Enter: add key in Settings                       │                   │
+                              │     … 39 more providers need setup · type a name to find one                                                                             │                   │
+                              │ NOT RUNNING · local servers never set up · rechecked on open                                                                             │─────────────────  │
+                              │   Aphrodite Engine · Ollama · Custom OpenAI-compatible · Custom OpenAI-compatible #2                                                     │                   │
+                              │ Values for tts-1-hd-1106 · OpenAI                                                                                                        │turns cannot       │
+                              │ Temperature 0.6      Console Behavior  Max tokens 4096     provider          Streaming Off   ▼  provider                                 │                   │
+                              │  Enter apply to this chat  · Tab edit values ·  Ctrl+N default for new chats  ·  Ctrl+O chat settings  · Esc cancel                      │─────────────────  │
+                              │  Save as model default  saves Temperature, Max tokens, Streaming                                             Applies to: this chat only  │                   │
+                              ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯turns cannot       │
+                                  │   make enough room. Repair the model limit, reduce mandatory context or the response maximum, or allow older turns to be omitted.                        │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │ blocked
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model: tts-1-hd-1106     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context unknown
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                                                          Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

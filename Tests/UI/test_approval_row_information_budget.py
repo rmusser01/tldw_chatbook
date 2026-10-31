@@ -10,6 +10,7 @@ TASK-1861 the card offers one decision per TARGET, so telling `spec.md` from
 `secrets.md` is the entire point of the row -- and at 80 columns it was
 impossible.
 """
+
 from __future__ import annotations
 
 import time
@@ -27,6 +28,7 @@ BUNDLE = (
     / "css"
     / "tldw_cli_modular.tcss"
 )
+
 
 #: Every `.approval-row*` rule lives in the app stylesheet, not in a
 #: `DEFAULT_CSS` -- a bare App harness measures an UNSTYLED row (header and
@@ -288,12 +290,9 @@ async def test_the_longest_decision_label_paints_on_one_line():
         select.value = value
         await pilot.pause()
         assert select.region.height <= 3, (
-            f"{longest!r} wraps the closed Select to "
-            f"{select.region.height} lines"
+            f"{longest!r} wraps the closed Select to {select.region.height} lines"
         )
-        assert longest in _painted(app), (
-            f"{longest!r} is clipped by the closed Select"
-        )
+        assert longest in _painted(app), f"{longest!r} is clipped by the closed Select"
 
 
 @pytest.mark.asyncio
@@ -334,7 +333,9 @@ async def test_the_reused_single_row_keeps_a_live_scope_line_below_its_controls(
         ]
         controls_at = kinds.index("controls")
         scope_at = next(
-            i for i, k in enumerate(kinds) if k != "controls" and "approval-row-scope" in k
+            i
+            for i, k in enumerate(kinds)
+            if k != "controls" and "approval-row-scope" in k
         )
         assert scope_at > controls_at, f"scope line above the controls: {kinds}"
 

@@ -1,11 +1,16 @@
 """fork_chat / new_chat runtime-tool constants and schema shapes."""
+
 from tldw_chatbook.Agents.agent_models import (
     AgentDefinition,
     FORK_CHAT_TOOL_NAME,
     NEW_CHAT_TOOL_NAME,
     RUNTIME_TOOL_NAMES,
+    ToolResult,
 )
-from tldw_chatbook.Agents.tool_catalog import FORK_CHAT_TOOL_SCHEMA, NEW_CHAT_TOOL_SCHEMA
+from tldw_chatbook.Agents.tool_catalog import (
+    FORK_CHAT_TOOL_SCHEMA,
+    NEW_CHAT_TOOL_SCHEMA,
+)
 
 
 def test_names_are_runtime_tools():
@@ -29,7 +34,13 @@ def test_new_chat_schema_shape():
     assert NEW_CHAT_TOOL_SCHEMA.id == "runtime:new_chat"
     assert NEW_CHAT_TOOL_SCHEMA.name == NEW_CHAT_TOOL_NAME
     props = NEW_CHAT_TOOL_SCHEMA.parameters["properties"]
-    assert set(props) == {"title", "opening_prompt", "instructions"}
+    assert set(props) == {
+        "title",
+        "opening_prompt",
+        "instructions",
+        "destination",
+        "mode",
+    }
     assert NEW_CHAT_TOOL_SCHEMA.parameters["required"] == []
 
 
@@ -129,7 +140,9 @@ def test_chat_create_runtime_schemas_now_include_subagents():
     )
 
     tool = lambda args: ToolResult(ok=True, content="{}")
-    assert [s.name for s in _chat_create_runtime_schemas(AGENT_KIND_SUBAGENT, tool, tool)] == [
+    assert [
+        s.name for s in _chat_create_runtime_schemas(AGENT_KIND_SUBAGENT, tool, tool)
+    ] == [
         "fork_chat",
         "new_chat",
     ]
@@ -157,3 +170,16 @@ def test_first_request_plan_discloses_chat_create_for_subagent_kind():
     )
     names = {s.name for s in plan.runtime_schemas}
     assert "fork_chat" in names and "new_chat" in names
+
+
+def test_preview_entry_points_accept_distinct_chat_surface_flags():
+    import inspect
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+
+    for method in (
+        ConsoleAgentBridge.build_project_instruction_preview_request,
+        ConsoleAgentBridge.build_personal_context_preview_snapshot,
+    ):
+        parameters = inspect.signature(method).parameters
+        assert parameters["fork_chat_enabled"].default is False
+        assert parameters["new_chat_enabled"].default is False

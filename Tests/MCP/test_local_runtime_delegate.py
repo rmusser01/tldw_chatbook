@@ -143,7 +143,9 @@ def test_protocol_diagnostics_reports_tools_call_as_unsupported():
 
     diagnostics = delegate.get_protocol_diagnostics()
 
-    methods_by_name = {entry["name"]: entry["supported"] for entry in diagnostics["methods"]}
+    methods_by_name = {
+        entry["name"]: entry["supported"] for entry in diagnostics["methods"]
+    }
     assert methods_by_name["tools/call"] is False
     # Every other advertised method stays truthfully supported -- the
     # refusal is scoped to `tools/call` alone, not a blanket downgrade.

@@ -19,7 +19,7 @@ import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from unicodedata import category as unicode_category
 
 from tldw_chatbook.Utils.Utils import elide_path_middle
@@ -49,7 +49,6 @@ _MAX_SETUP_DRAFT_FIELDS = 64
 _MAX_SETUP_DRAFT_BYTES = 16 * 1024
 _MAX_PROVIDER_CHARS = 128
 _MAX_ENDPOINT_CHARS = 4096
-_MAX_MODEL_CHARS = 120
 _MAX_CREDENTIAL_CHARS = 8192
 _MAX_IDENTITY_COUNTER = 2**63 - 1
 _SECRET_FIELD_TOKENS = ("api_key", "credential", "password", "token", "secret")
@@ -386,9 +385,7 @@ def _resolve_first_run_provider_endpoints(
         provider_settings,
     )
     if discovery_endpoint:
-        discovery_resolution = resolve_provider_endpoint(
-            owner_key, discovery_endpoint
-        )
+        discovery_resolution = resolve_provider_endpoint(owner_key, discovery_endpoint)
         if discovery_resolution.errors or discovery_resolution.chat_url is None:
             raise ValueError("Provider discovery endpoint is invalid.")
         discovery_endpoint = discovery_resolution.chat_url
@@ -439,17 +436,17 @@ def build_current_first_run_model_discovery_key(
 
 
 def validate_first_run_model_id(model_id: object) -> str:
-    """Return one bounded display/config-safe model identifier."""
+    """Return one model id the combined provider save writes (TASK-35712).
+
+    The save's own check (``is_writable_model_id``, ``MAX_MODEL_ID_CHARS``),
+    not a copy of it: this id feeds the same save Settings does.
+    """
+    from tldw_chatbook.Chat.provider_setup_persistence import is_writable_model_id
 
     if type(model_id) is not str:
         raise ValueError("Model is invalid.")
     model = model_id.strip()
-    if (
-        not model
-        or len(model) > _MAX_MODEL_CHARS
-        or not model.isprintable()
-        or _contains_unsafe_text(model)
-    ):
+    if not is_writable_model_id(model):
         raise ValueError("Model is invalid.")
     return model
 
@@ -538,21 +535,27 @@ def build_first_run_provider_commit(
 PROVIDER_PROBE_NONE = ""
 PROVIDER_PROBE_AUTH = "authentication"
 PROVIDER_PROBE_CONNECTION = "connection"
+#: TASK-33008 (capture 06a): the server refused a check that carried no key.
+#: Nothing was rejected; the server wants a key and none was set.
+PROVIDER_PROBE_KEY_REQUIRED = "key_required"
 
 
 def classify_discovery_failure(
-    discovery_state: str, failure_category: str
+    discovery_state: str, failure_category: str, *, key_sent: bool = True
 ) -> str:
-    """Collapse a discovery UI outcome into the trust-chain's three states.
+    """Collapse a discovery UI outcome into the trust-chain's states.
 
     Args:
         discovery_state: The model step's discovery state string
             ("available", "connection_failed", "listing_unavailable", ...).
         failure_category: The human category rendered with a failure
             ("authentication", "connection error", "request failed", ...).
+        key_sent: Whether the check carried a key (see
+            ``discovery_sends_a_key``).
 
     Returns:
-        PROVIDER_PROBE_AUTH for credential rejections,
+        PROVIDER_PROBE_AUTH for a key the server refused,
+        PROVIDER_PROBE_KEY_REQUIRED for a refusal when no key was sent,
         PROVIDER_PROBE_CONNECTION for any other failed probe, and
         PROVIDER_PROBE_NONE when discovery did not fail (including
         "listing_unavailable", which is a provider capability, not an
@@ -561,8 +564,93 @@ def classify_discovery_failure(
     if discovery_state != "connection_failed":
         return PROVIDER_PROBE_NONE
     if failure_category == "authentication":
-        return PROVIDER_PROBE_AUTH
+        return PROVIDER_PROBE_AUTH if key_sent else PROVIDER_PROBE_KEY_REQUIRED
     return PROVIDER_PROBE_CONNECTION
+
+
+def discovery_sends_a_key(provider_draft: object) -> bool:
+    """Whether model discovery for ``provider_draft`` carries a key.
+
+    The same rule as ``_first_run_discovery_staged_settings``: source "none",
+    or a typed draft with no text, sends an empty key. Without a draft the
+    answer is unknown and counts as sent, so the copy stays the rejected-key
+    wording it always was.
+    """
+    if type(provider_draft) is not FirstRunProviderDraft:
+        return True
+    credential = provider_draft.credential
+    if credential.source == "draft":
+        return bool(_credential_value_for_boundary(credential))
+    return credential.source != "none"
+
+
+class ProbeFailureCopy(NamedTuple):
+    """What each surface says about one failed check ({display}: the provider)."""
+
+    model_line: str  # the Model step's status line
+    provider_line: str  # the Provider step's status while its Next is allowed
+    confirm: str  # the Model step's Next asks this before it moves on
+    provider_notice: str  # pinned on Provider when you come back to it
+    summary_detail: str  # the Summary's Provider row
+
+
+PROBE_FAILURE_COPY: dict[str, ProbeFailureCopy] = {
+    PROVIDER_PROBE_AUTH: ProbeFailureCopy(
+        "Authentication failed — this API key was rejected. Go Back to fix it, "
+        "or enter a model ID below.",
+        "{display} rejected this API key. Update it, or continue anyway.",
+        "The API key failed an authentication check, so this model setup is "
+        "unverified. Continue anyway?",
+        "The last connection check failed: this API key was rejected. Update "
+        "it, or continue anyway.",
+        "saved, but the key failed an authentication check",
+    ),
+    PROVIDER_PROBE_KEY_REQUIRED: ProbeFailureCopy(
+        "{display} needs an API key and none was set. Go Back to add one, or "
+        "enter a model ID below.",
+        "{display} needs an API key and none was set. Add one under "
+        "Authentication, or continue anyway.",
+        "The server needs an API key and none was set, so this model setup is "
+        "unverified. Continue anyway?",
+        "The last connection check failed: the server needs an API key and "
+        "none was set. Add one under Authentication, or continue anyway.",
+        "saved, but the server needs an API key and none was set",
+    ),
+    PROVIDER_PROBE_CONNECTION: ProbeFailureCopy(
+        "",  # the Model step names the server it could not reach
+        "Couldn't discover models for {display}. You can continue anyway.",
+        "The server couldn't be reached, so this model setup is unverified. "
+        "Continue anyway?",
+        "The last connection check couldn't reach the server. Check it's "
+        "running, or continue anyway.",
+        "saved, but the server couldn't be reached when models were checked",
+    ),
+}
+
+
+#: A listing that cannot list (no model list, or a Claude subscription's):
+#: the Model step's status line, over its model ID field.
+MODEL_LISTING_UNAVAILABLE_LINE = (
+    "Model listing unavailable; enter the model ID used by this endpoint."
+)
+#: The same cause on the Provider step, which has no model ID field (as each
+#: ``ProbeFailureCopy`` pairs a ``model_line`` with a ``provider_line``).
+PROVIDER_LISTING_UNAVAILABLE_LINE = (
+    "Model listing unavailable; you can enter the model ID on the next step."
+)
+#: The owner's decision of 2026-10-17 (PR #3144, D2): after a 403 to a check
+#: that sent no key, each line adds that the server may want a key, where the
+#: step's key field is (Provider's Authentication section is below its line;
+#: Model has none, so the key is one step Back).
+PROVIDER_KEYLESS_REFUSAL_HINT = "If this server needs a key, add one under Authentication."
+MODEL_KEYLESS_REFUSAL_HINT = "If this server needs a key, go Back to add one."
+
+
+def probe_failure_copy(probe_failure: str) -> ProbeFailureCopy:
+    """Copy for a failed check; an unclassified one reads as a connection failure."""
+    return PROBE_FAILURE_COPY.get(
+        probe_failure, PROBE_FAILURE_COPY[PROVIDER_PROBE_CONNECTION]
+    )
 
 
 def probe_failure_summary_detail(probe_failure: str) -> str:
@@ -576,11 +664,8 @@ def probe_failure_summary_detail(probe_failure: str) -> str:
         no failure to describe.
     """
 
-    if probe_failure == PROVIDER_PROBE_AUTH:
-        return "saved, but the key failed an authentication check"
-    if probe_failure == PROVIDER_PROBE_CONNECTION:
-        return "saved, but the server couldn't be reached when models were checked"
-    return ""
+    copy = PROBE_FAILURE_COPY.get(probe_failure)
+    return copy.summary_detail if copy else ""
 
 
 def apply_probe_failure_to_summary_rows(
@@ -1508,7 +1593,6 @@ def tools_commit_delta(
     }
 
 
-
 def build_appearance_commit(
     *,
     default_theme: str | None,
@@ -1733,8 +1817,7 @@ def read_provider_secret_presence(
     explicit_source = (
         credential_source.strip().lower()
         if type(credential_source) is str
-        and credential_source.strip().lower()
-        in {"none", "stored", "environment"}
+        and credential_source.strip().lower() in {"none", "stored", "environment"}
         else None
     )
     env_var_raw = settings.get("api_key_env_var")
@@ -1778,61 +1861,37 @@ def read_wizard_prefill(app_config: Mapping[str, object]) -> WizardPrefill:
     )
 
 
-def _voice_service_name(base_url: object) -> str:
-    """Name an OpenAI-compatible endpoint the way the Voice step labels it."""
-    from urllib.parse import urlsplit
-
-    from tldw_chatbook.TTS.openai_compatible_config import (
-        normalize_openai_compatible_endpoint,
-    )
-    from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
-
-    if not isinstance(base_url, str) or not base_url.strip():
-        return "OpenAI"  # the openai provider's own default endpoint
-    try:
-        speech_url = normalize_openai_compatible_endpoint(base_url).speech_url
-    except ValueError:
-        return "Custom endpoint"
-    if speech_url == voice_state.POCKET_TTS_ENDPOINT:
-        return "PocketTTS"
-    if speech_url == voice_state.OFFICIAL_OPENAI_TTS_ENDPOINT:
-        return "OpenAI"
-    # Host and port only: a URL's userinfo must never reach the screen.
-    parts = urlsplit(speech_url)
-    host = parts.hostname or ""
-    if ":" in host:  # IPv6: keep the brackets so the port stays readable
-        host = f"[{host}]"
-    if parts.port:
-        host = f"{host}:{parts.port}"
-    return f"Custom endpoint {host}".rstrip()
-
-
 def _voice_summary_row(app_config: Mapping[str, object]) -> "SummaryRow":
     """TASK-32959: read back what the Voice step saved.
 
     Only the raw ``[app_tts]`` table counts: the loaded settings back-fill
     ``default_provider = "openai"`` when nothing was saved, which must not
-    read as the user's choice.
+    read as the user's choice. TASK-34100.8 (voice-speech-06): the row names
+    service, model and voice -- "OpenAI · tts-1-hd · shimmer". Review round 1:
+    it names the voice replies use (an OpenAI-slot endpoint with no
+    default_provider IS that voice), names an endpoint saved beside another
+    provider's default as extra, and gives the old wizard's unspeakable
+    PocketTTS write no tick.
     """
-    app_tts = _section(app_config, "app_tts")
-    provider = app_tts.get("default_provider")
-    provider = provider.strip() if isinstance(provider, str) else ""
-    base_url = app_tts.get("OPENAI_BASE_URL")
-    if provider == "omnivoice":
-        return SummaryRow("Voice", ROW_CONFIGURED, "OmniVoice (default voice)")
-    if provider == "openai":
+    from tldw_chatbook.UI.Wizards import first_run_voice_prefill as voice_prefill
+
+    saved = voice_prefill.saved_voice_from_config(_section(app_config, "app_tts"))
+    if saved is None:
+        return SummaryRow("Voice", ROW_DEFAULT, "not set up (optional)")
+    if saved.legacy:
         return SummaryRow(
-            "Voice", ROW_CONFIGURED, f"{_voice_service_name(base_url)} (default voice)"
+            "Voice", ROW_ATTENTION, voice_prefill.legacy_summary_detail()
         )
-    if provider:
-        return SummaryRow("Voice", ROW_CONFIGURED, f"{provider} (default voice)")
-    if isinstance(base_url, str) and base_url.strip():
-        return SummaryRow(
-            "Voice",
-            ROW_CONFIGURED,
-            f"{_voice_service_name(base_url)} (saved, not the default voice)",
+    label = voice_prefill.voice_label(saved)
+    if saved.other_provider:
+        extra = (
+            f"; {voice_prefill.service_name(saved.slot_preset, saved.draft.endpoint)}"
+            " also saved"
+            if saved.slot_preset
+            else ""
         )
-    return SummaryRow("Voice", ROW_DEFAULT, "not set up (optional)")
+        return SummaryRow("Voice", ROW_CONFIGURED, f"{label} (default voice){extra}")
+    return SummaryRow("Voice", ROW_CONFIGURED, label)
 
 
 def build_summary_rows(
@@ -2015,7 +2074,16 @@ def build_summary_rows(
             # "MCP ▸ Servers ▸ Tool gates" written here omitted the
             # built-in server ROW, and the pane only exists inside that
             # row's detail view -- so the breadcrumb did not lead anywhere.
-            else f"all off; turn them on under {TOOL_GATES_PANE_PATH}",
+            # TASK-34100.5 AC#2: not "all off" -- with every gate off, Console's
+            # assistant still gets the agent runtime, the local tools
+            # ([console] local_tools_enabled) and the built-in MCP source.
+            # Review round 1 (F10): "may ... when the window has room" -- a
+            # send planned against an unverified window carries no tools.
+            else (
+                "gates off; the assistant may still use chatbook's own tools "
+                "(sub-agents, web search, notes, Watchlists) when the model's "
+                f"context window has room. Turn gates on under {TOOL_GATES_PANE_PATH}"
+            ),
         ),
         SummaryRow(
             "Notes folder sync",

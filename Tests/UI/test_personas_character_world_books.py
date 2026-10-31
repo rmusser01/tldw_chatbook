@@ -35,11 +35,15 @@ async def test_empty_then_render():
         w.load_world_books([])
         await pilot.pause()
         assert app.query_one("#personas-char-worldbooks-empty", Static).display is True
-        assert app.query_one("#personas-char-worldbooks-table", DataTable).row_count == 0
+        assert (
+            app.query_one("#personas-char-worldbooks-table", DataTable).row_count == 0
+        )
         w.load_world_books([{"name": "Lore", "entry_count": 3, "enabled": True}])
         await pilot.pause()
         assert app.query_one("#personas-char-worldbooks-empty", Static).display is False
-        assert app.query_one("#personas-char-worldbooks-table", DataTable).row_count == 1
+        assert (
+            app.query_one("#personas-char-worldbooks-table", DataTable).row_count == 1
+        )
 
 
 @pytest.mark.asyncio
@@ -50,7 +54,9 @@ async def test_duplicate_names_do_not_crash():
         dup = {"name": "Dup", "entry_count": 1, "enabled": True}
         w.load_world_books([dup, dup])  # would DuplicateKey without the guard
         await pilot.pause()
-        assert app.query_one("#personas-char-worldbooks-table", DataTable).row_count == 1
+        assert (
+            app.query_one("#personas-char-worldbooks-table", DataTable).row_count == 1
+        )
 
 
 @pytest.mark.asyncio

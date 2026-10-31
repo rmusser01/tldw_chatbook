@@ -16,7 +16,7 @@ grow:
   persistence owns every key in that set (engine presets by registry
   derivation, TASK-33510), and the tests sweep it, so a listed row can always
   be selected and saved.
-* ``WizardErrorGuard`` and ``contain_advance_error`` handle any other error.
+* ``WizardErrorGuard`` and ``report_advance_error`` handle any other error.
   A step handler that raises, a key binding (Ctrl+B, Ctrl+N, Enter, Esc)
   whose action raises, or a Next whose commit raises, leaves the step on
   screen with an error line above the navigation. The nav bar is re-synced
@@ -24,22 +24,38 @@ grow:
   keep working. ``provider_switch`` names the provider that stays selected
   when picking another one fails, and clears that line once a pick succeeds.
 
-The error guards follow the production app's policy
+The handler and key-binding guards follow the production app's policy
 (``app_lifecycle._handle_exception``). They act only when the UI would
 otherwise be kept alive, which excludes headless ``run_test`` unless a test
 opts in, so the suite keeps its exception signal.
+
+Background work is different (TASK-34100.1). A Textual worker started with
+its default ``exit_on_error=True`` takes the whole app down whatever the
+app's keep-alive policy says. ``run_wizard_worker`` and ``@wizard_work`` are
+the one way first-run code starts a worker. Both always pass
+``exit_on_error=False`` and report an error that escapes the work on the
+pinned status strip, in headless runs too. A headless run also records the
+error where ``run_test`` re-raises it (``_record_for_test_run``), so the
+suite keeps the failure signal the old exit gave it.
+``Tests/Architecture/test_wizard_lifecycle_guards.py`` pins that no first-run
+module calls ``run_worker`` or ``@work`` directly.
 """
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
 import logging
+import threading
 from contextlib import contextmanager
-from typing import Any, Callable, Iterator
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Iterator
 
 from loguru import logger
 from textual.actions import SkipAction
+
+if TYPE_CHECKING:
+    from textual.worker import Worker
 
 #: The ``persist_event`` component for first-run setup's contained errors.
 _DIAGNOSTICS_COMPONENT = "first_run"
@@ -54,6 +70,9 @@ _CONTAINED_ACTION_ATTR = "_first_run_contained_action"
 #: A key-bound action whose failure is reported as a Next that stayed put:
 #: ``action_next`` only launches the advance worker, so nothing moved yet.
 _ADVANCE_ACTIONS = frozenset({"action_next"})
+#: Container attribute holding the widget that had focus when a fence
+#: disabled the nav bar, so lifting the fence can give focus back.
+_FENCED_FOCUS_ATTR = "_first_run_fenced_focus"
 _NO_FRAME = ("", "", 0)
 
 
@@ -485,30 +504,99 @@ class WizardErrorGuard:
             report_contained_error(self, "handler", error)
 
 
-def contain_advance_error(
-    container: Any, error: Exception, started_at: int | None = None
-) -> bool:
-    """Report a Next that raised, if the app keeps its UI alive.
+def hold_fenced_focus(container: Any) -> None:
+    """Remember who has focus before a fence disables the nav bar.
 
-    ``_advance`` runs as an ``exit_on_error`` worker, so an exception that
-    escapes it exits the whole app. Its ``finally`` then re-syncs the nav bar
+    Textual blurs a focused widget the moment it is disabled
+    (``Widget.watch_disabled``). With Back, Next and Exit all disabled, the
+    blur leaves focus at None. A Next that moves on gets focus back from
+    ``show_step``. One that stays on its step (the commit refused, or the
+    checkpoint failed) got nothing back, so Enter, Ctrl+N and Ctrl+B went
+    dead under copy that said "Retry with Next" (TASK-34100.1 review).
+
+    Args:
+        container: The ``SetupWizardContainer`` about to fence its nav bar.
+    """
+    try:
+        focused = container.screen.focused
+    except Exception:  # noqa: BLE001 - not on a screen yet: nothing to hold.
+        return
+    if focused is not None:
+        setattr(container, _FENCED_FOCUS_ATTR, focused)
+
+
+def restore_fenced_focus(container: Any) -> None:
+    """Give focus back once the fence lifts, unless something else took it.
+
+    Runs after the callbacks already queued, because ``Widget.focus`` defers
+    too: a ``show_step`` that just moved to a new step has queued its own
+    focus, which must win. Focus goes back to the held widget if it can take
+    it again, else the step on screen re-anchors it.
+
+    Args:
+        container: The ``SetupWizardContainer`` whose fence just lifted.
+    """
+    held = getattr(container, _FENCED_FOCUS_ATTR, None)
+    if held is None:
+        return
+    setattr(container, _FENCED_FOCUS_ATTR, None)
+
+    def restore() -> None:
+        try:
+            screen = container.screen
+            if screen.focused is not None or not container.is_attached:
+                return
+            if (
+                held.is_attached
+                and held.focusable
+                and held.screen is screen
+                and all(
+                    getattr(node, "display", True) for node in held.ancestors_with_self
+                )
+            ):
+                screen.set_focus(held)
+                return
+            heal = _bound(
+                container.steps[container.current_step], "_heal_orphaned_focus"
+            )
+        except Exception:  # noqa: BLE001 - the wizard is gone: nothing to restore.
+            return
+        if heal is not None:
+            heal()
+
+    try:
+        container.app.call_later(restore)
+    except Exception:  # noqa: BLE001 - no running app: nothing to restore.
+        return
+
+
+def report_advance_error(
+    container: Any, error: Exception, started_at: int | None = None
+) -> None:
+    """Report a Next that raised, and keep the wizard where the user can act.
+
+    ``_advance`` catches its own errors and reports them here, so a failing
+    Next never escapes its worker. Its ``finally`` then re-syncs the nav bar
     (``_set_advancing(False)`` runs ``update_progress``), so a Next that
     failed part-way through a step change still shows the right position.
-    Only a Next that failed before leaving its step says "setup stayed here";
-    one that failed after (the next step's ``on_show``) is logged against the
-    step it committed and shows neutral copy on the step now on screen.
+    Only a Next that failed before leaving its step says "setup stayed here".
+    One that failed after (the next step's ``on_show``) is logged against the
+    step it committed, and shows neutral copy on the step now on screen.
+
+    TASK-34100.1: this used to apply only when the app keeps its UI alive and
+    re-raised otherwise, out of a worker started with ``exit_on_error=True``.
+    In a headless run that exited the app, and it was the one advance path
+    that could. Background work now never exits the app (see the module
+    docstring); a headless run that did not opt in still gets the error
+    recorded for ``run_test``, the signal that re-raise gave it.
 
     Args:
         container: The ``SetupWizardContainer`` whose advance raised.
         error: The exception.
         started_at: ``current_step`` when the advance began.
-
-    Returns:
-        True when the error was contained and reported; False when the caller
-        must re-raise it (headless runs, so the suite keeps its signal).
     """
     if not contains_wizard_errors(container):
-        return False
+        _record_for_test_run(container, error)
     committing = None
     if started_at is not None and started_at != container.current_step:
         try:
@@ -516,4 +604,251 @@ def contain_advance_error(
         except Exception:  # noqa: BLE001 - unknown step: attribute to the container.
             committing = None
     report_contained_error(container, "advance", error, step=committing)
-    return True
+
+
+def _report_target(node: Any) -> Any:
+    """The wizard node a worker error is reported against.
+
+    Steps and the container carry their own wizard context (``wizard`` and
+    ``steps``). The setup screen does not, so its errors are reported against
+    the container it hosts.
+    """
+    if hasattr(node, "steps") or hasattr(node, "wizard"):
+        return node
+    try:
+        return next(iter(node.query(".wizard-container")), node)
+    except Exception:  # noqa: BLE001 - no DOM to search: report on the node.
+        return node
+
+
+def _record_for_test_run(node: Any, error: BaseException) -> None:
+    """Hand a contained error to a headless test run, as the old exit did.
+
+    A worker started with Textual's default ``exit_on_error=True`` exited
+    the app on an error, and ``run_test`` re-raised it, failing the test.
+    Wizard work no longer exits the app, so without this a worker bug in a
+    test only logged and showed on the strip, and the test passed (review
+    round 1). The first error goes in ``App._exception``, the slot
+    ``run_test`` re-raises from; the app stays up, and the suite's
+    ``app._exception is None`` checks see it. A production app is never
+    headless, so it never records anything.
+    """
+    try:
+        app = node.app
+        if not app.is_headless or not isinstance(error, Exception):
+            return
+        if getattr(app, "_exception", None) is None:
+            app._exception = error
+    except Exception:  # noqa: BLE001 - no app: nothing to record against.
+        return
+
+
+def _report_worker_error(node: Any, error: BaseException, category: str) -> None:
+    """Log a worker's escaped error and show it on the pinned strip.
+
+    A node that has already left the DOM (the user moved on, or dismissed
+    setup) only logs: there is no strip of its own left to show. Either way
+    a headless run records it (``_record_for_test_run``).
+    """
+    _record_for_test_run(node, error)
+    try:
+        attached = bool(node.is_attached)
+    except Exception:  # noqa: BLE001 - no app: treat as detached.
+        attached = False
+    if not attached or not isinstance(error, Exception):
+        logger.error(
+            "First-run setup worker failed after its step left "
+            "(category={}, error_type={})",
+            category,
+            type(error).__name__,
+        )
+        return
+    try:
+        report_contained_error(_report_target(node), category, error)
+    except Exception:  # noqa: BLE001 - reporting must never raise again.
+        logger.warning(
+            "First-run setup worker error report skipped (error_type={})",
+            type(error).__name__,
+        )
+
+
+def run_wizard_worker(
+    node: Any,
+    work: Callable[[], Any] | Awaitable[Any],
+    *,
+    group: str,
+    exclusive: bool = False,
+    thread: bool = False,
+    name: str = "",
+    description: str = "",
+    category: str = "handler",
+) -> "Worker[Any]":
+    """Start first-run background work that can never exit the app.
+
+    The one ``run_worker`` call site for first-run setup (TASK-34100.1). The
+    worker always runs with ``exit_on_error=False``. An error that escapes
+    ``work`` is logged by type and site only, never by message (it can hold
+    a typed key), and shown on the pinned status strip of the step on
+    screen. Then it is re-raised, so the worker still ends in
+    ``WorkerState.ERROR`` and ``Worker.wait()`` still raises. Cancellation is
+    not an error, and passes through.
+
+    Args:
+        node: The step, container or setup screen that owns the work. Its
+            removal cancels the worker, as with ``node.run_worker``.
+        work: A coroutine, an async callable, or (with ``thread=True``) a
+            plain callable.
+        group: The worker group (exclusive workers cancel their group).
+        exclusive: Cancel the group's other workers first. Defaults to
+            False, as Textual's ``run_worker`` and ``@work`` do.
+        thread: Run ``work`` on a thread (a plain callable).
+        name: The worker's name; defaults to the callable's name.
+        description: The worker's debug description. It is not built from
+            arguments, so a password argument never reaches it.
+        category: ``"advance"`` for a Next, else ``"handler"``; picks the
+            pinned-strip copy.
+
+    Returns:
+        The started ``Worker``.
+    """
+    if thread:
+        if not callable(work):
+            raise TypeError("a thread wizard worker needs a plain callable")
+
+        def run_on_thread() -> Any:
+            try:
+                return work()
+            except Exception as error:
+                try:
+                    node.app.call_from_thread(
+                        _report_worker_error, node, error, category
+                    )
+                except Exception:  # noqa: BLE001 - app gone: nothing to show.
+                    logger.error(
+                        "First-run setup worker failed (error_type={})",
+                        type(error).__name__,
+                    )
+                raise
+
+        target: Any = run_on_thread
+    else:
+
+        async def run_on_loop() -> Any:
+            try:
+                result = work if inspect.isawaitable(work) else work()
+                if inspect.isawaitable(result):
+                    result = await result
+                return result
+            except Exception as error:
+                _report_worker_error(node, error, category)
+                raise
+
+        target = run_on_loop
+    label = (
+        name
+        or getattr(work, "__name__", "")
+        or getattr(getattr(work, "func", None), "__name__", "")
+    )
+    return node.run_worker(
+        target,
+        name=label,
+        group=group,
+        description=description or label,
+        exclusive=exclusive,
+        thread=thread,
+        exit_on_error=False,
+    )
+
+
+def off_loop(function: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+    """Wrap an async function so each call runs on a worker thread's own loop.
+
+    Some first-run work is ``async`` but blocks before its first real await.
+    The localhost scan takes a storage admission (file I/O) and builds a TLS
+    client (SSL context, proxy lookup, a cold import). On the UI loop that
+    froze the screen for 0.4-1.3 s after choosing Full, so neither Provider
+    nor the busy line could paint (review round 1). Cancelling the awaiting
+    task cancels the work on its thread as well.
+
+    Args:
+        function: The async function to run off the UI loop.
+
+    Returns:
+        An async function taking the same arguments and returning its result.
+    """
+
+    @functools.wraps(function)
+    async def run(*args: Any, **kwargs: Any) -> Any:
+        state: dict[str, Any] = {}
+        lock = threading.Lock()
+
+        async def main() -> Any:
+            with lock:
+                if state.get("cancelled"):
+                    raise asyncio.CancelledError
+                state["loop"] = asyncio.get_running_loop()
+                state["task"] = asyncio.current_task()
+            return await function(*args, **kwargs)
+
+        try:
+            return await asyncio.to_thread(lambda: asyncio.run(main()))
+        except asyncio.CancelledError:
+            with lock:
+                state["cancelled"] = True
+                loop, task = state.get("loop"), state.get("task")
+            if loop is not None and task is not None:
+                try:
+                    loop.call_soon_threadsafe(task.cancel)
+                except RuntimeError:  # that loop has already finished
+                    pass
+            raise
+
+    return run
+
+
+def wizard_work(
+    *,
+    group: str,
+    exclusive: bool = False,
+    thread: bool = False,
+    description: str = "",
+) -> Callable[[Callable[..., Any]], Callable[..., "Worker[Any]"]]:
+    """``@work`` for first-run setup: every call starts a ``run_wizard_worker``.
+
+    Mirrors Textual's decorator: calling the method starts a worker and
+    returns it, and ``__wrapped__`` still reaches the original body. The
+    worker never exits the app (see ``run_wizard_worker``).
+
+    Args:
+        group: The worker group.
+        exclusive: Cancel the group's other workers first.
+        thread: Run the method on a thread (a plain ``def``).
+        description: The worker's debug description; defaults to the name.
+
+    Returns:
+        The decorator.
+
+    Raises:
+        TypeError: A non-thread worker that is not ``async def``, the same
+            mistake Textual's own ``WorkerDeclarationError`` refuses.
+    """
+
+    def decorator(method: Callable[..., Any]) -> Callable[..., "Worker[Any]"]:
+        if not thread and not inspect.iscoroutinefunction(method):
+            raise TypeError(f"{method.__name__} must be async def, or use thread=True")
+
+        @functools.wraps(method)
+        def launch(self: Any, *args: Any, **kwargs: Any) -> "Worker[Any]":
+            return run_wizard_worker(
+                self,
+                functools.partial(method, self, *args, **kwargs),
+                group=group,
+                exclusive=exclusive,
+                thread=thread,
+                name=method.__name__,
+                description=description or method.__name__,
+            )
+
+        return launch
+
+    return decorator

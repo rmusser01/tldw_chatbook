@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+from collections.abc import Callable
+from functools import partial
 
 from typing import Any, Literal
 
@@ -10,8 +13,11 @@ from rich.cells import cell_len
 from tldw_chatbook.Utils.input_validation import escape_markup as _escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.compose import compose
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
@@ -40,7 +46,11 @@ from tldw_chatbook.Workspaces.display_state import (
 from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
-from tldw_chatbook.Workspaces.conversation_attention import present_conversation_attention
+from tldw_chatbook.Workspaces.conversation_attention import (
+    present_conversation_attention,
+)
+from .compose_delta import ComposeReadView, box_ignores_content, same_visual
+from .console_bounded_section import ConsoleBoundedSection
 from .conversation_row_presentation import (
     conversation_action_width,
     conversation_title_cells,
@@ -69,6 +79,11 @@ class ConsoleBrowserSearchInput(Input):
     `self.prevent(Input.Changed)`, Textual's documented mechanism for a
     programmatic set without a message. The invariant the handler relies on
     -- every `Changed` from this box is a real edit -- becomes true.
+
+    TASK-33622.6: the Conversations filter is no longer re-mounted by those
+    syncs -- the tray keeps its mounted filter row across a rebuild (see
+    `_KeepsConversationFilterRow`) -- so this mount path now runs only for
+    a fresh tray. The Workspaces search still re-mounts per changed sync.
     """
 
     def __init__(
@@ -442,7 +457,218 @@ def _conversation_activity_text(row) -> str:
     return " · ".join(dict.fromkeys(parts))
 
 
-def _conversation_row_render_height(name_line_count: int, subagent_count: int, progress_count: int = 0) -> int:
+#: Browser row, group and section fields a run's start or end changes
+#: without moving a box: its marker, attention facts, icon and colour.
+_PATCHABLE_BROWSER_FIELDS = frozenset(
+    {"attention", "run_marker", "capped_run_marker", "icon", "color"}
+)
+
+
+def _browser_delta_may_patch(old: Any, new: Any) -> bool:
+    """Return False when a browser delta is sure to need the tray rebuilt.
+
+    TASK-36012 review: a delta the in-place patch refuses must cost nothing
+    before the rebuild composes (when the patch decided by composing, a
+    refused conversation switch at 40 rows went from 203 to 382 ms of CPU).
+    This state check admits only a delta confined to
+    ``_PATCHABLE_BROWSER_FIELDS`` that leaves every row's activity line as it
+    was (that line adds a row of height): every other field compose reads is
+    equal, so no row changes its box. What the admitted delta changes on the
+    composed rows is then decided from the same data
+    (``_BrowserRowPaint``, ``_browser_header_marker``).
+
+    Args:
+        old: The browser state (or a value inside it) the tray shows.
+        new: The incoming value at the same place.
+
+    Returns:
+        True when the two differ only in patchable fields.
+    """
+    if old == new:
+        return True
+    if type(old) is not type(new):
+        return False
+    if isinstance(old, tuple):
+        return len(old) == len(new) and all(map(_browser_delta_may_patch, old, new))
+    if not dataclasses.is_dataclass(old):
+        return False
+    if isinstance(old, ConsoleConversationBrowserRow) and (
+        _conversation_activity_text(old) != _conversation_activity_text(new)
+    ):
+        return False
+    return all(
+        field.name in _PATCHABLE_BROWSER_FIELDS
+        or _browser_delta_may_patch(getattr(old, field.name), getattr(new, field.name))
+        for field in dataclasses.fields(old)
+    )
+
+
+def _browser_header_marker(
+    header: ConsoleConversationBrowserSection | ConsoleConversationBrowserGroup,
+) -> str:
+    """Return the aggregate run marker a section or group header shows, or "".
+
+    A collapsed header echoes the most urgent marker among all of its rows;
+    an expanded one only the marker among rows its cap hides (TASK-912), since
+    every visible row shows its own.
+
+    Args:
+        header: The section or group whose header is composed.
+
+    Returns:
+        The marker glyph appended to the header title and decoded in its
+        toggle's tooltip, or "" for none.
+    """
+    return header.run_marker if header.collapsed else header.capped_run_marker
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class _BrowserRowPaint:
+    """The values on a composed browser row that its run state decides.
+
+    TASK-33620.15.20. ``_compose_conversation_browser_row`` writes these onto
+    the row's two buttons, and the tray's in-place patch compares the record
+    of what was written with the paint the incoming row gives. Compare with
+    ``same_visual``: ``Text`` equality ignores the glyph's colour.
+
+    Attributes:
+        row_tooltip: The row button's tooltip.
+        menu_label: The action button's glyph, in the row's colour when no
+            attention fact owns the slot.
+        menu_class: The action button's attention class, or "".
+        menu_tooltip: The action button's tooltip.
+    """
+
+    row_tooltip: Text | str
+    menu_label: Text
+    menu_class: str
+    menu_tooltip: Text
+
+
+@dataclasses.dataclass(frozen=True)
+class _ComposedBrowserRow:
+    """One browser row as compose built it.
+
+    Attributes:
+        path: ``(section index, group index or None, row index)`` of the row
+            in the browser state.
+        paint: The run-dependent values last written onto the row.
+        row_button: The row's title button.
+        menu_button: The row's action button.
+    """
+
+    path: tuple[int, int | None, int]
+    paint: _BrowserRowPaint
+    row_button: Button
+    menu_button: Button
+
+
+@dataclasses.dataclass
+class _BrowserPaintRecord:
+    """What a completed compose wrote that a run's start or end can change.
+
+    Attributes:
+        ascii_mode: The glyph mode the compose ran in; the paint depends on it.
+        headers: Each composed header's path (``(section,)`` or
+            ``(section, group)``) -> the marker it shows.
+        rows: Every composed browser row, in compose order.
+    """
+
+    ascii_mode: bool
+    headers: dict[tuple[int, ...], str] = dataclasses.field(default_factory=dict)
+    rows: list[_ComposedBrowserRow] = dataclasses.field(default_factory=list)
+
+
+def _browser_header_at(
+    browser: ConsoleConversationBrowserState, path: tuple[int, ...]
+) -> ConsoleConversationBrowserSection | ConsoleConversationBrowserGroup:
+    section = browser.sections[path[0]]
+    return section if len(path) == 1 else section.groups[path[1]]
+
+
+def _browser_row_at(
+    browser: ConsoleConversationBrowserState, path: tuple[int, int | None, int]
+) -> ConsoleConversationBrowserRow:
+    section_index, group_index, row_index = path
+    section = browser.sections[section_index]
+    rows = section.rows if group_index is None else section.groups[group_index].rows
+    return rows[row_index]
+
+
+def _write_button_label(button: Button, label: Text) -> None:
+    """Show ``label`` on a mounted Button, even when only its style changed.
+
+    Textual's reactive compares ``Content`` by text alone, so a plain
+    ``button.label = label`` drops a colour-only change (a conversation's
+    new colour on an unchanged glyph): TASK-36012's patch did, and the glyph
+    kept its old colour until the next rebuild.
+
+    Args:
+        button: The mounted button.
+        label: The label to show.
+    """
+    button.set_reactive(Button.label, button.validate_label(label))
+    button.mutate_reactive(Button.label)
+
+
+def _row_paint_writes(
+    composed: _ComposedBrowserRow, paint: _BrowserRowPaint
+) -> list[Callable[[], None]] | None:
+    """Return the writes that make a composed row show ``paint``.
+
+    The mounted buttons are checked against the record only when ``paint``
+    differs from it. A row whose incoming paint equals the record is left as
+    it is, even if its buttons drifted; the compose diff this replaced checked
+    mounted values only on the nodes it changed, too.
+
+    Args:
+        composed: The row as compose (or the last patch) left it.
+        paint: The values the incoming row data gives.
+
+    Returns:
+        The writes, empty when nothing differs; ``None`` when the row must be
+        rebuilt instead: its buttons left the DOM or no longer show the
+        recorded values (a row that drifted from its record is not patched),
+        or the glyph would change inside a content-sized box.
+    """
+    was = composed.paint
+    row_tooltip = not same_visual(paint.row_tooltip, was.row_tooltip)
+    menu_label = not same_visual(paint.menu_label, was.menu_label)
+    menu_class = paint.menu_class != was.menu_class
+    menu_tooltip = not same_visual(paint.menu_tooltip, was.menu_tooltip)
+    if not (row_tooltip or menu_label or menu_class or menu_tooltip):
+        return []
+    row_button, menu = composed.row_button, composed.menu_button
+    if (
+        row_button.parent is None
+        or menu.parent is None
+        or not same_visual(row_button.tooltip, was.row_tooltip)
+        or not same_visual(menu.tooltip, was.menu_tooltip)
+        or not same_visual(menu.label, menu.validate_label(was.menu_label))
+        or (was.menu_class and not menu.has_class(was.menu_class))
+    ):
+        return None
+    writes: list[Callable[[], None]] = []
+    if row_tooltip:
+        writes.append(partial(setattr, row_button, "tooltip", paint.row_tooltip))
+    if menu_label:
+        if not box_ignores_content(menu):
+            return None
+        writes.append(partial(_write_button_label, menu, paint.menu_label))
+    if menu_class:
+        if paint.menu_class and menu.has_class(paint.menu_class):
+            return None
+        swap = {was.menu_class: False, paint.menu_class: True}
+        swap.pop("", None)
+        writes.append(partial(menu.update_classes, swap))
+    if menu_tooltip:
+        writes.append(partial(setattr, menu, "tooltip", paint.menu_tooltip))
+    return writes
+
+
+def _conversation_row_render_height(
+    name_line_count: int, subagent_count: int, progress_count: int = 0
+) -> int:
     """Return the button height for a row: name lines + metadata line,
     plus a dedicated badge line when this conversation has historical
     sub-agent runs (see `format_console_conversation_row_label`)."""
@@ -548,7 +774,9 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             self.label_width_floor,
             min(17, cell_len(self.label) + 1),
         )
-        label_widget.remove_class(*(name for name in label_widget.classes if name.startswith("w-")))
+        label_widget.remove_class(
+            *(name for name in label_widget.classes if name.startswith("w-"))
+        )
         # ds-runtime: The field label text is measured in terminal cells within its width budget.
         label_widget.set_styles(width=label_width)
         label_widget.styles.min_width = label_width
@@ -560,7 +788,9 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             classes="console-workspace-status-value",
             markup=False,
         )
-        value_widget.remove_class(*(name for name in value_widget.classes if name.startswith("w-")))
+        value_widget.remove_class(
+            *(name for name in value_widget.classes if name.startswith("w-"))
+        )
         value_widget.set_styles(width=None)
         value_widget.add_class("w-fill")
         # Preserve the established 23-cell combined floor. Longer labels may
@@ -581,47 +811,144 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         yield value_widget
 
 
-class _ComposeReadView:
-    """Attribute-recording view of the tray state, live only during compose.
+_CONVERSATION_FILTER_ROW_ID = "console-workspace-conversation-search-row"
+_CONVERSATION_FILTER_INPUT_ID = "console-workspace-conversation-search"
+_CONVERSATION_FILTER_CLEAR_ID = "console-workspace-conversation-search-clear"
 
-    TASK-26836: ``_can_skip_recompose`` used whole-state value equality, so a
-    delta in a field this tray's ``content`` never renders (probe-observed:
-    ``conversation_browser`` pushed into the ``content="workspace"`` tray)
-    still forced a full recompose -- and its paint-blocking App batch. The
-    tray now records which top-level state fields ``compose`` actually reads,
-    exactly as it already records the row signature of what it builds, and
-    the guard skips when only unread fields changed.
 
-    The view delegates everything to the real state; reads observed while it
-    is live can only ADD fields to the recorded set, so interleaved readers
-    during a compose window bias toward recomposing more, never less.
+def _sync_retained_filter_row(row: Widget, query: str) -> None:
+    """Refresh a kept filter row from state without fighting the user's typing.
+
+    While the input has focus its text is the user's and is never written:
+    a sync can be built before the latest keystrokes reached the screen, so
+    its query may be behind what the field shows. Unfocused, nobody is
+    typing into it, so it shows the state's (raw) query -- silently, since a
+    `Changed` echo would read as an edit. Clear's enabled state follows the
+    field's own text.
+
+    Args:
+        row: The mounted filter row the rebuild keeps.
+        query: The raw query of the state being composed.
+    """
+    try:
+        search = row.query_one(f"#{_CONVERSATION_FILTER_INPUT_ID}", Input)
+        clear = row.query_one(f"#{_CONVERSATION_FILTER_CLEAR_ID}", Button)
+    except NoMatches:
+        return
+    if not search.has_focus and search.value != query:
+        with search.prevent(Input.Changed):
+            search.value = query
+    clear.disabled = not search.value.strip()
+
+
+def _clear_conversation_filter_input(row: Widget) -> None:
+    """Empty a kept filter input without posting a `Changed` for it.
+
+    The rebuild never writes state into a kept input, so Clear must empty
+    it here; the screen's Clear handler resets the search state itself, and
+    a `Changed("")` echo would clear it a second time.
+
+    Args:
+        row: The filter row (or any ancestor of its input).
+    """
+    try:
+        search = row.query_one(f"#{_CONVERSATION_FILTER_INPUT_ID}", Input)
+    except NoMatches:
+        return
+    with search.prevent(Input.Changed):
+        search.value = ""
+
+
+class _KeepsConversationFilterRow:
+    """Rebuild the tray's children around its mounted filter row (TASK-33622.6).
+
+    The tray rebuilds every child on a sync that changes what it shows, and a
+    rail search changes the rows on every debounced pass -- so it used to
+    replace the 'Filter visible titles' input under the user's fingers. The
+    replacement was seeded from state (lowercased, until the same task kept
+    the raw text), focus went wherever Textual's reset sent it, and the
+    restore that brought it back selected the text, so the next key replaced
+    the query, landed on a button, or reached a screen binding ('y' opened
+    Trace).
+
+    A rebuild now removes every child except a mounted filter row, composes
+    with that row offered back to ``compose`` (``_retained_filter_row``), and
+    mounts the new children around it. The input keeps its instance, value,
+    cursor and focus; the state's query is never written into it while it
+    has focus (see `_sync_retained_filter_row`). Sits
+    between ``RecomposeCaptureGuard`` and ``Vertical`` so the guard's
+    mouse-capture release and focus keeping still wrap the rebuild.
     """
 
-    __slots__ = ("_target", "_reads")
+    #: The mounted filter row the running rebuild keeps, else None. Read by
+    #: ``_compose_conversation_browser``; set only inside ``recompose``.
+    _retained_filter_row: Horizontal | None = None
 
-    def __init__(self, target: object, reads: set) -> None:
-        object.__setattr__(self, "_target", target)
-        object.__setattr__(self, "_reads", reads)
+    async def recompose(self) -> None:
+        """Rebuild every child except a mounted filter row, which stays put."""
+        kept = self._filter_row_to_keep()
+        if kept is None:
+            await super().recompose()  # type: ignore[misc]
+            return
+        tray: Any = self
+        if not tray.is_attached or tray._pruning:
+            return
+        # The kept row stays laid out while the new children are not, so a
+        # fit before the next layout would pin a short height (TASK-37160's
+        # mechanism, made routine by this rebuild): make it wait.
+        tray._fit_waits_for_layout = True
+        async with tray.batch():
+            doomed = [
+                child
+                for child in tray.children
+                if child is not kept and not child.has_class("-textual-system")
+            ]
+            if doomed:
+                await tray.remove_children(doomed)
+            if not tray.is_attached:
+                return
+            self._retained_filter_row = kept
+            try:
+                nodes = compose(tray)
+            finally:
+                self._retained_filter_row = None
+            index = next(
+                (position for position, node in enumerate(nodes) if node is kept),
+                None,
+            )
+            if index is None:
+                # This state renders no browser, so no filter row either.
+                await kept.remove()
+                await tray.mount_all(nodes)
+                return
+            if index:
+                await tray.mount_all(nodes[:index], before=kept)
+            if index + 1 < len(nodes):
+                await tray.mount_all(nodes[index + 1 :], after=kept)
 
-    def __getattr__(self, name: str):
-        if not name.startswith("_"):
-            self._reads.add(name)
-        return getattr(self._target, name)
+    def _recompose_kept_child(self) -> Horizontal | None:
+        """Name the kept row to ``RecomposeCaptureGuard``'s focus prediction.
 
-    def __eq__(self, other: object) -> bool:
-        return self._target == getattr(other, "_target", other)
+        Textual's reset lands on the kept filter input when a focused row
+        control is torn down; counted as removed, the guard missed that and
+        left focus in the filter, where the next key started a search.
+        """
+        return self._filter_row_to_keep()
 
-    def __ne__(self, other: object) -> bool:
-        return not self.__eq__(other)
+    def _filter_row_to_keep(self) -> Horizontal | None:
+        """The tray's own mounted filter row, when a rebuild can keep it."""
+        tray: Any = self
+        for child in tray.children:
+            if child.id == _CONVERSATION_FILTER_ROW_ID:
+                if child.is_attached and not child._pruning:
+                    return child
+                return None
+        return None
 
-    def __bool__(self) -> bool:
-        return self._target is not None
 
-    def __repr__(self) -> str:
-        return f"_ComposeReadView({self._target!r})"
-
-
-class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
+class ConsoleWorkspaceContextTray(
+    RecomposeCaptureGuard, _KeepsConversationFilterRow, Vertical
+):
     """Render workspace selection, conversation scope, and recovery copy."""
 
     #: TASK-33621.12: a state sync (e.g. the one that follows closing a row
@@ -648,22 +975,36 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     _composed_fixed_signature: tuple[str, ...] | None = None
     #: Live collector for the compose pass currently running, or None.
     _composing_fixed_signature: list[str] | None = None
+    #: TASK-33620.15.20: the run-dependent values the last COMPLETED
+    #: `compose()` wrote onto the browser rows and headers (kept current by
+    #: `_patch_in_place`), or None when no compose has finished. Only the
+    #: in-place patch reads it; None means "no record, rebuild".
+    _composed_browser_paint: _BrowserPaintRecord | None = None
+    #: Live collector for the compose pass currently running, or None.
+    _composing_browser_paint: _BrowserPaintRecord | None = None
+    #: TASK-33622.6: set when a rebuild kept the filter row; the height fit
+    #: waits for the screen's next layout (see `_fit_height_to_content`).
+    _fit_waits_for_layout: bool = False
 
     class WorkspaceFilesRequested(Message):
         """Typed request to inspect one stable workspace without activation."""
 
-        def __init__(self, workspace_id: str, *, expected_available: bool = False) -> None:
+        def __init__(
+            self, workspace_id: str, *, expected_available: bool = False
+        ) -> None:
             super().__init__()
             self.workspace_id = str(workspace_id or "").strip()
             self.expected_available = bool(expected_available)
 
-    class Relabeled(Message):
-        """Posted after a width-driven relabel recompose.
+    class Recomposed(Message):
+        """Posted once any rebuild of the tray's children has finished.
 
-        A relabel rebuilds the tray's children from compose(), which
-        discards any controls the screen mounted out-of-band (the
+        A rebuild (a width relabel, a state change, or any other recompose)
+        discards the controls the screen mounted out-of-band (the
         transitional legacy "New conversation" alias). The screen listens
-        for this message and re-applies them.
+        for this message and re-applies them. Phase 8 round 2 finding 8: it
+        used to be posted only for a relabel, and before that rebuild ran,
+        so "New conversation" could vanish after setup or a Settings return.
         """
 
     def __init__(
@@ -691,6 +1032,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self._state: Any = None
         self._state_field_reads: set[str] | None = None
         self._composed_state_reads: frozenset[str] | None = None
+        self._composed_publication_state: Any = None
         self.state = state
         self.show_heading = show_heading
         self.content = content
@@ -740,7 +1082,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         reads = self._state_field_reads
         if reads is None or self._state is None:
             return self._state
-        return _ComposeReadView(self._state, reads)
+        return ComposeReadView(self._state, reads)
 
     @state.setter
     def state(self, value: Any) -> None:
@@ -781,6 +1123,8 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             # the screen-side equality skip never re-arms.
             self.state = state
             return
+        if self._patch_in_place(state):
+            return
         self.state = state
         self.styles.min_height = 0
         scroll_parent = self._nearest_scroll_parent()
@@ -789,6 +1133,173 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self.refresh(recompose=True)
         if self.is_mounted:
             self._schedule_recomposed_content_fit(restore_scroll_y=restore_scroll_y)
+
+    def _patch_in_place(self, state: ConsoleWorkspaceContextState) -> bool:
+        """Apply a delta that moves no box to the mounted rows, without a rebuild.
+
+        TASK-36012. A send's start and end flip one row's "Running"
+        attention: its action icon (a fixed-width slot), a colour class and
+        two tooltips. The recompose that used to follow re-mounted every row,
+        and each mount cost a whole-screen layout (plus the legacy alias
+        re-mount and two section reconciles): three extra full reflows at a
+        send's start, two at its end. The patch takes only a browser delta
+        ``_browser_delta_may_patch`` admits, on a tray whose DOM is proved to
+        show its current state (the same proof ``_can_skip_recompose``
+        uses); anything else rebuilds as before.
+
+        TASK-33620.15.20. It decides from the row data. Compose records the
+        run-dependent values it wrote on each browser row
+        (``_BrowserRowPaint``) and the marker each header shows, and the patch
+        compares that record with what the incoming state gives. It used to
+        compose the tray twice off the DOM and diff the two trees, which built
+        and restyled every widget of both only to drop them (live, 21-34 ms
+        of a send's first poll tick). A header whose marker changes would need
+        new copy in a content-sized title, so that delta rebuilds, as it did
+        under the compose diff.
+
+        Args:
+            state: The incoming display state.
+
+        Returns:
+            True when the mounted rows now show ``state``.
+        """
+        record = self._composed_browser_paint
+        if (
+            record is None
+            or not getattr(self, "_console_workspace_context_synced", False)
+            or self._composed_row_signature is None
+            # Every row the signature proves mounted has a record entry.
+            or len(record.rows) != len(self._composed_row_signature)
+            or self._composed_fixed_signature is None
+            or getattr(self, "_recompose_required", False)
+            or self.recompose_in_flight
+            or not self.is_mounted
+            or not self.children
+        ):
+            return False
+        if self._mounted_signatures(self._composed_fixed_signature) != (
+            self._composed_row_signature,
+            self._composed_fixed_signature,
+        ):
+            return False
+        # Only a run-shaped browser delta can be patched. A delta that also
+        # moves a field this tray does not render (the screen's out-of-band
+        # alias reads `new_conversation_enabled`) keeps the rebuild that
+        # re-syncs those controls.
+        reads = self._composed_state_reads
+        changed = {
+            field.name
+            for field in dataclasses.fields(state)
+            if getattr(state, field.name) != getattr(self._state, field.name)
+        }
+        if (
+            reads is None
+            or "conversation_browser" not in reads
+            or changed != {"conversation_browser"}
+            or not _browser_delta_may_patch(
+                self._state.conversation_browser, state.conversation_browser
+            )
+        ):
+            return False
+        writes = self._plan_browser_paint(
+            record, self._state.conversation_browser, state.conversation_browser
+        )
+        if writes is None:
+            return False
+        for write in writes:
+            write()
+        self._state = state
+        # What compose would publish for `state`: the rows now show it.
+        self._composed_publication_state = state
+        return True
+
+    def _plan_browser_paint(
+        self,
+        record: _BrowserPaintRecord,
+        shown: ConsoleConversationBrowserState,
+        incoming: ConsoleConversationBrowserState,
+    ) -> list[Callable[[], None]] | None:
+        """Return the writes that make the composed browser show ``incoming``.
+
+        Args:
+            record: What the composed rows and headers show now.
+            shown: The browser state they were composed (or patched) from.
+            incoming: The browser state to show; ``_browser_delta_may_patch``
+                has admitted the delta.
+
+        Returns:
+            The writes, the last of which updates ``record``; ``None`` when
+            the tray must be rebuilt instead.
+        """
+        if record.ascii_mode != ascii_glyph_mode():
+            return None
+        writes: list[Callable[[], None]] = []
+        rows = list(record.rows)
+        try:
+            for path, marker in record.headers.items():
+                if _browser_header_marker(_browser_header_at(incoming, path)) != marker:
+                    return None
+            for index, composed in enumerate(record.rows):
+                row = _browser_row_at(incoming, composed.path)
+                if row == _browser_row_at(shown, composed.path):
+                    continue
+                paint = self._conversation_row_paint(row)
+                plan = _row_paint_writes(composed, paint)
+                if plan is None:
+                    return None
+                writes.extend(plan)
+                rows[index] = dataclasses.replace(composed, paint=paint)
+        except IndexError:
+            return None
+        writes.append(partial(setattr, record, "rows", rows))
+        return writes
+
+    async def wait_for_publication(self) -> bool:
+        """Await refresh and the existing mounted-DOM proof, not state assignment.
+
+        Returns:
+            True once recomposition has settled; False if this tray detaches.
+        """
+        if not self.is_mounted or not self.is_attached:
+            return False
+        screen = self.screen
+        while self.is_mounted and self.is_attached:
+            refreshed = asyncio.get_running_loop().create_future()
+
+            def complete_refresh(future: asyncio.Future[None] = refreshed) -> None:
+                if not future.done():
+                    future.set_result(None)
+
+            # The screen owns the awaiting rename worker. A rail recompose
+            # may retire this tray's message pump before refresh; enqueue on
+            # the surviving screen, then refuse a detached tray below.
+            if not screen.call_after_refresh(complete_refresh):
+                return False
+            await refreshed
+            composed = self._composed_publication_state
+            reads = self._composed_state_reads
+            rendered_state_matches = (
+                composed is not None
+                and reads is not None
+                and all(
+                    getattr(composed, name) == getattr(self._state, name)
+                    for name in reads
+                )
+            )
+            if (
+                self.is_mounted
+                and self.is_attached
+                and rendered_state_matches
+                and self._can_skip_recompose(self.state)
+            ):
+                return True
+        return False
+
+    async def recompose(self) -> None:
+        """Rebuild, then say so: the screen re-applies its out-of-band controls."""
+        await super().recompose()
+        if self.is_attached:
+            self.post_message(self.Recomposed())
 
     def _can_skip_recompose(self, state: ConsoleWorkspaceContextState) -> bool:
         """Return True only when the mounted DOM already IS ``state``'s DOM.
@@ -866,9 +1377,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 return False
             for field_info in dataclasses.fields(state):
                 name = field_info.name
-                if name in reads and getattr(state, name) != getattr(
-                    self._state, name
-                ):
+                if name in reads and getattr(state, name) != getattr(self._state, name):
                     return False
             # Only unrendered fields changed: the mounted DOM provably does
             # not depend on this delta. Fall through to the DOM signature
@@ -1082,7 +1591,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self.refresh(recompose=True)
         if self.is_mounted:
             self._schedule_recomposed_content_fit(restore_scroll_y=restore_scroll_y)
-            self.post_message(self.Relabeled())
         return True
 
     def _fit_height_to_content(self) -> None:
@@ -1142,6 +1650,13 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         if self._maybe_relabel_for_width():
             return
 
+        if self._fit_waits_for_layout:
+            # TASK-33622.6: a rebuild kept the (laid-out) filter row, so the
+            # check below cannot tell that the new children are not laid
+            # out yet; wait for the layout instead of pinning a short tray.
+            self._fit_after_screen_layout()
+            return
+
         content_top = 0
         content_bottom = 1
         for child in self.children:
@@ -1156,17 +1671,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             )
 
         if content_bottom == 1 and len(self.children) > 1:
-            # Coalesce retries until this screen actually lays out children.
-            if (
-                self.is_mounted
-                and self.display
-                and self._height_fit_layout_signal is None
-            ):
-                signal = self.screen.screen_layout_refresh_signal
-                signal.subscribe(
-                    self, self._fit_height_after_layout, immediate=True
-                )
-                self._height_fit_layout_signal = signal
+            self._fit_after_screen_layout()
             return
 
         target_height = max(1, content_bottom - content_top)
@@ -1185,11 +1690,38 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             # ds-runtime: The rail region is measured to retain its viewport height during reflow.
             self.set_styles(height=target_height)
 
+    def _fit_after_screen_layout(self) -> None:
+        """Retry the fit once this screen lays out children (coalesced)."""
+        if self.is_mounted and self.display and self._height_fit_layout_signal is None:
+            signal = self.screen.screen_layout_refresh_signal
+            signal.subscribe(self, self._fit_height_after_layout, immediate=True)
+            self._height_fit_layout_signal = signal
+
     def _fit_height_after_layout(self, screen: Any) -> None:
         """Retry once after the owning screen supplies fresh child geometry."""
         screen.screen_layout_refresh_signal.unsubscribe(self)
         self._height_fit_layout_signal = None
+        # A layout after a kept-row rebuild finished has laid out its new
+        # children (TASK-33622.6).
+        settled_rebuild = self._fit_waits_for_layout and not self.recompose_in_flight
+        if settled_rebuild:
+            self._fit_waits_for_layout = False
         self.call_after_refresh(self._fit_height_to_content)
+        if settled_rebuild:
+            # The owning section measured this tray while only the kept row
+            # was laid out; nothing else re-measures it once the tray settles.
+            self.call_after_refresh(self._request_owning_section_reconcile)
+
+    def _request_owning_section_reconcile(self) -> None:
+        """Ask the bounded rail section holding this tray to re-measure it.
+
+        Matched by type: the section's own scroll viewport sits between it
+        and the tray and carries a ``console-bounded-section-…`` id too.
+        """
+        for ancestor in self.ancestors:
+            if isinstance(ancestor, ConsoleBoundedSection):
+                ancestor.request_reconcile()
+                return
 
     def _is_inside_rail_section_body(self) -> bool:
         """Return whether this tray is nested in a collapsible rail section body.
@@ -1262,7 +1794,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         # here too would double-escape it instead.
         button.tooltip = _marker_aware_tooltip(
             f"Switch to {tooltip_label or fallback_tooltip}"
-            + (f" · {progress_count} queued progress reports" if progress_count else ""),
+            + (
+                f" · {progress_count} queued progress reports" if progress_count else ""
+            ),
             run_marker,
         )
         button.set_class(selected, "console-workspace-conversation-row-selected")
@@ -1272,7 +1806,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         state_class = _ROW_STATE_CLASS_BY_GLYPH.get(str(run_marker or "").strip())
         if state_class:
             button.add_class(state_class)
-        row_height = _conversation_row_render_height(name_line_count, subagent_count, progress_count)
+        row_height = _conversation_row_render_height(
+            name_line_count, subagent_count, progress_count
+        )
         button.remove_class(*(name for name in button.classes if name.startswith("h-")))
         # ds-runtime: Wrapped conversation names and live progress determine each browser row height.
         button.set_styles(height=row_height)
@@ -1328,9 +1864,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         button.styles.max_width = 4
         button.add_class("console-conversation-appearance-spacing")
         button.styles.text_align = "center"
-        button.tooltip = (
-            f"Change icon and color for {_escape_markup(row.title or 'this conversation')}."
-        )
+        button.tooltip = f"Change icon and color for {_escape_markup(row.title or 'this conversation')}."
         button.row_key = row.row_key
         button.conversation_id = row.conversation_id
         button.conversation_title = row.title
@@ -1431,6 +1965,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 height += ConsoleWorkspaceContextTray._conversation_browser_rows_height(
                     section.rows, row_title_budget
                 )
+                # TASK-18924: each date divider is a one-line dim Static
+                # ("Today"/"Yesterday"/"This week"/"Older" — labels far
+                # shorter than any rail width, so never wrapped), adding
+                # exactly one row of height. Dividers exist only on an
+                # expanded section with visible rows — exactly this branch.
+                height += len(section.date_dividers)
             elif section.empty_copy:
                 height += ConsoleWorkspaceContextTray._empty_copy_line_count(
                     section.empty_copy, empty_copy_budget
@@ -1460,10 +2000,16 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         collected: list[tuple[str, str]] = []
         collected_fixed: list[str] = []
         state_reads: set[str] = set()
+        # TASK-33620.15.20: what the in-place patch compares, published (like
+        # the signatures) only when the pass completes.
+        browser_paint = _BrowserPaintRecord(ascii_mode=ascii_glyph_mode())
+        publication_state = self._state
         self._composing_row_signature = collected
         self._composing_fixed_signature = collected_fixed
+        self._composing_browser_paint = browser_paint
         self._composed_row_signature = None
         self._composed_fixed_signature = None
+        self._composed_browser_paint = None
         self._state_field_reads = state_reads
         self._composed_state_reads = None
         try:
@@ -1507,10 +2053,13 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         finally:
             self._composing_row_signature = None
             self._composing_fixed_signature = None
+            self._composing_browser_paint = None
             self._state_field_reads = None
         self._composed_row_signature = tuple(collected)
         self._composed_fixed_signature = tuple(collected_fixed)
+        self._composed_browser_paint = browser_paint
         self._composed_state_reads = frozenset(state_reads)
+        self._composed_publication_state = publication_state
 
     def _compose_workspace_context(self) -> ComposeResult:
         """Render active workspace identity and workspace-scoped actions.
@@ -1552,7 +2101,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 disabled=not self.state.change_workspace_enabled,
             )
             switch_button.styles.min_width = 5
-            switch_button.remove_class(*(name for name in switch_button.classes if name.startswith("w-")))
+            switch_button.remove_class(
+                *(name for name in switch_button.classes if name.startswith("w-"))
+            )
             switch_button.set_styles(width=None)
             switch_button.add_class("w-auto")
             # TASK-2154.3 (LY-06): the block reason used to render as an
@@ -1577,7 +2128,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 disabled=not self.state.new_workspace_enabled,
             )
             new_button.styles.min_width = 5
-            new_button.remove_class(*(name for name in new_button.classes if name.startswith("w-")))
+            new_button.remove_class(
+                *(name for name in new_button.classes if name.startswith("w-"))
+            )
             new_button.set_styles(width=None)
             new_button.add_class("w-auto")
             yield self._record_composed_node(new_button)
@@ -1589,7 +2142,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 disabled=not self.state.rag_scope_enabled,
             )
             scope_button.styles.min_width = 5
-            scope_button.remove_class(*(name for name in scope_button.classes if name.startswith("w-")))
+            scope_button.remove_class(
+                *(name for name in scope_button.classes if name.startswith("w-"))
+            )
             scope_button.set_styles(width=None)
             scope_button.add_class("w-auto")
             scope_button.tooltip = "RAG Scope: narrow retrieval to this workspace"
@@ -1705,9 +2260,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
 
         for ancestor in self.ancestors:
             if getattr(ancestor, "id", None) == "console-bounded-section-workspace":
-                request_scoped = getattr(
-                    ancestor, "request_scoped_reconcile", None
-                )
+                request_scoped = getattr(ancestor, "request_scoped_reconcile", None)
                 if callable(request_scoped):
                     request_scoped()
                     return
@@ -1776,7 +2329,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                     id="console-workspace-conversations-title",
                     classes="console-rail-section-title",
                 )
-                title.remove_class(*(name for name in title.classes if name.startswith("w-")))
+                title.remove_class(
+                    *(name for name in title.classes if name.startswith("w-"))
+                )
                 title.set_styles(width=None)
                 title.add_class("w-fill")
                 yield title
@@ -1788,7 +2343,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             action = Button(
                 label, id=button_id, compact=True, classes="console-workspace-action"
             )
-            action.remove_class(*(name for name in action.classes if name.startswith("w-")))
+            action.remove_class(
+                *(name for name in action.classes if name.startswith("w-"))
+            )
             action.set_styles(width=None)
             action.add_class("w-full")
             yield action
@@ -1799,32 +2356,46 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 classes="console-workspace-selected-conversation"
                 + _selected_conversation_active_class(browser.selected_summary),
             )
-        with Horizontal(
-            id="console-workspace-conversation-search-row",
-            classes="console-workspace-conversation-search-row",
-        ):
-            search_input = ConsoleBrowserSearchInput(
-                initial_value=browser.query,
-                placeholder="Filter visible titles",
-                id="console-workspace-conversation-search",
-                classes="console-workspace-conversation-search",
-            )
-            search_input.remove_class(*(name for name in search_input.classes if name.startswith("w-")))
-            search_input.set_styles(width=None)
-            search_input.add_class("w-fill")
-            yield search_input
-            clear_button = Button(
-                "Clear",
-                id="console-workspace-conversation-search-clear",
-                classes=(
-                    "console-workspace-action "
-                    "console-workspace-conversation-search-clear"
-                ),
-                compact=True,
-                disabled=not bool(str(browser.query or "").strip()),
-            )
-            clear_button.tooltip = "Clear conversation search"
-            yield clear_button
+        retained_row = self._retained_filter_row
+        if retained_row is not None:
+            # TASK-33622.6: a rebuild keeps the mounted filter row (see
+            # `_KeepsConversationFilterRow`). It must stay a top-level child:
+            # the rebuild mounts the other children around it.
+            _sync_retained_filter_row(retained_row, str(browser.query or ""))
+            yield retained_row
+        else:
+            with Horizontal(
+                id=_CONVERSATION_FILTER_ROW_ID,
+                classes="console-workspace-conversation-search-row",
+            ):
+                search_input = ConsoleBrowserSearchInput(
+                    initial_value=browser.query,
+                    placeholder="Filter visible titles",
+                    id=_CONVERSATION_FILTER_INPUT_ID,
+                    classes="console-workspace-conversation-search",
+                    # TASK-33622.6: a programmatic refocus (a search's
+                    # results landing) must not select the text, or the
+                    # next key replaces the whole query.
+                    select_on_focus=False,
+                )
+                search_input.remove_class(
+                    *(name for name in search_input.classes if name.startswith("w-"))
+                )
+                search_input.set_styles(width=None)
+                search_input.add_class("w-fill")
+                yield search_input
+                clear_button = Button(
+                    "Clear",
+                    id=_CONVERSATION_FILTER_CLEAR_ID,
+                    classes=(
+                        "console-workspace-action "
+                        "console-workspace-conversation-search-clear"
+                    ),
+                    compact=True,
+                    disabled=not bool(str(browser.query or "").strip()),
+                )
+                clear_button.tooltip = "Clear conversation search"
+                yield clear_button
         if browser.status_copy:
             yield self._static(
                 browser.status_copy,
@@ -1840,7 +2411,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
 
         row_index = 0
         conversation_list = Vertical(id="console-workspace-conversations")
-        conversation_list.remove_class(*(name for name in conversation_list.classes if name.startswith("h-")))
+        conversation_list.remove_class(
+            *(name for name in conversation_list.classes if name.startswith("h-"))
+        )
         # ds-runtime: Visible conversation rows and measured title width determine the list height.
         conversation_list.set_styles(
             height=self._conversation_browser_list_height(
@@ -1851,8 +2424,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         )
         conversation_list.styles.min_height = 0
         with conversation_list:
-            for section in browser.sections:
-                yield from self._compose_conversation_browser_section_header(section)
+            for section_index, section in enumerate(browser.sections):
+                yield from self._compose_conversation_browser_section_header(
+                    section, path=(section_index,)
+                )
                 if section.collapsed:
                     continue
                 if section.groups:
@@ -1860,15 +2435,17 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                         yield from self._compose_conversation_browser_group_header(
                             group,
                             group_index,
+                            path=(section_index, group_index),
                         )
                         if group.collapsed:
                             continue
                         if group.rows:
-                            for row in group.rows:
+                            for offset, row in enumerate(group.rows):
                                 yield from self._compose_conversation_browser_row(
                                     row,
                                     row_index,
                                     marks_available=browser.marks_available,
+                                    path=(section_index, group_index, offset),
                                 )
                                 row_index += 1
                         elif group.empty_copy:
@@ -1897,12 +2474,34 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                     # distinguishable; the all-global Chats section does not need
                     # it (Qodo #812).
                     show_workspace = section.section_id == "starred"
-                    for row in section.rows:
+                    # TASK-18924: date dividers render before the visible row
+                    # at each recorded index. Recorded through
+                    # `_record_composed_node` so the recompose guard sees a
+                    # divider move (a row aging across a date boundary) as a
+                    # structural change instead of skipping it as a no-op.
+                    divider_labels = dict(section.date_dividers)
+                    for index, row in enumerate(section.rows):
+                        divider_label = divider_labels.get(index)
+                        if divider_label is not None:
+                            yield self._record_composed_node(
+                                self._static(
+                                    divider_label,
+                                    id=(
+                                        "console-conversation-browser-divider-"
+                                        f"{section.section_id}-{index}"
+                                    ),
+                                    classes=(
+                                        "console-workspace-empty-copy "
+                                        "console-conversation-browser-date-divider"
+                                    ),
+                                )
+                            )
                         yield from self._compose_conversation_browser_row(
                             row,
                             row_index,
                             marks_available=browser.marks_available,
                             show_workspace=show_workspace,
+                            path=(section_index, None, index),
                         )
                         row_index += 1
                 elif section.empty_copy:
@@ -1915,6 +2514,8 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     def _compose_conversation_browser_section_header(
         self,
         section: ConsoleConversationBrowserSection,
+        *,
+        path: tuple[int, ...],
     ) -> ComposeResult:
         """Render one grouped browser section header.
 
@@ -1937,13 +2538,13 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         header instead, mirroring `_compose_conversation_browser_group_
         header` exactly. A visible marked row within the cap needs no
         header echo, which is exactly what `capped_run_marker` excludes.
+
+        ``path`` (``(section index,)``) records the shown marker for the
+        in-place patch (TASK-33620.15.20).
         """
 
-        label = section.label
-        if section.collapsed and section.run_marker:
-            label = f"{label} {section.run_marker}"
-        elif not section.collapsed and section.capped_run_marker:
-            label = f"{label} {section.capped_run_marker}"
+        header_marker = self._record_browser_header(path, section)
+        label = f"{section.label} {header_marker}" if header_marker else section.label
         with Horizontal(classes="console-conversation-browser-section-header"):
             title = self._static(
                 label,
@@ -1963,9 +2564,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             # TASK-1233 AC#1: decode whichever aggregate marker the header
             # itself is currently showing (same collapsed/capped split as
             # the label above) rather than inventing a new tooltip surface.
-            header_marker = (
-                section.run_marker if section.collapsed else section.capped_run_marker
-            )
             action_verb = "Expand" if section.collapsed else "Collapse"
             toggle.tooltip = _marker_aware_tooltip(
                 f"{action_verb} {section.label}", header_marker
@@ -1976,6 +2574,8 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self,
         group: ConsoleConversationBrowserGroup,
         index: int,
+        *,
+        path: tuple[int, ...],
     ) -> ComposeResult:
         """Render one workspace group header.
 
@@ -1997,14 +2597,14 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         hidden overflow rows, TASK-912 AC#2) is borrowed onto the header in
         that case instead. A visible marked row within the cap needs no
         header echo, which is exactly what `capped_run_marker` excludes.
+
+        ``path`` (``(section index, group index)``) records the shown marker
+        for the in-place patch (TASK-33620.15.20).
         """
 
+        header_marker = self._record_browser_header(path, group)
         with Horizontal(classes="console-conversation-browser-group-header"):
-            label = group.label
-            if group.collapsed and group.run_marker:
-                label = f"{label} {group.run_marker}"
-            elif not group.collapsed and group.capped_run_marker:
-                label = f"{label} {group.capped_run_marker}"
+            label = f"{group.label} {header_marker}" if header_marker else group.label
             title = self._static(
                 label,
                 id=f"console-conversation-browser-group-title-{index}",
@@ -2020,7 +2620,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 compact=True,
             )
             toggle.group_id = group.group_id
-            toggle.remove_class(*(name for name in toggle.classes if name.startswith("w-")))
+            toggle.remove_class(
+                *(name for name in toggle.classes if name.startswith("w-"))
+            )
             toggle.set_styles(width=None)
             toggle.add_class("w-3")
             toggle.styles.min_width = 3
@@ -2028,9 +2630,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             # TASK-1233 AC#1: same collapsed/capped aggregate-marker split
             # as the label above, decoded into the already-existing toggle
             # tooltip rather than a new tooltip surface.
-            header_marker = (
-                group.run_marker if group.collapsed else group.capped_run_marker
-            )
             action_verb = "Expand" if group.collapsed else "Collapse"
             toggle.tooltip = _marker_aware_tooltip(
                 f"{action_verb} {group.label}", header_marker
@@ -2040,6 +2639,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Translate the active workspace's Show Files control into a typed intent."""
         button_id = str(event.button.id or "")
+        if button_id == _CONVERSATION_FILTER_CLEAR_ID:
+            # TASK-33622.6: not stopped -- the screen resets the search state.
+            _clear_conversation_filter_input(self)
+            return
         if button_id != "console-workspace-files-open":
             return
         event.stop()
@@ -2061,6 +2664,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         index: int,
         *,
         marks_available: bool,
+        path: tuple[int, int | None, int],
         show_workspace: bool = False,
     ) -> ComposeResult:
         """Render one grouped browser row plus its local star control.
@@ -2068,6 +2672,11 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         ``show_workspace`` carries the owning workspace into the subtitle for rows
         rendered without a workspace group header (the cross-workspace Starred
         section), where it is the disambiguator (Qodo #812).
+
+        Every value the row's run state decides comes from
+        ``_conversation_row_paint``; ``path`` (where the row lives in the
+        browser state) records them for the in-place patch
+        (TASK-33620.15.20).
         """
 
         with Horizontal(classes="console-conversation-browser-row-line"):
@@ -2079,9 +2688,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             text = name + (
                 "\n" + conversation_title_cells(activity, budget) if activity else ""
             )
-            presentation = present_conversation_attention(
-                row.attention, custom_icon=row.icon, ascii_mode=ascii_glyph_mode()
-            )
+            paint = self._conversation_row_paint(row)
             row_button = self._conversation_button(
                 text,
                 id=f"console-workspace-conversation-{index}",
@@ -2097,19 +2704,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 1 + bool(activity) + bool(row.subagent_count) + bool(row.progress_count)
             )
             row_button.styles.min_height = None
-            row_button.tooltip = Text(
-                " · ".join(
-                    part
-                    for part in (
-                        title,
-                        self._conversation_status(row.status),
-                        row.updated_label,
-                        presentation.summary,
-                        "m: conversation actions",
-                    )
-                    if part
-                )
-            )
+            row_button.tooltip = paint.row_tooltip
             row_button.row_key = row.row_key
             # Qodo #2932: the id is positional; a rebuild that reorders the
             # list must hand focus to this chat's row, not to its old slot.
@@ -2124,28 +2719,30 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             row_button.native_session_id = row.native_session_id
             row_button.scope_type = row.scope_type
             row_button.workspace_id = row.workspace_id
-            row_button.remove_class(*(name for name in row_button.classes if name.startswith("w-")))
+            row_button.remove_class(
+                *(name for name in row_button.classes if name.startswith("w-"))
+            )
             row_button.set_styles(width=None)
             row_button.add_class("w-fill")
             row_button.styles.min_width = 0
             if not row.openable:
                 # TASK-717: a prior open proved this record is missing; the
                 # row must stop presenting as an openable conversation.
+                # Its tooltip says so (`_conversation_row_paint`).
                 row_button.disabled = True
                 row_button.add_class("console-workspace-conversation-row-broken")
-                row_button.tooltip = (
-                    "This conversation's record is missing and cannot be opened."
-                )
             yield row_button
 
             menu_button = Button(
-                Text(presentation.icon, style=row.color if not row.attention else ""),
+                paint.menu_label,
                 id=f"console-conversation-actions-{index}",
                 classes="console-workspace-action console-conversation-actions "
-                + presentation.css_class,
+                + paint.menu_class,
                 compact=True,
             )
-            menu_button.remove_class(*(name for name in menu_button.classes if name.startswith("h-")))
+            menu_button.remove_class(
+                *(name for name in menu_button.classes if name.startswith("h-"))
+            )
             menu_button.set_styles(height=None)
             menu_button.add_class("h-1")
             menu_button.styles.min_height = 1
@@ -2153,9 +2750,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             # nine label cells in the fixed ASCII attention target.
             menu_button.styles.line_pad = 0
             menu_button.set_class(ascii_glyph_mode(), "conversation-actions-ascii")
-            menu_button.tooltip = Text(
-                f"{title} · {presentation.summary or 'Conversation'} — conversation actions"
-            )
+            menu_button.tooltip = paint.menu_tooltip
             menu_button.row_key = row.row_key
             if row.row_key:
                 menu_button.focus_identity = f"conversation-actions:{row.row_key}"
@@ -2168,7 +2763,81 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             menu_button.marks_available = marks_available
             menu_button.conversation_title = row.title
             menu_button.manual_unread = row.manual_unread
+            record = self._composing_browser_paint
+            if record is not None:
+                record.rows.append(
+                    _ComposedBrowserRow(path, paint, row_button, menu_button)
+                )
             yield menu_button
+
+    @classmethod
+    def _conversation_row_paint(
+        cls, row: ConsoleConversationBrowserRow
+    ) -> _BrowserRowPaint:
+        """Return the values one browser row's run state decides.
+
+        The single source for them: compose writes exactly these, and the
+        in-place patch compares two of them (TASK-33620.15.20), so a run's
+        start or end is decided from the row data alone.
+
+        Args:
+            row: The browser row's display data.
+
+        Returns:
+            The row's tooltip and its action button's glyph, attention class
+            and tooltip.
+        """
+        title = cls._conversation_title(row.title)
+        presentation = present_conversation_attention(
+            row.attention, custom_icon=row.icon, ascii_mode=ascii_glyph_mode()
+        )
+        if row.openable:
+            row_tooltip: Text | str = Text(
+                " · ".join(
+                    part
+                    for part in (
+                        title,
+                        cls._conversation_status(row.status),
+                        row.updated_label,
+                        presentation.summary,
+                        "m: conversation actions",
+                    )
+                    if part
+                )
+            )
+        else:
+            # TASK-717: a prior open proved this record is missing.
+            row_tooltip = "This conversation's record is missing and cannot be opened."
+        return _BrowserRowPaint(
+            row_tooltip=row_tooltip,
+            menu_label=Text(
+                presentation.icon, style=row.color if not row.attention else ""
+            ),
+            menu_class=presentation.css_class,
+            menu_tooltip=Text(
+                f"{title} · {presentation.summary or 'Conversation'} — conversation actions"
+            ),
+        )
+
+    def _record_browser_header(
+        self,
+        path: tuple[int, ...],
+        header: ConsoleConversationBrowserSection | ConsoleConversationBrowserGroup,
+    ) -> str:
+        """Return the marker a header shows, recording it for the patch.
+
+        Args:
+            path: ``(section,)`` or ``(section, group)`` in the browser state.
+            header: The section or group being composed.
+
+        Returns:
+            ``_browser_header_marker(header)``.
+        """
+        marker = _browser_header_marker(header)
+        record = self._composing_browser_paint
+        if record is not None:
+            record.headers[path] = marker
+        return marker
 
     def _workspace_selector_label(self) -> str:
         """Return the visible active-workspace selector affordance."""

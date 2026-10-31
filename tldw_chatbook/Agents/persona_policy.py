@@ -65,7 +65,9 @@ def parse_persona_policy_from_rules(
             )
             continue
         try:
-            from tldw_chatbook.tldw_api.character_persona_schemas import PersonaPolicyRule
+            from tldw_chatbook.tldw_api.character_persona_schemas import (
+                PersonaPolicyRule,
+            )
 
             cleaned.append(
                 PersonaPolicyRule.model_validate(dict(entry)).model_dump(mode="json")

@@ -42,6 +42,17 @@ _TABLE_COLUMNS = ("Tool", "State", "Tags")
 # are rebuilt from scratch on every `update_matrix()` call.
 _TABLE_COLUMNS_NO_TAGS = _TABLE_COLUMNS[:-1]
 
+# task-35151: one-shot mount-echo sentinel -- the same per-instance pattern
+# MCPRail's selects use (see `_ECHO_CONSUMED` in mcp_rail.py for the full
+# rationale). A `Select(allow_blank=False)` ALWAYS posts one Changed for its
+# constructor-time first option on mount, and that echo can be DELIVERED
+# after a deep link has already selected a non-default profile (reverting
+# it to "default"); consuming exactly one matching echo per Select instance
+# drops the echo while a genuine default -> X -> default round trip still
+# dispatches. Local twin of the rail's sentinel so the two stay consumable
+# independently.
+_ECHO_CONSUMED = object()
+
 # UX batch item 10: tool rows are indented two spaces under their pinned
 # "Server default — X" row -- Console/Library hierarchy idiom (label prefix
 # only; row keys are unaffected).
@@ -74,6 +85,22 @@ _SERVER_PROFILES_POINTER = (
 _PROFILE_HINT_TEXT = (
     "Console agents run with this profile; persona policy may still floor "
     "some tools to Ask."
+)
+
+# task-35154 (spec amendment A7 item 2): the mode's opening line, pinned
+# verbatim like `_SERVER_PROFILES_POINTER` above (tests assert this exact
+# copy, so any rewording happens HERE). Users flip a tool gate in Servers,
+# watch this matrix not change, and conclude it is broken -- the two
+# layers do different jobs: a gate off in Servers means the tool does not
+# exist for agents (it can still be LISTED here -- catalog visibility is
+# not the gate), while Allow/Ask/Off in this matrix governs only tools
+# that pass the gate. Plain-language per the TASK-35018/35019 copy rule:
+# names what the user sees (Servers, Allow/Ask/Off, this list), no config
+# keys, no "registration gate" jargon. "Console agents" is this surface's
+# own term (see `_PROFILE_HINT_TEXT` above).
+_GATE_VS_PERMISSION_EXPLAINER = (
+    "Tools turned off in Servers do not exist for Console agents — "
+    "Allow/Ask/Off in this list only governs tools that are turned on."
 )
 
 # Wave C (F3): cap on how many undiscovered server names the discovery
@@ -207,7 +234,9 @@ def tool_state_kind(effective: EffectiveToolState) -> str:
         `state_text()`'s `kind` bucket -- `"ready"`, `"warning"`, or
         `"error"` for a recognized `effective.state`, else `"muted"`.
     """
-    return {"allow": "ready", "ask": "warning", "deny": "error"}.get(effective.state, "muted")
+    return {"allow": "ready", "ask": "warning", "deny": "error"}.get(
+        effective.state, "muted"
+    )
 
 
 def format_tool_state_label(effective: EffectiveToolState) -> str:
@@ -492,6 +521,15 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         color: $text-muted;
         padding: 0 1;
     }
+    /* task-35154: the gate-vs-permission explainer is the same quiet,
+    dimmed one-liner tier as the kill-switch hint -- informational chrome
+    above the profile selector, never a competing headline. */
+    #mcp-perm-explainer {
+        height: auto;
+        min-height: 0;
+        color: $text-muted;
+        padding: 0 1;
+    }
     /* T8: the server-source governance section is a plain read-only
     listing (a handful of Static rows at most) -- hugs its own content,
     same rationale as #mcp-perm-preview immediately above. */
@@ -621,15 +659,26 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         self._tool_column_width: int | None = None
 
     def compose(self) -> ComposeResult:
+        # task-35154: the mode opens with the one-line gate-vs-permission
+        # explainer (see `_GATE_VS_PERMISSION_EXPLAINER` above) -- FIRST
+        # child, so it is read before the profile selector and the matrix.
+        yield Static(
+            _GATE_VS_PERMISSION_EXPLAINER, id="mcp-perm-explainer", markup=False
+        )
         yield Static(
             "Tool policy profile", id="mcp-perm-tool-profile-label", markup=False
         )
-        yield Select(
+        profile_select = Select(
             [("default · local", "default")],
             value="default",
             id="mcp-perm-tool-profile",
             allow_blank=False,
         )
+        # task-35151: pin the mount-echo value this instance was actually
+        # constructed with -- `on_select_changed` consumes at most one
+        # matching Changed per instance (see `_ECHO_CONSUMED` above).
+        profile_select._mcp_mount_echo_value = "default"
+        yield profile_select
         # Wave C (F8): populated by `set_profile_hint()` -- hidden while
         # empty (the default profile needs no Console-context caveat).
         hint = Static("", id="mcp-perm-profile-hint", markup=False)
@@ -895,7 +944,9 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
 
         self._apply_filter()
 
-        self.query_one("#mcp-perm-preview", Static).update(f"{echo}{preview}" if echo else preview)
+        self.query_one("#mcp-perm-preview", Static).update(
+            f"{echo}{preview}" if echo else preview
+        )
         legend_text = _LEGEND_TEXT
         for extra_line in (gate_breadcrumb, discovery_hint):
             if extra_line:
@@ -1150,6 +1201,19 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         if event.select.id != "mcp-perm-tool-profile" or self._profile_select_sync:
             return
         event.stop()
+        # task-35151: one-shot per-instance mount-echo guard -- see
+        # `_ECHO_CONSUMED` at module top and MCPRail's identical pattern.
+        # The first Changed a Select instance ever posts is its constructor
+        # echo (a user can't interact before mount); consuming at most one
+        # matching event per instance drops exactly the echo, so a late
+        # delivery can no longer revert a deep-linked profile to "default",
+        # while a genuine default -> X -> default round trip still
+        # dispatches.
+        echo_value = getattr(event.select, "_mcp_mount_echo_value", _ECHO_CONSUMED)
+        if echo_value is not _ECHO_CONSUMED:
+            event.select._mcp_mount_echo_value = _ECHO_CONSUMED
+            if event.value == echo_value:
+                return
         if event.value is Select.BLANK:
             return
         self.post_message(self.ToolPolicyProfileSelected(str(event.value)))

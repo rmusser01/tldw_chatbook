@@ -59,9 +59,7 @@ def _gate_feed_checks(monkeypatch, gate: asyncio.Event, started: asyncio.Event):
             }
         ]
 
-    monkeypatch.setattr(
-        monitoring_engine.FeedMonitor, "check_feed", gated_check_feed
-    )
+    monkeypatch.setattr(monitoring_engine.FeedMonitor, "check_feed", gated_check_feed)
     return calls
 
 
@@ -99,12 +97,10 @@ async def test_overlapping_feed_checks_run_the_check_once(tmp_path, monkeypatch)
     )
 
     dispositions = [
-        (result["stats"] or {}).get("dispositions") for result in
-        (scheduled_result, manual_result)
+        (result["stats"] or {}).get("dispositions")
+        for result in (scheduled_result, manual_result)
     ]
-    skipped_counts = [
-        int((d or {}).get("skipped", 0) or 0) for d in dispositions
-    ]
+    skipped_counts = [int((d or {}).get("skipped", 0) or 0) for d in dispositions]
     assert sum(skipped_counts) == 1, (
         f"expected exactly one run to record a skip, got {dispositions}"
     )
@@ -141,7 +137,8 @@ async def test_skipped_feed_check_does_not_count_as_a_successful_check(
     ]
 
     skipped_runs = [
-        r for r in results
+        r
+        for r in results
         if _entirely_skipped_dispositions((r["stats"] or {}).get("dispositions"))
     ]
     assert len(skipped_runs) == 1, (
@@ -152,9 +149,7 @@ async def test_skipped_feed_check_does_not_count_as_a_successful_check(
 
 
 @pytest.mark.asyncio
-async def test_distinct_feed_sources_still_check_concurrently(
-    tmp_path, monkeypatch
-):
+async def test_distinct_feed_sources_still_check_concurrently(tmp_path, monkeypatch):
     """The guard is per-source: two different feeds must not block each other."""
     db = SubscriptionsDB(tmp_path / "subs.db", "test")
     first = db.add_subscription(
@@ -211,8 +206,7 @@ async def test_a_failed_feed_check_releases_the_guard(tmp_path, monkeypatch):
     await _run_check(service, source_id)
 
     assert calls == [1], (
-        "the next check never ran: the failed check stranded the in-flight "
-        "claim"
+        "the next check never ran: the failed check stranded the in-flight claim"
     )
 
 

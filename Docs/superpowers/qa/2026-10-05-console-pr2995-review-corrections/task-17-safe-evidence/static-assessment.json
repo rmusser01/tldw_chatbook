@@ -1,0 +1,269 @@
+{
+  "commands": [
+    {
+      "name": "fatal-ruff",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "Tests/Chat/test_console_generation_actions.py",
+        "Tests/Console/test_console_command_draft.py",
+        "Tests/UI/test_console_command_origin_chat.py",
+        "Tests/UI/test_console_video_send_freeze.py",
+        "tldw_chatbook/UI/Console_Modules/command_draft.py",
+        "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+        "tldw_chatbook/UI/Console_Modules/image.py",
+        "tldw_chatbook/UI/Console_Modules/message.py",
+        "tldw_chatbook/UI/Console_Modules/prompts.py",
+        "tldw_chatbook/UI/Console_Modules/skill.py",
+        "tldw_chatbook/UI/Console_Modules/video.py",
+        "tldw_chatbook/UI/Console_Modules/wiring.py",
+        "tldw_chatbook/UI/Screens/chat_screen.py"
+      ],
+      "exit": 0,
+      "stdout": "fatal-ruff.stdout",
+      "stderr": "fatal-ruff.stderr"
+    },
+    {
+      "name": "formatter-assessment",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "format",
+        "--diff",
+        "Tests/Chat/test_console_generation_actions.py",
+        "Tests/Console/test_console_command_draft.py",
+        "Tests/UI/test_console_command_origin_chat.py",
+        "Tests/UI/test_console_video_send_freeze.py",
+        "tldw_chatbook/UI/Console_Modules/command_draft.py",
+        "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+        "tldw_chatbook/UI/Console_Modules/image.py",
+        "tldw_chatbook/UI/Console_Modules/message.py",
+        "tldw_chatbook/UI/Console_Modules/prompts.py",
+        "tldw_chatbook/UI/Console_Modules/skill.py",
+        "tldw_chatbook/UI/Console_Modules/video.py",
+        "tldw_chatbook/UI/Console_Modules/wiring.py",
+        "tldw_chatbook/UI/Screens/chat_screen.py"
+      ],
+      "exit": 1,
+      "stdout": "formatter-assessment.stdout",
+      "stderr": "formatter-assessment.stderr"
+    },
+    {
+      "name": "whitespace-incoming",
+      "argv": [
+        "git",
+        "diff",
+        "--check",
+        "13d1668d4eedbdfcab50fff28a47a8a68346f033..HEAD"
+      ],
+      "exit": 0,
+      "stdout": "whitespace-incoming.stdout",
+      "stderr": "whitespace-incoming.stderr"
+    }
+  ],
+  "fatal_paths": [
+    "Tests/Chat/test_console_generation_actions.py",
+    "Tests/Console/test_console_command_draft.py",
+    "Tests/UI/test_console_command_origin_chat.py",
+    "Tests/UI/test_console_video_send_freeze.py",
+    "tldw_chatbook/UI/Console_Modules/command_draft.py",
+    "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+    "tldw_chatbook/UI/Console_Modules/image.py",
+    "tldw_chatbook/UI/Console_Modules/message.py",
+    "tldw_chatbook/UI/Console_Modules/prompts.py",
+    "tldw_chatbook/UI/Console_Modules/skill.py",
+    "tldw_chatbook/UI/Console_Modules/video.py",
+    "tldw_chatbook/UI/Console_Modules/wiring.py",
+    "tldw_chatbook/UI/Screens/chat_screen.py"
+  ],
+  "added_hunk_formatter_assessment": {
+    "Tests/Chat/test_console_generation_actions.py": {
+      "would_reformat": false,
+      "incoming_added_line_count": 29,
+      "formatter_change_ranges": [],
+      "policy": "All actual bytes remain exact selected-dev/candidate pins. Formatting suggestions are inherited selected-source evidence; no owner reflow."
+    },
+    "Tests/Console/test_console_command_draft.py": {
+      "would_reformat": true,
+      "incoming_added_line_count": 346,
+      "formatter_change_ranges": [
+        {
+          "current_start": 270,
+          "current_end": 271,
+          "formatted_start": 270,
+          "formatted_end": 279,
+          "overlaps_incoming_added_lines": true
+        }
+      ],
+      "policy": "All actual bytes remain exact selected-dev/candidate pins. Formatting suggestions are inherited selected-source evidence; no owner reflow."
+    },
+    "Tests/UI/test_console_command_origin_chat.py": {
+      "would_reformat": true,
+      "incoming_added_line_count": 384,
+      "formatter_change_ranges": [
+        {
+          "current_start": 377,
+          "current_end": 378,
+          "formatted_start": 377,
+          "formatted_end": 377,
+          "overlaps_incoming_added_lines": true
+        }
+      ],
+      "policy": "All actual bytes remain exact selected-dev/candidate pins. Formatting suggestions are inherited selected-source evidence; no owner reflow."
+    },
+    "Tests/UI/test_console_video_send_freeze.py": {
+      "would_reformat": false,
+      "incoming_added_line_count": 895,
+      "formatter_change_ranges": [],
+      "policy": "All actual bytes remain exact selected-dev/candidate pins. Formatting suggestions are inherited selected-source evidence; no owner reflow."
+    },
+    "tldw_chatbook/UI/Console_Modules/command_draft.py": {
+      "would_reformat": false,
+      "incoming_added_line_count": 152,
+      "formatter_change_ranges": [],
+      "policy": "All actual bytes remain exact selected-dev/candidate pins. Formatting suggestions are inherited selected-source evidence; no owner reflow."
+    },
+    "tldw_chatbook/UI/Console_Modules/command_handoff.py": {
+      "would_reformat": false,
+      "incoming_added_line_count": 215,
+      "formatter_change_ranges": [],
+      "policy": "All actual bytes remain exact selected-dev/candidate pins. Formatting suggestions are inherited selected-source evidence; no owner reflow."
+    },
+    "tldw_chatbook/UI/Console_Modules/image.py": {
+      "would_reformat": false,
+      "incoming_added_line_count": 17,
+      "formatter_change_ranges": [],
+      "policy": "All actual bytes remain exact selected-dev/candidate pins. Formatting suggestions are inherited selected-source evidence; no owner reflow."
+    },
+    "tldw_chatbook/UI/Console_Modules/message.py": {
+      "would_reformat": true,
+      "incoming_added_line_count": 4,
+      "formatter_change_ranges": [
+        {
+          "current_start": 613,
+          "current_end": 613,
+          "formatted_start": 613,
+          "formatted_end": 612,
+          "overlaps_incoming_added_lines": false
+        },
+        {
+          "current_start": 2230,
+          "current_end": 2232,
+          "formatted_start": 2229,
+          "formatted_end": 2229,
+          "overlaps_incoming_added_lines": false
+        },
+        {
+          "current_start": 2837,
+          "current_end": 2839,
+          "formatted_start": 2834,
+          "formatted_end": 2834,
+          "overlaps_incoming_added_lines": false
+        }
+      ],
+      "policy": "All actual bytes remain exact selected-dev/candidate pins. Formatting suggestions are inherited selected-source evidence; no owner reflow."
+    },
+    "tldw_chatbook/UI/Console_Modules/prompts.py": {
+      "would_reformat": false,
+      "incoming_added_line_count": 25,
+      "formatter_change_ranges": [],
+      "policy": "All actual bytes remain exact selected-dev/candidate pins. Formatting suggestions are inherited selected-source evidence; no owner reflow."
+    },
+    "tldw_chatbook/UI/Console_Modules/skill.py": {
+      "would_reformat": true,
+      "incoming_added_line_count": 7,
+      "formatter_change_ranges": [
+        {
+          "current_start": 187,
+          "current_end": 189,
+          "formatted_start": 187,
+          "formatted_end": 187,
+          "overlaps_incoming_added_lines": false
+        },
+        {
+          "current_start": 196,
+          "current_end": 198,
+          "formatted_start": 194,
+          "formatted_end": 194,
+          "overlaps_incoming_added_lines": false
+        },
+        {
+          "current_start": 201,
+          "current_end": 203,
+          "formatted_start": 197,
+          "formatted_end": 197,
+          "overlaps_incoming_added_lines": false
+        }
+      ],
+      "policy": "All actual bytes remain exact selected-dev/candidate pins. Formatting suggestions are inherited selected-source evidence; no owner reflow."
+    },
+    "tldw_chatbook/UI/Console_Modules/video.py": {
+      "would_reformat": true,
+      "incoming_added_line_count": 25,
+      "formatter_change_ranges": [
+        {
+          "current_start": 874,
+          "current_end": 875,
+          "formatted_start": 874,
+          "formatted_end": 874,
+          "overlaps_incoming_added_lines": false
+        },
+        {
+          "current_start": 1309,
+          "current_end": 1310,
+          "formatted_start": 1308,
+          "formatted_end": 1314,
+          "overlaps_incoming_added_lines": false
+        },
+        {
+          "current_start": 1349,
+          "current_end": 1349,
+          "formatted_start": 1353,
+          "formatted_end": 1352,
+          "overlaps_incoming_added_lines": false
+        },
+        {
+          "current_start": 1370,
+          "current_end": 1371,
+          "formatted_start": 1373,
+          "formatted_end": 1379,
+          "overlaps_incoming_added_lines": false
+        }
+      ],
+      "policy": "All actual bytes remain exact selected-dev/candidate pins. Formatting suggestions are inherited selected-source evidence; no owner reflow."
+    },
+    "tldw_chatbook/UI/Console_Modules/wiring.py": {
+      "would_reformat": false,
+      "incoming_added_line_count": 3,
+      "formatter_change_ranges": [],
+      "policy": "All actual bytes remain exact selected-dev/candidate pins. Formatting suggestions are inherited selected-source evidence; no owner reflow."
+    },
+    "tldw_chatbook/UI/Screens/chat_screen.py": {
+      "would_reformat": true,
+      "incoming_added_line_count": 15,
+      "formatter_change_ranges": [
+        {
+          "current_start": 18947,
+          "current_end": 18946,
+          "formatted_start": 18947,
+          "formatted_end": 18947,
+          "overlaps_incoming_added_lines": false
+        },
+        {
+          "current_start": 19972,
+          "current_end": 19971,
+          "formatted_start": 19973,
+          "formatted_end": 19973,
+          "overlaps_incoming_added_lines": false
+        }
+      ],
+      "policy": "All actual bytes remain exact selected-dev/candidate pins. Formatting suggestions are inherited selected-source evidence; no owner reflow."
+    }
+  },
+  "source_mutations": false
+}

@@ -2,16 +2,24 @@
 active CONVERSATION chat dictionaries to the model-bound payload while the
 persisted transcript keeps the raw text (Roleplay P1h Task 3).
 
-Exercises the real ``ChatScreen`` -> ``_ensure_console_chat_controller`` wiring
-(``chat_dictionary_applier=self._console_chat_dictionary_applier``) end to
-end: a real ``CharactersRAGDB`` + ``ChatDictionaryScopeService`` seeded with a
+Exercises the real ``ChatScreen`` -> ``_ensure_console_chat_controller`` ->
+``ConsoleRuntime.ensure_chat_controller`` wiring end to end: a real
+``CharactersRAGDB`` + ``ChatDictionaryScopeService`` seeded with a
 conversation-attached dictionary (the P1e attach seam), a native session
 pinned to that conversation, and a capturing double standing in for the
 provider/agent transport so the actual outbound payload can be inspected.
+The applier in effect is the runtime-owned frozen-input applier
+``_apply_chat_dictionaries_for_app`` that ``ensure_chat_controller`` always
+binds (TASK-34667 removed the dead screen-level applier copy this docstring
+used to name -- ``ensure_chat_controller``'s ``kwargs.update`` had
+overwritten it on every path).
 """
 
 import pytest
 
+from Tests.console_provider_doubles import with_destination
+from Tests.private_profile import private_profile_test
+from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -26,8 +34,6 @@ from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from Tests.console_provider_doubles import with_destination
-from Tests.UI.app_factory import attach_chachanotes_db
 
 
 @pytest.fixture
@@ -62,19 +68,26 @@ class _CapturingGateway:
     def __init__(self):
         self.captured = None
 
+    def cached_context_window(self, settings):
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        return resolve_context_window(settings.provider, settings.model or "")
+
     async def resolve_for_send(self, selection):
-        return with_destination(ConsoleProviderResolution(
-            provider=selection.provider,
-            base_url=selection.base_url or "",
-            model=(
-                selection.explicit_model
-                or selection.configured_model
-                or "test-model"
-            ),
-            ready=True,
-            readiness_key="llama_cpp",
-            execution_key="llama_cpp",
-        ))
+        return with_destination(
+            ConsoleProviderResolution(
+                provider=selection.provider,
+                base_url=selection.base_url or "",
+                model=(
+                    selection.explicit_model
+                    or selection.configured_model
+                    or "test-model"
+                ),
+                ready=True,
+                readiness_key="llama_cpp",
+                execution_key="llama_cpp",
+            )
+        )
 
     async def stream_chat(self, _resolution, provider_messages, **kwargs):
         self.captured = [dict(m) for m in provider_messages]
@@ -89,8 +102,10 @@ def _final_user_content(messages):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_native_send_applies_conversation_dictionary_provider_branch(
     dictionary_db,
+    request,
 ):
     app = _build_test_app()
     attach_chachanotes_db(app)
@@ -132,7 +147,10 @@ async def test_native_send_applies_conversation_dictionary_provider_branch(
 
 
 @pytest.mark.asyncio
-async def test_native_send_applies_conversation_dictionary_agent_branch(dictionary_db):
+@private_profile_test
+async def test_native_send_applies_conversation_dictionary_agent_branch(
+    dictionary_db, request
+):
     app = _build_test_app()
     attach_chachanotes_db(app)
     app.chachanotes_db = dictionary_db
@@ -178,7 +196,7 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
             **_kwargs,
         ):
             captured["agent_messages"] = [dict(m) for m in agent_messages]
-            from tldw_chatbook.Agents.agent_models import RunOutcome, RUN_DONE
+            from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
 
             store = screen._ensure_console_chat_store()
             store.append_stream_chunk(assistant_message_id, "ok")
@@ -189,9 +207,7 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
             # task-15791: the conversation browser's poll now batch-reads
             # sub-agent counts through the bridge (perf finding A); the
             # double predates it -- the stale-double class.
-            subagent_counts = staticmethod(
-                lambda conversation_ids: {}
-            )
+            subagent_counts = staticmethod(lambda conversation_ids: {})
 
         bridge = _Bridge()
         screen._ensure_console_agent_bridge = lambda: bridge

@@ -1,0 +1,70 @@
+{
+  "reason": "User rejected exposure drift and unmatched eye/mouth pairs; previous visual qualification withdrawn.",
+  "source_sha256": "6d8ba7ecf1f19dd5e7c2a5a11e9337dd2ce26897140aff6fe4e77b91bfdf1463",
+  "review_regions": {
+    "left_eyelid": [
+      530,
+      330,
+      612,
+      380
+    ],
+    "right_eyelid": [
+      635,
+      345,
+      703,
+      394
+    ],
+    "mouth": [
+      567,
+      436,
+      672,
+      525
+    ]
+  },
+  "frames": {
+    "rest": {
+      "mean_luminance": 15.33070484828949,
+      "outside_expression_mean_channel_error": 2.9405662666210506,
+      "outside_expression_changed_pixel_fraction": 0.9464420880423415
+    },
+    "small": {
+      "mean_luminance": 15.171815008163453,
+      "outside_expression_mean_channel_error": 2.5140733159591484,
+      "outside_expression_changed_pixel_fraction": 0.9333261613938374
+    },
+    "open": {
+      "mean_luminance": 14.361538101387024,
+      "outside_expression_mean_channel_error": 2.3650730423270425,
+      "outside_expression_changed_pixel_fraction": 0.9419344271510246
+    },
+    "blink_rest": {
+      "mean_luminance": 14.677451555824279,
+      "outside_expression_mean_channel_error": 2.262170571335438,
+      "outside_expression_changed_pixel_fraction": 0.9329985782114539
+    },
+    "blink_small": {
+      "mean_luminance": 14.653748786926268,
+      "outside_expression_mean_channel_error": 2.290700352814195,
+      "outside_expression_changed_pixel_fraction": 0.9323036754251555
+    },
+    "blink_open": {
+      "mean_luminance": 14.42517118911743,
+      "outside_expression_mean_channel_error": 2.3516954368050365,
+      "outside_expression_changed_pixel_fraction": 0.9396626668566261
+    }
+  },
+  "mouth_pairs": {
+    "rest": {
+      "mouth_changed_pixel_fraction": 0.9768860353130016,
+      "exact_pair": false
+    },
+    "small": {
+      "mouth_changed_pixel_fraction": 0.9673622257891921,
+      "exact_pair": false
+    },
+    "open": {
+      "mouth_changed_pixel_fraction": 0.9676832530765115,
+      "exact_pair": false
+    }
+  }
+}

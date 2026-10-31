@@ -185,14 +185,6 @@ class TestBatchQueryOptimization:
         from tldw_chatbook.DB.Prompts_DB import PromptsDatabase as PromptsDB
 
         db = PromptsDB(tmp_path / "prompt-pagination.db", client_id="test_client")
-        original_execute = db.execute_query
-        query_log = []
-
-        def mock_execute(query, params=None):
-            query_log.append(query)
-            return original_execute(query, params)
-
-        db.execute_query = mock_execute
 
         for i in range(10):
             db.add_prompt(
@@ -204,15 +196,20 @@ class TestBatchQueryOptimization:
                 keywords=[f"keyword_{j}" for j in range(2)] if i < 5 else [],
             )
 
-        query_log.clear()
-        results, total = db.search_prompts(search_query="Prompt")
-        keyword_queries = [
-            q
-            for q in query_log
-            if "PromptKeywordsTable" in q and "JOIN PromptKeywordLinks" in q
-        ]
+        attach_calls = []
+        original_helper = PromptsDB._library_keywords_for_prompts
 
-        assert len(keyword_queries) == len(results)
+        def counting_helper(self, conn, prompt_ids):
+            attach_calls.append(list(prompt_ids))
+            return original_helper(self, conn, prompt_ids)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(PromptsDB, "_library_keywords_for_prompts", counting_helper)
+            results, total = db.search_prompts(search_query="Prompt")
+
+        # ONE batched keywords query for the whole page, never per-row.
+        assert len(attach_calls) == 1
+        assert len(attach_calls[0]) == len(results)
         for result in results:
             if result["id"] <= 5:
                 assert len(result["keywords"]) == 2

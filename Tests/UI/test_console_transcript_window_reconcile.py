@@ -105,7 +105,9 @@ async def test_pin_long_load_is_bounded_and_leaves_the_reader_at_the_tail():
         await _settle(pilot)
 
         mounted = _mounted_message_ids(transcript)
-        assert 0 < len(mounted) <= 60, f"the load window must be bounded: {len(mounted)}"
+        assert 0 < len(mounted) <= 60, (
+            f"the load window must be bounded: {len(mounted)}"
+        )
         assert mounted[-1] == "m499"
         assert transcript._is_following_tail(), "load must keep tail-follow engaged"
         assert transcript.scroll_y == transcript.max_scroll_y
@@ -204,9 +206,7 @@ async def test_mounted_rows_stay_one_contiguous_suffix_after_prune_and_jump():
         await _settle(pilot)
 
         transcript.select_message("m20")
-        assert await _wait_for(
-            pilot, lambda: "m20" in _mounted_message_ids(transcript)
-        )
+        assert await _wait_for(pilot, lambda: "m20" in _mounted_message_ids(transcript))
         await _settle(pilot)
 
         mounted = _mounted_message_ids(transcript)
@@ -350,9 +350,7 @@ async def test_restored_offset_is_applied_against_the_revealed_window():
                 selected_message_id="m12",
             ),
         )
-        assert await _wait_for(
-            pilot, lambda: "m12" in _mounted_message_ids(transcript)
-        )
+        assert await _wait_for(pilot, lambda: "m12" in _mounted_message_ids(transcript))
         await _settle(pilot)
 
         assert transcript.max_scroll_y > pre_reveal_max, (

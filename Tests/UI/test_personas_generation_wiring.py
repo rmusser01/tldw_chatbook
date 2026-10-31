@@ -28,7 +28,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget impo
 from Tests.UI.test_personas_dictionaries import PersonasTestApp
 from Tests.UI.test_personas_library_scale import scaled_db  # noqa: F401  (fixture)
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
 def _press(screen, selector: str) -> None:

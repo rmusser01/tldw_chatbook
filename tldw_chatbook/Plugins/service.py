@@ -107,24 +107,24 @@ class PluginService:
         return self._ready
 
     def _worker(self):
-        from tldw_chatbook.DB.base_db import operation_owned_connection
-        from tldw_chatbook.Skills_Interop.local_skills_service import (
-            default_local_skills_store_dir,
-        )
-
-        from .authority_store import (
-            KeyringPluginMarkerStore,
-            PluginAuthorityStore,
-            default_plugin_authority_dir,
-        )
-        from .coordinator import PluginCoordinator
-        from .registry import PluginRegistry
-        from .runtime_owner import PluginRuntimeOwner
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        owner = registry = None
+        loop = owner = registry = None
         try:
+            from tldw_chatbook.DB.base_db import operation_owned_connection
+            from tldw_chatbook.Skills_Interop.local_skills_service import (
+                default_local_skills_store_dir,
+            )
+
+            from .authority_store import (
+                KeyringPluginMarkerStore,
+                PluginAuthorityStore,
+                default_plugin_authority_dir,
+            )
+            from .coordinator import PluginCoordinator
+            from .registry import PluginRegistry
+            from .runtime_owner import PluginRuntimeOwner
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             owner = PluginRuntimeOwner(self.profile_root / "plugins")
             if not owner.try_acquire():
                 raise PluginUnavailable("plugin_owner_busy")
@@ -163,7 +163,8 @@ class PluginService:
                 registry.close()
             if owner is not None:
                 owner.close()
-            loop.close()
+            if loop is not None:
+                loop.close()
 
     async def _invoke(self, callback, *, terminal=False):
         # Admission is checked again on the worker: a callback queued before

@@ -1,0 +1,7 @@
+...                                                                      [100%]
+============================= slowest 25 durations =============================
+4.38s call     Tests/Chat/test_console_chat_start.py::test_saved_launch_status_projects_to_native_and_persisted_rows
+1.95s call     Tests/Chat/test_console_chat_start.py::test_refused_native_outcome_reopens_as_display_only_status
+
+(7 durations < 1s hidden.)
+3 passed, 92 deselected in 8.20s

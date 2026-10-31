@@ -1,0 +1,34 @@
+[
+  {
+    "path": "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py",
+    "sha256": "c2a98c144f6804fbdf9614c7213a4c89f66cfd7092a6e2c17a9bb518b1a7fbb6"
+  },
+  {
+    "path": "Tests/Chat/test_console_chat_create_confirm.py",
+    "sha256": "6207c357aa83eec951aae9c114dbdfca80071f82d08a4d94f53c647f7bd6b402"
+  },
+  {
+    "path": "Tests/Chat/test_console_chat_create_integration.py",
+    "sha256": "48d76566ab6ec09f7edc7ca58964f64f18deee7102ad34cc472dff08eff6f873"
+  },
+  {
+    "path": "Tests/DB/test_chachanotes_v76_agent_chat_starts_migration.py",
+    "sha256": "248f2c02e9c193d243d426fcbd3b5c5f98f313e0d01086ef0c826073e608b164"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_agent_bridge.py",
+    "sha256": "359a787d4f4444a1e21797a3b15c8d0f5a246382ac94ee6c616d65a90da3031a"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_chat_controller.py",
+    "sha256": "cb5f78e90f23aece23110b5c55b1a49cf2bb0d26635d2813ba4a1700174dfaef"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_dispatch_repository.py",
+    "sha256": "fc43b02efa8f4afc931fb3165583a60c8dbec4fb510fab76fa2aedef5043dc77"
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/workspace.py",
+    "sha256": "1a0cb315ff23c1c6f589c9ec6258ef97c868bf4cfccd14b8013aedea7ec41c5f"
+  }
+]

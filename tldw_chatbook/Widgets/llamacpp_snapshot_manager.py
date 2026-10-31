@@ -60,6 +60,10 @@ class LlamaCppSnapshotManager(Vertical):
         self._elapsed_timer = None
         self._confirming = False
         self._offsets = [0]
+        # TASK-35028: the last copy `_paint_elapsed` wrote into
+        # #snapshot-operation-status, so the 1 Hz tick between elapsed-second
+        # boundaries costs a compare instead of repainting the height:auto row.
+        self._last_operation_status: str | None = None
         try:
             self._preferences = preferences.load_snapshot_preferences()
         except (ValueError, OSError):
@@ -211,7 +215,13 @@ class LlamaCppSnapshotManager(Vertical):
             status = "Outcome unknown — Stop the server before trying again"
         elif view.message:
             status += " · " + view.message.replace("_", " ")
-        self.query_one("#snapshot-operation-status", Static).update(status + elapsed)
+        text = status + elapsed
+        # TASK-35028: the elapsed suffix only moves once per second; an
+        # unchanged tick must not repaint (and re-layout) the height:auto row.
+        if text == self._last_operation_status:
+            return
+        self._last_operation_status = text
+        self.query_one("#snapshot-operation-status", Static).update(text)
 
     def _paint(self) -> None:
         if not self.is_mounted or self._attachment is None:

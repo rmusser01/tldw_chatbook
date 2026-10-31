@@ -23,6 +23,10 @@ import threading
 from unittest.mock import AsyncMock
 
 import pytest
+
+# The harness mounts the real ChatScreen/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
 from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
@@ -36,6 +40,7 @@ from tldw_chatbook.Chat.console_rail_state import (
     serialize_console_rail_preferences,
 )
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusText
 
 
 def _stored_rail_preferences(app) -> dict:
@@ -91,8 +96,7 @@ async def test_standard_width_keeps_context_and_preserves_its_preference():
             pane = console.query_one(f"#{pane_id}")
             assert pane.display, f"{pane_id} is not displayed at 120 columns"
             assert grid.region.contains_region(pane.region), (
-                f"{pane_id} escaped the workspace grid: {pane.region} "
-                f"vs {grid.region}"
+                f"{pane_id} escaped the workspace grid: {pane.region} vs {grid.region}"
             )
         assert stored["left_open"] is True
         assert "right_open" not in stored
@@ -198,9 +202,28 @@ async def test_inspector_handle_opens_and_collapses_rail_at_140_cols():
         assert _stored_rail_preferences(app)["right_open"] is False
 
 
+async def _activate_status_segment(console, pilot, name: str) -> None:
+    """Focus the status line, walk its segment cursor to ``name``, Enter.
+
+    TASK-35160: the Sources/Tools chips are segments of one text line now;
+    the line's own segment cursor (arrows + Enter) is the keyboard route the
+    chips' BINDINGS used to provide.
+    """
+    line = console.query_one("#console-status-text", ConsoleStatusText)
+    line.focus()
+    await pilot.pause()
+    for _ in range(len(line.segment_spans)):
+        if line.segment_spans[line._cursor][0] == name:
+            break
+        await pilot.press("right")
+    assert line.segment_spans[line._cursor][0] == name
+    await pilot.press("enter")
+    await pilot.pause()
+
+
 @pytest.mark.asyncio
 async def test_sources_chip_opens_inspector_at_140_cols():
-    """DS-06: clicking the Sources chip opens the Inspector rail (the
+    """DS-06: activating the Sources segment opens the Inspector rail (the
     staged-sources tray's only surface below 150 cols) and focuses it, so
     activation is visible even when the rail was already open."""
     app = _build_test_app()
@@ -208,20 +231,17 @@ async def test_sources_chip_opens_inspector_at_140_cols():
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-sources-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
         await pilot.pause(0.2)
 
         right_rail = console.query_one("#console-right-rail")
         assert right_rail.display is False
 
         # The ConsoleHarness does not load the app's chip-width CSS, so the
-        # chip can lay out beyond the clickable viewport here; keyboard
-        # activation (focus + Enter) exercises the same BINDINGS path, and
-        # the real-app click path is covered by the UAT (p7c).
-        sources_chip = console.query_one("#console-sources-chip")
-        sources_chip.focus()
-        await pilot.pause(0.1)
-        await pilot.press("enter")
+        # strip can lay out beyond the clickable viewport here; keyboard
+        # activation (segment cursor + Enter) exercises the same BINDINGS
+        # path, and the real-app click path is covered by the UAT (p7c).
+        await _activate_status_segment(console, pilot, "sources")
         await pilot.pause(0.3)
 
         assert right_rail.display is True
@@ -229,9 +249,7 @@ async def test_sources_chip_opens_inspector_at_140_cols():
         assert _stored_rail_preferences(app)["right_open"] is True
 
         # Already open: activation must still give feedback (focus frame).
-        sources_chip.focus()
-        await pilot.pause(0.1)
-        await pilot.press("enter")
+        await _activate_status_segment(console, pilot, "sources")
         await pilot.pause(0.3)
         assert right_rail.display is True
         assert console.focused is right_rail
@@ -239,9 +257,9 @@ async def test_sources_chip_opens_inspector_at_140_cols():
 
 @pytest.mark.asyncio
 async def test_tools_chip_opens_inspector_at_80x24_single_pane():
-    """AC1 at 80x24: single-pane mode hides both handles, so the chips are
-    the route to the Inspector; keyboard activation (Enter) opens it
-    in-grid while the transcript keeps a usable share."""
+    """AC1 at 80x24: single-pane mode hides both handles, so the strip is
+    the route to the Inspector; keyboard activation (segment cursor + Enter)
+    opens it in-grid while the transcript keeps a usable share."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -256,12 +274,35 @@ async def test_tools_chip_opens_inspector_at_80x24_single_pane():
         right_rail = console.query_one("#console-right-rail")
         assert right_rail.display is False
 
-        # Chips clip visually at 80 cols (LY-03), so activate from the
-        # keyboard: focus + Enter exercises the chip's BINDINGS path.
-        tools_chip = console.query_one("#console-tools-chip")
-        tools_chip.focus()
-        await pilot.pause(0.1)
-        await pilot.press("enter")
+        # The strip clips visually at 80 cols (LY-03). Activate the tools
+        # segment via its activation MESSAGE (what both the click and the
+        # segment-cursor Enter produce): the screen's own sync would reset
+        # a staged cursor walk on this fresh console, and the message path
+        # is the race-free seam. TASK-2154.12 carried over: the segment
+        # only renders once tools are counted, so stage the ready state
+        # through the same sync the screen uses.
+        from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+        from tldw_chatbook.Widgets.Console.console_status_chips import (
+            ConsoleToolsChip,
+        )
+
+        strip = console.query_one("#console-status-chips")
+        strip.sync_state(
+            ConsoleControlState(
+                provider_label="Provider: llama.cpp",
+                model_label="Model: model-a",
+                assistant_label="Assistant: General",
+                rag_label="Library · Auto off · Agent access off",
+                sources_label="Sources: 0 staged",
+                tools_label="Tools: 7 ready",
+                tools_active=True,
+                approvals_label="Approvals: 0 pending",
+                sources_active=False,
+                approvals_active=False,
+            )
+        )
+        await pilot.pause()
+        line.post_message(ConsoleToolsChip.OpenRequested())
         await pilot.pause(0.3)
 
         assert right_rail.display is True

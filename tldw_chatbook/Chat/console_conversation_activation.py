@@ -66,6 +66,7 @@ class ConsoleConversationActivationResult:
     kind: ConsoleActivationResultKind
     target: LocalCharacterConversationTarget
     commit_started: bool
+    presentation_refused: bool = False
 
 
 @dataclass(frozen=True)
@@ -103,8 +104,10 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
             [LocalCharacterConversationTarget | CharacterConversationActivationRequest],
             object | Awaitable[object],
         ],
-        rollback_opened_target: Callable[[object], None | Awaitable[None]],
-        restore_state: Callable[[ConsoleStateT], None | Awaitable[None]],
+        rollback_opened_target: Callable[
+            [object], bool | None | Awaitable[bool | None]
+        ],
+        restore_state: Callable[[ConsoleStateT], bool | None | Awaitable[bool | None]],
         exact_target_visible: Callable[
             [LocalCharacterConversationTarget | CharacterConversationActivationRequest],
             bool | Awaitable[bool],
@@ -275,6 +278,7 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
         self.phase = ConsoleActivationPhase.OPENING_CANCELLABLE
         commit_started = False
         opened_token: object | None = None
+        presentation_refused = False
         try:
             revalidation = await _maybe_await(self._revalidate(target))
             if revalidation is not None:
@@ -323,6 +327,7 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
                 # No await between the source's final readiness/visit proof,
                 # synchronous dismissal, and the Console's strict proof below.
                 opened_ok = complete_presentation(result) is True
+                presentation_refused = not opened_ok
             visible = (
                 bool(await _maybe_await(self._exact_target_visible(target)))
                 if opened_ok
@@ -343,6 +348,7 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
                 )
             raise
         except Exception:  # noqa: BLE001 - boundary converts adapters to typed failure
+            presentation_refused = False
             logger.bind(
                 operation_id=id(commit_event),
                 target_type="local_character_conversation",
@@ -354,8 +360,13 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
         if commit_started:
             if opened_token is not None:
                 try:
-                    await _maybe_await(self._rollback_opened_target(opened_token))
+                    if (
+                        await _maybe_await(self._rollback_opened_target(opened_token))
+                        is False
+                    ):
+                        presentation_refused = False
                 except Exception:  # noqa: BLE001 - continue restoring prior UI
+                    presentation_refused = False
                     logger.bind(
                         operation_id=id(commit_event),
                         target_type="local_character_conversation",
@@ -365,8 +376,10 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
                         "Could not remove owned Console session after failed activation"
                     )
             try:
-                await _maybe_await(self._restore_state(prior_state))
+                if await _maybe_await(self._restore_state(prior_state)) is False:
+                    presentation_refused = False
             except Exception:  # noqa: BLE001 - rollback is best-effort at boundary
+                presentation_refused = False
                 logger.bind(
                     operation_id=id(commit_event),
                     target_type="local_character_conversation",
@@ -381,4 +394,5 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
             if isinstance(target, CharacterConversationActivationRequest)
             else target,
             commit_started,
+            presentation_refused=presentation_refused,
         )

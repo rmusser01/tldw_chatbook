@@ -358,3 +358,53 @@ async def test_title_names_the_sub_agent_label_and_falls_back_without_one():
         title = str(card.query_one("#question-title", Static).render())
         assert title.startswith("Sub-agent 're searcher z") and title.endswith("…' has 1 question for you:")
         assert "\n" not in title and "\x07" not in title
+
+
+# --- TASK-35028: the deadline countdown write is equality-gated --------------
+
+
+@pytest.mark.asyncio
+async def test_deadline_tick_repaints_only_when_the_countdown_copy_moves(
+    monkeypatch,
+):
+    """The 1 s tick costs a string compare while M:SS has not moved.
+
+    TASK-35028: ``#question-deadline`` is height:auto, so an ungated
+    per-tick write armed a whole-screen relayout every second even though
+    the copy only changes once per second.
+    """
+    from tldw_chatbook.Widgets.Chat_Widgets import chat_question_card as module
+
+    app = _Harness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        payload = _payload(1, timeout=120)
+        payload["deadline_monotonic"] = time.monotonic() + 60.0
+        card = await _mount(app, pilot, payload)
+        label = card.query_one("#question-deadline", Static)
+        assert card._deadline_timer is not None
+        calls = []
+        original_update = label.update
+
+        def counting_update(*args, **kwargs):
+            calls.append(args)
+            return original_update(*args, **kwargs)
+
+        label.update = counting_update
+        # Freeze the card's clock mid-countdown: the first tick paints (or
+        # matches whatever the mount painted), and any further tick within
+        # the same second must not repaint at all.
+        clock = [payload["deadline_monotonic"] - 60.0]
+        monkeypatch.setattr(
+            module, "time", SimpleNamespace(monotonic=lambda: clock[0])
+        )
+        card._sync_deadline(label)
+        painted_once = len(calls)
+        card._sync_deadline(label)
+        card._sync_deadline(label)
+        assert len(calls) == painted_once, "unchanged ticks must not repaint"
+        # One second later the copy moves, and the write must happen.
+        clock[0] += 1.0
+        card._sync_deadline(label)
+        assert len(calls) == painted_once + 1
+        assert "Auto-continues in 0:59" in str(label.render())

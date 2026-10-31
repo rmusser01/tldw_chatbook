@@ -72,8 +72,7 @@ class _TemporaryRecoveryApp(ConsolidatedCSSApp):
 async def test_temporary_capture_callout_offers_save_or_explicit_capture_off() -> None:
     actions: list[tuple[str, str]] = []
     app = _TemporaryRecoveryApp(
-        lambda action, preparation_id: actions.append((action, preparation_id))
-        or True
+        lambda action, preparation_id: actions.append((action, preparation_id)) or True
     )
     async with app.run_test(size=(52, 18)) as pilot:
         await pilot.pause()
@@ -161,9 +160,7 @@ async def test_capture_policy_explains_temporary_save_and_send_boundary() -> Non
     async with app.run_test() as pilot:
         await app.push_screen(ConsoleCapturePolicyDialog(bindings))
         await pilot.pause()
-        guidance = app.screen.query_one(
-            "#capture-policy-temporary-guidance", Static
-        )
+        guidance = app.screen.query_one("#capture-policy-temporary-guidance", Static)
 
         assert "Save & Send" in str(guidance.render())
         assert "Send without capture" in str(guidance.render())

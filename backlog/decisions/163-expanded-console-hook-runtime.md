@@ -178,8 +178,15 @@ record and counters for explicit reconciliation. Darwin local process groups
 are qualified by controlled children; deliberately escaped descendants and
 Windows tree-terminal proof remain outside this qualification. R47 refuses
 Windows v2 commands with `unsupported_platform` before launch, root reservation
-or environment access; no execution/lifetime ticket leaks. Linux POSIX behavior
-remains unqualified until its own real controls run. Legacy hooks are unchanged.
+or environment access; no execution/lifetime ticket leaks. Linux POSIX qualification was initially deferred. Legacy hooks are unchanged.
+
+**Linux qualification, 2026-10-28 (TASK-37204):** Ubuntu 24.04 / Python 3.12.15
+ran the complete command-execution and tool-pipeline controls together with
+native/fenced schema recovery, working-set replacement and skill gates: 142
+passed, zero failures/errors/skips (59.68s). The [run and retained JUnit artifact](https://github.com/rmusser01/tldw_chatbook/actions/runs/40742429112)
+identify implementation head `5157f909ac`. This qualifies those controlled Linux
+paths, preserving the process-group/escaped-descendant limits above; it does not
+establish the reporting user's exact Fedora configuration or live-model behavior.
 
 Authority callback exceptions become fixed `authority_check_failed` outcomes at
 admission and final acceptance. Dependency metadata failures become
@@ -509,6 +516,42 @@ Only an actual host-issued Interrupt/SessionEnd delivery can carry this scope ac
 
 Retire this scope/view at the bounded notification boundary without confusing that retirement with actual request/process cleanup. Unresolved resource custody stays with its existing owners. Repeated close must neither issue new authority nor extend deadlines. Qualify actual Console close after a completed turn, preserved ordinary post-seal refusal, a denying nested guard, stale/dependency/context refusal, and real notification/cleanup timing. Best-effort omission remains correct whenever ordinary current authority or the exact original deadline no longer permits dispatch.
 
+
+#### TASK-33648: saved standalone SessionEnd during host disposal
+
+Host disposal closes ordinary Console and HookPermissions admission immediately.
+An already-live lifecycle may retain its one host-issued, effect-free SessionEnd
+notification through that closure. The exception belongs to its exact existing
+engine-issued execution state, event identity, session and original notification
+deadline; event labels, public teardown booleans, copied events and ordinary calls
+cannot acquire it. Repeated sealing or disposal cannot issue another notification
+or extend the window. Managed-plugin authority and ordinary MCP dispatch retain
+their existing boundaries.
+Trusted per-handler projection retains the exact original host event and issued
+execution through a private delivery-local witness. The callback must be the
+exact projected object of that still-active delivery; a public replay creates
+its own witness and cannot borrow ambient delivery state. Parallel handlers
+keep separate projection witnesses, and retirement or cancellation fences them.
+
+The standalone command still needs its original exact saved definition and grant.
+At actual process creation, the existing permission owner reads canonical config
+and local consent under their existing launch locks, compares the original
+config/profile path and section identity, definition fingerprint and grant epoch,
+and rechecks the authentic bounded delivery. Changed, revoked, reapproved,
+disabled, locally sealed, refresh-pending, missing or unavailable state refuses.
+This private teardown validation does not republish ordinary targets, reopen the
+closed owner, create a grant, accept effects, prompt, reconnect or start a model
+turn. Existing command launch, ticket, process and physical reaping custody remain
+responsible through cancelled disposal callers and the unchanged cleanup allowance.
+
+This is a narrow implementation of H2/R73 and
+[ADR-197's standalone v2 consent](197-console-hook-configuration-review.md#current-dev-integration-standalone-v2-consent-task-32679),
+recorded prospectively for
+[TASK-33648](../tasks/task-33648%20-%20Preserve-authorized-SessionEnd-notification-during-Console-host-disposal.md).
+No new permission owner, persistence schema, dependency or general post-disposal
+authority is introduced. Qualification requires real saved/granted exact-close
+and disposal controls, changed/revoked/forged negative controls and cancellation
+with actual process, ticket and physical cleanup evidence.
 
 ### H6 integration and operational handoff
 

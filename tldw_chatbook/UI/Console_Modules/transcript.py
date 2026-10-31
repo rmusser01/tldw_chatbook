@@ -88,6 +88,7 @@ handlers.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -97,6 +98,7 @@ from textual.containers import Vertical
 from textual.css.query import QueryError
 from textual.widget import Widget
 
+from ...Utils.ui_responsiveness import heap_freeze_epoch, heap_refreezer
 from ...Widgets.Console import ConsoleTranscript
 from .frame import frame_console_region
 
@@ -109,22 +111,127 @@ class ConsoleChangeReviewProjection:
         *,
         runtime_accessor: Callable[[], Any],
         conversation_id_accessor: Callable[[], str | None],
+        screen: Any | None = None,
     ) -> None:
+        self._screen = screen
         self._runtime_accessor = runtime_accessor
         self._conversation_id_accessor = conversation_id_accessor
         self._key: tuple[str | None, int] | None = None
         self._marker_blocks: list[Any] = []
+        self._owner = None
+        self._preparation_reads = set()
+        self._prepared_stock = False
+        self._prepare_lock = asyncio.Lock()
+
+    def _closed(self) -> bool:
+        if self._screen is None:
+            return False
+        from ..Screens.chat_screen import _console_screen_is_torn_down
+
+        return _console_screen_is_torn_down(self._screen)
+
+    def _selection(self):
+        runtime = self._runtime_accessor()
+        coordinator = runtime.change_review_coordinator
+        bridge = getattr(runtime, "agent_bridge", None)
+        database = getattr(bridge, "_db", None)
+        conversation_id = self._conversation_id_accessor()
+        revision = (
+            coordinator.publication_signal.snapshot().revision
+            if coordinator is not None
+            else None
+        )
+        return (runtime, coordinator, bridge, database, conversation_id, revision)
+
+    @staticmethod
+    def _same_selection(before, after):
+        return (
+            all(left is right for left, right in zip(before[:4], after[:4]))
+            and before[4:] == after[4:]
+        )
+
+    async def prepare(self) -> bool:
+        """Await one stock read before the caller captures current UI messages."""
+        if self._closed():
+            return False
+        async with self._prepare_lock:
+            if self._closed():
+                return False
+            return await self._prepare_current()
+
+    async def _prepare_current(self) -> bool:
+        selected = self._selection()
+        runtime, coordinator, bridge, _unused_database, conversation_id, _unused_revision = selected
+        if conversation_id is None:
+            self._prepared_stock = False
+            return True
+        from ...Chat.console_change_review_read import (
+            MarkerReadObsolete,
+            capture_marker_read,
+        )
+
+        read = capture_marker_read(runtime, coordinator, bridge, conversation_id)
+        if read is None:
+            self._prepared_stock = False
+            return True
+        self._prepared_stock = True
+        if runtime._disposed:
+            return False
+        if self._owner is not None and self._same_selection(
+            (*self._owner, *self._key), selected
+        ):
+            return True
+        self._marker_blocks = []
+        self._key = self._owner = None
+        try:
+            blocks = await read.run(self)
+        except MarkerReadObsolete:
+            return False
+        if (
+            self._closed()
+            or not self._same_selection(selected, self._selection())
+            or runtime._disposed
+        ):
+            return False
+        self._marker_blocks = [block for block in blocks if block[0] is not None]
+        self._owner, self._key = selected[:4], selected[4:]
+        return True
+
+    def revision_key(self) -> tuple[str | None, int] | None:
+        """Cheap input token for screen-side skip gates (TASK-34958).
+
+        Mirrors ``project``'s own cache key: when this and the caller's
+        other inputs are unchanged, ``project`` would inject the same
+        markers, so the screen may skip the whole pipeline.
+        """
+        runtime = self._runtime_accessor()
+        coordinator = runtime.change_review_coordinator
+        if coordinator is None:
+            return None
+        return (
+            self._conversation_id_accessor(),
+            coordinator.publication_signal.snapshot().revision,
+        )
 
     def project(self, messages: list[Any]) -> list[Any]:
         """Return messages with the current durable review markers injected."""
+        if self._closed():
+            return messages
         runtime = self._runtime_accessor()
         coordinator = runtime.change_review_coordinator
         if coordinator is None:
             return messages
         conversation_id = self._conversation_id_accessor()
         key = (conversation_id, coordinator.publication_signal.snapshot().revision)
-        if key != self._key:
-            bridge = runtime.agent_bridge
+        bridge = runtime.agent_bridge
+        owner = (runtime, coordinator, bridge, getattr(bridge, "_db", None))
+        if (
+            key != self._key
+            or self._owner is None
+            or any(left is not right for left, right in zip(owner, self._owner))
+        ):
+            if self._prepared_stock:
+                return messages
             self._marker_blocks = (
                 [
                     block
@@ -135,6 +242,7 @@ class ConsoleChangeReviewProjection:
                 else []
             )
             self._key = key
+            self._owner = owner
         from ...Chat.console_agent_bridge import inject_resume_agent_markers
 
         return inject_resume_agent_markers(messages, self._marker_blocks)
@@ -313,3 +421,79 @@ class ConsoleTranscriptRegion(Vertical):
         if transcript is None:
             return
         transcript.note_follow_intent()
+
+
+#: Screen attribute: the ``((session, conversation), freeze epoch)`` the
+#: transcript last showed when an idle heap re-freeze was requested for it.
+_REFREEZE_PAINTED_ATTRIBUTE = "_console_heap_refreeze_painted"
+
+
+def request_console_heap_refreeze(screen: Any, reason: str) -> None:
+    """Ask for an idle heap re-freeze once this Console is quiet (TASK-33620.15.3).
+
+    Called when a run settles and when the transcript shows a different
+    conversation: the two moments the Console's long-lived heap changes. The
+    re-freeze itself runs later, only while :func:`_console_heap_busy` is
+    False and no input arrived for the quiet period (ADR-198 amendment).
+
+    Args:
+        screen: The Console ``ChatScreen``; its timer runs the re-freeze.
+        reason: ``run_settled`` or ``conversation_painted``.
+    """
+    heap_refreezer().request(reason, screen, _console_heap_busy)
+
+
+def note_console_conversation_painted(screen: Any) -> None:
+    """Request a re-freeze when the transcript shows a different conversation.
+
+    The transcript is rebuilt for every conversation it shows. When a freeze
+    ran while the outgoing one was shown, its rows were frozen live and are
+    now cyclic garbage no collection reaches, so the refreezer is told to
+    compact at the next idle moment (ADR-198 amendment). Rows replaced
+    before any freeze are ordinary garbage: the re-freeze's own full
+    collection reclaims them. A new chat gaining its conversation id on its
+    first send is not a switch: its rows stay (they match by message id).
+
+    Args:
+        screen: The Console ``ChatScreen`` whose transcript was just synced.
+    """
+    store = screen._console_chat_store
+    key = (
+        store.active_session_id if store is not None else None,
+        screen._current_console_conversation_id(),
+    )
+    shown = getattr(screen, _REFREEZE_PAINTED_ATTRIBUTE, None)
+    if shown is not None and shown[0] == key:
+        return
+    if shown is not None and shown[0] == (key[0], None):
+        # A new chat's first send persisted it: rows match by message id, so
+        # none were replaced. Keep the epoch it was first shown under.
+        setattr(screen, _REFREEZE_PAINTED_ATTRIBUTE, (key, shown[1]))
+        return
+    if shown is not None and heap_freeze_epoch() != shown[1]:
+        heap_refreezer().note_stranded()
+    setattr(screen, _REFREEZE_PAINTED_ATTRIBUTE, (key, heap_freeze_epoch()))
+    request_console_heap_refreeze(screen, "conversation_painted")
+
+
+def _console_heap_busy(screen: Any) -> bool:
+    """Whether a re-freeze must wait: from Enter to a settled run, or off screen.
+
+    A visible send is in flight from its press (``_console_send_flight``)
+    until its turn is accepted; from acceptance the run is in custody or
+    active, which keeps the transcript poll running. A Console that is not
+    the screen on top (another screen, a modal) is busy too, so a re-freeze
+    never freezes a transient screen's widgets.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import _console_screen_is_torn_down
+
+    if _console_screen_is_torn_down(screen) or screen.app.screen is not screen:
+        return True
+    flight = getattr(screen, "_console_send_flight", None)
+    if flight is not None and (flight.tasks or flight.deferred is not None):
+        return True
+    if getattr(screen, "_console_pending_send", None) is not None:
+        return True
+    if getattr(screen, "_console_transcript_sync_timer", None) is not None:
+        return True
+    return bool(screen._console_transcript_poll_needed())

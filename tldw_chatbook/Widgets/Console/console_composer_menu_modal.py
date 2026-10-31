@@ -35,6 +35,10 @@ ACTION_BUDDY = "buddy"
 #: `@on(Button.Pressed, "#console-<id>")` handlers stay the one
 #: implementation and the menu just becomes a second way in.
 ACTION_ATTACH_CONTEXT = "attach-context"
+#: TASK-35160 follow-up: the status line's Library policy readout moved
+#: here; the entry opens the same two-axis policy editor the line's
+#: segment click used to open.
+ACTION_LIBRARY_ACCESS = "library-access"
 #: Matches the `EPHEMERAL_BLOCKED_ACTIONS` registry key, so the
 #: temporary-chat block needs no translation layer.
 ACTION_SAVE_CHATBOOK = "save-chatbook"
@@ -141,6 +145,11 @@ def build_composer_menu_entries(
             "Attach a file to the draft",
         ),
         ComposerMenuEntry(
+            ACTION_LIBRARY_ACCESS,
+            "Library access…",
+            "View and edit this conversation's Library policy",
+        ),
+        ComposerMenuEntry(
             ACTION_SAVE_CHATBOOK,
             "Save as Chatbook",
             chatbook_reason,
@@ -203,8 +212,9 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
     #console-composer-menu {
         width: 56;
         height: auto;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
@@ -225,7 +235,7 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
        contrast at ~1.1:1, so muting the explanation too would make the
        reason as unreadable as the state it explains. */
     .console-composer-menu-reason {
-        color: $warning;
+        color: $text-warning;
         margin: 0 0 1 2;
         width: 100%;
     }

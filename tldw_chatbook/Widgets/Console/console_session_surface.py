@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from dataclasses import replace
+from types import CoroutineType, FunctionType
 from typing import Any, Callable
 
 from tldw_chatbook.Utils.input_validation import escape_markup as _escape_markup
 from rich.text import Text
 from textual import events
+from textual._context import active_message_pump
 from textual.app import ComposeResult
 from textual.containers import Horizontal, HorizontalScroll, Vertical
 from textual.css.query import NoMatches
+from textual.message import Message
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
@@ -39,6 +43,7 @@ from tldw_chatbook.Widgets.Console.console_activity_outcome_notice import (
     ConsoleActivityOutcomeNotice,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from tldw_chatbook.UI.Navigation.surface_swap_guard import finish_removal
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
 
@@ -100,10 +105,13 @@ def _session_tab_tooltip(
     that class of bug even though today's fixed vocabulary (the marker
     meaning, "Click again to rename.") happens to contain no brackets.
     """
-    display_title = sanitize_character_display_label(
-        session.title,
-        max_characters=CONSOLE_SESSION_TITLE_MAX_CHARACTERS,
-    ) or "Untitled"
+    display_title = (
+        sanitize_character_display_label(
+            session.title,
+            max_characters=CONSOLE_SESSION_TITLE_MAX_CHARACTERS,
+        )
+        or "Untitled"
+    )
     meaning = CONSOLE_RUN_MARKER_MEANINGS.get(marker, "")
     tail = f" — {meaning}." if meaning else "."
     # DS-04 (TASK-2154.15): the middle-click close accelerator is surfaced
@@ -115,8 +123,7 @@ def _session_tab_tooltip(
         )
     else:
         text = (
-            f"Switch to Console tab: {display_title}{tail}"
-            " Middle-click closes the tab."
+            f"Switch to Console tab: {display_title}{tail} Middle-click closes the tab."
         )
     if session.ephemeral:
         # The ◌ glyph carries no meaning on its own; this is where it is
@@ -140,6 +147,11 @@ class ConsoleSessionTabButton(Button):
     button and stops the event, so the middle-click path must live here.
     """
 
+    # TASK-33622.7: a click switches chats without taking focus, so keys
+    # typed straight after it stay in the composer instead of reaching
+    # single-letter screen bindings (a "y" opened Trace). Tab still focuses it.
+    FOCUS_ON_CLICK = False
+
     # TASK-375: keep the (middle-truncated) label on one line so its ellipsis
     # renders instead of being word-wrapped onto a hidden second row.
     BUNDLED_CSS = """
@@ -149,9 +161,21 @@ class ConsoleSessionTabButton(Button):
     }
     """
 
-    def __init__(self, *args: Any, session_id: str, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        session_id: str,
+        capture_click_record: Callable[[str], Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._session_id = session_id
+        #: TASK-33622.7: called with this tab's session id when a left click
+        #: lands, before its Pressed message starts its way to the screen.
+        self._capture_click_record = capture_click_record
+        #: TASK-35640: the record a click took, until that click posts its
+        #: own Pressed (see ``post_message``).
+        self._click_record_in_flight: Any = None
 
     async def _on_click(self, event) -> None:
         # TASK-33621.15: both branches prevent the default, because Textual
@@ -170,8 +194,43 @@ class ConsoleSessionTabButton(Button):
                 return
             close_button.press()
             return
-        await super()._on_click(event)
+        if self._capture_click_record is not None:
+            self._click_record_in_flight = self._capture_click_record(self._session_id)
+        try:
+            await super()._on_click(event)
+        finally:
+            self._click_record_in_flight = None
         event.prevent_default()
+
+    def post_message(self, message: Message) -> bool:
+        """Attach the in-flight click record to the Pressed that click posts.
+
+        TASK-35640: the record rides on the message itself, so only the
+        handling of that one press can use it; a click that never becomes a
+        press (or a press from the keyboard) carries nothing anywhere.
+        """
+        record = self._click_record_in_flight
+        if record is not None and isinstance(message, Button.Pressed):
+            self._click_record_in_flight = None
+            setattr(message, _CLICK_RECORD_ATTRIBUTE, record)
+        return super().post_message(message)
+
+
+#: The attribute a session tab's ``Button.Pressed`` carries its click record in.
+_CLICK_RECORD_ATTRIBUTE = "_console_session_tab_click_record"
+
+
+def session_tab_click_record(pressed: Button.Pressed) -> Any:
+    """The record the click behind ``pressed`` took, or None (TASK-35640).
+
+    Args:
+        pressed: A session tab's ``Button.Pressed`` message.
+
+    Returns:
+        What ``capture_click_record`` returned for that click, or None when
+        the press did not come from a recorded click.
+    """
+    return getattr(pressed, _CLICK_RECORD_ATTRIBUTE, None)
 
 
 class ConsoleSessionTabStrip(HorizontalScroll):
@@ -247,10 +306,13 @@ class ConsoleSessionSurface(Vertical):
         app_instance: Any,
         *,
         background_effect_settings: ConsoleBackgroundEffectSettings | None = None,
+        capture_session_tab_click: Callable[[str], Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        #: TASK-33622.7: records the composer when a session tab is clicked.
+        self._capture_session_tab_click = capture_session_tab_click
         self.background_effect_settings = (
             background_effect_settings or ConsoleBackgroundEffectSettings()
         )
@@ -293,7 +355,9 @@ class ConsoleSessionSurface(Vertical):
         query keeps resolving.
         """
         tab_strip = ConsoleSessionTabStrip(id="console-native-tab-strip")
-        tab_strip.remove_class(*(name for name in tab_strip.classes if name.startswith("h-")))
+        tab_strip.remove_class(
+            *(name for name in tab_strip.classes if name.startswith("h-"))
+        )
         tab_strip.set_styles(height=None)
         tab_strip.add_class("h-1")
         tab_strip.styles.min_height = 1
@@ -302,14 +366,18 @@ class ConsoleSessionSurface(Vertical):
         # utility overrides the shared `#console-native-tab-strip` rule so a
         # margin never eats the row's single line.
         tab_strip.add_class("m-0")
-        tab_strip.remove_class(*(name for name in tab_strip.classes if name.startswith("w-")))
+        tab_strip.remove_class(
+            *(name for name in tab_strip.classes if name.startswith("w-"))
+        )
         tab_strip.set_styles(width=None)
         tab_strip.add_class("w-fill")
         tab_strip.on_overflow_state_changed = self._sync_tab_overflow_hints
         tab_strip.compose_add_child(self._build_new_tab_button())
 
         strip_row = Horizontal(classes="console-session-tab-strip")
-        strip_row.remove_class(*(name for name in strip_row.classes if name.startswith("h-")))
+        strip_row.remove_class(
+            *(name for name in strip_row.classes if name.startswith("h-"))
+        )
         strip_row.set_styles(height=None)
         strip_row.add_class("h-1")
         strip_row.styles.min_height = 1
@@ -318,9 +386,7 @@ class ConsoleSessionSurface(Vertical):
         # `_build_fleet_coachmark` pattern) because this helper returns the
         # built row rather than yielding through the compose generator.
         strip_row.compose_add_child(
-            self._build_overflow_hint(
-                CONSOLE_TAB_OVERFLOW_LEFT_ID, GLYPH_COLLAPSE_LEFT
-            )
+            self._build_overflow_hint(CONSOLE_TAB_OVERFLOW_LEFT_ID, GLYPH_COLLAPSE_LEFT)
         )
         strip_row.compose_add_child(tab_strip)
         strip_row.compose_add_child(
@@ -403,7 +469,9 @@ class ConsoleSessionSurface(Vertical):
             compact=True,
         )
         dismiss.tooltip = "Dismiss"
-        dismiss.remove_class(*(name for name in dismiss.classes if name.startswith("w-")))
+        dismiss.remove_class(
+            *(name for name in dismiss.classes if name.startswith("w-"))
+        )
         dismiss.set_styles(width=None)
         dismiss.add_class("w-3")
         dismiss.styles.min_width = CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH
@@ -444,6 +512,7 @@ class ConsoleSessionSurface(Vertical):
     def _build_new_tab_button(self) -> Button:
         """Return the compact symbolic Console new-session control."""
         button = Button("New tab", id="console-new-chat-tab", compact=True)
+        button.FOCUS_ON_CLICK = False  # TASK-33622.7: see ConsoleSessionTabButton
         button.tooltip = "New Console tab"
         button.remove_class(*(name for name in button.classes if name.startswith("w-")))
         button.set_styles(width=None)
@@ -460,6 +529,7 @@ class ConsoleSessionSurface(Vertical):
     def _build_new_temporary_tab_button(self) -> Button:
         """Return the tab-strip control for a chat that is never saved."""
         button = Button("Temporary", id="console-new-temporary-tab", compact=True)
+        button.FOCUS_ON_CLICK = False  # TASK-33622.7: see ConsoleSessionTabButton
         button.tooltip = "New temporary Console tab — not saved locally"
         button.remove_class(*(name for name in button.classes if name.startswith("h-")))
         button.remove_class(*(name for name in button.classes if name.startswith("w-")))
@@ -492,10 +562,13 @@ class ConsoleSessionSurface(Vertical):
         title always remains one hover away in the tab's tooltip
         (``_session_tab_tooltip``).
         """
-        normalized_title = sanitize_character_display_label(
-            title,
-            max_characters=CONSOLE_SESSION_TITLE_MAX_CHARACTERS,
-        ) or "Untitled"
+        normalized_title = (
+            sanitize_character_display_label(
+                title,
+                max_characters=CONSOLE_SESSION_TITLE_MAX_CHARACTERS,
+            )
+            or "Untitled"
+        )
         if len(normalized_title) <= CONSOLE_SESSION_TAB_DISPLAY_CHARS:
             return normalized_title
         keep = CONSOLE_SESSION_TAB_DISPLAY_CHARS - 1  # room for the ellipsis cell
@@ -526,6 +599,7 @@ class ConsoleSessionSurface(Vertical):
             classes=classes,
             compact=True,
             session_id=session.id,
+            capture_click_record=self._capture_session_tab_click,
         )
         button.tooltip = _session_tab_tooltip(
             session,
@@ -608,13 +682,18 @@ class ConsoleSessionSurface(Vertical):
             classes="console-session-close-button",
             compact=True,
         )
+        close_button.FOCUS_ON_CLICK = False  # TASK-33622.7
         close_button.tooltip = "Close Console tab"
-        close_button.remove_class(*(name for name in close_button.classes if name.startswith("w-")))
+        close_button.remove_class(
+            *(name for name in close_button.classes if name.startswith("w-"))
+        )
         close_button.set_styles(width=None)
         close_button.add_class("w-3")
         close_button.styles.min_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
         close_button.styles.max_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
-        close_button.remove_class(*(name for name in close_button.classes if name.startswith("h-")))
+        close_button.remove_class(
+            *(name for name in close_button.classes if name.startswith("h-"))
+        )
         close_button.set_styles(height=None)
         close_button.add_class("h-1")
         close_button.styles.min_height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
@@ -679,6 +758,38 @@ class ConsoleSessionSurface(Vertical):
                     "console-session-tab-active",
                 )
 
+    def show_active_session(self, session_id: str | None, title: str | None) -> None:
+        """Move the active-tab highlight and header title, mounting nothing.
+
+        TASK-33622.7: a session switch shows its chat at once, before the
+        coalescable sync pass reaches ``sync_sessions``, which still owns
+        labels, markers, tooltips and any tab that must be mounted.
+
+        Args:
+            session_id: Session whose tab is now active.
+            title: That session's title for the transcript header.
+        """
+        self.set_session_title(title)
+        try:
+            tab_strip = self.query_one("#console-native-tab-strip", HorizontalScroll)
+        except NoMatches:
+            return
+        active_id = f"console-session-tab-{session_id}"
+        for child in tab_strip.children:
+            if (child.id or "").startswith("console-session-tab-"):
+                child.set_class(child.id == active_id, "console-session-tab-active")
+
+    def highlighted_session_id(self) -> str | None:
+        """The session whose tab carries the active highlight, if any."""
+        try:
+            tab_strip = self.query_one("#console-native-tab-strip", HorizontalScroll)
+        except NoMatches:
+            return None
+        for child in tab_strip.children:
+            if child.has_class("console-session-tab-active"):
+                return (child.id or "").removeprefix("console-session-tab-") or None
+        return None
+
     def _record_mount_churn(self, *, mounted: int = 0, removed: int = 0) -> None:
         """Best-effort tab churn diagnostic hook."""
         try:
@@ -691,6 +802,29 @@ class ConsoleSessionSurface(Vertical):
                 )
         except Exception:
             return
+
+    def _session_strip_is_attached(self, tab_strip: HorizontalScroll) -> bool:
+        """Check that an awaited tab update still owns the attached strip."""
+        if (
+            not self.is_attached
+            or self.app._exit
+            or not tab_strip.is_attached
+            or self._closing
+            or self._closed
+            or self._pruning
+            or tab_strip._closing
+            or tab_strip._closed
+            or tab_strip._pruning
+        ):
+            return False
+        try:
+            return (
+                self.query_one("#console-native-tab-strip", HorizontalScroll)
+                is tab_strip
+            )
+        except NoMatches:
+            return False
+
 
     async def sync_sessions(
         self,
@@ -711,13 +845,60 @@ class ConsoleSessionSurface(Vertical):
                 controller), falls back to the legacy ``streaming_session_id``
                 single-session cursor for the RUNNING glyph only.
         """
+        if not self.is_attached or self._closing or self._closed or self._pruning:
+            return
         active_session = next(
             (session for session in sessions if session.id == active_session_id),
             None,
         )
         self.set_session_title(active_session.title if active_session else None)
         async with self._session_sync_lock:
-            tab_strip = self.query_one("#console-native-tab-strip", HorizontalScroll)
+            if (
+                not self.is_attached
+                or self.app._exit
+                or self._closing
+                or self._closed
+                or self._pruning
+            ):
+                return
+            try:
+                tab_strip = self.query_one(
+                    "#console-native-tab-strip", HorizontalScroll
+                )
+            except NoMatches:
+                return
+            # A copied pump context does not identify its actual mount task.
+            # Eager execution can enter Mount before Textual assigns _task.
+            task = asyncio.current_task()
+            strip_task = tab_strip._task
+            owns_mount = (
+                active_message_pump.get(None) is tab_strip
+                and task is not None
+                and task is strip_task
+            )
+            if (
+                not owns_mount
+                and strip_task is None
+                and task is not None
+                and active_message_pump.get(None) is tab_strip
+            ):
+                function = inspect.getattr_static(
+                    type(tab_strip), "_process_messages", None
+                )
+                coroutine = task.get_coro()
+                frame = coroutine.cr_frame if type(coroutine) is CoroutineType else None
+                owns_mount = (
+                    type(function) is FunctionType
+                    and type(coroutine) is CoroutineType
+                    and coroutine.cr_code is function.__code__
+                    and frame is not None
+                    and frame.f_locals.get("self") is tab_strip
+                )
+                del frame, coroutine, function
+            if not owns_mount:
+                await tab_strip._mounted_event.wait()
+            if not self._session_strip_is_attached(tab_strip):
+                return
             desired_ids = self._desired_tab_child_ids(
                 sessions=sessions,
                 active_session_id=active_session_id,
@@ -736,8 +917,11 @@ class ConsoleSessionSurface(Vertical):
 
             removed_count = len(tab_strip.children)
             mounted_count = (len(sessions) * 2) + 2
+            # Each removal or mount can yield to navigation or app shutdown.
             for child in list(tab_strip.children):
-                await child.remove()
+                await finish_removal(child.remove())
+                if not self._session_strip_is_attached(tab_strip):
+                    return
             for session in sessions:
                 is_active = session.id == active_session_id
                 marker = self._resolve_tab_marker(
@@ -753,9 +937,19 @@ class ConsoleSessionSurface(Vertical):
                         queued_count=(queue_counts or {}).get(session.id, 0),
                     )
                 )
+                if not self._session_strip_is_attached(tab_strip):
+                    return
                 await tab_strip.mount(self._build_close_tab_button(session))
+                if not self._session_strip_is_attached(tab_strip):
+                    return
+            if not self._session_strip_is_attached(tab_strip):
+                return
             await tab_strip.mount(self._build_new_tab_button())
+            if not self._session_strip_is_attached(tab_strip):
+                return
             await tab_strip.mount(self._build_new_temporary_tab_button())
+            if not self._session_strip_is_attached(tab_strip):
+                return
             self._record_mount_churn(mounted=mounted_count, removed=removed_count)
         # TASK-28028: mounted/removed tabs change what is hidden past each
         # edge even when scroll_x does not move; refresh the ‹ › hints once

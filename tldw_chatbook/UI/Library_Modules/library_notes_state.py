@@ -458,6 +458,14 @@ class LibraryNotesState:
     tree_inactive_managed_folder_ids: frozenset[str] = field(
         default_factory=frozenset
     )
+    # TASK-34000.2: sync folders whose lasting-sync root is held for
+    # attention, read live from the runtime (``library_notes_sync_attention``)
+    # -- their tree row and the list's idle status say so.
+    tree_attention_folder_ids: frozenset[str] = field(default_factory=frozenset)
+    # TASK-34000.50 fix round 1: healthy sync folders nothing is watching,
+    # read live from the runtime the same way -- their tree row reads
+    # "⚠ Sync stopped" instead of "⇄ Sync managed".
+    tree_unwatched_folder_ids: frozenset[str] = field(default_factory=frozenset)
     tree_selected_placement_id: str = ""
     tree_pending_target_placement_id: str = ""
     filter_browse_receipt: LibraryNotesTreeReceipt | None = None
@@ -496,8 +504,21 @@ class LibraryNotesState:
     load_state: str = "idle"
     load_message: str = ""
     autosave_state: str = "idle"
+    #: TASK-34000.10 (N-07): the field the last validation veto named
+    #: ("title" / "body" / "keywords"), or "", and the coordinator's own
+    #: reason. The editor marks that field and shows the reason under it.
+    #: Fix round 1 (M-5/M-6): the mark outlives ``autosave_state`` -- a key
+    #: typed into ANOTHER field must not hide the hint row and shift the
+    #: body -- and clears only when the vetoed field itself changes
+    #: (``clear_vetoed_field``), the note loads or the editor resets.
+    validation_field: str = ""
+    validation_message: str = ""
     autosave_timer: Timer | None = None
     autosave_generation: int = 0
+    #: TASK-34000.1: ``((note_id, session_generation, saved_revision),
+    #: started_at)`` for the burst of unsaved typing the debounce is
+    #: deferring, or None. Bounds that burst by the autosave max wait.
+    autosave_burst: tuple[tuple[str, int, int], float] | None = None
     confirming_delete: bool = False
     preview: bool = False
     context: bool = False
@@ -522,6 +543,29 @@ class LibraryNotesState:
     #: indistinguishable from a verified zero, and Info claims "no notes
     #: link here yet" before -- or without ever -- checking.
     backlinks_status: Literal["loading", "ready", "failed"] = "loading"
+
+    #: TASK-34000.11: the ``[[`` picker's candidate-load generation. Bumped
+    #: on every new completion context; a loader that answers for an older
+    #: generation is dropped, so a slow query never paints stale rows over
+    #: a narrower one.
+    link_picker_generation: int = 0
+
+    #: TASK-34000.11: the completion ``start`` Escape dismissed, or ``None``.
+    #: While the caret's context still begins there the picker stays closed
+    #: (AC#1: Escape leaves the typed text and does not reopen until the
+    #: context changes); any other context -- or none -- clears it.
+    link_picker_latch: tuple[int, int] | None = None
+
+    #: TASK-34000.11 final fix round (I-1, C-1 (b)): the completion the
+    #: picker was last asked for, as ``(start, query)`` -- ``start`` the
+    #: opener's ``(row, column)``, ``query`` the text between ``[[`` and the
+    #: caret -- or ``None`` while nothing is open and no load is in flight.
+    #: The hot paths (every caret move, Tab and resize frame) read this one
+    #: field and stop when it is ``None``; a keystroke's ``SelectionChanged``
+    #: + ``Changed`` pair starts ONE load because the second sees the same
+    #: request; a caret move into a different ``[[`` ends the completion
+    #: instead of opening a new one.
+    link_picker_request: tuple[tuple[int, int], str] | None = None
 
     # Task 7 owns measured breakpoint transitions. Task 5 consumes this
     # explicit presentation input now so compact/wide utility grouping is
@@ -615,6 +659,18 @@ class LibraryNotesState:
     # happened to it in between.
     session_blank_id: str | None = None
 
+    # TASK-34000.25: where the caret lands once a just-created note's
+    # editor is ready. ``"title"`` is every create today (Blank note, the
+    # templates, ``n``/ctrl+n in Notes: the title is the seed, so it is
+    # the first thing to type). ``"body-end"`` is the Media Reader's Note
+    # action: the title is already the document's and the body opens
+    # with the ``[<title>](media://<uuid>)`` source line, so the caret
+    # belongs on the line after it. Written by ``_create_library_note``
+    # for EVERY create (so it always describes the latest one) and read
+    # by both the create projection and the editor-ready hook, which
+    # race each other to focus a control.
+    create_caret: str = "title"
+
     # (P0, xhigh review + live-verify round) Whether the user has
     # TOUCHED the title widget during this editor session. The
     # untouched-blank GC used to key blankness on
@@ -652,3 +708,23 @@ class LibraryNotesState:
     # Sync now run. None = not edited this panel visit; fall back to the
     # persisted config value.
     sync_folder_text: str | None = None
+
+    def mark_vetoed_field(self, field: str, message: str = "") -> None:
+        """Record the field a validation veto named and its reason.
+
+        TASK-34000.10. ``field`` empty (a failed write, no veto) clears the
+        mark. Called by every veto presenter, autosave or explicit.
+        """
+        self.validation_field = field
+        self.validation_message = message if field else ""
+
+    def clear_vetoed_field(self, field: str | None = None) -> None:
+        """Drop the mark -- for ``field`` only, or unconditionally.
+
+        TASK-34000.10 fix round 1 (M-5/M-6): a field's own ``Changed`` passes
+        its name, so a key typed into another field leaves the hint row where
+        it is; a note load, an editor reset or a discard passes nothing.
+        """
+        if field is None or field == self.validation_field:
+            self.validation_field = ""
+            self.validation_message = ""

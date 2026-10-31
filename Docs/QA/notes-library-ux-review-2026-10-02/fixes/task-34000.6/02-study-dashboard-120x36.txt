@@ -1,0 +1,36 @@
+
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Library ▸ Study                                                                                                      │
+│ Flashcards, quizzes, and study sessions. Esc: back to Library.                                                       │
+│  Ready                                                                                                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+   Dashboard         Paths         Flashcards       Quizzes          Guides         Mindmaps         Course           Ma
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                      │
+│ Study Dashboard                                                                                                      │
+│                                                                                                                      │
+│ Global study | Local Library Sources: Ideas inbox, Reading list, Thesis outline — retrieval-augmented tutoring and 7 │
+│ more                                                                                                                 │
+│                                                                                                                      │
+│ Due Today                             Recent Decks                           Recent Quizzes                          │
+│                                                                                                                      │
+│ 0 due today                           No recent decks yet.                   No recent quizzes yet.                  │
+│                                                                                                                      │
+│                                                                                                                      │
+│  Resume last session  Open flashcards   Open quizzes   Generate source pack                                          │
+│ Source generation requires server mode.                                                                              │
+│                                                                                                                      │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+  esc back to Library | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

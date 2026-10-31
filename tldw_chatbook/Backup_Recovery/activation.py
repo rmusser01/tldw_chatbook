@@ -159,12 +159,12 @@ def _source_scope_admitted(root: Path, names: tuple[str, ...], path: Path) -> bo
     resolved = selected.resolve()
     try:
         info = os.stat(selected)
-        inode = f"inode:{info.st_dev}:{info.st_ino}"
+        inode = bootstrap.inode_token(info)
     except FileNotFoundError:
         inode = None
     for name in uncovered:
         entry = registry[name]
-        if inode is not None and inode in entry["historical"]:
+        if inode is not None and inode in bootstrap.identity_view(entry["historical"]):
             return False
         paths = entry["roots"] + [
             token[5:] for token in entry["historical"] if token.startswith("path:")
@@ -384,6 +384,12 @@ class ActivationStore:
 
 
 def replacement_installation_id() -> str | None:
+    """Return the verified replacement installation, preserving the public seam."""
+    identity = replacement_data_identity()
+    return identity[0] if identity is not None else None
+
+
+def replacement_data_identity() -> tuple[str, str] | None:
     """Read a committed replacement identity before ordinary config composition.
 
     Missing ordinary history retains legacy behavior. Any surviving restored pair
@@ -419,8 +425,9 @@ def replacement_installation_id() -> str | None:
         next(row.evidence for row in rows if row.event == "prepared")
     )
     if rows[-1].event == "rolled_back":
-        return _rollback_installation_id(
-            selector, root, witness, profiles, rows, prepared
+        return (
+            _rollback_installation_id(selector, root, witness, profiles, rows, prepared),
+            witness["generation"],
         )
     if prepared.isolated_profiles:
         # Explicit isolated launch selects its verified identity before this call.
@@ -452,7 +459,7 @@ def replacement_installation_id() -> str | None:
     with _private(store._generation(prepared.generation)) as parent:
         if store._required(parent, prepared.generation).owners != witness["owners"]:
             raise bootstrap.RecoveryRequired("replacement_identity_unverified")
-    return expected.installation_id
+    return expected.installation_id, witness["generation"]
 
 
 def _rollback_installation_id(selector, root, witness, profiles, rows, prepared):

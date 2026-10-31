@@ -1,0 +1,1806 @@
+{
+  "schema_version": 1,
+  "status": "proposal_for_root_scope_selection_not_execution",
+  "preflight_head": "06cfe2f6a30236dcd8f81893ebf49bc3d0b78036",
+  "previous_integrated_dev": "a78a9a900b4901e33c031f830dd2d80224d5147d",
+  "selected_dev": "8c4dfe59a243ce0cec8e131aff3935646c64b298",
+  "incoming_commits": [
+    "8c4dfe59a243ce0cec8e131aff3935646c64b298",
+    "8ef6fa7f287b65a6283f6522766b391017d2a97f",
+    "9199a9774ad1e621662e4cdc1d9cd4d4ad2ee9e0",
+    "88f343b6a0c583dc8ccc471cd0f456647b43d1a2",
+    "13bd08e44826c5dfe62bde41ff7b8319a7257d1c",
+    "9857cbf7d2107ba8196430b39f6bd836a5a6db3d",
+    "ba03d7d0f5e290199960a41582a02ebfe4bf1f1b",
+    "e0cbb2690dd5707b633d7e10dd8b269ee0231b67",
+    "162ecaae1547a615df221a30471dd5308c271bcd",
+    "8d7843893a5463905bbbbee74d7772dcce0d5756"
+  ],
+  "incoming_paths": [
+    {
+      "path": "Docs/User_Guide/console.md",
+      "selected_dev_blob": "92ac0b213a13e214a18951cc8cb9b472b9b74b26",
+      "previous_dev": {
+        "sha256": "2bf92485a8d6b5e1a81baa6059718066dbef73c77c77cb864a5716d5302200cd",
+        "bytes": 79660,
+        "lines": 1234
+      },
+      "head": {
+        "sha256": "2bf92485a8d6b5e1a81baa6059718066dbef73c77c77cb864a5716d5302200cd",
+        "bytes": 79660,
+        "lines": 1234
+      },
+      "selected_dev": {
+        "sha256": "e3ec52ad8fad50d23571064c8a76ddf3ab972671afd897967c950ac60a2763d6",
+        "bytes": 80325,
+        "lines": 1245
+      },
+      "feature_overlap": false,
+      "ownership": "exact selected-dev whole-file bytes",
+      "candidate": {
+        "sha256": "e3ec52ad8fad50d23571064c8a76ddf3ab972671afd897967c950ac60a2763d6",
+        "bytes": 80325,
+        "lines": 1245
+      }
+    },
+    {
+      "path": "Docs/User_Guide/console/attachments-images-voice.md",
+      "selected_dev_blob": "4067864c9109f94f98aedc7fe2c43d9fec867a96",
+      "previous_dev": {
+        "sha256": "808ae5d569cea231b24b878fd9a2cd5947027e57d45cbd7dcb3dcf604860268b",
+        "bytes": 14352,
+        "lines": 277
+      },
+      "head": {
+        "sha256": "808ae5d569cea231b24b878fd9a2cd5947027e57d45cbd7dcb3dcf604860268b",
+        "bytes": 14352,
+        "lines": 277
+      },
+      "selected_dev": {
+        "sha256": "63f6e41b6632e405fd4718fb11a311e11f7726108a8b220e2bd3f970c0c79f44",
+        "bytes": 14640,
+        "lines": 282
+      },
+      "feature_overlap": false,
+      "ownership": "exact selected-dev whole-file bytes",
+      "candidate": {
+        "sha256": "63f6e41b6632e405fd4718fb11a311e11f7726108a8b220e2bd3f970c0c79f44",
+        "bytes": 14640,
+        "lines": 282
+      }
+    },
+    {
+      "path": "Docs/User_Guide/console/video.md",
+      "selected_dev_blob": "d24ea7752437dff3a5a2e0f771b42a920ea3c4f7",
+      "previous_dev": {
+        "sha256": "2aa75b4c490b5562fd64718248b88a08970cd77ccbe9b057e6bf4bfd2a631baf",
+        "bytes": 5265,
+        "lines": 112
+      },
+      "head": {
+        "sha256": "2aa75b4c490b5562fd64718248b88a08970cd77ccbe9b057e6bf4bfd2a631baf",
+        "bytes": 5265,
+        "lines": 112
+      },
+      "selected_dev": {
+        "sha256": "af471e573b76df3eff80837455d0bd958108b4b984918d428565e92f30439a0a",
+        "bytes": 5953,
+        "lines": 122
+      },
+      "feature_overlap": false,
+      "ownership": "exact selected-dev whole-file bytes",
+      "candidate": {
+        "sha256": "af471e573b76df3eff80837455d0bd958108b4b984918d428565e92f30439a0a",
+        "bytes": 5953,
+        "lines": 122
+      }
+    },
+    {
+      "path": "Docs/security/production-diagnostic-inventory.json",
+      "selected_dev_blob": "20057f379c8af19bf25fe7749cae5521b6c32083",
+      "previous_dev": {
+        "sha256": "8dc41b98f069a3d0405cd6757bab07e71016a286c7513e0a2b518ef1aae3ea0d",
+        "bytes": 365064,
+        "lines": 11743
+      },
+      "head": {
+        "sha256": "89a727133ab7e618f355f0e2d69f97af8d1ec1a8c44bc2a066feb73fe3eb6287",
+        "bytes": 365319,
+        "lines": 11750
+      },
+      "selected_dev": {
+        "sha256": "bbc3224d7e72c7cfc1f32ed65928b11f7401b2f9640694e4192b40c1d37052f2",
+        "bytes": 365312,
+        "lines": 11750
+      },
+      "feature_overlap": true,
+      "merge_file": {
+        "argv": [
+          "git",
+          "merge-file",
+          "-p",
+          "/private/tmp/pr2995-task17-preflight/production-diagnostic-inventory.json.head",
+          "/private/tmp/pr2995-task17-preflight/production-diagnostic-inventory.json.base",
+          "/private/tmp/pr2995-task17-preflight/production-diagnostic-inventory.json.dev"
+        ],
+        "exit": 0,
+        "sketch": "/private/tmp/pr2995-task17-preflight/merge-sketch-production-diagnostic-inventory.json",
+        "sha256": "f1d5f27684ed9f8873dd315435221b37184573bdbe915e8c908b408236be8bae",
+        "bytes": 365567,
+        "lines": 11757
+      },
+      "ownership": "exact narrow composition: all selected-dev incoming changes plus unchanged feature declarations/rows",
+      "candidate": {
+        "sha256": "f1d5f27684ed9f8873dd315435221b37184573bdbe915e8c908b408236be8bae",
+        "bytes": 365567,
+        "lines": 11757
+      }
+    },
+    {
+      "path": "Tests/Chat/test_console_generation_actions.py",
+      "selected_dev_blob": "1beed380158de07fd7f7908c38a9435b1be86ca6",
+      "previous_dev": {
+        "sha256": "dd0d3c2732a1f6ef1e8c77cafcefd290c2431d87c07b1392bbf288baadbde7b3",
+        "bytes": 70112,
+        "lines": 1796
+      },
+      "head": {
+        "sha256": "dd0d3c2732a1f6ef1e8c77cafcefd290c2431d87c07b1392bbf288baadbde7b3",
+        "bytes": 70112,
+        "lines": 1796
+      },
+      "selected_dev": {
+        "sha256": "79d12450a7ca6348d6063f513562d64cd4000088cbe277a4b09b9f273cbbb55a",
+        "bytes": 71038,
+        "lines": 1822
+      },
+      "feature_overlap": false,
+      "ownership": "exact selected-dev whole-file bytes",
+      "candidate": {
+        "sha256": "79d12450a7ca6348d6063f513562d64cd4000088cbe277a4b09b9f273cbbb55a",
+        "bytes": 71038,
+        "lines": 1822
+      },
+      "declarations": {
+        "incoming_changed": [
+          "_FakeComposer.__init__@1",
+          "_FakeComposer.capture_draft_for_send@1",
+          "_FakeComposer.capture_draft_snapshot@1",
+          "_FakeComposer.clear_draft@1",
+          "_FakeComposer.commit_captured_draft@1",
+          "_FakeComposer.insert_text_as_paste@1",
+          "_FakeComposer.restore_stashed_draft@1"
+        ],
+        "feature_changed": [],
+        "shared_changed": [],
+        "candidate_changed_from_head": [
+          "_FakeComposer.__init__@1",
+          "_FakeComposer.capture_draft_for_send@1",
+          "_FakeComposer.capture_draft_snapshot@1",
+          "_FakeComposer.clear_draft@1",
+          "_FakeComposer.commit_captured_draft@1",
+          "_FakeComposer.insert_text_as_paste@1",
+          "_FakeComposer.restore_stashed_draft@1"
+        ],
+        "candidate_changed_from_selected_dev": [],
+        "module_import_nodes_identical_to_head": true,
+        "incoming_module_import_change": false
+      },
+      "incoming_declaration_ast_carry": {
+        "_FakeComposer.__init__@1": {
+          "selected_dev": "9a6ccf1e34e42d9aa99cf64c188ba3d9349d5841a8477d1bfa0cd1caa8c25983",
+          "candidate": "9a6ccf1e34e42d9aa99cf64c188ba3d9349d5841a8477d1bfa0cd1caa8c25983"
+        },
+        "_FakeComposer.capture_draft_for_send@1": {
+          "selected_dev": "177a0ee29dcbfd055a6bf6c75dcdc06d8d4c335f197e7c2d4ad97c4b5b2a1efb",
+          "candidate": "177a0ee29dcbfd055a6bf6c75dcdc06d8d4c335f197e7c2d4ad97c4b5b2a1efb"
+        },
+        "_FakeComposer.capture_draft_snapshot@1": {
+          "selected_dev": "f8293f07360424d6945643a36e8f05f442ccb9d8fabc2090186137b5688b38f8",
+          "candidate": "f8293f07360424d6945643a36e8f05f442ccb9d8fabc2090186137b5688b38f8"
+        },
+        "_FakeComposer.clear_draft@1": {
+          "selected_dev": "07dca1bcd0f49eade483d5930555c7cb2c17ceb4ac4bc5562b99f51d64e920dc",
+          "candidate": "07dca1bcd0f49eade483d5930555c7cb2c17ceb4ac4bc5562b99f51d64e920dc"
+        },
+        "_FakeComposer.commit_captured_draft@1": {
+          "selected_dev": "1ee4f3270375a509fb50b664dbd579a1323d935d6e4cb8c1d52c8c44a3d4fe66",
+          "candidate": "1ee4f3270375a509fb50b664dbd579a1323d935d6e4cb8c1d52c8c44a3d4fe66"
+        },
+        "_FakeComposer.insert_text_as_paste@1": {
+          "selected_dev": null,
+          "candidate": null
+        },
+        "_FakeComposer.restore_stashed_draft@1": {
+          "selected_dev": "c1b1d89fff315ce74f2dff4374bdc8824775472f5efd2bf866970cced2f13b04",
+          "candidate": "c1b1d89fff315ce74f2dff4374bdc8824775472f5efd2bf866970cced2f13b04"
+        }
+      }
+    },
+    {
+      "path": "Tests/Console/test_console_command_draft.py",
+      "selected_dev_blob": "75152a62374b1cc222120b17034144151565560b",
+      "previous_dev": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "lines": 0
+      },
+      "head": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "lines": 0
+      },
+      "selected_dev": {
+        "sha256": "8587beb305efb3ff36767eada57e5eb862bd767ca8665f2cd23d8a2b6e2dd857",
+        "bytes": 10910,
+        "lines": 346
+      },
+      "feature_overlap": false,
+      "ownership": "exact selected-dev whole-file bytes",
+      "candidate": {
+        "sha256": "8587beb305efb3ff36767eada57e5eb862bd767ca8665f2cd23d8a2b6e2dd857",
+        "bytes": 10910,
+        "lines": 346
+      },
+      "declarations": {
+        "incoming_changed": [
+          "_Clear.__call__@1",
+          "_Clear.__init__@1",
+          "_Composer.__init__@1",
+          "_Composer.capture_draft_for_send@1",
+          "_Composer.capture_draft_snapshot@1",
+          "_Composer.clear@1",
+          "_Composer.commit_captured_draft@1",
+          "_Composer.draft_text@1",
+          "_Composer.load@1",
+          "_Composer.restore_stashed_draft@1",
+          "_Composer.type@1",
+          "_Screen.__init__@1",
+          "_in_command@1",
+          "_refused@1",
+          "_take@1",
+          "_taken_from@1",
+          "test_a_command_from_the_chat_showing_runs@1",
+          "test_a_command_whose_chat_no_longer_shows_is_refused_aloud@1",
+          "test_a_direct_call_has_no_origin_and_is_never_refused@1",
+          "test_command_output_goes_to_the_origin_chat_only_inside_a_command@1",
+          "test_restore_never_overwrites_text_typed_since@1",
+          "test_restore_never_writes_into_another_composer@1",
+          "test_restore_never_writes_into_the_chat_switched_to@1",
+          "test_restore_of_a_command_the_take_left_behind_only_offers_a_resend@1",
+          "test_restore_of_nothing_says_nothing@1",
+          "test_restore_puts_the_command_back_into_its_own_empty_scope@1",
+          "test_take_clears_a_composer_holding_exactly_the_captured_draft@1",
+          "test_take_keeps_text_typed_after_the_captured_draft@1",
+          "test_take_of_an_empty_draft_keeps_nothing@1",
+          "test_take_removes_nothing_but_keeps_a_draft_that_changed@1",
+          "test_take_without_a_capture_takes_the_live_draft@1",
+          "test_take_without_a_composer_still_keeps_the_captured_command@1",
+          "test_with_resend_hint_joins_with_exactly_one_period@1"
+        ],
+        "feature_changed": [],
+        "shared_changed": [],
+        "candidate_changed_from_head": [
+          "_Clear.__call__@1",
+          "_Clear.__init__@1",
+          "_Composer.__init__@1",
+          "_Composer.capture_draft_for_send@1",
+          "_Composer.capture_draft_snapshot@1",
+          "_Composer.clear@1",
+          "_Composer.commit_captured_draft@1",
+          "_Composer.draft_text@1",
+          "_Composer.load@1",
+          "_Composer.restore_stashed_draft@1",
+          "_Composer.type@1",
+          "_Screen.__init__@1",
+          "_in_command@1",
+          "_refused@1",
+          "_take@1",
+          "_taken_from@1",
+          "test_a_command_from_the_chat_showing_runs@1",
+          "test_a_command_whose_chat_no_longer_shows_is_refused_aloud@1",
+          "test_a_direct_call_has_no_origin_and_is_never_refused@1",
+          "test_command_output_goes_to_the_origin_chat_only_inside_a_command@1",
+          "test_restore_never_overwrites_text_typed_since@1",
+          "test_restore_never_writes_into_another_composer@1",
+          "test_restore_never_writes_into_the_chat_switched_to@1",
+          "test_restore_of_a_command_the_take_left_behind_only_offers_a_resend@1",
+          "test_restore_of_nothing_says_nothing@1",
+          "test_restore_puts_the_command_back_into_its_own_empty_scope@1",
+          "test_take_clears_a_composer_holding_exactly_the_captured_draft@1",
+          "test_take_keeps_text_typed_after_the_captured_draft@1",
+          "test_take_of_an_empty_draft_keeps_nothing@1",
+          "test_take_removes_nothing_but_keeps_a_draft_that_changed@1",
+          "test_take_without_a_capture_takes_the_live_draft@1",
+          "test_take_without_a_composer_still_keeps_the_captured_command@1",
+          "test_with_resend_hint_joins_with_exactly_one_period@1"
+        ],
+        "candidate_changed_from_selected_dev": [],
+        "module_import_nodes_identical_to_head": null,
+        "incoming_module_import_change": "new lazy module"
+      },
+      "incoming_declaration_ast_carry": {
+        "_Clear.__call__@1": {
+          "selected_dev": "d382bdd2a7f43c93b507fc794aeb7287aa93466a3fefa2358c2df32a31de3ce2",
+          "candidate": "d382bdd2a7f43c93b507fc794aeb7287aa93466a3fefa2358c2df32a31de3ce2"
+        },
+        "_Clear.__init__@1": {
+          "selected_dev": "fabc8a2fc10bbe3b8a06748992b3c01a66149ff3d505cccd4db62df0b16c5412",
+          "candidate": "fabc8a2fc10bbe3b8a06748992b3c01a66149ff3d505cccd4db62df0b16c5412"
+        },
+        "_Composer.__init__@1": {
+          "selected_dev": "ba8767e3094c95bc986cf7b5294c55dc87662b2d4b24a108e8ab7c05e34f93bb",
+          "candidate": "ba8767e3094c95bc986cf7b5294c55dc87662b2d4b24a108e8ab7c05e34f93bb"
+        },
+        "_Composer.capture_draft_for_send@1": {
+          "selected_dev": "8fa1cf58decc4134b267374ee3ca4fbb5e89cc7aed85d96a7736b95ff312091d",
+          "candidate": "8fa1cf58decc4134b267374ee3ca4fbb5e89cc7aed85d96a7736b95ff312091d"
+        },
+        "_Composer.capture_draft_snapshot@1": {
+          "selected_dev": "20e830ce3c0b9aa856339c92d818ae2ad79cbca15f236112bbe38a20279c6694",
+          "candidate": "20e830ce3c0b9aa856339c92d818ae2ad79cbca15f236112bbe38a20279c6694"
+        },
+        "_Composer.clear@1": {
+          "selected_dev": "0b6c9d633523bf3f62a01aeddb9952d05dedd1f0fc9b373be6e1c52cd224b71b",
+          "candidate": "0b6c9d633523bf3f62a01aeddb9952d05dedd1f0fc9b373be6e1c52cd224b71b"
+        },
+        "_Composer.commit_captured_draft@1": {
+          "selected_dev": "a41f90848489b37b79b7cbb408ea01fa40fb24e24f8d4162baf4a2d0d7d9357a",
+          "candidate": "a41f90848489b37b79b7cbb408ea01fa40fb24e24f8d4162baf4a2d0d7d9357a"
+        },
+        "_Composer.draft_text@1": {
+          "selected_dev": "8dade8046440ccdbeee725bb922817f54929ac7256bd950c5a396957ae7951a4",
+          "candidate": "8dade8046440ccdbeee725bb922817f54929ac7256bd950c5a396957ae7951a4"
+        },
+        "_Composer.load@1": {
+          "selected_dev": "c75b0ea77dd253ce6352522c75ec2ed7272d5106918a02977000999ecc0635d2",
+          "candidate": "c75b0ea77dd253ce6352522c75ec2ed7272d5106918a02977000999ecc0635d2"
+        },
+        "_Composer.restore_stashed_draft@1": {
+          "selected_dev": "6c0f32b393bf40396145cb91edac1695bfc29f125c735a87ba066b0b2dc6f057",
+          "candidate": "6c0f32b393bf40396145cb91edac1695bfc29f125c735a87ba066b0b2dc6f057"
+        },
+        "_Composer.type@1": {
+          "selected_dev": "a524665c5d135c60642f0e818ac8ec5e5c3ab91d910bfd16acd93ce0b6a1b56e",
+          "candidate": "a524665c5d135c60642f0e818ac8ec5e5c3ab91d910bfd16acd93ce0b6a1b56e"
+        },
+        "_Screen.__init__@1": {
+          "selected_dev": "02544d3034ffb2726b1a4933e96edefc92e5d482d25a307df3c2447654337ea0",
+          "candidate": "02544d3034ffb2726b1a4933e96edefc92e5d482d25a307df3c2447654337ea0"
+        },
+        "_in_command@1": {
+          "selected_dev": "3606fc65dab47e84e8d8a9fd0429c9a5f7f28cf7b19b3e1bff55b0efdd6c3697",
+          "candidate": "3606fc65dab47e84e8d8a9fd0429c9a5f7f28cf7b19b3e1bff55b0efdd6c3697"
+        },
+        "_refused@1": {
+          "selected_dev": "299faa62ffc183fc223f75b85eb11bd4b0af6adfe3705332f035c47e4e9693c3",
+          "candidate": "299faa62ffc183fc223f75b85eb11bd4b0af6adfe3705332f035c47e4e9693c3"
+        },
+        "_take@1": {
+          "selected_dev": "0f795c2471cd74be97826e9efb3b60083361c6cb9549e3a7977305abae2f2495",
+          "candidate": "0f795c2471cd74be97826e9efb3b60083361c6cb9549e3a7977305abae2f2495"
+        },
+        "_taken_from@1": {
+          "selected_dev": "0b3365c199a6daed119e4c3438d7a483225105dc495cc9fd8818d8f44c4c0aae",
+          "candidate": "0b3365c199a6daed119e4c3438d7a483225105dc495cc9fd8818d8f44c4c0aae"
+        },
+        "test_a_command_from_the_chat_showing_runs@1": {
+          "selected_dev": "7be89ef4b983679cca3f82d4a83e5cfb50fc490dfca93cd78dabeb06440f71ba",
+          "candidate": "7be89ef4b983679cca3f82d4a83e5cfb50fc490dfca93cd78dabeb06440f71ba"
+        },
+        "test_a_command_whose_chat_no_longer_shows_is_refused_aloud@1": {
+          "selected_dev": "132976d6e2081bae80d9231026d35690adf83431da3f8fcfcc5a89d99f79b33d",
+          "candidate": "132976d6e2081bae80d9231026d35690adf83431da3f8fcfcc5a89d99f79b33d"
+        },
+        "test_a_direct_call_has_no_origin_and_is_never_refused@1": {
+          "selected_dev": "f732dac71e793963a8b31ebd222bd50596e98fa09358a15d883049b30da0755b",
+          "candidate": "f732dac71e793963a8b31ebd222bd50596e98fa09358a15d883049b30da0755b"
+        },
+        "test_command_output_goes_to_the_origin_chat_only_inside_a_command@1": {
+          "selected_dev": "b0dfe1e506380d27f63a25a95668bee827986793f8a258b129e05f6c9fbec140",
+          "candidate": "b0dfe1e506380d27f63a25a95668bee827986793f8a258b129e05f6c9fbec140"
+        },
+        "test_restore_never_overwrites_text_typed_since@1": {
+          "selected_dev": "c09b43be302bc7a0e9b39ab5e6a6e330409cef4d176ecac7d1b4572174fd02ca",
+          "candidate": "c09b43be302bc7a0e9b39ab5e6a6e330409cef4d176ecac7d1b4572174fd02ca"
+        },
+        "test_restore_never_writes_into_another_composer@1": {
+          "selected_dev": "2b2252d30e2b7da741ac03d54b910ce48cf3890d7f329a7163fbfc378d80223b",
+          "candidate": "2b2252d30e2b7da741ac03d54b910ce48cf3890d7f329a7163fbfc378d80223b"
+        },
+        "test_restore_never_writes_into_the_chat_switched_to@1": {
+          "selected_dev": "fdc7cac2a2f9b5cf137caf513103763ed516c5740e0ad2331f4bc801a0ca0470",
+          "candidate": "fdc7cac2a2f9b5cf137caf513103763ed516c5740e0ad2331f4bc801a0ca0470"
+        },
+        "test_restore_of_a_command_the_take_left_behind_only_offers_a_resend@1": {
+          "selected_dev": "7c831b3ca7a0a06464bddd1b92d7f1258b2ceb09ac9826482852616debcb1ad6",
+          "candidate": "7c831b3ca7a0a06464bddd1b92d7f1258b2ceb09ac9826482852616debcb1ad6"
+        },
+        "test_restore_of_nothing_says_nothing@1": {
+          "selected_dev": "7c11b3e718efd840b87ff5a8f896b0c25e63a5d89031027a7f3dd8578b8fb4f9",
+          "candidate": "7c11b3e718efd840b87ff5a8f896b0c25e63a5d89031027a7f3dd8578b8fb4f9"
+        },
+        "test_restore_puts_the_command_back_into_its_own_empty_scope@1": {
+          "selected_dev": "75d2ec109f93ddf921c79c7dc8ecd45bd300b30f57ff5c3910dc071ccf3a07d7",
+          "candidate": "75d2ec109f93ddf921c79c7dc8ecd45bd300b30f57ff5c3910dc071ccf3a07d7"
+        },
+        "test_take_clears_a_composer_holding_exactly_the_captured_draft@1": {
+          "selected_dev": "71976546f9ffbd58f8bb83c2f836dabc5474a24d5d12968df5cd44026be53640",
+          "candidate": "71976546f9ffbd58f8bb83c2f836dabc5474a24d5d12968df5cd44026be53640"
+        },
+        "test_take_keeps_text_typed_after_the_captured_draft@1": {
+          "selected_dev": "1405f70cd062bb5b0ea39fffe645a4d5e1d00b2b384c0f1eb7fddfedf23e48ae",
+          "candidate": "1405f70cd062bb5b0ea39fffe645a4d5e1d00b2b384c0f1eb7fddfedf23e48ae"
+        },
+        "test_take_of_an_empty_draft_keeps_nothing@1": {
+          "selected_dev": "fbdb1da9ff2b31500e15f213083b1606b25c3d1e2bfb5e77280fb43d2675da0b",
+          "candidate": "fbdb1da9ff2b31500e15f213083b1606b25c3d1e2bfb5e77280fb43d2675da0b"
+        },
+        "test_take_removes_nothing_but_keeps_a_draft_that_changed@1": {
+          "selected_dev": "f4ef46ae44870b82f60d2857447f8ce201213edd5f9e461e425d63ead9f463ac",
+          "candidate": "f4ef46ae44870b82f60d2857447f8ce201213edd5f9e461e425d63ead9f463ac"
+        },
+        "test_take_without_a_capture_takes_the_live_draft@1": {
+          "selected_dev": "e2ac24f6929fe87c0c1ef795ad5a2c62789c2972cf09a2eba58abd4ddc0c61c0",
+          "candidate": "e2ac24f6929fe87c0c1ef795ad5a2c62789c2972cf09a2eba58abd4ddc0c61c0"
+        },
+        "test_take_without_a_composer_still_keeps_the_captured_command@1": {
+          "selected_dev": "06d3beebafe7325ba53ad66cb6afc585f8b01cbe58b9ae5dc24850ede5f1e44d",
+          "candidate": "06d3beebafe7325ba53ad66cb6afc585f8b01cbe58b9ae5dc24850ede5f1e44d"
+        },
+        "test_with_resend_hint_joins_with_exactly_one_period@1": {
+          "selected_dev": "c1eb9750dfc6feb2e8d56e702c693310ee620d15c3327626b6e91e14f9dadf0a",
+          "candidate": "c1eb9750dfc6feb2e8d56e702c693310ee620d15c3327626b6e91e14f9dadf0a"
+        }
+      }
+    },
+    {
+      "path": "Tests/UI/test_console_command_origin_chat.py",
+      "selected_dev_blob": "729d124613b1f4e521c8b9047c28378099a0a6dd",
+      "previous_dev": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "lines": 0
+      },
+      "head": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "lines": 0
+      },
+      "selected_dev": {
+        "sha256": "5f99e85eecfe23ccb18ceeb37ef1aa77faae9a85b8741c6c643857e420568be9",
+        "bytes": 14441,
+        "lines": 384
+      },
+      "feature_overlap": false,
+      "ownership": "exact selected-dev whole-file bytes",
+      "candidate": {
+        "sha256": "5f99e85eecfe23ccb18ceeb37ef1aa77faae9a85b8741c6c643857e420568be9",
+        "bytes": 14441,
+        "lines": 384
+      },
+      "declarations": {
+        "incoming_changed": [
+          "_AsyncGate.__call__@1",
+          "_AsyncGate.__init__@1",
+          "_ThreadGate.__call__@1",
+          "_ThreadGate.__init__@1",
+          "_commands_idle@1",
+          "_console@1",
+          "_doctor@1",
+          "_fewer_permission_prompts@1",
+          "_gate_prompt_search@1",
+          "_load@1",
+          "_record_toasts@1",
+          "_send@1",
+          "_skills@1",
+          "_stream_video@1",
+          "_switch_to_new_chat@1",
+          "_system_prompt@1",
+          "_system_rows@1",
+          "_type@1",
+          "_type_into@1",
+          "test_a_command_answers_in_the_chat_it_was_sent_from@1",
+          "test_a_command_never_starts_in_a_chat_it_was_not_sent_from@1",
+          "test_a_named_system_prompt_never_lands_on_the_chat_switched_to@1",
+          "test_a_named_system_prompt_takes_only_the_draft_its_send_captured@1"
+        ],
+        "feature_changed": [],
+        "shared_changed": [],
+        "candidate_changed_from_head": [
+          "_AsyncGate.__call__@1",
+          "_AsyncGate.__init__@1",
+          "_ThreadGate.__call__@1",
+          "_ThreadGate.__init__@1",
+          "_commands_idle@1",
+          "_console@1",
+          "_doctor@1",
+          "_fewer_permission_prompts@1",
+          "_gate_prompt_search@1",
+          "_load@1",
+          "_record_toasts@1",
+          "_send@1",
+          "_skills@1",
+          "_stream_video@1",
+          "_switch_to_new_chat@1",
+          "_system_prompt@1",
+          "_system_rows@1",
+          "_type@1",
+          "_type_into@1",
+          "test_a_command_answers_in_the_chat_it_was_sent_from@1",
+          "test_a_command_never_starts_in_a_chat_it_was_not_sent_from@1",
+          "test_a_named_system_prompt_never_lands_on_the_chat_switched_to@1",
+          "test_a_named_system_prompt_takes_only_the_draft_its_send_captured@1"
+        ],
+        "candidate_changed_from_selected_dev": [],
+        "module_import_nodes_identical_to_head": null,
+        "incoming_module_import_change": "new lazy module"
+      },
+      "incoming_declaration_ast_carry": {
+        "_AsyncGate.__call__@1": {
+          "selected_dev": "14d36e8368992263c9ef45eaf4ef17592c37742d4bdef1f3ac87845213aeba87",
+          "candidate": "14d36e8368992263c9ef45eaf4ef17592c37742d4bdef1f3ac87845213aeba87"
+        },
+        "_AsyncGate.__init__@1": {
+          "selected_dev": "e2a9ed821737d7d58e6e649545463f5b8dd21cd9390ba5bac9cafd447cad54e8",
+          "candidate": "e2a9ed821737d7d58e6e649545463f5b8dd21cd9390ba5bac9cafd447cad54e8"
+        },
+        "_ThreadGate.__call__@1": {
+          "selected_dev": "2026e96c842e8808c4d4277636f6bb8435ca91c97d3ffd30da5e92b93da89fad",
+          "candidate": "2026e96c842e8808c4d4277636f6bb8435ca91c97d3ffd30da5e92b93da89fad"
+        },
+        "_ThreadGate.__init__@1": {
+          "selected_dev": "e2a9ed821737d7d58e6e649545463f5b8dd21cd9390ba5bac9cafd447cad54e8",
+          "candidate": "e2a9ed821737d7d58e6e649545463f5b8dd21cd9390ba5bac9cafd447cad54e8"
+        },
+        "_commands_idle@1": {
+          "selected_dev": "d13667cd8928a802b0507d3479b929aa7175ccb3c6b93c8357c8e6f35d9d9685",
+          "candidate": "d13667cd8928a802b0507d3479b929aa7175ccb3c6b93c8357c8e6f35d9d9685"
+        },
+        "_console@1": {
+          "selected_dev": "9db0035bb9cf09faee62f50dd42f4b33194d1086d2edf2f153f991e91cf3cfb2",
+          "candidate": "9db0035bb9cf09faee62f50dd42f4b33194d1086d2edf2f153f991e91cf3cfb2"
+        },
+        "_doctor@1": {
+          "selected_dev": "b00a51c116675fa363e33c33ec01489f1449ea5cd56ce4641e2743c8731dde85",
+          "candidate": "b00a51c116675fa363e33c33ec01489f1449ea5cd56ce4641e2743c8731dde85"
+        },
+        "_fewer_permission_prompts@1": {
+          "selected_dev": "cabbcc82bd387fe41795e099d08b4559bd197051943fe79ec58e2003a52a19c7",
+          "candidate": "cabbcc82bd387fe41795e099d08b4559bd197051943fe79ec58e2003a52a19c7"
+        },
+        "_gate_prompt_search@1": {
+          "selected_dev": "136227e0d1f28dc80b69da3604f30eda5851bc4c8c0113a635e9fb13f847eafe",
+          "candidate": "136227e0d1f28dc80b69da3604f30eda5851bc4c8c0113a635e9fb13f847eafe"
+        },
+        "_load@1": {
+          "selected_dev": "45774d08884b4b6a876a2b01ae67f4f60d8649d4463a4b7d4342621696eaa9eb",
+          "candidate": "45774d08884b4b6a876a2b01ae67f4f60d8649d4463a4b7d4342621696eaa9eb"
+        },
+        "_record_toasts@1": {
+          "selected_dev": "8d77bd01e3cd906f54bec7812781122d8586270371cf79be524278cab8dc1b05",
+          "candidate": "8d77bd01e3cd906f54bec7812781122d8586270371cf79be524278cab8dc1b05"
+        },
+        "_send@1": {
+          "selected_dev": "fd2ddeb93cef9eb794af04aab16fce9905d80c8916c2376525a6e12955a24a19",
+          "candidate": "fd2ddeb93cef9eb794af04aab16fce9905d80c8916c2376525a6e12955a24a19"
+        },
+        "_skills@1": {
+          "selected_dev": "78c21fcf2920af8f574a7735e784823f1b85138d45abfdf4a588eaa2c7a995f2",
+          "candidate": "78c21fcf2920af8f574a7735e784823f1b85138d45abfdf4a588eaa2c7a995f2"
+        },
+        "_stream_video@1": {
+          "selected_dev": "25e8e6cce41abe3b3ab3963b0d2496b7197be843d06b85e530dcd83dfc133fcd",
+          "candidate": "25e8e6cce41abe3b3ab3963b0d2496b7197be843d06b85e530dcd83dfc133fcd"
+        },
+        "_switch_to_new_chat@1": {
+          "selected_dev": "5b9eb8ab51e7e24e48ca975c8e4a197de0419139159a7d1de267cab04a656182",
+          "candidate": "5b9eb8ab51e7e24e48ca975c8e4a197de0419139159a7d1de267cab04a656182"
+        },
+        "_system_prompt@1": {
+          "selected_dev": "b43e244e808d75f4dc6b4e9690367f1eb93dc6272f3bea93edcddca4baf86ba0",
+          "candidate": "b43e244e808d75f4dc6b4e9690367f1eb93dc6272f3bea93edcddca4baf86ba0"
+        },
+        "_system_rows@1": {
+          "selected_dev": "4da472bf09be1097766b1a2a9c8c7b6ac18bdac40ce46df212cfebaaf253c75c",
+          "candidate": "4da472bf09be1097766b1a2a9c8c7b6ac18bdac40ce46df212cfebaaf253c75c"
+        },
+        "_type@1": {
+          "selected_dev": "c68a710e28e44811c699cc43c4c41198cbf199163a9512a9f69dcef41328a4aa",
+          "candidate": "c68a710e28e44811c699cc43c4c41198cbf199163a9512a9f69dcef41328a4aa"
+        },
+        "_type_into@1": {
+          "selected_dev": "7c936a0e22582ba73d622e61b47d44157cd7636115947e0ab841665e135262a8",
+          "candidate": "7c936a0e22582ba73d622e61b47d44157cd7636115947e0ab841665e135262a8"
+        },
+        "test_a_command_answers_in_the_chat_it_was_sent_from@1": {
+          "selected_dev": "fd6f0c2283d79a291e8507130a684b1129c0b39bdf8eaf46b6ef9d6031f91995",
+          "candidate": "fd6f0c2283d79a291e8507130a684b1129c0b39bdf8eaf46b6ef9d6031f91995"
+        },
+        "test_a_command_never_starts_in_a_chat_it_was_not_sent_from@1": {
+          "selected_dev": "1d88e238cd4e8261e3e5db796a8ab778449230f832742e70c20b4681365c34ef",
+          "candidate": "1d88e238cd4e8261e3e5db796a8ab778449230f832742e70c20b4681365c34ef"
+        },
+        "test_a_named_system_prompt_never_lands_on_the_chat_switched_to@1": {
+          "selected_dev": "2d3ba8530e41def1e532960b6bf8736e40af865ed9736ceeee81db4256953d37",
+          "candidate": "2d3ba8530e41def1e532960b6bf8736e40af865ed9736ceeee81db4256953d37"
+        },
+        "test_a_named_system_prompt_takes_only_the_draft_its_send_captured@1": {
+          "selected_dev": "85b16a5e206725d97058e5d2cc392e77bb2d2bb5cc19841e9f395c3786fc897b",
+          "candidate": "85b16a5e206725d97058e5d2cc392e77bb2d2bb5cc19841e9f395c3786fc897b"
+        }
+      }
+    },
+    {
+      "path": "Tests/UI/test_console_video_send_freeze.py",
+      "selected_dev_blob": "41256cc9b62cd41a2e37abfb86e3212937930668",
+      "previous_dev": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "lines": 0
+      },
+      "head": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "lines": 0
+      },
+      "selected_dev": {
+        "sha256": "058623efd7fb78242b2476ae092a604a1ef4de11d75fbd1e936004ca49a2e963",
+        "bytes": 36325,
+        "lines": 895
+      },
+      "feature_overlap": false,
+      "ownership": "exact selected-dev whole-file bytes",
+      "candidate": {
+        "sha256": "058623efd7fb78242b2476ae092a604a1ef4de11d75fbd1e936004ca49a2e963",
+        "bytes": 36325,
+        "lines": 895
+      },
+      "declarations": {
+        "incoming_changed": [
+          "_BlockingImageBatch.__call__@1",
+          "_BlockingImageBatch.__init__@1",
+          "_PaidBackend.__call__@1",
+          "_PaidBackend.__init__@1",
+          "_Registry.resolve_backend@1",
+          "_assert_pumps_run@1",
+          "_configure_image_backend@1",
+          "_configure_paid_backend@1",
+          "_confirm_button@1",
+          "_confirm_generate@1",
+          "_console_sending_video@1",
+          "_cost_confirm@1",
+          "_dialogs_titled@1",
+          "_escape_at_the_cost_confirm@1",
+          "_generation_took_the_draft@1",
+          "_load_draft@1",
+          "_pending_artifact@1",
+          "_press_confirm@1",
+          "_record_system_messages@1",
+          "_release@1",
+          "_said_how_to_resend@1",
+          "_send@1",
+          "_type@1",
+          "_type_into@1",
+          "_video_idle@1",
+          "_wait_for_cost_confirm@1",
+          "_wait_for_storage_choice@1",
+          "test_a_command_whose_modal_wait_is_cancelled_ends_quietly@1",
+          "test_a_failed_generation_never_writes_into_the_chat_switched_to@1",
+          "test_a_failed_generation_puts_the_command_back_ready_to_resend@1",
+          "test_a_failed_image_batch_keeps_a_draft_typed_while_it_ran@1",
+          "test_a_failed_image_batch_still_offers_a_command_its_take_left_behind@1",
+          "test_a_paid_generation_in_flight_answers_keys_help_and_stop@1",
+          "test_a_repeat_press_of_the_same_draft_opens_one_cost_confirm@1",
+          "test_an_image_command_takes_only_the_draft_its_send_captured@1",
+          "test_another_command_runs_while_a_generation_is_in_flight@1",
+          "test_ctrl_q_during_a_paid_generation_reaches_the_quit_flow@1",
+          "test_ctrl_q_under_an_enter_sent_storage_choice_asks_before_discarding@1",
+          "test_ctrl_q_under_the_cost_confirm_reaches_the_quit_flow@1",
+          "test_stop_keeps_a_draft_typed_during_the_generation@1",
+          "test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing@1",
+          "test_the_storage_choice_after_an_enter_send_answers_its_keys@1"
+        ],
+        "feature_changed": [],
+        "shared_changed": [],
+        "candidate_changed_from_head": [
+          "_BlockingImageBatch.__call__@1",
+          "_BlockingImageBatch.__init__@1",
+          "_PaidBackend.__call__@1",
+          "_PaidBackend.__init__@1",
+          "_Registry.resolve_backend@1",
+          "_assert_pumps_run@1",
+          "_configure_image_backend@1",
+          "_configure_paid_backend@1",
+          "_confirm_button@1",
+          "_confirm_generate@1",
+          "_console_sending_video@1",
+          "_cost_confirm@1",
+          "_dialogs_titled@1",
+          "_escape_at_the_cost_confirm@1",
+          "_generation_took_the_draft@1",
+          "_load_draft@1",
+          "_pending_artifact@1",
+          "_press_confirm@1",
+          "_record_system_messages@1",
+          "_release@1",
+          "_said_how_to_resend@1",
+          "_send@1",
+          "_type@1",
+          "_type_into@1",
+          "_video_idle@1",
+          "_wait_for_cost_confirm@1",
+          "_wait_for_storage_choice@1",
+          "test_a_command_whose_modal_wait_is_cancelled_ends_quietly@1",
+          "test_a_failed_generation_never_writes_into_the_chat_switched_to@1",
+          "test_a_failed_generation_puts_the_command_back_ready_to_resend@1",
+          "test_a_failed_image_batch_keeps_a_draft_typed_while_it_ran@1",
+          "test_a_failed_image_batch_still_offers_a_command_its_take_left_behind@1",
+          "test_a_paid_generation_in_flight_answers_keys_help_and_stop@1",
+          "test_a_repeat_press_of_the_same_draft_opens_one_cost_confirm@1",
+          "test_an_image_command_takes_only_the_draft_its_send_captured@1",
+          "test_another_command_runs_while_a_generation_is_in_flight@1",
+          "test_ctrl_q_during_a_paid_generation_reaches_the_quit_flow@1",
+          "test_ctrl_q_under_an_enter_sent_storage_choice_asks_before_discarding@1",
+          "test_ctrl_q_under_the_cost_confirm_reaches_the_quit_flow@1",
+          "test_stop_keeps_a_draft_typed_during_the_generation@1",
+          "test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing@1",
+          "test_the_storage_choice_after_an_enter_send_answers_its_keys@1"
+        ],
+        "candidate_changed_from_selected_dev": [],
+        "module_import_nodes_identical_to_head": null,
+        "incoming_module_import_change": "new lazy module"
+      },
+      "incoming_declaration_ast_carry": {
+        "_BlockingImageBatch.__call__@1": {
+          "selected_dev": "f329314a5049aaedb10d3e79a94138715c0e705a893cbd5c10d2e548a90421c6",
+          "candidate": "f329314a5049aaedb10d3e79a94138715c0e705a893cbd5c10d2e548a90421c6"
+        },
+        "_BlockingImageBatch.__init__@1": {
+          "selected_dev": "5a3d9a81a5ef059960f0ef5ab75bcff5d4417c1d3fb1890bb7428cf431036a5e",
+          "candidate": "5a3d9a81a5ef059960f0ef5ab75bcff5d4417c1d3fb1890bb7428cf431036a5e"
+        },
+        "_PaidBackend.__call__@1": {
+          "selected_dev": "2d7e697dfe0303c867854408cae74e6bb267609b055eac67d3f473303e76c1c8",
+          "candidate": "2d7e697dfe0303c867854408cae74e6bb267609b055eac67d3f473303e76c1c8"
+        },
+        "_PaidBackend.__init__@1": {
+          "selected_dev": "cbc2af8792902804424dac869c71912d89d1e15965bf70a33b5685ae20c15666",
+          "candidate": "cbc2af8792902804424dac869c71912d89d1e15965bf70a33b5685ae20c15666"
+        },
+        "_Registry.resolve_backend@1": {
+          "selected_dev": "1f14159a14a160931ffd75c59b03af4dede9593ac2cdefee722790fe9ff24e3f",
+          "candidate": "1f14159a14a160931ffd75c59b03af4dede9593ac2cdefee722790fe9ff24e3f"
+        },
+        "_assert_pumps_run@1": {
+          "selected_dev": "ab147d2721f9f5010bfb0f2657805de2cc284f8b6c4cf1dfa88b275086981a2f",
+          "candidate": "ab147d2721f9f5010bfb0f2657805de2cc284f8b6c4cf1dfa88b275086981a2f"
+        },
+        "_configure_image_backend@1": {
+          "selected_dev": "fb2dcbeaa9fd0d4900257a756ba86f8f47dafc577323c47db2a0958f109bcb10",
+          "candidate": "fb2dcbeaa9fd0d4900257a756ba86f8f47dafc577323c47db2a0958f109bcb10"
+        },
+        "_configure_paid_backend@1": {
+          "selected_dev": "bcbfe9ba50fbe7833511a9f7c6c1b4ce5cde01121187b02f8694d7612e28a4c6",
+          "candidate": "bcbfe9ba50fbe7833511a9f7c6c1b4ce5cde01121187b02f8694d7612e28a4c6"
+        },
+        "_confirm_button@1": {
+          "selected_dev": "2bbf7e327503e1ed92fe37c32f8236df416415d8113ab389fb1a4ea6be7bbe25",
+          "candidate": "2bbf7e327503e1ed92fe37c32f8236df416415d8113ab389fb1a4ea6be7bbe25"
+        },
+        "_confirm_generate@1": {
+          "selected_dev": "428ea70ed9922e7dcf22c4460295781024b7a1cf007e91ef9e91f87bda21f4e1",
+          "candidate": "428ea70ed9922e7dcf22c4460295781024b7a1cf007e91ef9e91f87bda21f4e1"
+        },
+        "_console_sending_video@1": {
+          "selected_dev": "aae7ee6a5e9c2b9dc8436dd8d3aef3867ac02a543a560e4d596157425308439f",
+          "candidate": "aae7ee6a5e9c2b9dc8436dd8d3aef3867ac02a543a560e4d596157425308439f"
+        },
+        "_cost_confirm@1": {
+          "selected_dev": "9231b8f0881c9e59ebd54c7f43f499c50aa35b3eed6bef9ab9302c9b1fd49afc",
+          "candidate": "9231b8f0881c9e59ebd54c7f43f499c50aa35b3eed6bef9ab9302c9b1fd49afc"
+        },
+        "_dialogs_titled@1": {
+          "selected_dev": "0384d36647db55e11013512570bf9a1bfff1b982a8526bfd3e0c531d7375deee",
+          "candidate": "0384d36647db55e11013512570bf9a1bfff1b982a8526bfd3e0c531d7375deee"
+        },
+        "_escape_at_the_cost_confirm@1": {
+          "selected_dev": "739a0b6e038e2f8aeb0ed0abc049c7e0f25482f4e19ed626204c78fa2adaac73",
+          "candidate": "739a0b6e038e2f8aeb0ed0abc049c7e0f25482f4e19ed626204c78fa2adaac73"
+        },
+        "_generation_took_the_draft@1": {
+          "selected_dev": "c506a78f606077c275d4c03006a3261f8dbcf9305a0cf03317aa30bff3115e9c",
+          "candidate": "c506a78f606077c275d4c03006a3261f8dbcf9305a0cf03317aa30bff3115e9c"
+        },
+        "_load_draft@1": {
+          "selected_dev": "4ec54a499f52bd077ee21bc4523f727d8bb4a9e39e7e0bf946fabbb83b18b7b6",
+          "candidate": "4ec54a499f52bd077ee21bc4523f727d8bb4a9e39e7e0bf946fabbb83b18b7b6"
+        },
+        "_pending_artifact@1": {
+          "selected_dev": "f3766a6980b782e3fe3aa0a5b18edeee1a6ef21462b17020c251ce79918502f4",
+          "candidate": "f3766a6980b782e3fe3aa0a5b18edeee1a6ef21462b17020c251ce79918502f4"
+        },
+        "_press_confirm@1": {
+          "selected_dev": "5228df2d5a42b1ccbdaa4e486e42036f6f055a779b300b27cf42c7c370187063",
+          "candidate": "5228df2d5a42b1ccbdaa4e486e42036f6f055a779b300b27cf42c7c370187063"
+        },
+        "_record_system_messages@1": {
+          "selected_dev": "19aa11b6d53cbabde8d50c3f9db910d08ebd4f16bddfea3856b900437cc474b9",
+          "candidate": "19aa11b6d53cbabde8d50c3f9db910d08ebd4f16bddfea3856b900437cc474b9"
+        },
+        "_release@1": {
+          "selected_dev": "41d2fab9a7fbb023666c37d9b7fae26954fb993f8944f29a722cfc56511ff97b",
+          "candidate": "41d2fab9a7fbb023666c37d9b7fae26954fb993f8944f29a722cfc56511ff97b"
+        },
+        "_said_how_to_resend@1": {
+          "selected_dev": "2f693fc70c077142be8bee02bb55dac762a660d9b0bb2b8643c5165610562f95",
+          "candidate": "2f693fc70c077142be8bee02bb55dac762a660d9b0bb2b8643c5165610562f95"
+        },
+        "_send@1": {
+          "selected_dev": "fd2ddeb93cef9eb794af04aab16fce9905d80c8916c2376525a6e12955a24a19",
+          "candidate": "fd2ddeb93cef9eb794af04aab16fce9905d80c8916c2376525a6e12955a24a19"
+        },
+        "_type@1": {
+          "selected_dev": "c68a710e28e44811c699cc43c4c41198cbf199163a9512a9f69dcef41328a4aa",
+          "candidate": "c68a710e28e44811c699cc43c4c41198cbf199163a9512a9f69dcef41328a4aa"
+        },
+        "_type_into@1": {
+          "selected_dev": "24e2588e8705f097b2460886f424923f3ab8447ac18b199033a58b48f5383ea8",
+          "candidate": "24e2588e8705f097b2460886f424923f3ab8447ac18b199033a58b48f5383ea8"
+        },
+        "_video_idle@1": {
+          "selected_dev": "c96fb5bcb1d81e13c63becb8eab4934b4e380567770fe0362f0f79a042896cab",
+          "candidate": "c96fb5bcb1d81e13c63becb8eab4934b4e380567770fe0362f0f79a042896cab"
+        },
+        "_wait_for_cost_confirm@1": {
+          "selected_dev": "a033012eba2c598bd837f8520d1bcf612101ef05b56dfbe35b59b1f98f40a1f9",
+          "candidate": "a033012eba2c598bd837f8520d1bcf612101ef05b56dfbe35b59b1f98f40a1f9"
+        },
+        "_wait_for_storage_choice@1": {
+          "selected_dev": "5fcd18a80f367cecb763076a837b23a799eed7d5efa5ac71588a67d93733fd8c",
+          "candidate": "5fcd18a80f367cecb763076a837b23a799eed7d5efa5ac71588a67d93733fd8c"
+        },
+        "test_a_command_whose_modal_wait_is_cancelled_ends_quietly@1": {
+          "selected_dev": "6a58f936e14c4e3fc967b251b0a384475dde67f2c830e0dc85db6cf8e28106ee",
+          "candidate": "6a58f936e14c4e3fc967b251b0a384475dde67f2c830e0dc85db6cf8e28106ee"
+        },
+        "test_a_failed_generation_never_writes_into_the_chat_switched_to@1": {
+          "selected_dev": "e0fe465d36ed51eea595d8dc0b83ea54832187c9ed099c83925bb994049b9644",
+          "candidate": "e0fe465d36ed51eea595d8dc0b83ea54832187c9ed099c83925bb994049b9644"
+        },
+        "test_a_failed_generation_puts_the_command_back_ready_to_resend@1": {
+          "selected_dev": "d43bbb2a13f0a1cb0513a9b3bc37584d3f6e38d58dd8680e8a7a779f37046474",
+          "candidate": "d43bbb2a13f0a1cb0513a9b3bc37584d3f6e38d58dd8680e8a7a779f37046474"
+        },
+        "test_a_failed_image_batch_keeps_a_draft_typed_while_it_ran@1": {
+          "selected_dev": "20d68133c922d4acba8490234fa7b1d4b508641fd4d43c8bb2177dc954fa9bfb",
+          "candidate": "20d68133c922d4acba8490234fa7b1d4b508641fd4d43c8bb2177dc954fa9bfb"
+        },
+        "test_a_failed_image_batch_still_offers_a_command_its_take_left_behind@1": {
+          "selected_dev": "560d3afd2c5adc184b9a79a3a04c66afad025a9c2b5d94de844a3036011c1d15",
+          "candidate": "560d3afd2c5adc184b9a79a3a04c66afad025a9c2b5d94de844a3036011c1d15"
+        },
+        "test_a_paid_generation_in_flight_answers_keys_help_and_stop@1": {
+          "selected_dev": "90b045ee770c1cf56bb647d3c9d986760405f4e3476dc3cb2f4d2d694c1458d3",
+          "candidate": "90b045ee770c1cf56bb647d3c9d986760405f4e3476dc3cb2f4d2d694c1458d3"
+        },
+        "test_a_repeat_press_of_the_same_draft_opens_one_cost_confirm@1": {
+          "selected_dev": "92f86fe174842ac6f317297b840a3b25ace73e5e3befb31afdd8419586d03761",
+          "candidate": "92f86fe174842ac6f317297b840a3b25ace73e5e3befb31afdd8419586d03761"
+        },
+        "test_an_image_command_takes_only_the_draft_its_send_captured@1": {
+          "selected_dev": "2eb876300802782599097b786c70e062d30b6ae2c15cd25c0a13470a0bfc64a9",
+          "candidate": "2eb876300802782599097b786c70e062d30b6ae2c15cd25c0a13470a0bfc64a9"
+        },
+        "test_another_command_runs_while_a_generation_is_in_flight@1": {
+          "selected_dev": "42e65776f8d499c8d0f5fb338657dbe9e7f6d2e9baf4b575df66c3facd0c2441",
+          "candidate": "42e65776f8d499c8d0f5fb338657dbe9e7f6d2e9baf4b575df66c3facd0c2441"
+        },
+        "test_ctrl_q_during_a_paid_generation_reaches_the_quit_flow@1": {
+          "selected_dev": "2c1e9757cc5f4f563f86a611ee36ec30156b0c12aed1fa404e95f6ec65bf193e",
+          "candidate": "2c1e9757cc5f4f563f86a611ee36ec30156b0c12aed1fa404e95f6ec65bf193e"
+        },
+        "test_ctrl_q_under_an_enter_sent_storage_choice_asks_before_discarding@1": {
+          "selected_dev": "b07ace6bd7561156b34962c8618ade57f461909f7f6d9bd8db5aa24f58e8710e",
+          "candidate": "b07ace6bd7561156b34962c8618ade57f461909f7f6d9bd8db5aa24f58e8710e"
+        },
+        "test_ctrl_q_under_the_cost_confirm_reaches_the_quit_flow@1": {
+          "selected_dev": "65a95c832d05c7275672d19d1d4b6323af98ea3d443392c4c65b935e8b1bb929",
+          "candidate": "65a95c832d05c7275672d19d1d4b6323af98ea3d443392c4c65b935e8b1bb929"
+        },
+        "test_stop_keeps_a_draft_typed_during_the_generation@1": {
+          "selected_dev": "2a7e780161454f8a2a673556f19e91e78af3cbfc9a58995e46037079fe19aa36",
+          "candidate": "2a7e780161454f8a2a673556f19e91e78af3cbfc9a58995e46037079fe19aa36"
+        },
+        "test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing@1": {
+          "selected_dev": "b3e5e1fccbca70ab1192a2090048d56dbf0f01ceb1968aba6bea66aa4945b5aa",
+          "candidate": "b3e5e1fccbca70ab1192a2090048d56dbf0f01ceb1968aba6bea66aa4945b5aa"
+        },
+        "test_the_storage_choice_after_an_enter_send_answers_its_keys@1": {
+          "selected_dev": "4e7a74a6e921ccbc3eb388db74b41e4f5eae6c65bd1a8f3448701efde58a01de",
+          "candidate": "4e7a74a6e921ccbc3eb388db74b41e4f5eae6c65bd1a8f3448701efde58a01de"
+        }
+      }
+    },
+    {
+      "path": "backlog/docs/lessons-textual.md",
+      "selected_dev_blob": "45335024b62b4b7ca7a113f0d1f20fffd300b726",
+      "previous_dev": {
+        "sha256": "0c83584e78484251df884960e011c67d07bb7d583b62913c52bdd0e7f655ed08",
+        "bytes": 90013,
+        "lines": 1469
+      },
+      "head": {
+        "sha256": "0c83584e78484251df884960e011c67d07bb7d583b62913c52bdd0e7f655ed08",
+        "bytes": 90013,
+        "lines": 1469
+      },
+      "selected_dev": {
+        "sha256": "a5cc25c53caf1acbc2b3c1eded6525d8b96f49d3cfb3c4fa7965b9a661141938",
+        "bytes": 94924,
+        "lines": 1541
+      },
+      "feature_overlap": false,
+      "ownership": "exact selected-dev whole-file bytes",
+      "candidate": {
+        "sha256": "a5cc25c53caf1acbc2b3c1eded6525d8b96f49d3cfb3c4fa7965b9a661141938",
+        "bytes": 94924,
+        "lines": 1541
+      }
+    },
+    {
+      "path": "backlog/tasks/task-33622.16 - Console-generate-video-send-freezes-input-the-cost-confirm-and-storage-choice-ignore-Escape-F1-and-CtrlQ-until-generation-resolves.md",
+      "selected_dev_blob": "4043057c644be5d6bba2addce083c98f1df40483",
+      "previous_dev": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "lines": 0
+      },
+      "head": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "lines": 0
+      },
+      "selected_dev": {
+        "sha256": "d19a73bfd7ca438d9382c11fd497b341003c3b7f49ea4af591bd7d1b7b5eca82",
+        "bytes": 21083,
+        "lines": 118
+      },
+      "feature_overlap": false,
+      "ownership": "exact selected-dev whole-file bytes",
+      "candidate": {
+        "sha256": "d19a73bfd7ca438d9382c11fd497b341003c3b7f49ea4af591bd7d1b7b5eca82",
+        "bytes": 21083,
+        "lines": 118
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/command_draft.py",
+      "selected_dev_blob": "2b7d87842cb54372ab6686b878c71519ff268231",
+      "previous_dev": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "lines": 0
+      },
+      "head": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "lines": 0
+      },
+      "selected_dev": {
+        "sha256": "17352db0b83e7e85d660b0c9bb902ed4e1178eaa097ac709ae77c0e4bec2fdbc",
+        "bytes": 5725,
+        "lines": 152
+      },
+      "feature_overlap": false,
+      "ownership": "exact selected-dev whole-file bytes",
+      "candidate": {
+        "sha256": "17352db0b83e7e85d660b0c9bb902ed4e1178eaa097ac709ae77c0e4bec2fdbc",
+        "bytes": 5725,
+        "lines": 152
+      },
+      "declarations": {
+        "incoming_changed": [
+          "TakenCommandDraft.removed@1",
+          "_generation@1",
+          "_holds_exactly@1",
+          "restore_command_draft@1",
+          "take_command_draft@1",
+          "with_resend_hint@1"
+        ],
+        "feature_changed": [],
+        "shared_changed": [],
+        "candidate_changed_from_head": [
+          "TakenCommandDraft.removed@1",
+          "_generation@1",
+          "_holds_exactly@1",
+          "restore_command_draft@1",
+          "take_command_draft@1",
+          "with_resend_hint@1"
+        ],
+        "candidate_changed_from_selected_dev": [],
+        "module_import_nodes_identical_to_head": null,
+        "incoming_module_import_change": "new lazy module"
+      },
+      "incoming_declaration_ast_carry": {
+        "TakenCommandDraft.removed@1": {
+          "selected_dev": "3d85d523d80d4820b2278959b898d62e3e6049d6fda20c19b1df9ee9bba37715",
+          "candidate": "3d85d523d80d4820b2278959b898d62e3e6049d6fda20c19b1df9ee9bba37715"
+        },
+        "_generation@1": {
+          "selected_dev": "254314cc8f6ab7aae6f2116b5321417fea7ffa54d22c67cb8f897062dbf74dc1",
+          "candidate": "254314cc8f6ab7aae6f2116b5321417fea7ffa54d22c67cb8f897062dbf74dc1"
+        },
+        "_holds_exactly@1": {
+          "selected_dev": "9f909ad63c7db8b1942a03b3eb63fa75019956fa428006fe77da3c4b494afafc",
+          "candidate": "9f909ad63c7db8b1942a03b3eb63fa75019956fa428006fe77da3c4b494afafc"
+        },
+        "restore_command_draft@1": {
+          "selected_dev": "3dacbfd85413454a071268f89f4097f3fe13174b5b32bfb622aac94c971d3525",
+          "candidate": "3dacbfd85413454a071268f89f4097f3fe13174b5b32bfb622aac94c971d3525"
+        },
+        "take_command_draft@1": {
+          "selected_dev": "d86be169c9f0d0e6624988f14e22ae280f9e678355413f08f8141ea6ded1f0a6",
+          "candidate": "d86be169c9f0d0e6624988f14e22ae280f9e678355413f08f8141ea6ded1f0a6"
+        },
+        "with_resend_hint@1": {
+          "selected_dev": "22d501e86400dc7642339b207ff5e93565ac1cc9e0cf5af4ca8f8f842bd05624",
+          "candidate": "22d501e86400dc7642339b207ff5e93565ac1cc9e0cf5af4ca8f8f842bd05624"
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+      "selected_dev_blob": "c5b0d4a49c6b6237f570cec0369fd15c80451701",
+      "previous_dev": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "lines": 0
+      },
+      "head": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "lines": 0
+      },
+      "selected_dev": {
+        "sha256": "054a81608ae733f9ea53b851793d3d0c19aca99f8c8fb862c4b2ffc731302bb8",
+        "bytes": 8221,
+        "lines": 215
+      },
+      "feature_overlap": false,
+      "ownership": "exact selected-dev whole-file bytes",
+      "candidate": {
+        "sha256": "054a81608ae733f9ea53b851793d3d0c19aca99f8c8fb862c4b2ffc731302bb8",
+        "bytes": 8221,
+        "lines": 215
+      },
+      "declarations": {
+        "incoming_changed": [
+          "_dispatch_then_release@1",
+          "_repeat_key@1",
+          "_shows_chat@1",
+          "append_command_output@1",
+          "command_origin_session@1",
+          "refuse_if_chat_changed@1",
+          "run_console_command@1"
+        ],
+        "feature_changed": [],
+        "shared_changed": [],
+        "candidate_changed_from_head": [
+          "_dispatch_then_release@1",
+          "_repeat_key@1",
+          "_shows_chat@1",
+          "append_command_output@1",
+          "command_origin_session@1",
+          "refuse_if_chat_changed@1",
+          "run_console_command@1"
+        ],
+        "candidate_changed_from_selected_dev": [],
+        "module_import_nodes_identical_to_head": null,
+        "incoming_module_import_change": "new lazy module"
+      },
+      "incoming_declaration_ast_carry": {
+        "_dispatch_then_release@1": {
+          "selected_dev": "9070c2389df3cbab273ca6ac75597ece49345ea4e469c7403c3f1dbb5d3e811d",
+          "candidate": "9070c2389df3cbab273ca6ac75597ece49345ea4e469c7403c3f1dbb5d3e811d"
+        },
+        "_repeat_key@1": {
+          "selected_dev": "1118d9f300c1282029b658244534a3a5de459713a634006e81376b498c26891b",
+          "candidate": "1118d9f300c1282029b658244534a3a5de459713a634006e81376b498c26891b"
+        },
+        "_shows_chat@1": {
+          "selected_dev": "69bced4603d95c6e4bcb0c50e043543806c154a001814cc3ee38d4b829622654",
+          "candidate": "69bced4603d95c6e4bcb0c50e043543806c154a001814cc3ee38d4b829622654"
+        },
+        "append_command_output@1": {
+          "selected_dev": "19e4fcef6e6888c96ee99fb40979408919ebd0fbc61ca36f9974def2831e72d4",
+          "candidate": "19e4fcef6e6888c96ee99fb40979408919ebd0fbc61ca36f9974def2831e72d4"
+        },
+        "command_origin_session@1": {
+          "selected_dev": "03ce4898656880682b45c7b753141dbd48943a82b916f7ef0156932c2032d5f3",
+          "candidate": "03ce4898656880682b45c7b753141dbd48943a82b916f7ef0156932c2032d5f3"
+        },
+        "refuse_if_chat_changed@1": {
+          "selected_dev": "8da2fef73b2156272d0e259bf8f67e241d36493e4b43c85f172a355a9dd01e23",
+          "candidate": "8da2fef73b2156272d0e259bf8f67e241d36493e4b43c85f172a355a9dd01e23"
+        },
+        "run_console_command@1": {
+          "selected_dev": "73f997ec7c130eebe451c8b9f71a8ee26c858d36ff2a0461fd67f1ee9a920bec",
+          "candidate": "73f997ec7c130eebe451c8b9f71a8ee26c858d36ff2a0461fd67f1ee9a920bec"
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/image.py",
+      "selected_dev_blob": "0e66df9f2b8283bab9beba38cdb5480ce846abfe",
+      "previous_dev": {
+        "sha256": "76e822987b78ac386852838affc195b0334ddfdd91b9e351c84b5c734f5de3dd",
+        "bytes": 60516,
+        "lines": 1431
+      },
+      "head": {
+        "sha256": "76e822987b78ac386852838affc195b0334ddfdd91b9e351c84b5c734f5de3dd",
+        "bytes": 60516,
+        "lines": 1431
+      },
+      "selected_dev": {
+        "sha256": "69cd531ec49076b0b52be6cb9a6a4587200444e8850edec486cf63729209c61c",
+        "bytes": 60537,
+        "lines": 1435
+      },
+      "feature_overlap": false,
+      "ownership": "exact selected-dev whole-file bytes",
+      "candidate": {
+        "sha256": "69cd531ec49076b0b52be6cb9a6a4587200444e8850edec486cf63729209c61c",
+        "bytes": 60537,
+        "lines": 1435
+      },
+      "declarations": {
+        "incoming_changed": [
+          "ConsoleImageController._console_command_generate_image@1"
+        ],
+        "feature_changed": [],
+        "shared_changed": [],
+        "candidate_changed_from_head": [
+          "ConsoleImageController._console_command_generate_image@1"
+        ],
+        "candidate_changed_from_selected_dev": [],
+        "module_import_nodes_identical_to_head": true,
+        "incoming_module_import_change": false
+      },
+      "incoming_declaration_ast_carry": {
+        "ConsoleImageController._console_command_generate_image@1": {
+          "selected_dev": "01d075456415d5651fce00e9009997ccb9dfe33b62088916f7090a199469e757",
+          "candidate": "01d075456415d5651fce00e9009997ccb9dfe33b62088916f7090a199469e757"
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/message.py",
+      "selected_dev_blob": "e84b220f7ece13e3f8637cd4f39d230c3c49809a",
+      "previous_dev": {
+        "sha256": "6d09c16ebd3cb2e462383ce22d87c05e97bb012d569943809911282c2d6f909e",
+        "bytes": 139301,
+        "lines": 3070
+      },
+      "head": {
+        "sha256": "6d09c16ebd3cb2e462383ce22d87c05e97bb012d569943809911282c2d6f909e",
+        "bytes": 139301,
+        "lines": 3070
+      },
+      "selected_dev": {
+        "sha256": "f0942e8404819e43188d3f98f71ef0360bf95dc477915f22cf0166453735b657",
+        "bytes": 139515,
+        "lines": 3073
+      },
+      "feature_overlap": false,
+      "ownership": "exact selected-dev whole-file bytes",
+      "candidate": {
+        "sha256": "f0942e8404819e43188d3f98f71ef0360bf95dc477915f22cf0166453735b657",
+        "bytes": 139515,
+        "lines": 3073
+      },
+      "declarations": {
+        "incoming_changed": [
+          "ConsoleMessageController._append_native_console_system_message@1"
+        ],
+        "feature_changed": [],
+        "shared_changed": [],
+        "candidate_changed_from_head": [
+          "ConsoleMessageController._append_native_console_system_message@1"
+        ],
+        "candidate_changed_from_selected_dev": [],
+        "module_import_nodes_identical_to_head": true,
+        "incoming_module_import_change": false
+      },
+      "incoming_declaration_ast_carry": {
+        "ConsoleMessageController._append_native_console_system_message@1": {
+          "selected_dev": "eb211ee478aadaa8672451aa48806cfe0e438b4d789c73122ee1d3154b077294",
+          "candidate": "eb211ee478aadaa8672451aa48806cfe0e438b4d789c73122ee1d3154b077294"
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/prompts.py",
+      "selected_dev_blob": "8fc534190b28402547eb3bddb326b8961e6f4871",
+      "previous_dev": {
+        "sha256": "7bc3cceada358032a2b9208eaee793a7828bca29294be0b3db3eda2cb2d9516f",
+        "bytes": 97646,
+        "lines": 2205
+      },
+      "head": {
+        "sha256": "7bc3cceada358032a2b9208eaee793a7828bca29294be0b3db3eda2cb2d9516f",
+        "bytes": 97646,
+        "lines": 2205
+      },
+      "selected_dev": {
+        "sha256": "f4716b8aad6748da4492eac5e9314e30de2064dd900a06d2fdd33a8467996b05",
+        "bytes": 98565,
+        "lines": 2228
+      },
+      "feature_overlap": false,
+      "ownership": "exact selected-dev whole-file bytes",
+      "candidate": {
+        "sha256": "f4716b8aad6748da4492eac5e9314e30de2064dd900a06d2fdd33a8467996b05",
+        "bytes": 98565,
+        "lines": 2228
+      },
+      "declarations": {
+        "incoming_changed": [
+          "ConsolePromptsController._console_command_apply_system@1",
+          "ConsolePromptsController._console_command_insert_prompt@1"
+        ],
+        "feature_changed": [],
+        "shared_changed": [],
+        "candidate_changed_from_head": [
+          "ConsolePromptsController._console_command_apply_system@1",
+          "ConsolePromptsController._console_command_insert_prompt@1"
+        ],
+        "candidate_changed_from_selected_dev": [],
+        "module_import_nodes_identical_to_head": false,
+        "incoming_module_import_change": true
+      },
+      "incoming_declaration_ast_carry": {
+        "ConsolePromptsController._console_command_apply_system@1": {
+          "selected_dev": "218a36dca8bc59410becc699f8843f58c855334b5555acb9e6a2ca6e9eaa0f33",
+          "candidate": "218a36dca8bc59410becc699f8843f58c855334b5555acb9e6a2ca6e9eaa0f33"
+        },
+        "ConsolePromptsController._console_command_insert_prompt@1": {
+          "selected_dev": "6b2672fc74a83bdedf0234ab29c40576f07c42398cec8851f77796b65f42697e",
+          "candidate": "6b2672fc74a83bdedf0234ab29c40576f07c42398cec8851f77796b65f42697e"
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/skill.py",
+      "selected_dev_blob": "0c996a1ba456eecf0fa2d16ed3ab1001701ae79d",
+      "previous_dev": {
+        "sha256": "c21d985ba4f3a80c1ce18eca4566dd25970b96f21e3e0de20dacc9ea393cadf3",
+        "bytes": 9733,
+        "lines": 246
+      },
+      "head": {
+        "sha256": "c21d985ba4f3a80c1ce18eca4566dd25970b96f21e3e0de20dacc9ea393cadf3",
+        "bytes": 9733,
+        "lines": 246
+      },
+      "selected_dev": {
+        "sha256": "603169a0e7de42a50f1680c1349276bfd57909681d4df7ae21a0b3db73d22ae6",
+        "bytes": 9993,
+        "lines": 251
+      },
+      "feature_overlap": false,
+      "ownership": "exact selected-dev whole-file bytes",
+      "candidate": {
+        "sha256": "603169a0e7de42a50f1680c1349276bfd57909681d4df7ae21a0b3db73d22ae6",
+        "bytes": 9993,
+        "lines": 251
+      },
+      "declarations": {
+        "incoming_changed": [
+          "ConsoleSkillController._console_command_skills@1"
+        ],
+        "feature_changed": [],
+        "shared_changed": [],
+        "candidate_changed_from_head": [
+          "ConsoleSkillController._console_command_skills@1"
+        ],
+        "candidate_changed_from_selected_dev": [],
+        "module_import_nodes_identical_to_head": true,
+        "incoming_module_import_change": false
+      },
+      "incoming_declaration_ast_carry": {
+        "ConsoleSkillController._console_command_skills@1": {
+          "selected_dev": "18f944e87accbdefb9fc8d6a528979a391dbaede0e19a996df438463b1f15b9a",
+          "candidate": "18f944e87accbdefb9fc8d6a528979a391dbaede0e19a996df438463b1f15b9a"
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/video.py",
+      "selected_dev_blob": "93e8a6da2e1684b3d2f9a28065c80901bb66cfad",
+      "previous_dev": {
+        "sha256": "b3c7d99716742eff37e0e4b99fcf72801da4b8941fd81f2057fd24cb274e85ad",
+        "bytes": 64371,
+        "lines": 1522
+      },
+      "head": {
+        "sha256": "b3c7d99716742eff37e0e4b99fcf72801da4b8941fd81f2057fd24cb274e85ad",
+        "bytes": 64371,
+        "lines": 1522
+      },
+      "selected_dev": {
+        "sha256": "029b2968205a6cacdb6f2eb2b6c3b8dfc546a49939f5b86acab543db36668c2f",
+        "bytes": 64812,
+        "lines": 1535
+      },
+      "feature_overlap": false,
+      "ownership": "exact selected-dev whole-file bytes",
+      "candidate": {
+        "sha256": "029b2968205a6cacdb6f2eb2b6c3b8dfc546a49939f5b86acab543db36668c2f",
+        "bytes": 64812,
+        "lines": 1535
+      },
+      "declarations": {
+        "incoming_changed": [
+          "ConsoleVideoController._console_command_generate_video@1",
+          "ConsoleVideoController._console_command_stream_video@1"
+        ],
+        "feature_changed": [],
+        "shared_changed": [],
+        "candidate_changed_from_head": [
+          "ConsoleVideoController._console_command_generate_video@1",
+          "ConsoleVideoController._console_command_stream_video@1"
+        ],
+        "candidate_changed_from_selected_dev": [],
+        "module_import_nodes_identical_to_head": true,
+        "incoming_module_import_change": false
+      },
+      "incoming_declaration_ast_carry": {
+        "ConsoleVideoController._console_command_generate_video@1": {
+          "selected_dev": "3cfec0b607c9ebb65270f1145f87105eef8876a60a5d41230dc5db3656541677",
+          "candidate": "3cfec0b607c9ebb65270f1145f87105eef8876a60a5d41230dc5db3656541677"
+        },
+        "ConsoleVideoController._console_command_stream_video@1": {
+          "selected_dev": "4fc5312e9edf3297f2f7da9bca79b4061e218deadb5bab7dfa947bf6a0f57de7",
+          "candidate": "4fc5312e9edf3297f2f7da9bca79b4061e218deadb5bab7dfa947bf6a0f57de7"
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/wiring.py",
+      "selected_dev_blob": "522cf232173e88daae6767aa953ec6c3287a7eb1",
+      "previous_dev": {
+        "sha256": "f9cb1b5d5c1b1bb5b9fd0ea09a5edb0deacccd17c1c0edb5bc0e58e4d3dd1586",
+        "bytes": 101638,
+        "lines": 2397
+      },
+      "head": {
+        "sha256": "f1d3181b255e0e8ff74dcb48a2563e25824da0c71c5da1c39d8920f4b94539a2",
+        "bytes": 103328,
+        "lines": 2442
+      },
+      "selected_dev": {
+        "sha256": "e87419eb51656f034f3298d9ec4a3a9db5b55b98a28271109c2eba71418d0410",
+        "bytes": 101688,
+        "lines": 2399
+      },
+      "feature_overlap": true,
+      "merge_file": {
+        "argv": [
+          "git",
+          "merge-file",
+          "-p",
+          "/private/tmp/pr2995-task17-preflight/wiring.py.head",
+          "/private/tmp/pr2995-task17-preflight/wiring.py.base",
+          "/private/tmp/pr2995-task17-preflight/wiring.py.dev"
+        ],
+        "exit": 0,
+        "sketch": "/private/tmp/pr2995-task17-preflight/merge-sketch-wiring.py",
+        "sha256": "393564a9213493e0e21e31af0c8d9009842251e15e20cc883aa9fa3569f95669",
+        "bytes": 103378,
+        "lines": 2444
+      },
+      "ownership": "exact narrow composition: all selected-dev incoming changes plus unchanged feature declarations/rows",
+      "candidate": {
+        "sha256": "393564a9213493e0e21e31af0c8d9009842251e15e20cc883aa9fa3569f95669",
+        "bytes": 103378,
+        "lines": 2444
+      },
+      "declarations": {
+        "incoming_changed": [
+          "build_console_controllers@1"
+        ],
+        "feature_changed": [
+          "build_console_controllers@1",
+          "request_console_hooks_review@1"
+        ],
+        "shared_changed": [
+          "build_console_controllers@1"
+        ],
+        "candidate_changed_from_head": [
+          "build_console_controllers@1"
+        ],
+        "candidate_changed_from_selected_dev": [
+          "build_console_controllers@1",
+          "request_console_hooks_review@1"
+        ],
+        "module_import_nodes_identical_to_head": true,
+        "incoming_module_import_change": false
+      },
+      "incoming_declaration_ast_carry": {
+        "build_console_controllers@1": {
+          "selected_dev": "9c5312022229f2095264b6303c0b250dbf5c053646cc7f4bdb514ba1e1ee8ecf",
+          "candidate": "e66afa59afbe1b6e0f5653226b82b9920e476c371c57d8742347c6a367c07d59",
+          "note": "Both sides change this constructor function. Candidate preserves the selected-dev skill append lambda exactly, forwarding message and **kwargs, and all feature Session/compaction/recovery/hook bindings."
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "selected_dev_blob": "e53d8a2513fbb7d1d0b0d8481d213c00fd20cfc2",
+      "previous_dev": {
+        "sha256": "b2334a0c9fbd0b5a71f878cb7486dc95e2d452690db5ec39679674138cab2233",
+        "bytes": 1169249,
+        "lines": 25442
+      },
+      "head": {
+        "sha256": "056ecad8b39f7c9d5e3869768884b336f02120269779297fd5f5a39492762be2",
+        "bytes": 1158672,
+        "lines": 25192
+      },
+      "selected_dev": {
+        "sha256": "b634ecd4d9814fe6ada5cb3c003203e8f226033625abfa177777ce45d5e51fba",
+        "bytes": 1169511,
+        "lines": 25442
+      },
+      "feature_overlap": true,
+      "merge_file": {
+        "argv": [
+          "git",
+          "merge-file",
+          "-p",
+          "/private/tmp/pr2995-task17-preflight/chat_screen.py.head",
+          "/private/tmp/pr2995-task17-preflight/chat_screen.py.base",
+          "/private/tmp/pr2995-task17-preflight/chat_screen.py.dev"
+        ],
+        "exit": 0,
+        "sketch": "/private/tmp/pr2995-task17-preflight/merge-sketch-chat_screen.py",
+        "sha256": "c2788e9a88908335be20c47c8da799495c295e16c8db3d3581e6c7ea5c34c160",
+        "bytes": 1158934,
+        "lines": 25192
+      },
+      "ownership": "exact narrow composition: all selected-dev incoming changes plus unchanged feature declarations/rows",
+      "candidate": {
+        "sha256": "c2788e9a88908335be20c47c8da799495c295e16c8db3d3581e6c7ea5c34c160",
+        "bytes": 1158934,
+        "lines": 25192
+      },
+      "declarations": {
+        "incoming_changed": [
+          "ChatScreen._console_command_doctor@1",
+          "ChatScreen._console_command_fewer_permission_prompts@1",
+          "ChatScreen._send_console_message_from_visible_action_observed@1"
+        ],
+        "feature_changed": [
+          "ChatScreen.__init__@1",
+          "ChatScreen._build_console_center@1",
+          "ChatScreen._build_console_workbench_state@1",
+          "ChatScreen._complete_agent_chat_create@1",
+          "ChatScreen._console_trace_recovery_state@1",
+          "ChatScreen._consume_verified_console_intent@1",
+          "ChatScreen._coordinate_console_settings_submission@1",
+          "ChatScreen._dispatch_console_draft_send@1",
+          "ChatScreen._dispatch_console_trace_recovery@1",
+          "ChatScreen._on_console_composer_draft_changed@1",
+          "ChatScreen._open_console_hooks_review@1",
+          "ChatScreen._request_console_hooks_review@1",
+          "ChatScreen._start_console_view_after_reconciliation@1",
+          "ChatScreen._sync_console_composer_action_state@1",
+          "ChatScreen.consume_pending_llamacpp_console_intent@1",
+          "ChatScreen.consume_pending_vllm_console_intent@1",
+          "ChatScreen.on_console_workbench_action_requested@1",
+          "ChatScreen.on_screen_resume@1"
+        ],
+        "shared_changed": [],
+        "candidate_changed_from_head": [
+          "ChatScreen._console_command_doctor@1",
+          "ChatScreen._console_command_fewer_permission_prompts@1",
+          "ChatScreen._send_console_message_from_visible_action_observed@1"
+        ],
+        "candidate_changed_from_selected_dev": [
+          "ChatScreen.__init__@1",
+          "ChatScreen._build_console_center@1",
+          "ChatScreen._build_console_workbench_state@1",
+          "ChatScreen._complete_agent_chat_create@1",
+          "ChatScreen._console_trace_recovery_state@1",
+          "ChatScreen._consume_verified_console_intent@1",
+          "ChatScreen._coordinate_console_settings_submission@1",
+          "ChatScreen._dispatch_console_draft_send@1",
+          "ChatScreen._dispatch_console_trace_recovery@1",
+          "ChatScreen._on_console_composer_draft_changed@1",
+          "ChatScreen._open_console_hooks_review@1",
+          "ChatScreen._request_console_hooks_review@1",
+          "ChatScreen._start_console_view_after_reconciliation@1",
+          "ChatScreen._sync_console_composer_action_state@1",
+          "ChatScreen.consume_pending_llamacpp_console_intent@1",
+          "ChatScreen.consume_pending_vllm_console_intent@1",
+          "ChatScreen.on_console_workbench_action_requested@1",
+          "ChatScreen.on_screen_resume@1"
+        ],
+        "module_import_nodes_identical_to_head": true,
+        "incoming_module_import_change": false
+      },
+      "incoming_declaration_ast_carry": {
+        "ChatScreen._console_command_doctor@1": {
+          "selected_dev": "96227795545e06cac2c7da2b9ff8cdd59ec1d33906fee56837e73a1a801fbdc5",
+          "candidate": "96227795545e06cac2c7da2b9ff8cdd59ec1d33906fee56837e73a1a801fbdc5"
+        },
+        "ChatScreen._console_command_fewer_permission_prompts@1": {
+          "selected_dev": "e43fa9bbfee039c17ccb5ca58afca9572e251cc8a83bc661b272064a82bccad8",
+          "candidate": "e43fa9bbfee039c17ccb5ca58afca9572e251cc8a83bc661b272064a82bccad8"
+        },
+        "ChatScreen._send_console_message_from_visible_action_observed@1": {
+          "selected_dev": "2defbea984cc51a4f1874ee7793c1245d5e8fc3e61b37edbb7fe67f5ab7e420e",
+          "candidate": "2defbea984cc51a4f1874ee7793c1245d5e8fc3e61b37edbb7fe67f5ab7e420e"
+        }
+      }
+    }
+  ],
+  "three_composed_paths": [
+    "Docs/security/production-diagnostic-inventory.json",
+    "tldw_chatbook/UI/Console_Modules/wiring.py",
+    "tldw_chatbook/UI/Screens/chat_screen.py"
+  ],
+  "clean_merge_sketches": [
+    "/private/tmp/pr2995-task17-preflight/merge-sketch-production-diagnostic-inventory.json",
+    "/private/tmp/pr2995-task17-preflight/merge-sketch-wiring.py",
+    "/private/tmp/pr2995-task17-preflight/merge-sketch-chat_screen.py"
+  ],
+  "same_class_method_intersections": [],
+  "actual_module_function_intersection": [
+    "tldw_chatbook/UI/Console_Modules/wiring.py::build_console_controllers"
+  ],
+  "diagnostic_union": {
+    "selected_dev_row": {
+      "call_count": 3,
+      "diagnostic_digest": "9cf00a2c9afc387b0ba0",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    "remove_only_new_row_restores_exact_head_json": true
+  },
+  "caps": {
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "limit": 29301,
+      "actual": 29301,
+      "headroom": 0,
+      "changed_from_head": false,
+      "sha256": "5d9df3acc6ff2caa5d03e425d13f8ff23f6109c0c78300aa7a36dcae53b26c94"
+    },
+    "tldw_chatbook/Chat/console_chat_store.py": {
+      "limit": 22344,
+      "actual": 22334,
+      "headroom": 10,
+      "changed_from_head": false,
+      "sha256": "bf6eb20181f4cdf893ae4615041170929fab2b0091a42cdc25278959cd7c8771"
+    },
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": {
+      "limit": 6479,
+      "actual": 6479,
+      "headroom": 0,
+      "changed_from_head": false,
+      "sha256": "d9d391123e31a409e000293acb1b335b423ddec0c0bd2ba9b81cc679def63487"
+    },
+    "tldw_chatbook/Chat/console_context_compaction.py": {
+      "limit": 4185,
+      "actual": 4185,
+      "headroom": 0,
+      "changed_from_head": false,
+      "sha256": "652cf911ab2656063ee111de37f9576931873f01f4187890306c2c443e05326c"
+    },
+    "tldw_chatbook/UI/Screens/chat_screen.py": {
+      "limit": 25218,
+      "actual": 25192,
+      "headroom": 26,
+      "changed_from_head": true,
+      "sha256": "c2788e9a88908335be20c47c8da799495c295e16c8db3d3581e6c7ea5c34c160"
+    },
+    "screen_methods": {
+      "limit": 759,
+      "actual": 759
+    }
+  },
+  "unchanged_limits": {
+    "ui_ready": 1033,
+    "preimport_modules": 557,
+    "preimport_total_loc": 425347,
+    "preimport_single_route_loc": 135111,
+    "app_import": 686,
+    "boot_css_bytes": 608090,
+    "screen_slack_rule": 50
+  },
+  "qa_carry": {
+    "original_1983_rows_verified_exact_HEAD_blobs": true,
+    "original_digest": "ad92f9666141271109dde626bd96522d969f0dd366da9a0db931e492b3940d04",
+    "incoming_qa_intersections": [],
+    "current_qa_directory_counts": {
+      "Docs/superpowers/qa/2026-10-03-console-pr2995-review-and-merge/": 354,
+      "Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/": 632
+    },
+    "current_qa_directory_path_blob_digests": {
+      "Docs/superpowers/qa/2026-10-03-console-pr2995-review-and-merge/": "97f69c24385be32703297a304e8207850705034f05153ed7fc7d3fe2f96331df",
+      "Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/": "5d17ffb7a9f313dd40fc385e159bd94ce9ed6b883cd188c9037985aa754439fa"
+    },
+    "rule": "Every historical QA byte including original QA527 history and later additive documents stays at its own original provenance. Candidate overlays only 19 incoming paths, none is QA. No receipt retarget, archive regeneration or snapshot rewrite.",
+    "original_zip": {
+      "path": "Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/qualification-evidence.zip",
+      "bytes": 63166118,
+      "sha256": "acecbdfb6ddbafe6df679c39f9f137f2bfb49a1f87b62556e1345021f8384c84",
+      "entries_carried_from_prior_receipt": 2118,
+      "decompressed_or_replayed": false
+    },
+    "historical_case_phases": [
+      "original58 startup/navigation",
+      "original35 final loading",
+      "Task15 original61",
+      "Task15 R1 original27",
+      "Task16 original58 (56pass/2 inherited failures), then separately recorded exact two-node profile repair and typed-adapter follow-up"
+    ],
+    "prior_root_receipt": {
+      "path": "task-16-root-handoff-verification.json",
+      "sha256": "a3ddcd641deb733f8d72cdf71f0a82d583f090f5f4296cae03c52076919267e1",
+      "bytes": 2136,
+      "lines": 51
+    }
+  },
+  "named_exact_owner_carry": {
+    "tldw_chatbook/Chat/console_runtime.py": {
+      "sha256": "baf3b1bd1c0f048e4045e7753e18ffd7a297a1ce3e1834458074ecff727ecf35",
+      "bytes": 237539,
+      "lines": 5497
+    },
+    "tldw_chatbook/Chat/console_chat_start.py": {
+      "sha256": "3d628d4394da0ecad3a4d04166623608116e709a434dab204b13ab71e6b5b2e0",
+      "bytes": 32603,
+      "lines": 759
+    },
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "sha256": "5d9df3acc6ff2caa5d03e425d13f8ff23f6109c0c78300aa7a36dcae53b26c94",
+      "bytes": 1322984,
+      "lines": 29301
+    },
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": {
+      "sha256": "d9d391123e31a409e000293acb1b335b423ddec0c0bd2ba9b81cc679def63487",
+      "bytes": 298767,
+      "lines": 6479
+    },
+    "tldw_chatbook/UI/Console_Modules/session.py": {
+      "sha256": "9a6c31fdf30b3d478686d90a32775ce927002544ef428ec4b16bcaf43b30011f",
+      "bytes": 270427,
+      "lines": 6293
+    },
+    "Tests/conftest.py": {
+      "sha256": "a065da11e2d3d6b6a5bda42f52e537c7619dc0bee509bf2d5669491c143fa148",
+      "bytes": 79301,
+      "lines": 1789
+    },
+    "Tests/UI/test_console_ask_user_typed_answers.py": {
+      "sha256": "b9c3ea4b8b0c35bb4501d36285b03b7b374f7a02466939451fb30fc7d93497e9",
+      "bytes": 14089,
+      "lines": 331
+    },
+    "Tests/Performance/test_ui_ready_module_census.py": {
+      "sha256": "08bb8725611f069fd42d87f11fed813969fa44ac154fedf803cbd04d66ff6117",
+      "bytes": 26569,
+      "lines": 565
+    },
+    "Tests/Performance/test_screen_preimport_payload_budget.py": {
+      "sha256": "27f92d64015b5d598ed5b204d6443820c2e0316c1ae2205db189060d3bddba4c",
+      "bytes": 14469,
+      "lines": 351
+    },
+    "Tests/Packaging/test_console_interaction_boot_closure.py": {
+      "sha256": "6d370770566e75b2f00b2724175448420b63983a4aec15c124b19cd8ed218782",
+      "bytes": 3794,
+      "lines": 106
+    },
+    "Tests/Packaging/test_conversation_settings_boot_closure.py": {
+      "sha256": "f539866edbc60d4009e221d7dd8888d3715f0c413329fbe3002aa715104db185",
+      "bytes": 2676,
+      "lines": 79
+    },
+    "Tests/Performance/test_boot_worker_census.py": {
+      "sha256": "e545699169ba9c57291110f97e3e4154ddef6d7db9f05394d6496e0de1b57e67",
+      "bytes": 17367,
+      "lines": 438
+    }
+  },
+  "loading": {
+    "new_loading_selectors": [],
+    "new_payload_selector": null,
+    "reason": "Changed existing Console owners are already in app+Chat prewarm baseline. New command_handoff and command_draft are imported only within command handler bodies; added prompt constants come from an already imported grammar module. Controller construction imports/calls and view-startup worker/timer sites remain exact. No route or CSS changes. Marginal preimport module/LOC projection unchanged, not a fresh census claim.",
+    "historical_task16_payload": "557 modules /415370 total LOC /127527 library LOC; keep warning and original source",
+    "historical_loading": "35 at a688; original58 startup/nav unchanged; no replay or current-tree pass relabel"
+  },
+  "test_groups": [
+    {
+      "name": "command_origin_and_exact_wiring",
+      "selectors": [
+        "Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_never_lands_on_the_chat_switched_to[enter]",
+        "Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_never_lands_on_the_chat_switched_to[send-button]",
+        "Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_takes_only_the_draft_its_send_captured[appended]",
+        "Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_takes_only_the_draft_its_send_captured[replaced]",
+        "Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[doctor]",
+        "Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[skills]",
+        "Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[fewer-permission-prompts]",
+        "Tests/UI/test_console_command_origin_chat.py::test_a_command_never_starts_in_a_chat_it_was_not_sent_from"
+      ],
+      "expected_cases_from_source": 8,
+      "reason": "Actual shared send branch, doctor/fewer screen method additions, and skill kwargs lambda in composed wiring; guarded system awaits and captured revisions."
+    },
+    {
+      "name": "command_timing_cancellation_and_draft",
+      "selectors": [
+        "Tests/UI/test_console_video_send_freeze.py::test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[lazy-enter]",
+        "Tests/UI/test_console_video_send_freeze.py::test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[lazy-send-button]",
+        "Tests/UI/test_console_video_send_freeze.py::test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[eager-enter]",
+        "Tests/UI/test_console_video_send_freeze.py::test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[eager-send-button]",
+        "Tests/UI/test_console_video_send_freeze.py::test_another_command_runs_while_a_generation_is_in_flight",
+        "Tests/UI/test_console_video_send_freeze.py::test_a_command_whose_modal_wait_is_cancelled_ends_quietly",
+        "Tests/UI/test_console_video_send_freeze.py::test_stop_keeps_a_draft_typed_during_the_generation[enter]",
+        "Tests/UI/test_console_video_send_freeze.py::test_stop_keeps_a_draft_typed_during_the_generation[send-button]",
+        "Tests/UI/test_console_video_send_freeze.py::test_a_failed_generation_never_writes_into_the_chat_switched_to[typed]",
+        "Tests/UI/test_console_video_send_freeze.py::test_a_failed_image_batch_still_offers_a_command_its_take_left_behind"
+      ],
+      "expected_cases_from_source": 10,
+      "reason": "Both real send pumps plus eager factory, non-exclusive worker concurrency, modal WorkerCancelled handling, newer live draft and sibling scope, and lost-take resend hint."
+    },
+    {
+      "name": "changed_visible_send_plain_answer_control",
+      "selectors": [
+        "Tests/UI/test_console_ask_user_typed_answers.py::test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer"
+      ],
+      "expected_cases_from_source": 1,
+      "reason": "The actual changed shared visible-send function must still route plain text through the real decision card, host worker and composer before ordinary custody; retain the final Task16 bootstrap marker and exact adapter."
+    },
+    {
+      "name": "composed_static_owners",
+      "selectors": [
+        "Tests/Architecture/test_screen_size_ratchet.py::test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py]",
+        "Tests/Architecture/test_screen_size_ratchet.py::test_budget_is_not_left_slack_after_a_wave[tldw_chatbook/UI/Screens/chat_screen.py]",
+        "Tests/Architecture/test_persistent_diagnostic_inventory.py::test_production_diagnostic_inventory_and_sink_topology_are_unchanged"
+      ],
+      "expected_cases_from_source": 3,
+      "reason": "Only changed capped owner and actual three-log upstream diagnostic addition/composition. All unchanged module cap owners carry exactly."
+    }
+  ],
+  "selector_count": 22,
+  "expected_cases_from_source": 22,
+  "pytest_collection_performed": false,
+  "test_execution": false,
+  "future_verification_constraints": [
+    "Root selects scope before a fresh source worker; no rebase/checkout/source/index/HEAD writes made during this preflight.",
+    "Use shared Python3.12 with WT PYTHONPATH, canonical private profiles, final Task16 exact marker/adapter and existing300s timeout.",
+    "Verify explicit IDs at bounded collection/execution; parametrized case IDs above are source-derived, not claimed collected.",
+    "Selected-dev owns all 16 nonoverlap paths; retain every incoming assertion, marker, worker group and source method. Preserve all feature changes in three compositions.",
+    "No full58/35/61/27 replay, full suites, dependency install, live-provider call, new skip/XFAIL, warning suppression or higher cap.",
+    "Any actual new early import/constructor/route cost requires root to select the one affected loading node; current static diff supplies no such need."
+  ],
+  "adr": {
+    "required": false,
+    "paths": [
+      "backlog/decisions/219-console-chat-destinations-and-bounded-starts.md",
+      "backlog/decisions/220-console-human-decision-coordination-ownership.md",
+      "backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md",
+      "backlog/decisions/097-boot-budget-ratchets.md"
+    ],
+    "reason": "Direct upstream integration preserving existing ownership and budgets; no new runtime/storage/authority/schema/dependency boundary."
+  },
+  "read_only_git_receipt": {
+    "HEAD": "06cfe2f6a30236dcd8f81893ebf49bc3d0b78036",
+    "index_sha256": "82c85c6973c90e18099e218007357f53d9c539659bbd6e5cc42fda7c3b0ab8ac",
+    "status_porcelain": ""
+  }
+}

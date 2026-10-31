@@ -262,6 +262,80 @@ def test_pathspec_magic_in_the_path_argument_cannot_invert_the_scope(
     )
 
 
+def test_git_status_scopes_to_the_requested_path(home_repo: Path) -> None:
+    """TASK-19874: ``path`` limits the status, like git_diff/git_log.
+
+    Before: the parameter only discovered the repository, so narrowing to
+    a subdirectory silently returned every changed file in the repo.
+    """
+    (home_repo / "notes.txt").write_text("hello\nworld\ndirty\n")
+    scoped_dir = home_repo / "scoped"
+    scoped_dir.mkdir()
+    (scoped_dir / "inside.txt").write_text("scoped change\n")
+
+    out = git_status(home_repo, path="scoped")
+
+    assert "inside.txt" in out, f"the scoped entry is missing:\n{out}"
+    assert "notes.txt" not in out, (
+        f"the scope leaked past the requested subdirectory:\n{out}"
+    )
+    # The default (no path) still reports the whole repository.
+    everything = git_status(home_repo)
+    assert "inside.txt" in everything and "notes.txt" in everything
+
+
+def test_git_status_magic_in_the_path_argument_cannot_invert_the_scope(
+    home_repo: Path,
+) -> None:
+    """A magic-shaped ``path`` must scope literally, not exclude (TASK-19874)."""
+    (home_repo / MAGIC_NAME).write_text("magic-filename\nchanged\n")
+    (home_repo / "notes.txt").write_text("hello\nworld\nalso changed\n")
+    (home_repo / ".ssh" / "id_rsa").write_text(
+        f"-----BEGIN OPENSSH PRIVATE KEY-----\n{SSH_MARKER}\nINJECTED\n"
+    )
+
+    out = git_status(home_repo, path=MAGIC_NAME)
+
+    _assert_no_leak(out, f"git_status(path={MAGIC_NAME!r})")
+    # The scoped status lists exactly the one named file. The assertion is
+    # on the REAL notes.txt's exact entry shape: the magic-named file's own
+    # entry (".M :(exclude)notes.txt") contains the substring too.
+    assert ".M notes.txt" not in out, (
+        f"the injected magic excluded the named file and leaked the rest:\n{out}"
+    )
+    assert ":(exclude)notes.txt" in out, (
+        f"the literal pathspec stopped matching its own file:\n{out}"
+    )
+
+
+def test_git_status_positive_pathspec_does_not_weaken_the_denylist(
+    home_repo: Path,
+) -> None:
+    """The choke point refuses a denylisted ``path`` for status too.
+
+    The denylist is enforced in TWO places and neither is weakened by the
+    new positive pathspec: (1) naming a denylisted path as ``path`` is
+    refused by the same resolve TASK-19551 pinned for git_diff; (2) the
+    denylist pathspecs still ride alongside the positive one in the argv,
+    guaranteed structurally by
+    ``test_every_pathspec_this_family_builds_carries_explicit_magic``
+    (only ``_literal_pathspec`` appends and ``_denylist_pathspecs``
+    extends may build the pathspec list).
+    """
+    (home_repo / ".ssh" / "id_rsa").write_text(
+        f"-----BEGIN OPENSSH PRIVATE KEY-----\n{SSH_MARKER}\nSCOPED-DIRTY\n"
+    )
+    (home_repo / "notes.txt").write_text("dirty\n")
+
+    with pytest.raises(LocalToolError, match="protected path"):
+        git_status(home_repo, path=".ssh/id_rsa")
+
+    # An ordinary scoped path still works beside the dirty denylisted file.
+    out = git_status(home_repo, path="notes.txt")
+    _assert_no_leak(out, "git_status(path='notes.txt')")
+    assert "notes.txt" in out
+
+
 def test_every_pathspec_this_family_builds_carries_explicit_magic() -> None:
     """Structural pin: no bare value may reach a pathspec position.
 
@@ -744,9 +818,7 @@ def test_prepare_repository_refuses_a_protected_repository_root(
     # `context` it threads into this exact call (see `_denylist_pathspecs`
     # sharing one `SensitivePathContext` per tool call instead of
     # re-resolving it) -- the stub must accept that keyword too.
-    monkeypatch.setattr(
-        gti, "is_sensitive_path", lambda candidate, context=None: True
-    )
+    monkeypatch.setattr(gti, "is_sensitive_path", lambda candidate, context=None: True)
     with pytest.raises(LocalToolError, match="protected path"):
         prepare_repository(repo, ".")
 

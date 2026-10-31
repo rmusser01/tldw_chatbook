@@ -1,0 +1,11 @@
+{
+  "actual_cases": 1,
+  "cases": [
+    {
+      "classname": "Tests.UI.test_console_ask_user_typed_answers",
+      "failure_message": "AttributeError: 'types.SimpleNamespace' object has no attribute '_ui_responsiveness_monitor'",
+      "name": "test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer",
+      "outcome": "failure"
+    }
+  ]
+}

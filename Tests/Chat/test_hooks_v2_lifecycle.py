@@ -8,11 +8,15 @@ from Tests.Agents.test_hook_permissions import _approve, _edit
 from Tests.Agents.test_hook_permissions import hook_file as _hook_file
 from Tests.Agents.test_hooks_v2_execution import command
 from Tests.Chat.test_console_fleet_wake import _controller_rig
+from Tests.Plugins.conftest import native_console as _native_console
+from Tests.Plugins.conftest import native_package as _native_package
 from tldw_chatbook.Agents.run_hooks import HookOutcome
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 hook_file = _hook_file
+native_console = _native_console
+native_package = _native_package
 
 
 @pytest.fixture
@@ -186,6 +190,347 @@ async def test_live_viewless_session_end_is_observed_once(session_case, tmp_path
     await case.runtime.close_hooks_v2(case.session.id)
     assert marker.read_text() == "end"
     await case.runtime.close_hooks_v2(case.session.id)
+
+
+@pytest.fixture
+async def saved_session_end_case(session_case, hook_file, tmp_path, request):
+    """Activate a real saved command through the normal review and Send seam."""
+    from Tests.hooks_v2_process_support import child_argv
+
+    case = session_case
+    await case.runtime.close_hooks_v2(case.session.id)
+    marker = tmp_path / "saved-session-end"
+    wait = (
+        "import time;time.sleep(30);"
+        if getattr(request, "param", None) == "blocked-child"
+        else ""
+    )
+    argv = child_argv(
+        "from pathlib import Path;"
+        f"p=Path({str(marker)!r});"
+        "p.write_text((p.read_text() if p.exists() else '')+'end\\n');"
+        + wait
+        + 'print(\'{"version":2,"decision":"pass"}\')'
+    )
+    _edit(
+        hook_file,
+        lambda section: section.update(
+            handler=[
+                {
+                    "id": "saved-end",
+                    "event": "SessionEnd",
+                    "type": "command",
+                    "effects": [],
+                    "argv": argv,
+                }
+            ]
+        ),
+    )
+    permissions = case.runtime.ensure_hook_permissions()
+    case.controller._hook_permissions_accessor = lambda: permissions
+    assert _approve(permissions).ready
+    assert (await case.submit()).accepted
+    case.end_marker = marker
+    case.hook_file = hook_file
+    case.permissions = permissions
+    case.end_engine = case.runtime.get_hooks_v2(case.session.id)
+    case.end_target = next(
+        target
+        for target in permissions.v2_configuration()[1]
+        if target.spec.id == "saved-end"
+    )
+    assert permissions.target_current(case.end_target)
+    assert case.gateway.payloads and not marker.exists()
+    return case
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("closure", ["session", "dispose", "begin_dispose"])
+async def test_saved_granted_session_end_survives_actual_host_closure_once(
+    saved_session_end_case, closure
+):
+    """Ordinary closure must not suppress the host's still-granted notification."""
+    case = saved_session_end_case
+    if closure == "session":
+        await case.runtime.close_session(
+            case.session.id,
+            expected_revision=case.controller.lifecycle_impact().revision,
+        )
+    else:
+        if closure == "begin_dispose":
+            case.runtime.begin_dispose()
+        await case.runtime.dispose()
+    assert case.end_marker.exists(), dict(case.end_engine.notification_failures)
+    assert case.end_marker.read_text() == "end\n"
+    assert not case.end_engine.processes.records
+    assert case.end_engine.budget_owner.snapshot()["tickets"] == 0
+    if closure != "session":
+        payloads = len(case.gateway.payloads)
+        assert not (await case.submit()).accepted
+        assert len(case.gateway.payloads) == payloads
+        assert not case.permissions.target_current(case.end_target)
+        with pytest.raises(RuntimeError, match="disposed"):
+            case.runtime.ensure_hooks_v2("late", (), lambda *_: True)
+        await case.runtime.dispose()
+    await case.runtime.close_hooks_v2(case.session.id)
+    assert case.end_marker.read_text() == "end\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("closure", ["dispose", "begin_dispose"])
+async def test_mixed_native_and_saved_session_end_survives_host_disposal(
+    native_console, native_package, hook_file, tmp_path, closure
+):
+    """Native projection preserves standalone host delivery, not plugin reopening."""
+    import json
+
+    from Tests.hooks_v2_process_support import child_argv
+
+    case = native_console
+    path = "io.github.rmusser01.chatbook/hooks.json"
+    package = native_package(extension={"version": 1, "hooks": path})
+    (package / path).parent.mkdir(parents=True, exist_ok=True)
+    (package / path).write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "hooks": [
+                    {
+                        "id": name,
+                        "event": event,
+                        "type": "command",
+                        "effects": [],
+                        "required": event == "SessionStart",
+                        "argv": child_argv(
+                            "import os;from pathlib import Path;"
+                            f"Path(os.environ['PLUGIN_DATA'],{name!r}).touch();"
+                            'print(\'{"version":2,"decision":"pass"}\')'
+                        ),
+                    }
+                    for name, event in (
+                        ("native-start", "SessionStart"),
+                        ("native-end", "SessionEnd"),
+                    )
+                ],
+            }
+        )
+    )
+    installed = await case.service.review_install(
+        package,
+        selection=("hook:native-start", "hook:native-end"),
+        workspace_id="workspace-a",
+    )
+    await case.service.commit(installed, installed.operation_id)
+    data_review = await case.service.review_data_creation(installed.installation_id)
+    data = await case.service.create_data(data_review, data_review.operation_id)
+    trusted = await case.service.review_trust(installed.installation_id)
+    await case.service.commit(trusted, trusted.operation_id)
+    enabled = await case.service.review_activation(
+        installed.installation_id, workspace_id="workspace-a", intent="enabled"
+    )
+    await case.service.commit(enabled, enabled.operation_id)
+    marker = tmp_path / "mixed-saved-end"
+    _edit(
+        hook_file,
+        lambda section: section.update(
+            handler=[
+                {
+                    "id": "saved-end",
+                    "event": "SessionEnd",
+                    "type": "command",
+                    "effects": [],
+                    "argv": child_argv(
+                        "from pathlib import Path;"
+                        f"p=Path({str(marker)!r});"
+                        "p.write_text((p.read_text() if p.exists() else '')+'end\\n');"
+                        'print(\'{"version":2,"decision":"pass"}\')'
+                    ),
+                }
+            ]
+        ),
+    )
+    runtime = ConsoleRuntime(app=case.controller.app)
+    runtime.set_chat_store(case.store)
+    runtime.set_chat_controller(case.controller)
+    permissions = runtime.ensure_hook_permissions()
+    case.controller._hook_permissions_accessor = lambda: permissions
+    assert _approve(permissions).ready
+    try:
+        assert (
+            await case.controller.submit_draft("hello", session_id=case.session.id)
+        ).accepted
+        engine = runtime.get_hooks_v2(case.session.id)
+        assert engine.native_plugins.owners and engine._event_projector is not None
+        assert (data.path / "native-start").exists()
+        target = next(
+            target
+            for target in permissions.v2_configuration()[1]
+            if target.spec.id == "saved-end"
+        )
+        assert permissions.target_current(target) and not marker.exists()
+        if closure == "begin_dispose":
+            runtime.begin_dispose()
+            owner = engine.lifecycle_owner
+            state = engine._execution_state(owner._session_end_execution)
+            with engine._continuation_scope(state):
+                for replay in (
+                    owner._session_end_event,
+                    owner._session_end_event.model_copy(),
+                ):
+                    refused = await engine.fire_teardown_async(replay)
+                    assert not refused.accepted and refused.failures
+        await runtime.dispose()
+        assert marker.exists(), dict(engine.notification_failures)
+        assert marker.read_text() == "end\n"
+        assert not (data.path / "native-end").exists()
+        assert not permissions.target_current(target)
+        assert not engine.processes.records
+        assert engine.budget_owner.snapshot()["tickets"] == 0
+        assert not runtime.hooks_v2_cleanup_pending
+        payloads = len(case.gateway.payloads)
+        assert not (
+            await case.controller.submit_draft("late", session_id=case.session.id)
+        ).accepted
+        assert len(case.gateway.payloads) == payloads
+    finally:
+        await runtime.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["revoke", "reapprove", "definition", "missing"])
+async def test_saved_session_end_rechecks_grant_after_launch_authority(
+    saved_session_end_case, change, monkeypatch
+):
+    """A valid worker check cannot substitute for current authority at spawn."""
+    import asyncio
+    import threading
+
+    from tldw_chatbook.Agents.hook_permissions import HookPermissions
+
+    case = saved_session_end_case
+    entered, release = threading.Event(), threading.Event()
+    original = case.end_engine.authority_check
+
+    def held_authority(handler, event, stage):
+        permitted = original(handler, event, stage)
+        if stage == "launch":
+            entered.set()
+            assert release.wait(2), "launch-authority control was not released"
+        return permitted
+
+    monkeypatch.setattr(case.end_engine, "authority_check", held_authority)
+    disposing = asyncio.create_task(case.runtime.dispose())
+    try:
+        assert await asyncio.to_thread(entered.wait, 2), (
+            "authorized teardown never reached the final launch boundary",
+            dict(case.end_engine.notification_failures),
+        )
+        owner = HookPermissions()
+        current = owner.snapshot()
+        if change in {"revoke", "reapprove"}:
+            await asyncio.to_thread(owner.revoke, current, case.end_target.key)
+            if change == "reapprove":
+                assert (await asyncio.to_thread(_approve, owner)).ready
+        elif change == "definition":
+            _edit(
+                case.hook_file,
+                lambda section: section["handler"][0].update(timeout_seconds=4),
+            )
+        else:
+            current.store_path.unlink()
+        release.set()
+        await asyncio.wait_for(disposing, 9)
+        assert not case.end_marker.exists(), "stale grant launched a real command"
+        assert case.end_engine.notification_failures
+        assert not case.end_engine.processes.records
+        assert case.end_engine.budget_owner.snapshot()["tickets"] == 0
+        payloads = len(case.gateway.payloads)
+        assert not (await case.submit()).accepted
+        assert len(case.gateway.payloads) == payloads
+    finally:
+        release.set()
+        await asyncio.gather(disposing, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_saved_session_end_public_teardown_replay_cannot_borrow_host_delivery(
+    saved_session_end_case, monkeypatch
+):
+    """Same labels and even the original event cannot mint another execution."""
+    case = saved_session_end_case
+    captured = []
+    original = case.end_engine.notify_teardown
+
+    def record(event, **kwargs):
+        captured.append(event)
+        return original(event, **kwargs)
+
+    monkeypatch.setattr(case.end_engine, "notify_teardown", record)
+    case.runtime.begin_dispose()
+    assert captured
+    state = case.end_engine._execution_state(
+        case.end_engine.lifecycle_owner._session_end_execution
+    )
+    assert not case.end_engine.notify_teardown(
+        captured[0], _execution=case.end_engine.lifecycle_owner._session_end_execution
+    ), "the consumed host execution was reused"
+    with case.end_engine._continuation_scope(state):
+        for replay in (captured[0], captured[0].model_copy()):
+            refused = await case.end_engine.fire_teardown_async(replay)
+            assert not refused.accepted, "public teardown replay launched a command"
+            assert refused.failures
+    await case.runtime.dispose()
+    assert case.end_marker.exists(), dict(case.end_engine.notification_failures)
+    assert case.end_marker.read_text() == "end\n"
+    assert not case.end_engine.processes.records
+    assert case.end_engine.budget_owner.snapshot()["tickets"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("saved_session_end_case", ["blocked-child"], indirect=True)
+async def test_saved_session_end_cancelled_dispose_keeps_original_deadline_and_reaps(
+    saved_session_end_case,
+):
+    """Cancelling the caller cannot orphan the granted notification process."""
+    import asyncio
+    import os
+    import time
+
+    case = saved_session_end_case
+    started = time.monotonic()
+    disposing = asyncio.create_task(case.runtime.dispose())
+    try:
+        try:
+            async with asyncio.timeout(3):
+                while not case.end_marker.exists():
+                    await asyncio.sleep(0.01)
+        except TimeoutError:
+            pytest.fail(
+                "authorized teardown child did not launch: "
+                f"{dict(case.end_engine.notification_failures)}"
+            )
+        jobs = tuple(case.end_engine.processes.records.values())
+        assert len(jobs) == 1 and jobs[0].capture.transport is not None
+        transport = jobs[0].capture.transport
+        pid = transport.get_pid()
+        deadline = case.end_engine.teardown_deadline
+        disposing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(disposing, 9)
+        case.runtime.begin_dispose()
+        assert case.end_engine.teardown_deadline == deadline
+        await asyncio.wait_for(case.runtime.close_hooks_v2(), 9)
+        await case.runtime.dispose()
+        assert time.monotonic() - started < 8.5
+        assert transport.get_returncode() is not None
+        with pytest.raises(ProcessLookupError):
+            os.killpg(pid, 0)
+        assert not case.end_engine.processes.records
+        assert not case.runtime.hooks_v2_cleanup_pending
+        assert case.end_engine.budget_owner.snapshot()["tickets"] == 0
+        assert case.end_marker.read_text() == "end\n"
+    finally:
+        await asyncio.gather(disposing, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -899,9 +1244,9 @@ async def test_actual_console_teardown_mcp_uses_captured_runtime_and_normal_guar
                 )
                 original = engine.notify_teardown
 
-                def changed(event):
+                def changed(event, **kwargs):
                     state["ids"] = ("new-required-initializer",)
-                    return original(event)
+                    return original(event, **kwargs)
 
                 engine.notify_teardown = changed
             if mode == "cap_exhausted":

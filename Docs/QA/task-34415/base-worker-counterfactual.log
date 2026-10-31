@@ -1,0 +1,35 @@
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "/Users/macbook-dev/.codex/worktrees/switcher-qualification-refresh/tldw_chatbook/Tests/Backup_Recovery/test_home_citation_retirement.py", line 334, in _run
+    assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+           ^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2026-10-06 08:57:01.897 | DEBUG    | tldw_chatbook.config:<module>:116 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-10-06 08:57:01.932 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6942 - Attempting to load CLI config from: /private/tmp/task34415-base-worker-confirmed-M5xJuI/home/.config/tldw_cli/config.toml
+2026-10-06 08:57:01.938 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6963 - Successfully loaded and merged CLI config from /private/tmp/task34415-base-worker-confirmed-M5xJuI/home/.config/tldw_cli/config.toml
+2026-10-06 08:57:01.938 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7047 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'paths']
+2026-10-06 08:57:01.938 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7051 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-10-06 08:57:01.944 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/switcher-qualification-refresh/tldw_chatbook/tldw_chatbook
+2026-10-06 08:57:01.944 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/switcher-qualification-refresh/tldw_chatbook/tldw_chatbook
+2026-10-06 08:57:01.945 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-06 08:57:01.945 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-10-06 08:57:01.950 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3803 - Ensured chat dictionaries folder exists: /private/tmp/task34415-base-worker-confirmed-M5xJuI/home/data/fixture/chat_dicts
+2026-10-06 08:57:01.950 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3834 - load_settings: Configuration cached for future use
+2026-10-06 08:57:01.950 | INFO     | tldw_chatbook.config:<module>:11504 - Default API Endpoint (from config.py global scope): openai
+2026-10-06 08:57:01.950 | DEBUG    | tldw_chatbook.config:<module>:11527 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-10-06 08:57:02.250 | INFO     | tldw_chatbook.Utils.optional_deps:<module>:1554 - Lazy dependency checking enabled (default). Dependencies will be checked on first use.
+Traceback (most recent call last):
+  File "<string>", line 197, in <module>
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "<string>", line 193, in main
+  File "/Users/macbook-dev/.codex/worktrees/switcher-qualification-refresh/tldw_chatbook/tldw_chatbook/UI/Screens/chat_screen.py", line 18523, in _sync_native_console_chat_ui
+    self._session.schedule_manual_read_acknowledgement()
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'types.SimpleNamespace' object has no attribute 'schedule_manual_read_acknowledgement'

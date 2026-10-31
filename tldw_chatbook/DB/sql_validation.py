@@ -81,6 +81,9 @@ VALID_TABLES = {
         "character_conversation_search_revision",
         "character_conversation_search_state",
         "character_expression_images",
+        "character_portrait_performances",
+        "character_portrait_performance_frames",
+        "character_portrait_regions",
         "chat_dictionaries",
         "collection_keywords",
         "conversation_dictionaries",
@@ -126,6 +129,14 @@ VALID_TABLES = {
         "flashcard_assets",
         "flashcard_templates",
         "flashcards",
+        "fleet_progress_messages",
+        "console_response_rule_revisions",
+        "console_response_rule_bindings",
+        "console_response_rule_validations",
+        "console_response_rule_drafts",
+        "console_response_rule_fixtures",
+        "console_response_rule_assessments",
+        "console_machine_followup_receipts",
         "kept_briefings",
         "kept_scripts",
         "keyword_collections",
@@ -185,32 +196,44 @@ VALID_TABLES = {
         "world_books",
     },
     "media": {
+        # task-19867: re-synced against a freshly initialized MediaDatabase
+        # (see Tests/DB/test_sql_validation.py's media live-schema guard).
+        # Removed as stale: IngestionTriggerTracking, MediaModifications,
+        # MediaVersion, and the old FTS names (Keywords_fts / Media_fts /
+        # MediaChunks_fts -- the FTS tables are now keyword_fts / media_fts
+        # and MediaChunks_fts is gone; FTS tables are trigger-written and
+        # excluded from the allowlist by design). Added as missing:
+        # MediaReadItLaterState, ReadingProgress, schema_version.
         "Media",
         "Keywords",
         "MediaKeywords",
-        "MediaVersion",
-        "MediaModifications",
         "UnvectorizedMediaChunks",
         "DocumentVersions",
-        "IngestionTriggerTracking",
         "sync_log",
-        "Media_fts",
-        "Keywords_fts",
         "MediaChunks",
-        "MediaChunks_fts",
+        "MediaReadItLaterState",
+        "ReadingProgress",
         "Transcripts",
+        "schema_version",
         # task-8 (spec §5.2.1/AC 27): without this row, any use of a
         # generic helper for the new v7 columns would raise
         # ``InputError: Invalid table name``.
         "ChunkingTemplates",
     },
     "prompts": {
+        # task-19867: re-synced against a freshly initialized PromptsDatabase
+        # (see Tests/DB/test_sql_validation.py's prompts live-schema guard).
+        # Removed as stale: Keywords, PromptKeywords and the old FTS names
+        # (Prompts_fts / Keywords_fts -- the live FTS tables are prompts_fts
+        # and prompt_keywords_fts, trigger-written and excluded by design).
+        # Added as missing: LocalPromptDrafts, PromptKeywordLinks,
+        # PromptKeywordsTable, schema_version.
         "Prompts",
-        "Keywords",
-        "PromptKeywords",
         "sync_log",
-        "Prompts_fts",
-        "Keywords_fts",
+        "LocalPromptDrafts",
+        "PromptKeywordLinks",
+        "PromptKeywordsTable",
+        "schema_version",
     },
 }
 
@@ -411,6 +434,8 @@ VALID_COLUMNS = {
         "deleted_at",
         "client_id",
     },
+    # TASK-34903: re-synced with the live Keywords DDL (the old set listed
+    # a never-existing deleted_at and lacked the sync-replica columns).
     "Keywords": {
         "id",
         "uuid",
@@ -418,8 +443,20 @@ VALID_COLUMNS = {
         "deleted",
         "last_modified",
         "version",
-        "deleted_at",
         "client_id",
+        "prev_version",
+        "merge_parent_uuid",
+    },
+    "PromptKeywordsTable": {
+        "id",
+        "uuid",
+        "keyword",
+        "deleted",
+        "last_modified",
+        "version",
+        "client_id",
+        "prev_version",
+        "merge_parent_uuid",
     },
     # TASK-864: these four are Media's soft-delete/undelete cascade child
     # tables (Client_Media_DB_v2.py, ``child_tables`` cascade loops in
@@ -551,7 +588,7 @@ LINK_TABLE_COLUMNS = {
     "collection_keywords": {"collection_id", "keyword_id", "created_at"},
     "note_keywords": {"note_id", "keyword_id", "created_at"},
     "MediaKeywords": {"media_id", "keyword_id"},
-    "PromptKeywords": {"prompt_id", "keyword_id"},
+    "PromptKeywordLinks": {"prompt_id", "keyword_id"},
 }
 
 

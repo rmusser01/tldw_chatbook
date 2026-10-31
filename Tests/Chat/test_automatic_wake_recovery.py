@@ -9,6 +9,8 @@ from Tests.Chat.test_automatic_wake_budget import (
 from Tests.Chat.test_console_fleet_wake import _controller_rig, _settle
 from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.fixture
 def rig(tmp_path):

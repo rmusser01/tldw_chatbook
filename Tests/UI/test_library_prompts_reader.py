@@ -185,9 +185,7 @@ async def test_basic_save_preserves_advanced_only_prompt_fields(tmp_path) -> Non
             message="Prompt editor did not arm",
         )
         screen._prompts_state.editor_mode = "basic"
-        work = screen.query_one(
-            "#library-prompt-work-pane", LibraryPromptWorkPane
-        )
+        work = screen.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
         assert not work.basic_unavailable_reason, work.basic_unavailable_reason
         await work.set_editor_mode("basic")
         assert screen.query_one("#library-prompt-basic-region").display is True
@@ -204,8 +202,9 @@ async def test_basic_save_preserves_advanced_only_prompt_fields(tmp_path) -> Non
         screen.query_one("#library-prompt-save", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: not screen._prompts_state.dirty
-            and screen._prompts_state.version == 2,
+            lambda: (
+                not screen._prompts_state.dirty and screen._prompts_state.version == 2
+            ),
             message="Basic structured Prompt save did not settle",
         )
 
@@ -250,9 +249,9 @@ async def test_invalid_advanced_block_routes_save_focus_to_its_owner(tmp_path) -
         title = screen.query_one("#prompt-block-title-delivery", Input)
 
         assert screen.query_one("#library-prompt-info-region").display is True
-        screen.query_one("#library-prompt-details", Input).value = (
-            "Still needs a block title."
-        )
+        screen.query_one(
+            "#library-prompt-details", Input
+        ).value = "Still needs a block title."
         await _wait_for_condition(
             pilot,
             lambda: screen._prompts_state.dirty,
@@ -261,8 +260,10 @@ async def test_invalid_advanced_block_routes_save_focus_to_its_owner(tmp_path) -
         screen.query_one("#library-prompt-save", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen.query_one("#library-prompt-advanced-region").display
-            and screen.focused is title,
+            lambda: (
+                screen.query_one("#library-prompt-advanced-region").display
+                and screen.focused is title
+            ),
             message="Invalid block save did not route to its Advanced owner",
         )
 
@@ -522,7 +523,9 @@ async def test_import_from_clean_editor_replaces_work_and_cancel_restores_editor
 
 
 @pytest.mark.asyncio
-async def test_import_from_dirty_editor_is_vetoed_without_hiding_draft(tmp_path) -> None:
+async def test_import_from_dirty_editor_is_vetoed_without_hiding_draft(
+    tmp_path,
+) -> None:
     prompt_id, service = _seed_prompt(tmp_path)
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)

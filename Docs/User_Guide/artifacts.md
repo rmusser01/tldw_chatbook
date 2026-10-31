@@ -36,8 +36,17 @@ silently replace or relabel an existing kept copy; Keep refuses that conflict.
 **Export…** writes Markdown through the file picker. **Scripts…** opens the
 existing kept-report manager on that copy. **Play** is available when the live
 report has usable audio. **Watchlists** returns to the selected live report's
-source. Empty Reports and failed runs offer **Try report demo**; this uses the
-existing demo service and configured provider.
+source. Empty Reports offers **Watchlists** and **Set up a daily brief…**
+directly under the "No reports yet" sentence. The latter is not a one-off
+demo: it first shows what it creates — a recurring "Daily Brief" watchlist
+over three live RSS feeds (Hacker News front page, BBC World News, Ars
+Technica) checked hourly, a brief written every 24 h with your persisted
+provider · model (using your API quota), a cast script and audio through
+your TTS provider when a voice profile exists, and the removal path (delete
+the Daily Brief watchlist in Watchlists) — and only **Set up and write
+today's brief** starts it; **Cancel** or Escape writes and fetches nothing.
+If the newest report failed, the same buttons stay under the list so you can
+run it again; the consent then says it reuses your existing Daily Brief.
 
 If a source fails, Library shows an error and Retry instead of claiming that
 its last successful count is current. Other healthy artifact views remain
@@ -55,6 +64,27 @@ is offered when its original local conversation is available. **Manage
 Chatbook packs…** opens the existing manager, including Create, Import,
 Templates, Export, and Delete. The manager remains a separate workflow linked
 from Library.
+
+### Importing a pack: the conflict step
+
+The import wizard's third step asks how to handle items that already exist
+in your databases (skip, rename, replace, or merge). What it reports there
+is checked, not assumed: when the step opens, the conversations, notes,
+characters and media in the pack are looked up against your databases, and
+the step shows one of exactly three states:
+
+- **Potential Conflicts Detected** — a list naming each pack item whose
+  name (or, for media, URL) is already present, and the existing name it
+  matches.
+- **✅ No conflicts detected** — only shown after that lookup ran and found
+  nothing.
+- Nothing at all — when no pack has been validated yet, or the lookup
+  could not run, the step makes no claim either way.
+
+Prompts and kept briefings are not part of the check: the skip/rename/
+replace/merge choice does not apply to them (prompts that collide with an
+existing name fail their import instead), and kept briefings are matched by
+content rather than by name.
 
 The inventory covers registered Chatbooks and reports. It does not scan folders
 for unregistered exports or invent empty Datasets/Drafts sections.

@@ -162,9 +162,9 @@ class PersonasCharacterWorldBooksWidget(Container):
         table.display = bool(self._rows)
         # The count lives in the section header; the collapsed state does not
         # (a data refresh must not re-collapse what the user expanded).
-        self.query_one("#personas-char-worldbooks-toggle", Button).label = (
-            self._toggle_label()
-        )
+        self.query_one(
+            "#personas-char-worldbooks-toggle", Button
+        ).label = self._toggle_label()
 
     def _selected_name(self) -> str | None:
         table = self.query_one("#personas-char-worldbooks-table", DataTable)
@@ -181,12 +181,10 @@ class PersonasCharacterWorldBooksWidget(Container):
     def _toggle_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self._collapsed = not self._collapsed
-        self.query_one("#personas-char-worldbooks-body").display = (
-            not self._collapsed
-        )
-        self.query_one("#personas-char-worldbooks-toggle", Button).label = (
-            self._toggle_label()
-        )
+        self.query_one("#personas-char-worldbooks-body").display = not self._collapsed
+        self.query_one(
+            "#personas-char-worldbooks-toggle", Button
+        ).label = self._toggle_label()
 
     @on(Button.Pressed, "#personas-char-worldbooks-add")
     def _attach_pressed(self, event: Button.Pressed) -> None:

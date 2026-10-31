@@ -3,6 +3,7 @@
 Runs on the REAL app CSS stack (screen css + bundle): geometry measured
 without the bundle is not measured (task-15110's lesson).
 """
+
 import time
 from threading import Event
 from pathlib import Path
@@ -32,9 +33,17 @@ class _FakeProvider:
     def __init__(self):
         from tldw_chatbook.UI.Screens.change_review_screen import ReviewTurn
 
-        self._row = {"root": "/ws", "kind": "turn", "tracking_error": None,
-                     "files_changed": 2, "adds": 8, "dels": 3,
-                     "baseline_sha": "b", "end_sha": "e", "run_id": "run-1"}
+        self._row = {
+            "root": "/ws",
+            "kind": "turn",
+            "tracking_error": None,
+            "files_changed": 2,
+            "adds": 8,
+            "dels": 3,
+            "baseline_sha": "b",
+            "end_sha": "e",
+            "run_id": "run-1",
+        }
         self._turn = ReviewTurn(run_id="run-1", label="t", rows=(self._row,))
 
     def turns(self):
@@ -44,8 +53,10 @@ class _FakeProvider:
         from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 
         assert row is self._row
-        return [ChangedFile(path="a.py", status="M", adds=5, dels=3),
-                ChangedFile(path="b.md", status="A", adds=3, dels=0)]
+        return [
+            ChangedFile(path="a.py", status="M", adds=5, dels=3),
+            ChangedFile(path="b.md", status="A", adds=3, dels=0),
+        ]
 
     def diff_text(self, row, path):
         assert path in ("a.py", "b.md")
@@ -137,7 +148,9 @@ class _Host(ConsolidatedCSSApp):
 
     def compose(self) -> ComposeResult:
         yield ConsoleTurnFileCard(
-            MARKER, "run-1", lambda: _FakeProvider(),
+            MARKER,
+            "run-1",
+            lambda: _FakeProvider(),
             id="card-under-test",
         )
 
@@ -374,8 +387,7 @@ async def test_expand_hunk_past_old_cap_still_present():
         )
         combined = "\n".join(str(hunk.render()) for hunk in hunks)
         assert "hunk_2_marker" in combined, (
-            "third hunk's header must survive segmentation past the old "
-            "global line cap"
+            "third hunk's header must survive segmentation past the old global line cap"
         )
         # Per-hunk elision: cap=4 // 3 == 1 body line kept per hunk, so
         # each hunk's block carries an honest "more lines" tail rather than
@@ -532,9 +544,7 @@ async def test_expand_provider_construction_failure_never_crashes_app():
 
     class _FlakyHost(_Host):
         def compose(self) -> ComposeResult:
-            yield ConsoleTurnFileCard(
-                MARKER, "run-1", factory, id="card-under-test"
-            )
+            yield ConsoleTurnFileCard(MARKER, "run-1", factory, id="card-under-test")
 
     async with _FlakyHost().run_test(size=(120, 40)) as pilot:
         card = await _settled_card(pilot)
@@ -745,12 +755,16 @@ async def test_selected_card_uses_the_bundles_focus_background():
                 id="selected-peer",
             )
             yield ConsoleTurnFileCard(
-                MARKER, "run-1", lambda: _FakeProvider(),
+                MARKER,
+                "run-1",
+                lambda: _FakeProvider(),
                 selected=True,
                 id="card-under-test",
             )
             yield ConsoleTurnFileCard(
-                MARKER, "run-1", lambda: _FakeProvider(),
+                MARKER,
+                "run-1",
+                lambda: _FakeProvider(),
                 id="card-unselected",
             )
 
@@ -812,8 +826,7 @@ async def test_toggle_all_expands_every_row_then_collapses_them_all():
         assert len(bodies) == 2
         for body in bodies:
             assert list(body.query(".console-turn-file-hunk")), (
-                "expand-all must mount every row's hunk blocks, not just "
-                "flip display"
+                "expand-all must mount every row's hunk blocks, not just flip display"
             )
         toggle_btn = card.query_one(".console-turn-file-toggle-all-btn", Button)
         toggle_btn.focus()
@@ -948,9 +961,7 @@ async def test_row_tooltip_carries_the_full_unelided_path():
 
 @pytest.mark.asyncio
 async def test_narrow_card_elides_a_long_path_but_tooltip_keeps_it_whole():
-    long_path = (
-        "very/deeply/nested/directory/structure/that/is/quite/long/module.py"
-    )
+    long_path = "very/deeply/nested/directory/structure/that/is/quite/long/module.py"
 
     class _LongPathProvider(_FakeProvider):
         def changed_files(self, row):

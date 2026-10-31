@@ -21,7 +21,10 @@ from tldw_chatbook.Image_Generation.config import (
     DEFAULT_NOVITA_IMAGE_TIMEOUT_SECONDS,
     get_image_generation_config,
 )
-from tldw_chatbook.Image_Generation.exceptions import ImageBackendUnavailableError, ImageGenerationError
+from tldw_chatbook.Image_Generation.exceptions import (
+    ImageBackendUnavailableError,
+    ImageGenerationError,
+)
 from tldw_chatbook.Image_Generation.request_validation import effective_inline_max_bytes
 from tldw_chatbook.Utils.egress import origin_set
 
@@ -55,7 +58,9 @@ class NovitaImageAdapter:
             output_format,
             max_bytes=self._max_output_bytes(),
         )
-        return ImageGenResult(content=content, content_type=content_type, bytes_len=len(content))
+        return ImageGenResult(
+            content=content, content_type=content_type, bytes_len=len(content)
+        )
 
     def _max_output_bytes(self) -> int:
         return effective_inline_max_bytes(self._config)
@@ -76,7 +81,9 @@ class NovitaImageAdapter:
         )
         cleaned = str(raw).strip()
         if not cleaned:
-            raise ImageBackendUnavailableError("novita image base URL is not configured")
+            raise ImageBackendUnavailableError(
+                "novita image base URL is not configured"
+            )
         if not cleaned.startswith("http://") and not cleaned.startswith("https://"):
             cleaned = f"https://{cleaned}"
         return cleaned.rstrip("/")
@@ -88,7 +95,9 @@ class NovitaImageAdapter:
             "Content-Type": "application/json",
         }
 
-    def _submit_task(self, submit_url: str, api_key: str, request: ImageGenRequest) -> str:
+    def _submit_task(
+        self, submit_url: str, api_key: str, request: ImageGenRequest
+    ) -> str:
         payload = self._build_submit_payload(request)
         try:
             data = fetch_json(
@@ -96,7 +105,8 @@ class NovitaImageAdapter:
                 url=submit_url,
                 headers=self._headers(api_key),
                 json=payload,
-                timeout=self._config.novita_image_timeout_seconds or DEFAULT_NOVITA_IMAGE_TIMEOUT_SECONDS,
+                timeout=self._config.novita_image_timeout_seconds
+                or DEFAULT_NOVITA_IMAGE_TIMEOUT_SECONDS,
                 # submit_url is built from the configured base_url, not
                 # API-returned data, so its host is trusted.
                 trusted_origins=origin_set(submit_url),
@@ -109,11 +119,16 @@ class NovitaImageAdapter:
             raise ImageGenerationError("Novita submit response did not include task id")
         return task_id
 
-    def _poll_task_result(self, base_url: str, api_key: str, task_id: str) -> dict[str, Any]:
+    def _poll_task_result(
+        self, base_url: str, api_key: str, task_id: str
+    ) -> dict[str, Any]:
         timeout_seconds = float(
-            self._config.novita_image_timeout_seconds or DEFAULT_NOVITA_IMAGE_TIMEOUT_SECONDS
+            self._config.novita_image_timeout_seconds
+            or DEFAULT_NOVITA_IMAGE_TIMEOUT_SECONDS
         )
-        poll_interval = max(1.0, float(self._config.novita_image_poll_interval_seconds or 2))
+        poll_interval = max(
+            1.0, float(self._config.novita_image_poll_interval_seconds or 2)
+        )
         deadline = time.monotonic() + timeout_seconds
         poll_url = f"{base_url}/v3/async/task-result"
 
@@ -125,25 +140,33 @@ class NovitaImageAdapter:
                     url=poll_url,
                     headers=self._headers(api_key),
                     params={"task_id": task_id},
-                    timeout=self._config.novita_image_timeout_seconds or DEFAULT_NOVITA_IMAGE_TIMEOUT_SECONDS,
+                    timeout=self._config.novita_image_timeout_seconds
+                    or DEFAULT_NOVITA_IMAGE_TIMEOUT_SECONDS,
                     trusted_origins=origin_set(poll_url),
                 )
             except Exception as exc:
-                raise ImageGenerationError(f"Novita task polling failed: {exc}") from exc
+                raise ImageGenerationError(
+                    f"Novita task polling failed: {exc}"
+                ) from exc
 
             if isinstance(data, dict):
                 last_payload = data
             state = self._extract_state(data)
             if state in self._DONE_STATES:
                 if not isinstance(data, dict):
-                    raise ImageGenerationError("Novita task-result response was not JSON")
+                    raise ImageGenerationError(
+                        "Novita task-result response was not JSON"
+                    )
                 return data
             if state in self._FAILED_STATES:
                 detail = self._extract_error_message(data) or state
                 raise ImageGenerationError(f"Novita task failed: {detail}")
             time.sleep(poll_interval)
 
-        detail = self._extract_error_message(last_payload) or "timed out waiting for Novita image task result"
+        detail = (
+            self._extract_error_message(last_payload)
+            or "timed out waiting for Novita image task result"
+        )
         raise ImageGenerationError(detail)
 
     def _build_submit_payload(self, request: ImageGenRequest) -> dict[str, Any]:
@@ -229,7 +252,9 @@ class NovitaImageAdapter:
             for key in ("b64_json", "image_base64", "base64", "image_b64"):
                 value = node.get(key)
                 if isinstance(value, str) and value.strip():
-                    return decode_base64_image(value.strip(), max_bytes=self._max_output_bytes()), "image/png"
+                    return decode_base64_image(
+                        value.strip(), max_bytes=self._max_output_bytes()
+                    ), "image/png"
             for key in ("image_url", "url", "image"):
                 if key in node:
                     extracted = self._extract_from_link_value(node.get(key))
@@ -272,7 +297,8 @@ class NovitaImageAdapter:
             # subject to the egress policy (private/link-local/metadata blocked).
             return fetch_image_bytes(
                 raw,
-                timeout=self._config.novita_image_timeout_seconds or DEFAULT_NOVITA_IMAGE_TIMEOUT_SECONDS,
+                timeout=self._config.novita_image_timeout_seconds
+                or DEFAULT_NOVITA_IMAGE_TIMEOUT_SECONDS,
                 max_bytes=self._max_output_bytes(),
             )
         decoded = maybe_decode_base64_image(raw, max_bytes=self._max_output_bytes())

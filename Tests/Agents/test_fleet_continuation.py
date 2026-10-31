@@ -164,9 +164,7 @@ def _assert_coherent(final_messages):
             index = cursor
             continue
         if message.get("role") == "tool":
-            pytest.fail(
-                f"orphan role=tool message at {index}: {final_messages!r}"
-            )
+            pytest.fail(f"orphan role=tool message at {index}: {final_messages!r}")
         index += 1
 
 
@@ -200,11 +198,7 @@ def _terminal_scripts(draw):
     identical = draw(st.booleans())
     tiny_steps = draw(st.booleans())
     post_at = (
-        draw(
-            st.one_of(
-                st.none(), st.integers(min_value=1, max_value=total_invokes)
-            )
-        )
+        draw(st.one_of(st.none(), st.integers(min_value=1, max_value=total_invokes)))
         if total_invokes
         else None
     )
@@ -230,11 +224,7 @@ def _run_scripted(rounds, cancel_after, identical, tiny_steps, post_at):
             script.append(_native_turn(calls))
         else:
             script.append(
-                ModelTurn(
-                    text=fence(
-                        "calculator", {"expression": expr or f"{r}+0"}
-                    )
-                )
+                ModelTurn(text=fence("calculator", {"expression": expr or f"{r}+0"}))
             )
     script.append(ModelTurn(text="final answer"))
 
@@ -281,9 +271,7 @@ def test_property_final_messages_end_at_a_coherent_boundary(script_shape):
     call (plus, on RUN_DONE only, the final assistant text) -- and never
     ends inside an unpaired native batch."""
     rounds, cancel_after, identical, tiny_steps, post_at = script_shape
-    outcome, seen = _run_scripted(
-        rounds, cancel_after, identical, tiny_steps, post_at
-    )
+    outcome, seen = _run_scripted(rounds, cancel_after, identical, tiny_steps, post_at)
     assert outcome.status in {RUN_DONE, RUN_CANCELLED, RUN_STUCK}
     final = outcome.final_messages
     _assert_coherent(final)
@@ -356,9 +344,7 @@ def test_mid_batch_cancel_excludes_the_split_batch():
         STEER_CFG,
         [{"role": "user", "content": "hi"}],
         [CALC],
-        make_deps(
-            call_model, invoke=invoke, cancel=lambda: invoked[0] >= 1
-        ),
+        make_deps(call_model, invoke=invoke, cancel=lambda: invoked[0] >= 1),
     )
     assert out.status == RUN_CANCELLED
     assert out.final_messages == [{"role": "user", "content": "hi"}]
@@ -369,9 +355,7 @@ def test_mid_batch_cycle_stuck_excludes_the_split_batch():
     into the transcript; the tripping batch does not."""
     fence_text = fence("calculator", {"expression": "6*7"})
     same = {"expression": "1+1"}
-    calls = [
-        ToolCall("calculator", same, f"c{j}", json.dumps(same)) for j in range(3)
-    ]
+    calls = [ToolCall("calculator", same, f"c{j}", json.dumps(same)) for j in range(3)]
     script = [ModelTurn(text=fence_text), _native_turn(calls)]
 
     def call_model(messages, active):
@@ -481,9 +465,7 @@ def test_budget_exhausted_at_loop_top_yields_the_last_boundary():
 
 def _coord(max_live=3, **caps):
     ticks = iter(range(100_000))
-    return FleetCoordinator(
-        max_live=max_live, clock=lambda: float(next(ticks)), **caps
-    )
+    return FleetCoordinator(max_live=max_live, clock=lambda: float(next(ticks)), **caps)
 
 
 _TRANSCRIPT = (
@@ -607,9 +589,10 @@ def test_oversize_transcripts_are_not_retained():
     assert c.retain_transcript(h.handle_id, big) is False
     assert c.get_retained(h.handle_id) is None
     small = _finished_handle(c, task="small")
-    assert c.retain_transcript(
-        small.handle_id, [{"role": "user", "content": "ok"}]
-    ) is True
+    assert (
+        c.retain_transcript(small.handle_id, [{"role": "user", "content": "ok"}])
+        is True
+    )
 
 
 def test_oldest_is_evicted_first_at_the_count_cap():
@@ -633,9 +616,7 @@ def test_set_retention_caps_resizes_in_place_and_evicts_oldest():
     """The set_max_live shape: a cross-turn owner re-reads config every
     turn and re-sizes the SAME store rather than replacing it."""
     c = _coord()
-    handles = [
-        _finished_handle(c, task=f"t{index}") for index in range(3)
-    ]
+    handles = [_finished_handle(c, task=f"t{index}") for index in range(3)]
     for h in handles:
         assert c.retain_transcript(h.handle_id, list(_TRANSCRIPT))
     c.set_retention_caps(1, 50)
@@ -646,9 +627,10 @@ def test_set_retention_caps_resizes_in_place_and_evicts_oldest():
     assert c.get_retained(handles[2].handle_id) is not None
     # The lowered char cap governs the NEXT retention.
     big = _finished_handle(c, task="big")
-    assert c.retain_transcript(
-        big.handle_id, [{"role": "user", "content": "y" * 100}]
-    ) is False
+    assert (
+        c.retain_transcript(big.handle_id, [{"role": "user", "content": "y" * 100}])
+        is False
+    )
 
 
 def test_a_zero_count_cap_retains_nothing():
@@ -785,11 +767,7 @@ def _subagent_rows(db, conversation_id="c"):
 
 def _finished_child(coordinator):
     """The single finished child's handle after turn 1's wait collected it."""
-    return next(
-        h
-        for h in coordinator.snapshot()
-        if h.status in TERMINAL_RUN_STATUSES
-    )
+    return next(h for h in coordinator.snapshot() if h.status in TERMINAL_RUN_STATUSES)
 
 
 def _await_retained(coordinator, handle_id):
@@ -852,9 +830,7 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     retained_history = original_calls[1]["messages_payload"][1:] + [
         {"role": "assistant", "content": "the answer is 42"}
     ]
-    labeled = format_steering_message(
-        STEERING_SOURCE_SUPERVISOR, "now double-check it"
-    )
+    labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, "now double-check it")
     resumed_payload = original_calls[2]["messages_payload"]
     assert resumed_payload[0]["role"] == "system"
     assert resumed_payload[1:] == retained_history + [
@@ -871,16 +847,13 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     steering_step = next(
         step
         for step in db.get_run(run2)["steps"]
-        if step["kind"] == "tool_call"
-        and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
+        if step["kind"] == "tool_call" and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
     )
     assert resumed_row["spawn_event_id"] == (
         f"agent-step:{run2}:{steering_step['index']}"
     )
     resumed_lifecycle = [
-        step
-        for step in resumed_row["steps"]
-        if step["kind"].startswith("agent_run_")
+        step for step in resumed_row["steps"] if step["kind"].startswith("agent_run_")
     ]
     assert [step["kind"] for step in resumed_lifecycle] == [
         "agent_run_reserved",
@@ -890,9 +863,7 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
         "agent_run_completed",
     ]
     resumed_event = next(
-        step
-        for step in resumed_lifecycle
-        if step["kind"] == "agent_run_resumed"
+        step for step in resumed_lifecycle if step["kind"] == "agent_run_resumed"
     )
     assert resumed_event["source_event_id"] == f"agent-run:{old_run_id}"
     old_row = next(r for r in rows if r["id"] == old_run_id)
@@ -1058,9 +1029,7 @@ def test_refused_isolated_resume_filters_shell_and_settles_without_child_script(
     assert chat.child_calls.get("iso task") is None
     assert coordinator.get_retained(original.handle_id).messages == tuple(history)
 
-    child_configs = [
-        cfg for cfg in captured_configs if cfg is not shell_cli_resume_cfg
-    ]
+    child_configs = [cfg for cfg in captured_configs if cfg is not shell_cli_resume_cfg]
     resumed_config = child_configs[-1]
     assert RAW_SHELL_TOOL_NAME not in resumed_config.allowed_tools
     assert VIRTUAL_CLI_TOOL_NAME not in resumed_config.allowed_tools
@@ -1157,8 +1126,7 @@ def test_resumed_lifecycle_capture_failure_starts_from_actual_diagnostic_after_r
     def fail_resumed_once(run_id, indexed_steps):
         nonlocal failed
         if not failed and any(
-            step["kind"] == "agent_run_resumed"
-            for _index, step in indexed_steps
+            step["kind"] == "agent_run_resumed" for _index, step in indexed_steps
         ):
             failed = True
             raise RuntimeError("simulated resumed lifecycle failure")
@@ -1431,9 +1399,7 @@ def test_undelivered_queued_steering_rides_the_seed_with_original_labels(db):
             "the child never reached its final model call"
         )
         coordinator = holder["coordinator"]
-        handle = next(
-            h for h in coordinator.snapshot() if h.status == "running"
-        )
+        handle = next(h for h in coordinator.snapshot() if h.status == "running")
         holder["handle_id"] = handle.handle_id
         assert coordinator.post_steering(
             handle.handle_id, STEERING_SOURCE_USER, "late user note"
@@ -1539,8 +1505,7 @@ def test_retained_live_send_preserves_its_cause_on_resumed_steering(db):
     send_step = next(
         step
         for step in db.get_run(run1)["steps"]
-        if step["kind"] == "tool_call"
-        and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
+        if step["kind"] == "tool_call" and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
     )
     send_event_id = f"agent-step:{run1}:{send_step['index']}"
     retained = coordinator.get_retained(holder["handle_id"])
@@ -1553,14 +1518,11 @@ def test_retained_live_send_preserves_its_cause_on_resumed_steering(db):
     resume_send = next(
         step
         for step in db.get_run(run2)["steps"]
-        if step["kind"] == "tool_call"
-        and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
+        if step["kind"] == "tool_call" and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
     )
     resume_event_id = f"agent-step:{run2}:{resume_send['index']}"
     resumed = next(
-        row
-        for row in _subagent_rows(db)
-        if row["resumed_from_run_id"] is not None
+        row for row in _subagent_rows(db) if row["resumed_from_run_id"] is not None
     )
     assert resumed["spawn_event_id"] == resume_event_id
     reserved = next(
@@ -1574,14 +1536,11 @@ def test_retained_live_send_preserves_its_cause_on_resumed_steering(db):
     steering = next(
         step
         for step in reloaded["steps"]
-        if step["kind"] == "steering"
-        and step["source_event_id"] == send_event_id
+        if step["kind"] == "steering" and step["source_event_id"] == send_event_id
     )
     assert steering["parent_event_id"] == send_event_id
     all_rows = reopened.list_runs("c", include_superseded=True)
-    event_ids = {
-        f"agent-run:{row['id']}" for row in all_rows
-    } | {
+    event_ids = {f"agent-run:{row['id']}" for row in all_rows} | {
         f"agent-step:{row['id']}:{step['index']}"
         for row in all_rows
         for step in row["steps"]
@@ -1750,9 +1709,7 @@ def test_a_finished_child_remains_continuable_after_prune_terminal(db):
     assert outcome2.status == RUN_DONE
     rows = _subagent_rows(db)
     assert len(rows) == 2
-    resumed_row = next(
-        r for r in rows if r["resumed_from_run_id"] is not None
-    )
+    resumed_row = next(r for r in rows if r["resumed_from_run_id"] is not None)
     assert resumed_row["resumed_from_run_id"] == holder["run_id"]
     # The seed really carried the transcript (second call under the task).
     resumed_payload = chat.child_calls["pruned task"][1]["messages_payload"]
@@ -1863,9 +1820,7 @@ def test_a_cancelled_child_draws_the_honest_not_retained_refusal_not_unknown(db)
     def cancel_then_steer():
         assert child_started.wait(_JOIN_TIMEOUT)
         coordinator = holder["coordinator"]
-        handle = next(
-            h for h in coordinator.snapshot() if h.status == "running"
-        )
+        handle = next(h for h in coordinator.snapshot() if h.status == "running")
         holder["handle_id"] = handle.handle_id
         # The cancel path's coordinator-side effect: the handle goes
         # terminal CANCELLED first; the child's own later finish (with

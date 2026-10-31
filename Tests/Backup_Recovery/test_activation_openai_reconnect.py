@@ -51,6 +51,8 @@ class Session:
  def mount(self,*args):pass
  def post(self,url,**kwargs):effects.append(('post',url,kwargs));return Response()
 calls.create_default_session=Session
+calls.create_owned_default_session=Session
+calls.create_pooled_default_session=Session
 message=[{'role':'user','content':'hello'}]
 """
 
@@ -158,8 +160,15 @@ elif route=='local':
  from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import chat_with_custom_openai
  call=lambda:chat_with_custom_openai(message,api_key='owned-test-key')
 elif route=='summary':
- from tldw_chatbook.LLM_Calls.Summarization_General_Lib import summarize_with_openai
- call=lambda:summarize_with_openai('owned-test-key','text','summarize')
+ from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
+ def call():
+  result=analyze('openai','text','summarize',api_key='owned-test-key')
+  # TASK-34895: the public summarize seam rides chat_api_call, which wraps
+  # the gate's ProviderReconnectRequired into a ChatAPIError that the
+  # summarizer reports in-band -- the unqualified provider body itself
+  # still never ran (effects/network asserted below).
+  assert isinstance(result,str) and 'provider_reconnect_required' in result, result
+  raise recovery.ProviderReconnectRequired
 elif route=='catalog':
  from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import discover_openai_compatible_models
  call=lambda:asyncio.run(discover_openai_compatible_models(provider='anthropic',provider_list_key='anthropic',endpoint='https://api.anthropic.com/v1',api_key='owned-test-key'))
@@ -302,6 +311,7 @@ _HOSTED = (
 from tldw_chatbook.LLM_Calls.hosted_chat import owned_json_post,HostedHTTPTransportConfig
 from tldw_chatbook.LLM_Calls import hosted_chat
 hosted_chat.create_default_session=Session
+hosted_chat.create_pooled_default_session=lambda *args,**kwargs:Session()
 from tldw_chatbook.Backup_Recovery.control_records import bind_profile
 bind_profile(root,selector,('profile',),root/'admission')
 result=owned_json_post(config=HostedHTTPTransportConfig(provider='moonshot',base_url='https://api.moonshot.ai/v1',api_key='test-owned',timeout=1,retries=0,retry_delay=0),route='chat/completions',payload={},streaming=True)
@@ -391,7 +401,7 @@ _ISOLATED = (
     + r"""
 import subprocess
 from threading import Event
-from Tests.Backup_Recovery.test_restore_plan import sealed
+from Tests.Backup_Recovery.test_archive_reader import sealed
 from tldw_chatbook.Backup_Recovery.isolated_restore import restore_isolated
 from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
 source=base/'archive-source';source.mkdir(mode=0o700)
@@ -823,6 +833,7 @@ class NativeSession(requests.sessions.Session):
 def unreviewed_netrc(*args,**kwargs):raise AssertionError('ambient netrc auth resolution')
 requests.sessions.get_netrc_auth=unreviewed_netrc
 calls.create_default_session=NativeSession
+calls.create_owned_default_session=NativeSession
 result=calls.chat_with_openai(message,model='gpt-4o-mini')
 assert result['choices'][0]['message']['content']=='answer'
 assert len(prepared)==1 and prepared[0].headers['Authorization']=='Bearer owned-test-key'

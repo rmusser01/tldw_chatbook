@@ -14,9 +14,11 @@ async def test_get_skill_with_nested_and_binary_never_raises(tmp_path):
     (d / "references" / "api.md").write_text("# api\n", encoding="utf-8")
     (d / "assets").mkdir(parents=True, exist_ok=True)
     (d / "assets" / "logo.png").write_bytes(b"\x89PNG\x00binary")
-    skill = await svc.get_skill("demo")      # must NOT raise
+    skill = await svc.get_skill("demo")  # must NOT raise
     assert skill["supporting_files"]["references/api.md"] == "# api\n"
-    assert "assets/logo.png" not in skill["supporting_files"]   # binary excluded from text view
+    assert (
+        "assets/logo.png" not in skill["supporting_files"]
+    )  # binary excluded from text view
     paths = {b["path"]: b for b in skill["bundle_files"]}
     assert paths["assets/logo.png"]["is_text"] is False
     assert paths["references/api.md"]["is_text"] is True
@@ -30,7 +32,7 @@ async def test_get_skill_with_toplevel_binary_never_raises(tmp_path):
     await svc.create_skill(name="demo", content="---\nname: demo\n---\nbody\n")
     d = svc._skill_dir("demo")
     (d / "logo.png").write_bytes(b"\x89PNG\x00bin")
-    skill = await svc.get_skill("demo")      # must NOT raise
+    skill = await svc.get_skill("demo")  # must NOT raise
     assert "logo.png" not in (skill["supporting_files"] or {})
     paths = {b["path"]: b for b in skill["bundle_files"]}
     assert paths["logo.png"]["is_text"] is False

@@ -105,7 +105,12 @@ __all__ = [
 PAGE_SIZE = 500
 
 #: Above this many records the initial ledger render moves to a worker.
-WORKER_THRESHOLD = 5000
+#: TASK-34930: the ledger itself is pagination-bounded (newest PAGE_SIZE
+#: rows), so this threshold governs the O(total-records) setup legs --
+#: filter-bar record registration, the timeline key map, and the turn
+#: counter -- which otherwise run synchronously on the mount path for
+#: large-but-not-huge sessions too.
+WORKER_THRESHOLD = 1000
 
 #: DataTable row key of the "load earlier" control row.
 LOAD_EARLIER_ROW_KEY = "__load_earlier__"

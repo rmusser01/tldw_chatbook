@@ -1,0 +1,712 @@
+# Review package: 7602257552749336e5d22d152026381f8609c147..HEAD
+
+## Commits
+d94791f244 fix(console): repair interrupt fixtures and await Stop publication
+3238094c92 docs: scope Buddy constructor profile precondition repair
+1a9b777bdb docs: correct exact interrupt annotation accessor names
+
+## Files changed
+ .../2026-10-03-console-pr2995-review-and-merge.md  | 14 +++++++-
+ Tests/Architecture/test_module_size_ratchet.py     |  4 +--
+ Tests/Chat/console_interrupt_test_bindings.py      |  2 --
+ Tests/Chat/test_console_decision_clock.py          |  8 ++---
+ Tests/UI/test_buddy_speech.py                      |  6 +++-
+ Tests/UI/test_console_runtime_ownership.py         |  3 ++
+ ...t-starts-with-current-dev-before-publication.md |  4 ++-
+ tldw_chatbook/Chat/console_chat_controller.py      |  2 --
+ tldw_chatbook/Chat/console_chat_start.py           | 12 +++++++
+ tldw_chatbook/Chat/console_interrupt_rounds.py     | 38 +++++++++-------------
+ 10 files changed, 57 insertions(+), 36 deletions(-)
+
+## Diff
+diff --git a/Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md b/Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md
+index fb9647dffe..c51048f49e 100644
+--- a/Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md
++++ b/Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md
+@@ -612,31 +612,43 @@ Reason: the selected diagnostic node reveals unchanged Task15 source has11 calls
+ 
+ ADR required: no new ADR
+ ADR path: backlog/decisions/220-console-human-decision-coordination-ownership.md (dated annotation-only clarification); backlog/decisions/219-console-chat-destinations-and-bounded-starts.md.
+ Reason: reuse existing test binding and imported types while preserving all runtime live dependencies and authorization behavior.
+ 
+ A fresh sole source implementer follows approved Task17; no children. Read own-SDD task-17-interrupt-preflight.md and Ruling75 for complete constructor/type/caller census, plus exact Qodo feedback in task-17-initial-feedback.json. The recovery finding4179836584 is addressed separately by existing ADR126/219 policy and frozen10case evidence; no paired-store restore, new schema/migration or imported authority change is authorized.
+ 
+ - [ ] On the actual integrated BASE, run the two existing stale test owners Tests/Chat/test_console_decision_clock.py and Tests/UI/test_buddy_speech.py before repair to retain constructor RED (44 source-inferred cases). Preserve all actual collected IDs/failures/output, with shared Python3.12/WT PYTHONPATH/canonical private profiles/-p no:randomly/fresh basetemp/unchanged300s timeout.
+ - [ ] Replace only their actual InterruptRoundHost import with make_interrupt_host as InterruptRoundHost from Tests.Chat.console_interrupt_test_bindings. Keep separate KIND_SETTER_ATTRS/FakeSeamsFull imports in the clock owner. No fixture/helper attribute addition is needed. Preserve all six original positional call sites, function bodies/assertions/signatures/decorators/parameterization/waits/deadlines/events/cleanup.
+ - [ ] Add an accurate Google-style docstring to ConsoleChatStartCoordinator.authorizes(authorization, session_id)->bool, documenting nullable authorization and exact live coordinator/store/active-object/session-incarnation check. It establishes neither accepted state nor current primary visibility. Preserve executable method AST exactly; no docstring-only test.
+-- [ ] Replace exactly17 annotation references to self._read_global_Any()/self._read_global_Mapping() in InterruptRoundHost with existing imported Any/Mapping. Delete only their two keyword-only constructor parameters, two assignments, and matching controller/test-helper lambda arguments. Result120required keywords and33runtime global getters; retain all86controller readers and one write-through callback. Preserve non-annotation executable AST in every other method and exact runtime lookup/patch/nullability/order/alias/lock authority. Separate build_tool_review_hook Any interface and compaction accessors stay exact. No broad receiver/global bypass, dependency bag, proxy, import or new abstraction.
++- [ ] Replace exactly17 annotation references to self.read_global_Any()/self.read_global_Mapping() in InterruptRoundHost with existing imported Any/Mapping. Delete only their two keyword-only constructor parameters, two assignments, and matching controller/test-helper lambda arguments. Result120required keywords and33runtime global getters; retain all86controller readers and one write-through callback. Preserve non-annotation executable AST in every other method and exact runtime lookup/patch/nullability/order/alias/lock authority. Separate build_tool_review_hook Any interface and compaction accessors stay exact. No broad receiver/global bypass, dependency bag, proxy, import or new abstraction.
+ - [ ] Run the same two corrected test owners (44source-inferred cases) and only four binding selectors below (eight source-inferred cases), retaining all actual IDs/argv/source/exits/log/XML/warnings. Prove import reversal recovers both owner bodies and annotation removal/reversal preserves all nonconstructor executable methods. Verify unchanged unowned source/QA/ZIP; preserve old RED and all historical passes/warnings. Fatal Ruff/added-hunk formatter/whitespace plus actual host/controller size measurements; existing downward/slack rules apply only to a demonstrated shrink, never raise caps.
+ - [ ] Commit only authorized source/test overlays, freeze task-18-report.md and compact additive task-18-safe-evidence/source+AST manifest, return clean source/index/HEAD/closed processes. Root dispatches independent scoped spec/quality review. All four new Qodo threads remain open until reviewed repairs/rebuttal are published with evidence; one fresh current-head Qodo and normal checks/PerfGuard/ancestry precede merge.
+ 
+ **Selected binding controls:**
+ 
+ - Tests/Chat/test_console_owner_live_bindings.py::test_interrupt_remount_reads_replaced_sink_and_controller_state
+ - Tests/Chat/test_console_interrupt_host_wiring.py::test_legacy_registry_payload_and_lock_names_alias_the_host
+ - Tests/Chat/test_console_interrupt_host_wiring.py::test_approvals_register_the_permission_summary_as_the_after_remount_hook
+ - Tests/Chat/test_console_ask_user_round.py::test_timeout_reads_console_config_when_no_seam
+ 
+ 
+ ### Task18 extension: Await actual mounted Stop control publication
+ 
+ ADR required: no
+ ADR path: N/A for a test-only synchronization repair; retain ADR094/219 native lifetime/custody.
+ Reason: current-head CI establishes STREAMING with an idle Stop projection; the awaited sync may coalesce, and pilot.pause is not a publication-completion barrier. No lost-request product defect is demonstrated.
+ 
+ - [ ] Read task-17-stop-ci-preflight.md and its exact frozen one-node receipts plus task-17-PR-fast-lane-failure-receipt.json. Preserve initial CI1fail/221pass/oldxfail/fivewarnings and unchanged06 local1PASS without treating the latter as a fix.
+ - [ ] In Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target, add only await _wait_for_selector(chat, pilot, "#console-stop-generation.console-stop-active") after the existing sync/pilot.pause and before reading/asserting the Stop button. Reuse the already imported helper and its existing2second bound. Preserve every original statement, signature, marker, assertion, physical acceptance/provider entry,120second release guard,0.5second custody timeout, click/cancel/claim/drain/STOPPED/one-generation evidence. No production change, new helper, increased time, retry, skip/XFAIL or relaxed assertion.
+ - [ ] Run only this exact node once after repair with the same canonical private profile/Python/PYTHONPATH/-p no:randomly/fresh basetemp/300s bounds; retain original failure/localpass and complete new receipts. If it fails the unchanged bound, retain flags/owned workers at the deadline and report before another change/run. Include exact body reversal/source/QA/ZIP carry and fatal Ruff/added-hunk formatter/whitespace in Task18 report and independent scoped review.
++
++
++### Task18 extension: Retain Buddy's canonical collection profile
++
++ADR required: no
++ADR path: N/A for an existing test-profile marker selection.
++Reason: all14 Buddy cases fail before their constructor through the same source-bound UI autouse fixture; the registered marker preserves actual canonical raw/native admission instead of changing that gate.
++
++- [ ] Preserve task-18-report-before-buddy-profile.md/brief snapshot and original RED44cases (30constructor failures/14profile setup errors), all frozen-manifest maps/old receipts/warnings. Same Task18 implementer resumes after clean root metadata handoff; no source or test had changed before this correction.
++- [ ] Add only pytestmark = pytest.mark.bootstrap_profile after existing imports and before DESTINATION in Tests/UI/test_buddy_speech.py. All14 cases share the source-bound _disable_model_catalog_refresh/isolate_test_environment route, and none reselects profile. This existing registered owner marker retains collection profile and actual config-participant guards; no fixture/plugin/fakeconfig/profile/native/raw gate change, newskip or assertion weakening.
++- [ ] Before the already selected helper-import/type/doc/Stop repairs, run only Tests/UI/test_buddy_speech.py::test_hidden_named_reply_uses_consent_and_does_not_select_or_acknowledge once with only this marker overlay. It must reach the unchanged original host construction and fail with its TypeError, establishing unmasked constructor RED; any other result is frozen/reported before expanding. SharedPython/WT PYTHONPATH/canonical private profile/-p no:randomly/freshbasetemp/300s bounds unchanged.
++- [ ] Then complete the original Task18 repairs and same two-owner44case/eight binding-control/one Stop-node GREEN selection. Import+marker reversal must recover the entire Buddy test body/source, with every original asyncio/decorator/parameter/assertion/wait unchanged. Use separate compact profile-marker/probe receipts, preserve original report prefix and explicit historical snapshot mappings without rewriting any original hash map or replaying the30clock failures/old passing cohorts.
+diff --git a/Tests/Architecture/test_module_size_ratchet.py b/Tests/Architecture/test_module_size_ratchet.py
+index 1ec019d317..a919875f00 100644
+--- a/Tests/Architecture/test_module_size_ratchet.py
++++ b/Tests/Architecture/test_module_size_ratchet.py
+@@ -90,23 +90,23 @@ _BUDGETS: dict[str, int] = {
+     "tldw_chatbook/app_lifecycle.py": 2134,
+     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
+     # (NavigationMixin); governed there, so governed here.
+     "tldw_chatbook/app_navigation.py": 1110,
+     # TASK-33011: the command-palette providers moved verbatim out of app.py;
+     # governed there, so governed here.
+     "tldw_chatbook/app_command_providers.py": 1123,
+     # TASK-33011: TldwCli's per-feature glue moved verbatim out of app.py
+     # (FeatureGlueMixin); governed there, so governed here.
+     "tldw_chatbook/app_feature_glue.py": 742,
+-    "tldw_chatbook/Chat/console_chat_controller.py": 29301,
++    "tldw_chatbook/Chat/console_chat_controller.py": 29299,
+     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
+-    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6479,
++    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6471,
+     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
+     "tldw_chatbook/Chat/console_chat_store.py": 22344,
+     # TASK-33622.14: the aggregate Roleplay draft guard moved to
+     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
+     # over this row; the move brings it to 16,397).
+     # 2026-10-03 (PR #2993, owner decision): +128 is formatter reflow only
+     # (TASK-26000 series, Ruff 0.15.22; the file is AST-identical to the
+     # 16,397-line version), so the row is re-measured, not grown.
+     # 2026-10-04 (TASK-34400, owner decision): +3 for the crash fix that stops
+     # names shaped like markup from exiting the app (the escape_markup import,
+diff --git a/Tests/Chat/console_interrupt_test_bindings.py b/Tests/Chat/console_interrupt_test_bindings.py
+index 82037a4423..8bab7c97b1 100644
+--- a/Tests/Chat/console_interrupt_test_bindings.py
++++ b/Tests/Chat/console_interrupt_test_bindings.py
+@@ -249,33 +249,31 @@ def make_interrupt_host(seams):
+         read_controller_update_pending_approval_summary=lambda: getattr(
+             seams, "update_pending_approval_summary", None
+         ),
+         read_controller_worktree_merge_confirm_timeout_seconds=lambda: getattr(
+             seams, "worktree_merge_confirm_timeout_seconds", None
+         ),
+         write_controller__pending_decision_order=lambda value: setattr(
+             seams, "_pending_decision_order", value
+         ),
+         read_global_ASK_USER_TIMEOUT_ENV_VAR=lambda: ccc.ASK_USER_TIMEOUT_ENV_VAR,
+-        read_global_Any=lambda: ccc.Any,
+         read_global_ApprovalDecisions=lambda: ccc.ApprovalDecisions,
+         read_global_CONSOLE_PENDING_APPROVAL_KIND=lambda: (
+             ccc.CONSOLE_PENDING_APPROVAL_KIND
+         ),
+         read_global_CONSOLE_PENDING_CHAT_CREATE_KIND=lambda: (
+             ccc.CONSOLE_PENDING_CHAT_CREATE_KIND
+         ),
+         read_global_ConsolePendingDecisionProjection=lambda: (
+             ccc.ConsolePendingDecisionProjection
+         ),
+         read_global_INTERRUPT_BELL_ENV_VAR=lambda: ccc.INTERRUPT_BELL_ENV_VAR,
+-        read_global_Mapping=lambda: ccc.Mapping,
+         read_global_ToolExecutionPolicy=lambda: ccc.ToolExecutionPolicy,
+         read_global_UNRESOLVED_DENIED_DECISION=lambda: ccc.UNRESOLVED_DENIED_DECISION,
+         read_global__ChatCreationToken=lambda: ccc._ChatCreationToken,
+         read_global__DEFAULT_ASK_USER_TIMEOUT_SECONDS=lambda: (
+             ccc._DEFAULT_ASK_USER_TIMEOUT_SECONDS
+         ),
+         read_global__DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS=lambda: (
+             ccc._DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS
+         ),
+         read_global__DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS=lambda: (
+diff --git a/Tests/Chat/test_console_decision_clock.py b/Tests/Chat/test_console_decision_clock.py
+index b5415a68e1..134c11b880 100644
+--- a/Tests/Chat/test_console_decision_clock.py
++++ b/Tests/Chat/test_console_decision_clock.py
+@@ -1,21 +1,21 @@
+ """Decision budgets count time during which their owning card is answerable."""
+ 
+ from __future__ import annotations
+ 
+ import pytest
+ 
+-from Tests.Chat.test_console_interrupt_rounds import FakeSeamsFull
+-from tldw_chatbook.Chat.console_interrupt_rounds import (
+-    KIND_SETTER_ATTRS,
+-    InterruptRoundHost,
++from Tests.Chat.console_interrupt_test_bindings import (
++    make_interrupt_host as InterruptRoundHost,
+ )
++from Tests.Chat.test_console_interrupt_rounds import FakeSeamsFull
++from tldw_chatbook.Chat.console_interrupt_rounds import KIND_SETTER_ATTRS
+ 
+ 
+ @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+ @pytest.mark.parametrize("away", ("navigation", "session"))
+ def test_decision_budget_pauses_while_its_card_cannot_be_answered(
+     monkeypatch, kind, away
+ ):
+     """Wall-clock deadlines would expire at 102; ten visible seconds end at 110."""
+     import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+ 
+diff --git a/Tests/UI/test_buddy_speech.py b/Tests/UI/test_buddy_speech.py
+index 3eb7a12e50..ae92c9bb83 100644
+--- a/Tests/UI/test_buddy_speech.py
++++ b/Tests/UI/test_buddy_speech.py
+@@ -1,24 +1,28 @@
+ """App-owned named speech follows trusted sources without activating Console."""
+ 
+ import asyncio
+ import threading
+ from types import SimpleNamespace
+ 
+ import pytest
+ 
+ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+-from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
++from Tests.Chat.console_interrupt_test_bindings import (
++    make_interrupt_host as InterruptRoundHost,
++)
+ from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
+ from tldw_chatbook.UI.Navigation.buddy_speech import BuddySpeechCoordinator
+ 
++pytestmark = pytest.mark.bootstrap_profile
++
+ DESTINATION = "sha256:" + "b" * 64
+ 
+ 
+ class Handler:
+     def __init__(self):
+         self.spoken = []
+         self.destination = SimpleNamespace(
+             fingerprint=DESTINATION,
+             provider_label="Configured TTS",
+             sanitized_destination="https://speech.example",
+diff --git a/Tests/UI/test_console_runtime_ownership.py b/Tests/UI/test_console_runtime_ownership.py
+index 557739c4a3..ac3b366bfe 100644
+--- a/Tests/UI/test_console_runtime_ownership.py
++++ b/Tests/UI/test_console_runtime_ownership.py
+@@ -3129,20 +3129,23 @@ async def test_accepted_agent_chat_start_has_visible_stop_in_mounted_target(tmp_
+             runtime._chat_controller = controller
+             runtime._agent_bridge = controller._agent_bridge
+             controller.app = app
+             try:
+                 start = asyncio.create_task(controller._chat_start.start(request))
+                 assert (await start).launch_status == "started"
+                 assert await asyncio.to_thread(entered.wait, 5)
+                 store.switch_session(target.id)
+                 await chat._sync_native_console_chat_ui()
+                 await pilot.pause()
++                await _wait_for_selector(
++                    chat, pilot, "#console-stop-generation.console-stop-active"
++                )
+                 stop = chat.query_one("#console-stop-generation", Button)
+                 assert controller.run_state.status is ConsoleRunStatus.STREAMING
+                 assert stop.display and stop.region.width > 0
+                 assert stop.region.right <= stop.parent.region.right
+                 assert (
+                     str(chat.query_one("#console-send-message", Button).label)
+                     != "Preparing..."
+                 )
+                 assert not chat._console_setup_modal_blocking()
+                 assert app.screen is chat and runtime.view is chat
+diff --git a/backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md b/backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md
+index e8c2be3274..d46748bd34 100644
+--- a/backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md	
++++ b/backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md	
+@@ -1,18 +1,18 @@
+ ---
+ id: TASK-34215.2
+ title: Integrate Console chat starts with current dev before publication
+ status: In Progress
+ assignee:
+   - '@codex'
+ created_date: '2026-10-03 14:59'
+-updated_date: '2026-10-05 01:37'
++updated_date: '2026-10-05 01:47'
+ labels:
+   - console
+   - integration
+ dependencies: []
+ parent_task_id: TASK-34215
+ ---
+ 
+ ## Description
+ 
+ <!-- SECTION:DESCRIPTION:BEGIN -->
+@@ -154,13 +154,15 @@ Task16 automatic rebase749e preserves49 incoming paths/132 feature pins and orig
+ 
+ Task16 canonical markers admit both reader tests: Persona staging passes; typed reaches original real-send assertion then fails at missing stand-in monitor. Typed-only immutable6cd with marker overlay reproduces identical failure. Scope amended before correction: five exact namespace fields supply optional monitor, live observed delegate and exact visible session/pending identity while retaining real answer/controller/card/composer worker and every original assertion/wait. Preserve57 prior passes, initial140/interim81 packages and warnings; rerun only typed node, then first scoped independent integration review and all external gates.
+ 
+ Task16 source81484b688a independently Compliant/Approved after latest dev a78a integration. All49 incoming paths and two compositions preserve exact selected ownership. Exactly two canonical reader markers plus five typed-screen namespace fields repair immutable-base-proven harness failures, retaining original real runtime assertions. The58 distinct selected cases pass across separately frozen source phases (56 initial, Persona1, typed1), with no passing-case replay. Root verified29999 unchanged tracked tree hashes and all source/metadata exceptions, original QA/ZIP/report-prefix snapshots and six manifest sets. Historical warning/format debt stays disclosed. Additive publication and fresh current-head Qodo/PR Fast Lane/UI1/UI2/Derived final/actual PerfGuard/latest-dev ancestry/normal merge remain required; actual merge criterion and In Progress status remain open.
+ 
+ Current-head Qodo review adds four findings. Task17 selects the actual PR3006 dev8c4dfe59 delta (19paths, three exact compositions, 22 bounded nodes) while retaining fixed caps and all historical QA. Task18 reuses existing test-only interrupt binding in two stale test owners, documents authorizes and removes only17 annotation uses/two host type getters under the dated ADR220 clarification. Independent conversations-history restore remains inert per ADR126/219; ten frozen tests support the Qodo recovery rebuttal without claiming a full native ZIP journey. The single mounted Stop CI failure remains independently attributed; local same-node PASS is not a fix. Source implementation and independent task review precede one additive publication, fresh Qodo/CI/PerfGuard/ancestry and actual merge. Status and AC8 stay open.
+ 
+ Task17 integration54a18180211 preserves all19 incoming paths and92 replayed patches; 21 of22 selected cases pass. The sole diagnostic failure is the unchanged Task15 chat-start owner row6→11 calls. Existing statement audit confirms five fixed phases and exception-type-only arguments, so a bounded inventory-only correction and exact-node recheck are selected with original failures/passes frozen. Task18 additionally reuses the existing2second active Stop selector to await actual publication while preserving all original native/worker/allowance assertions. No product lost-sync defect is claimed; current external gates and merge remain open.
+ 
+ Task17 source9ceacaa9fd independently reviewed Spec Compliant/Quality Approved. All22 selected cases have passing chronological evidence (21 at54a plus exact diagnostic-node GREEN); no passing case replay. Reviewed five static exception-type diagnostics justify only the stale6→11 inventory row. All92 feature patches, selected19paths, original64+20 evidence artifacts and QA/ZIP carry; inherited formatter debt is disclosed. Fresh current-head PerfGuard, remote-dev/Qodo/CI and actual merge stay open. Task18 scoped fixture/doc/type-getter/Stop barrier repairs follow.
++
++Task18 BASE1a9 RED reaches30 expected clock constructor failures but all14 Buddy cases stop earlier at the same canonical config-participant/UI-autouse profile binding. Read-only attribution and registered marker contract justify only a Buddy module bootstrap_profile marker, retaining actual raw/native admission. One exact original Buddy node must then reach constructor TypeError before the already selected import/type/doc/Stop repairs and44+8+1 covering GREEN runs. Original14 setup errors/30 failures and all historical maps/warnings remain frozen. No product/profile gate, shared fixture, plugin, skip/assertion/timeout change or install is authorized.
+ <!-- SECTION:NOTES:END -->
+ 
+ Current-dev publication identity: 34215.2 replaces unmerged 33805.2. The landed TASK33802 census keeps its identity; the design/foundation/feature chain moved together to preserve dependency ordering. Historical QA retains original identifiers and bytes. Current evidence: Docs/superpowers/qa/2026-10-03-console-chat-starts-dev-integration/README.md.
+diff --git a/tldw_chatbook/Chat/console_chat_controller.py b/tldw_chatbook/Chat/console_chat_controller.py
+index 16c2d8c721..471deae16a 100644
+--- a/tldw_chatbook/Chat/console_chat_controller.py
++++ b/tldw_chatbook/Chat/console_chat_controller.py
+@@ -4477,33 +4477,31 @@ class ConsoleChatController:
+             ),
+             read_controller_store=lambda: self.store,
+             read_controller_update_pending_approval_summary=lambda: (
+                 self.update_pending_approval_summary
+             ),
+             read_controller_worktree_merge_confirm_timeout_seconds=lambda: (
+                 self.worktree_merge_confirm_timeout_seconds
+             ),
+             write_controller__pending_decision_order=write_controller__pending_decision_order,
+             read_global_ASK_USER_TIMEOUT_ENV_VAR=lambda: ASK_USER_TIMEOUT_ENV_VAR,
+-            read_global_Any=lambda: Any,
+             read_global_ApprovalDecisions=lambda: ApprovalDecisions,
+             read_global_CONSOLE_PENDING_APPROVAL_KIND=lambda: (
+                 CONSOLE_PENDING_APPROVAL_KIND
+             ),
+             read_global_CONSOLE_PENDING_CHAT_CREATE_KIND=lambda: (
+                 CONSOLE_PENDING_CHAT_CREATE_KIND
+             ),
+             read_global_ConsolePendingDecisionProjection=lambda: (
+                 ConsolePendingDecisionProjection
+             ),
+             read_global_INTERRUPT_BELL_ENV_VAR=lambda: INTERRUPT_BELL_ENV_VAR,
+-            read_global_Mapping=lambda: Mapping,
+             read_global_ToolExecutionPolicy=lambda: ToolExecutionPolicy,
+             read_global_UNRESOLVED_DENIED_DECISION=lambda: UNRESOLVED_DENIED_DECISION,
+             read_global__ChatCreationToken=lambda: _ChatCreationToken,
+             read_global__DEFAULT_ASK_USER_TIMEOUT_SECONDS=lambda: (
+                 _DEFAULT_ASK_USER_TIMEOUT_SECONDS
+             ),
+             read_global__DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS=lambda: (
+                 _DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS
+             ),
+             read_global__DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS=lambda: (
+diff --git a/tldw_chatbook/Chat/console_chat_start.py b/tldw_chatbook/Chat/console_chat_start.py
+index 241cfb9f29..a8a8b40fbf 100644
+--- a/tldw_chatbook/Chat/console_chat_start.py
++++ b/tldw_chatbook/Chat/console_chat_start.py
+@@ -105,20 +105,32 @@ class ConsoleChatStartCoordinator:
+         item = self._active.get(session_id)
+         return bool(item and item.accepted and self.authorizes(item, session_id))
+ 
+     def is_prepared(self, session_id: str) -> bool:
+         item = self._active.get(session_id)
+         return bool(item and not item.accepted and not item.withdrawn)
+ 
+     def authorizes(
+         self, authorization: AgentChatStartAuthorization | None, session_id: str
+     ) -> bool:
++        """Return whether this authorization still belongs to the target session.
++
++        Args:
++            authorization: Candidate start authorization, or None.
++            session_id: Target session ID whose active authorization is checked.
++
++        Returns:
++            True when this coordinator is live, the authorization is unwithdrawn
++            and owned by it and its current store, the active entry is this exact
++            object, and the target exists with the requested session incarnation.
++            This check establishes neither acceptance nor current primary visibility.
++        """
+         if not isinstance(authorization, AgentChatStartAuthorization):
+             return False
+         target = self._controller.store._sessions.get(session_id)
+         return bool(
+             not self._disposed
+             and not authorization.withdrawn
+             and authorization.owner is self
+             and self._controller.store is authorization.store
+             and self._active.get(session_id) is authorization
+             and target is not None
+diff --git a/tldw_chatbook/Chat/console_interrupt_rounds.py b/tldw_chatbook/Chat/console_interrupt_rounds.py
+index eb47b7b5b9..07f7d2c85a 100644
+--- a/tldw_chatbook/Chat/console_interrupt_rounds.py
++++ b/tldw_chatbook/Chat/console_interrupt_rounds.py
+@@ -317,27 +317,25 @@ class InterruptRoundHost:
+         read_controller_set_pending_skill_script: Callable[[], Any],
+         read_controller_set_pending_worktree_merge: Callable[[], Any],
+         read_controller_set_task_panel: Callable[[], Any],
+         read_controller_skill_install_confirm_timeout_seconds: Callable[[], Any],
+         read_controller_skill_script_confirm_timeout_seconds: Callable[[], Any],
+         read_controller_store: Callable[[], Any],
+         read_controller_update_pending_approval_summary: Callable[[], Any],
+         read_controller_worktree_merge_confirm_timeout_seconds: Callable[[], Any],
+         write_controller__pending_decision_order: Callable[[Any], None],
+         read_global_ASK_USER_TIMEOUT_ENV_VAR: Callable[[], Any],
+-        read_global_Any: Callable[[], Any],
+         read_global_ApprovalDecisions: Callable[[], Any],
+         read_global_CONSOLE_PENDING_APPROVAL_KIND: Callable[[], Any],
+         read_global_CONSOLE_PENDING_CHAT_CREATE_KIND: Callable[[], Any],
+         read_global_ConsolePendingDecisionProjection: Callable[[], Any],
+         read_global_INTERRUPT_BELL_ENV_VAR: Callable[[], Any],
+-        read_global_Mapping: Callable[[], Any],
+         read_global_ToolExecutionPolicy: Callable[[], Any],
+         read_global_UNRESOLVED_DENIED_DECISION: Callable[[], Any],
+         read_global__ChatCreationToken: Callable[[], Any],
+         read_global__DEFAULT_ASK_USER_TIMEOUT_SECONDS: Callable[[], Any],
+         read_global__DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS: Callable[[], Any],
+         read_global__DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS: Callable[[], Any],
+         read_global__DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS: Callable[[], Any],
+         read_global__DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS: Callable[[], Any],
+         read_global__DEFAULT_WORKTREE_MERGE_CONFIRM_TIMEOUT_SECONDS: Callable[[], Any],
+         read_global__LEGACY_PENDING_APPROVAL_ROUND_ID: Callable[[], Any],
+@@ -577,33 +575,31 @@ class InterruptRoundHost:
+         self.read_controller_update_pending_approval_summary = (
+             read_controller_update_pending_approval_summary
+         )
+         self.read_controller_worktree_merge_confirm_timeout_seconds = (
+             read_controller_worktree_merge_confirm_timeout_seconds
+         )
+         self.write_controller__pending_decision_order = (
+             write_controller__pending_decision_order
+         )
+         self.read_global_ASK_USER_TIMEOUT_ENV_VAR = read_global_ASK_USER_TIMEOUT_ENV_VAR
+-        self.read_global_Any = read_global_Any
+         self.read_global_ApprovalDecisions = read_global_ApprovalDecisions
+         self.read_global_CONSOLE_PENDING_APPROVAL_KIND = (
+             read_global_CONSOLE_PENDING_APPROVAL_KIND
+         )
+         self.read_global_CONSOLE_PENDING_CHAT_CREATE_KIND = (
+             read_global_CONSOLE_PENDING_CHAT_CREATE_KIND
+         )
+         self.read_global_ConsolePendingDecisionProjection = (
+             read_global_ConsolePendingDecisionProjection
+         )
+         self.read_global_INTERRUPT_BELL_ENV_VAR = read_global_INTERRUPT_BELL_ENV_VAR
+-        self.read_global_Mapping = read_global_Mapping
+         self.read_global_ToolExecutionPolicy = read_global_ToolExecutionPolicy
+         self.read_global_UNRESOLVED_DENIED_DECISION = (
+             read_global_UNRESOLVED_DENIED_DECISION
+         )
+         self.read_global__ChatCreationToken = read_global__ChatCreationToken
+         self.read_global__DEFAULT_ASK_USER_TIMEOUT_SECONDS = (
+             read_global__DEFAULT_ASK_USER_TIMEOUT_SECONDS
+         )
+         self.read_global__DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS = (
+             read_global__DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS
+@@ -1493,21 +1489,21 @@ class InterruptRoundHost:
+                     return False
+             except Exception as exc:  # noqa: BLE001 -- surfacing is best-effort
+                 self.read_global_logger().debug(
+                     "Detached approval notice raised (exception_type={})",
+                     type(exc).__name__,
+                 )
+                 return False
+             return True
+ 
+         def _matches_live_round(
+-            state: dict[str, self.read_global_Any()] | None,
++            state: dict[str, Any] | None,
+         ) -> bool:
+             return bool(
+                 state is not None
+                 and not state.get("settled")
+                 and state.get("session_id") == session_id
+                 and state.get("decision_type") == decision_type
+                 and state.get("decision_id") == decision_id
+             )
+ 
+         if decision_type == "approval":
+@@ -1756,28 +1752,24 @@ class InterruptRoundHost:
+                             root_limit=10_000,
+                             depth_cap=10_000,
+                         )
+                         conversation_row = dict(tree.get("conversation") or {})
+                         source_title = str(conversation_row.get("title") or "")
+                         # Count definition -- ACTIVE-PATH LENGTH, not total
+                         # tree nodes: the executor's
+                         # copy_conversation_active_path copies exactly the
+                         # leaf-to-root ancestry, so the card must not count
+                         # off-path siblings the fork drops.
+-                        nodes: dict[
+-                            str, self.read_global_Mapping()[str, self.read_global_Any()]
+-                        ] = {}
++                        nodes: dict[str, Mapping[str, Any]] = {}
+ 
+                         def _walk(
+-                            node: self.read_global_Mapping()[
+-                                str, self.read_global_Any()
+-                            ],
++                            node: Mapping[str, Any],
+                         ) -> None:
+                             nodes[str(node["id"])] = node
+                             for child in node.get("children") or []:
+                                 _walk(child)
+ 
+                         for root in tree.get("root_threads") or []:
+                             _walk(root)
+                         leaf = (
+                             database.get_conversation_active_leaf(str(conversation_id))
+                             if database is not None
+@@ -1832,21 +1824,21 @@ class InterruptRoundHost:
+             )
+         return enriched
+ 
+     def _expire_answerable_decision_if_due(
+         self, session_id: str, decision_id: str, *, now: float
+     ) -> bool:
+         """Settle one still-mounted head only when its active allowance is due."""
+         expired = False
+ 
+         def _expire(
+-            state: dict[str, self.read_global_Any()],
++            state: dict[str, Any],
+         ) -> self.read_global_threading().Event | None:
+             nonlocal expired
+             if (
+                 self.read_controller__answerable_decision_by_session().get(session_id)
+                 != decision_id
+             ):
+                 return None
+             remaining = state.get("remaining_active_seconds")
+             active_since = state.get("active_since")
+             if remaining is None or active_since is None:
+@@ -2254,21 +2246,21 @@ class InterruptRoundHost:
+         session_id: str,
+         decision_id: str,
+         *,
+         now: float,
+         claim_revision: int | None,
+     ) -> bool:
+         """Pause one exact head, terminally timing it out at zero."""
+         expired = False
+ 
+         def _pause(
+-            state: dict[str, self.read_global_Any()],
++            state: dict[str, Any],
+         ) -> self.read_global_threading().Event | None:
+             nonlocal expired
+             if (
+                 claim_revision is not None
+                 and claim_revision != self.decision_view_revision
+             ):
+                 return None
+             if (
+                 self.read_controller__answerable_decision_by_session().get(session_id)
+                 != decision_id
+@@ -2520,21 +2512,21 @@ class InterruptRoundHost:
+             return current_id
+         if current_id is not None:
+             self._pause_answerable_decision(
+                 session_id, current_id, now=now, claim_revision=claim_revision
+             )
+         if decision_id is None:
+             return None
+ 
+         started = False
+ 
+-        def _start(state: dict[str, self.read_global_Any()]) -> None:
++        def _start(state: dict[str, Any]) -> None:
+             nonlocal started
+             if claim_revision != self.decision_view_revision:
+                 return
+             if state.get("settled"):
+                 return
+             if state.get("session_id") != session_id:
+                 return
+             payloads = self._pending_decision_payloads_locked(session_id)
+             if (
+                 not payloads
+@@ -3609,21 +3601,21 @@ class InterruptRoundHost:
+                 owning_session_id
+             )
+             != record["payload"]["source_message_id"]
+         ):
+             round_cancel_event = None
+         # The visit's teardown Event, captured at ARM time for the same
+         # reason the run's cancel event is -- see `_bind_visit_cancel_signal`.
+         visit_cancel_event = self.read_controller__bind_visit_cancel_signal()()
+         # Same run-ownership stamp the sibling bridges carry -- a revoked
+         # round must fail closed even against a late Allow.
+-        chat_create_round_state: dict[str, self.read_global_Any()] = {
++        chat_create_round_state: dict[str, Any] = {
+             "event": event,
+             "decision": decision,
+             "session_id": owning_session_id,
+             # Legacy callers never park; their initial card remains unscoped.
+             "session_scoped": session_id is not None,
+             "run_id": self.read_global_current_run_id()(),
+             # Re-read after the wait: a late Allow must not stick. See
+             # `revoke_approval_rounds_for_run`.
+             "revoked": False,
+         }
+@@ -3937,21 +3929,21 @@ class InterruptRoundHost:
+             class HookRoundCancellation:
+                 def is_set(self):
+                     return (
+                         original_cancel_event is not None
+                         and original_cancel_event.is_set()
+                     ) or any(policy.cancel_event.is_set() for policy in hook_policies)
+ 
+             round_cancel_event = HookRoundCancellation()
+         visit_cancel_event = self.read_controller__bind_visit_cancel_signal()()
+         owning_run_id = self.read_global_current_run_id()()
+-        round_state: dict[str, self.read_global_Any()] = {
++        round_state: dict[str, Any] = {
+             "event": event,
+             "decisions": decisions,
+             "session_id": owning_session_id,
+             "run_id": owning_run_id,
+             "names": tuple(unique_keys),
+             "calls": tuple(pending),
+             "revoked": False,
+             "summary": None,
+             "summary_fired": False,
+             "cancel_event": round_cancel_event,
+@@ -4213,21 +4205,21 @@ class InterruptRoundHost:
+         owning_session_id = (
+             session_id
+             if session_id is not None
+             else (self.read_controller_store().active_session_id or "")
+         )
+         round_cancel_event = self.read_controller__bind_round_cancel_signal()(
+             session_id
+         )
+         visit_cancel_event = self.read_controller__bind_visit_cancel_signal()()
+         owning_run_id = self.read_global_current_run_id()()
+-        install_round_state: dict[str, self.read_global_Any()] = {
++        install_round_state: dict[str, Any] = {
+             "event": event,
+             "decision": decision,
+             "session_id": owning_session_id,
+             "run_id": owning_run_id,
+             "cancel_event": round_cancel_event,
+             "visit_event": visit_cancel_event,
+         }
+         with self.lock:
+             self.registries["skill_install"][request_id] = install_round_state
+         timeout_seconds = (
+@@ -4320,21 +4312,21 @@ class InterruptRoundHost:
+         owning_session_id = (
+             session_id
+             if session_id is not None
+             else (self.read_controller_store().active_session_id or "")
+         )
+         round_cancel_event = self.read_controller__bind_round_cancel_signal()(
+             session_id
+         )
+         visit_cancel_event = self.read_controller__bind_visit_cancel_signal()()
+         owning_run_id = self.read_global_current_run_id()()
+-        script_round_state: dict[str, self.read_global_Any()] = {
++        script_round_state: dict[str, Any] = {
+             "event": event,
+             "decision": decision,
+             "session_id": owning_session_id,
+             "run_id": owning_run_id,
+             "revoked": False,
+             "cancel_event": round_cancel_event,
+             "visit_event": visit_cancel_event,
+         }
+         if not self.register_round("skill_script", request_id, script_round_state):
+             return {"allow": False, "remember": False}
+@@ -4421,23 +4413,23 @@ class InterruptRoundHost:
+             and not self.has_retained_decision_target(session_id)
+         ):
+             return unanswered_result("cancelled")
+         owning_session_id = (
+             session_id
+             if session_id is not None
+             else (self.read_controller_store().active_session_id or "")
+         )
+         owning_run_id = self.read_global_current_run_id()()
+         event = self.read_global_threading().Event()
+-        decision: dict[str, self.read_global_Any()] = {}
++        decision: dict[str, Any] = {}
+         request_id = str(self.read_global_uuid4()())
+-        round_state: dict[str, self.read_global_Any()] = {
++        round_state: dict[str, Any] = {
+             "event": event,
+             "decision": decision,
+             "session_id": owning_session_id,
+             "run_id": owning_run_id,
+             "revoked": False,
+         }
+         # The live check and the registration share ONE critical section
+         # (Qodo #2379): two sibling workers asking at once must not both
+         # see "no live round" and both arm -- exactly one arms, the other
+         # gets `busy`. The host re-registers the same state object at
+@@ -4482,34 +4474,34 @@ class InterruptRoundHost:
+             else None
+         )
+         actor = self.read_global_current_run_actor()()
+         asked_by = (
+             "sub-agent" if actor is not None and actor.kind == "subagent" else "agent"
+         )
+         # task-31382: name WHICH sub-agent is asking when the run carries a label.
+         asker_label = (
+             actor.label if asked_by == "sub-agent" and actor is not None else None
+         )
+-        card_payload: dict[str, self.read_global_Any()] = {
++        card_payload: dict[str, Any] = {
+             "questions": [dict(question) for question in questions],
+             "asked_by": asked_by,
+             "asker_label": asker_label,
+             "timeout_seconds": timeout_seconds,
+             "request_id": request_id,
+             "session_id": owning_session_id,
+             "deadline_monotonic": deadline,
+         }
+         is_parked = session_id is not None and session_id != (
+             self.read_controller_store().active_session_id or ""
+         )
+         # task-31384: one host lifecycle; the outcome maps onto PRD A6.
+-        results: list[dict[str, self.read_global_Any()]] = []
++        results: list[dict[str, Any]] = []
+ 
+         def _on_outcome(outcome: str) -> None:
+             # Runs before the host's teardown so the transcript marker
+             # precedes the card clear and badge discard, as before.
+             if outcome == "decided":
+                 answers = decision.get("answers")
+                 result = answered_result(
+                     answers if answers else empty_answers(questions)
+                 )
+             else:
+@@ -4606,21 +4598,21 @@ class InterruptRoundHost:
+         )
+         if operation_cancel_event is not None and session_id is None:
+             return {"allow": False}
+         round_cancel_event = (
+             operation_cancel_event
+             if operation_cancel_event is not None
+             else self.read_controller__bind_round_cancel_signal()(session_id)
+         )
+         visit_cancel_event = self.read_controller__bind_visit_cancel_signal()()
+         owning_run_id = self.read_global_current_run_id()()
+-        merge_round_state: dict[str, self.read_global_Any()] = {
++        merge_round_state: dict[str, Any] = {
+             "event": event,
+             "decision": decision,
+             "session_id": owning_session_id,
+             # The payload's run_id is the recovered child, not the requester.
+             "run_id": owning_run_id or None,
+             "cancel_event": round_cancel_event,
+             "visit_event": visit_cancel_event,
+         }
+         with self.lock:
+             self.registries["worktree_merge"][request_id] = merge_round_state

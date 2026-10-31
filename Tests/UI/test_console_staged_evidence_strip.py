@@ -8,6 +8,8 @@ hardcoded `staged_source_count=1` chip lie.
 
 from __future__ import annotations
 
+from Tests.UI.console_controller_stubs import context_spend_for_test
+
 from unittest.mock import AsyncMock
 
 import pytest
@@ -154,8 +156,8 @@ def test_strip_state_escapes_untrusted_library_titles() -> None:
     )
     row = state.rows[0]
     # Markup brackets survive verbatim (they are rendered with markup off) and
-    # angle brackets are html-escaped exactly like the Inspector tray does.
-    assert row.title == "[bold]pwn[/bold] &lt;script&gt;"
+    # TASK-32802.4: terminal Static rows also paint angle brackets literally.
+    assert row.title == "[bold]pwn[/bold] <script>"
 
 
 def test_strip_state_falls_back_to_the_launch_when_no_bundle_is_attached() -> None:
@@ -197,7 +199,7 @@ def test_staged_source_count_is_the_bundle_reference_count() -> None:
 
 
 def test_prompted_source_count_applies_the_captures_own_filter() -> None:
-    """"How much is staged" and "how much reaches the model" are different."""
+    """ "How much is staged" and "how much reaches the model" are different."""
     launch = _mixed_launch()
     # Four staged...
     assert console_staged_source_count(launch) == 4
@@ -210,8 +212,7 @@ def test_prompted_evidence_uses_canonical_headers_and_separators() -> None:
     launch = _mixed_launch()
 
     assert console_prompted_evidence_text(launch) == (
-        "[S1] MEDIA — Source 1\nBody 1\n---\n"
-        "[S2] MEDIA — Source 3\nBody 3"
+        "[S1] MEDIA — Source 1\nBody 1\n---\n[S2] MEDIA — Source 3\nBody 3"
     )
     assert console_prompted_source_count(launch) == 2
     assert console_prompted_evidence_text(None) == ""
@@ -243,8 +244,7 @@ def test_prompted_evidence_excludes_noncanonical_local_references() -> None:
     )
 
     assert console_prompted_evidence_text(launch) == (
-        "[S1] MEDIA — Source 1\nBody 1\n---\n"
-        "[S2] MEDIA — Source 3\nBody 3"
+        "[S1] MEDIA — Source 1\nBody 1\n---\n[S2] MEDIA — Source 3\nBody 3"
     )
     assert console_prompted_source_count(launch) == 2
 
@@ -268,6 +268,18 @@ class _StripApp(App):
 
     def compose(self) -> ComposeResult:
         yield ConsoleStagedEvidenceStrip(self._state, id=STRIP_ID.lstrip("#"))
+
+
+@pytest.mark.asyncio
+async def test_strip_widget_paints_untrusted_title_as_literal_text() -> None:
+    app = _StripApp(build_console_staged_evidence_strip_state(
+        _launch(1, first_title="[bold]pwn[/bold] <script>")
+    ))
+    async with app.run_test(size=(120, 12)) as pilot:
+        await pilot.pause()
+        row = app.query_one("#console-staged-evidence-row-0", Static)
+        assert "[bold]pwn[/bold] <script>" in row.render_line(0).text
+        assert "&lt;" not in row.render_line(0).text
 
 
 @pytest.mark.asyncio
@@ -426,6 +438,7 @@ async def test_strip_has_no_blank_filler_rows_for_small_staged_counts() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_run_staging_fans_out_to_strip_and_truthful_chip() -> None:
     app = _build_test_app()
     attach_chachanotes_db(app)
@@ -451,6 +464,7 @@ async def test_console_run_staging_fans_out_to_strip_and_truthful_chip() -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_unstage_clears_context_strip_chip_and_tray() -> None:
     app = _build_test_app()
     attach_chachanotes_db(app)
@@ -475,7 +489,10 @@ async def test_console_unstage_clears_context_strip_chip_and_tray() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_unstage_click_heals_a_stale_strip_when_context_already_none() -> None:
+@pytest.mark.bootstrap_profile
+async def test_console_unstage_click_heals_a_stale_strip_when_context_already_none() -> (
+    None
+):
     """M4 (final review): the handler's early return (`if
     self._pending_console_launch_context is None: return`) fires with no
     self-heal when the field was already cleared out from under a strip
@@ -509,6 +526,7 @@ async def test_console_unstage_click_heals_a_stale_strip_when_context_already_no
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_u_key_handoff_populates_the_strip() -> None:
     """The Library `u` handoff writes the SAME field, so the strip must list it."""
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
@@ -533,10 +551,21 @@ async def _submit(screen, draft: str):
     controller = screen._ensure_console_chat_controller()
     controller.provider_gateway = _CapturingGateway()
     controller._agent_runtime_enabled = False
-    return await controller.submit_draft(draft)
+    launch = screen._retrieval._snapshot_console_staged_evidence()
+    configuration = await controller.capture_turn_configuration_snapshot(
+        controller.store.active_session_id
+    )
+    return await controller.submit_draft(
+        draft,
+        configuration=configuration,
+        staged_evidence_launch=launch,
+        staged_evidence_capture=screen._retrieval._capture_frozen_console_staged_rag,
+        staged_evidence_release=screen._retrieval._release_frozen_console_staged_rag,
+    )
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_send_consumes_staging_and_shows_the_sent_transient(
     monkeypatch,
 ) -> None:
@@ -581,6 +610,7 @@ async def test_console_send_consumes_staging_and_shows_the_sent_transient(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_sent_notice_counts_only_what_reached_the_model(
     monkeypatch,
 ) -> None:
@@ -613,6 +643,7 @@ async def test_console_sent_notice_counts_only_what_reached_the_model(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_sent_notice_prefers_the_exact_prompted_entry_count(
     monkeypatch,
 ) -> None:
@@ -655,6 +686,7 @@ async def test_console_sent_notice_prefers_the_exact_prompted_entry_count(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_surface_refresh_failure_never_costs_the_send_its_evidence(
     monkeypatch,
 ) -> None:
@@ -684,19 +716,22 @@ async def test_console_surface_refresh_failure_never_costs_the_send_its_evidence
         def _explode() -> bool:
             raise RuntimeError("rail body vanished mid-send")
 
-        monkeypatch.setattr(
-            screen, "_sync_console_pending_launch_surfaces", _explode
-        )
+        monkeypatch.setattr(screen, "_sync_console_pending_launch_surfaces", _explode)
 
         controller = screen._ensure_console_chat_controller()
         # The send still receives the captured context...
-        captured = await controller._capture_rag_context("question")
-        assert captured[0] == context
+        result = await _submit(screen, "question")
+        assert result.accepted is True
+        assert capture.await_args.args[1] is launch
+        assert capture.await_count == 1
+        assert capture.return_value.context == context
+        assert any(context in row.get("content", "") for row in controller.provider_gateway.captured)
         # ...and the staging is still consumed.
         assert screen._pending_console_launch_context is None
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_use_in_console_handoff_reaches_the_strip() -> None:
     """The CHAT_HANDOFF writer must fan out like Console's own staging.
 
@@ -738,6 +773,7 @@ async def test_console_use_in_console_handoff_reaches_the_strip() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_rail_badge_and_chip_report_the_same_staged_count() -> None:
     """The rail badge and settings estimate read the workspace context; the
     chip reads the bundle. Both must land on the same number."""
@@ -775,8 +811,10 @@ def test_workspace_context_falls_back_to_one_row_for_a_bundleless_launch() -> No
         _pending_console_launch_context=launch,
         app_instance=SimpleNamespace(),
     )
-    context = workspace_module.ConsoleWorkspaceController._current_console_workspace_context(
-        screen
+    context = (
+        workspace_module.ConsoleWorkspaceController._current_console_workspace_context(
+            screen
+        )
     )
     assert len(context.staged_sources) == 1
     assert context.staged_sources[0].label == "Daily papers"
@@ -784,6 +822,7 @@ def test_workspace_context_falls_back_to_one_row_for_a_bundleless_launch() -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_context_estimate_counts_staged_evidence_before_send() -> None:
     """task-6: reproduces the critique's exact bug -- staged evidence used to
     move `staged_source_count` (the label suffix) but never `used_tokens`,
@@ -797,7 +836,7 @@ async def test_context_estimate_counts_staged_evidence_before_send() -> None:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
 
-        baseline = screen._active_console_settings_context_estimate()
+        baseline = context_spend_for_test(screen)._active_console_settings_context_estimate()
         assert baseline.used_tokens is not None
 
         large_source = EvidenceReference(
@@ -825,13 +864,14 @@ async def test_context_estimate_counts_staged_evidence_before_send() -> None:
         screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
-        staged = screen._active_console_settings_context_estimate()
+        staged = context_spend_for_test(screen)._active_console_settings_context_estimate()
         assert staged.used_tokens is not None
         assert staged.used_tokens > baseline.used_tokens
         assert "1 source staged" in staged.label
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_capture_without_prompt_context_keeps_staging(
     monkeypatch,
 ) -> None:
@@ -858,6 +898,7 @@ async def test_console_capture_without_prompt_context_keeps_staging(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_blocked_send_keeps_staged_evidence(monkeypatch) -> None:
     app = _build_test_app()
     attach_chachanotes_db(app)
@@ -905,6 +946,7 @@ async def test_console_blocked_send_keeps_staged_evidence(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_send_blocked_reason_sendable_for_library_staged_one_ref() -> (
     None
 ):
@@ -934,6 +976,7 @@ async def test_console_send_blocked_reason_sendable_for_library_staged_one_ref()
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_send_blocked_reason_blocks_for_library_staged_zero_available_refs() -> (
     None
 ):

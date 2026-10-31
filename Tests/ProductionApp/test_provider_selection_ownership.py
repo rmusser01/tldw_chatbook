@@ -8,6 +8,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Input, OptionList
 
 from Tests.app_module_patches import set_app_global
+from Tests.private_profile import private_profile_test
 import tldw_chatbook.app as app_module
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import load_settings
@@ -21,6 +22,10 @@ from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 
 
+# TASK-33001.11: every test here saves chat_defaults and api_settings through
+# the real config writer, so each runs in its own pytest child on a fresh
+# profile (private_profile_test). The bootstrap profile is shared by every
+# bootstrap_profile test in a worker and would carry those values to the next.
 PROVIDERS_MODELS = {
     "OpenAI": ["gpt-task-648"],
     "Anthropic": ["claude-task-648"],
@@ -99,8 +104,14 @@ async def _wait_for_stable_provider_picker(
     settings: SettingsScreen,
     pilot,
 ) -> OptionList:
+    """Return the provider list once its painted Provider control is stable.
+
+    TASK-33007.2, rewritten on purpose: the list is hidden until the user
+    types in the one-row Provider control, so the control is what paints.
+    """
     for _ in range(300):
         try:
+            provider_control = settings.query_one("#settings-provider-search", Input)
             provider_picker = settings.query_one(
                 "#settings-provider-picker", OptionList
             )
@@ -108,9 +119,9 @@ async def _wait_for_stable_provider_picker(
             await pilot.pause(0.01)
             continue
         if (
-            provider_picker.is_mounted
-            and provider_picker.region.width > 0
-            and provider_picker.region.height > 0
+            provider_control.is_mounted
+            and provider_control.region.width > 0
+            and provider_control.region.height > 0
         ):
             await pilot.pause()
             if (
@@ -143,7 +154,9 @@ async def _close_production_app(app: TldwCli) -> None:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_real_app_restart_routes_saved_global_and_model_profile_to_new_chat(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A fresh TldwCli mount consumes the persisted global/profile defaults."""
@@ -194,7 +207,9 @@ async def test_real_app_restart_routes_saved_global_and_model_profile_to_new_cha
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_real_console_change_model_command_opens_real_picker(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """TASK-33001.6: the palette reaches providers only through the model picker."""
@@ -295,7 +310,9 @@ async def test_real_console_change_model_command_opens_real_picker(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_save_preserves_user_session(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = _production_app(monkeypatch)
@@ -341,7 +358,10 @@ async def test_settings_save_preserves_user_session(
                 "#settings-provider-search",
                 Input,
             )
-            provider_search.value = "anthropic"
+            # TASK-33007.2, rewritten on purpose: typed into the focused
+            # Provider control; the list never takes focus, Enter chooses.
+            provider_search.focus()
+            await pilot.press(*"anthropic")
             await _wait_until(
                 pilot,
                 lambda: (
@@ -357,7 +377,6 @@ async def test_settings_save_preserves_user_session(
                 ),
                 "the provider picker did not highlight Anthropic",
             )
-            provider_picker.focus()
             await pilot.press("enter")
             await _wait_until(
                 pilot,
@@ -367,16 +386,20 @@ async def test_settings_save_preserves_user_session(
                 ),
                 "the rendered provider control did not stage Anthropic",
             )
-            model_input = await _wait_for_widget(
+            # TASK-33007.3, rewritten on purpose: the rendered Model control
+            # is the Default model picker (#settings-model-value is its hidden
+            # adapter); an id no list holds is typed after its Custom ID.
+            model_field = await _wait_for_widget(
                 settings,
                 pilot,
-                "#settings-model-value",
+                "#model-search-picker-input",
                 Input,
             )
-            model_input.value = "claude-task-648"
-            settings.handle_model_value_changed(
-                Input.Changed(model_input, model_input.value)
-            )
+            model_field.focus()
+            await pilot.pause()
+            settings.query_one("#model-search-picker-custom", Button).press()
+            await pilot.pause()
+            await pilot.press("home", "shift+end", "backspace", *"claude-task-648")
             await _wait_until(
                 pilot,
                 lambda: (

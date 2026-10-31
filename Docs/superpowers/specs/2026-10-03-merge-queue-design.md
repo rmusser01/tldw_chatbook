@@ -1,0 +1,445 @@
+# In-repo merge queue for `dev` — design
+
+- **Date:** 2026-10-03
+- **Status:** Draft for owner review
+- **Program:** CI throughput (owner priority 1). This supersedes the 2026-09-28 drop of sub-project 5: the owner asked on
+  2026-10-03 to "rebuild the CI workflows to be optimized and controlled so only one pr gets pushed at a time instead of all
+  trying to be the one to merge".
+- **Related:** ADR-103 (fast PR lane and required-gate aggregation), `backlog/docs/branch-protection-baseline.md`,
+  `Docs/superpowers/specs/2026-09-27-ci-conflicts-and-waste-design.md`.
+- **Revised 2026-10-06 (approve, never dispatch).** The first version dispatched the required check after a rebase, and no
+  queue-rebased PR could ever merge: a `workflow_dispatch` run's check is not in the PR's status rollup, so the required
+  check read as missing and the PR stayed `BLOCKED` with every check green until the stuck eviction (#2874, #3026; fact
+  V4). The queue now **approves** the `pull_request` runs GitHub holds after its rebase (F4); those are ordinary
+  `pull_request` runs whose check counts. A retry re-runs the failed run in its own check suite (V3). The queue was set
+  `MERGE_QUEUE=off` on 2026-10-06 until this revision is merged and tested live on one PR.
+
+## 1. Problem
+
+`dev` is protected with strict status checks, so a PR can merge only when it is up to date with `dev` and its single
+required check (`Derived artifacts reproduce from their sources`) is green on that up-to-date head. Each merge therefore
+makes every other ready PR behind again. Today every armed PR is re-synced and re-tested after each merge, but only one of
+them can win the next merge.
+
+Evidence:
+- 80 merged PRs (2026-09-21..28), 392 required-workflow runs: 186 runs (47%) were re-sync churn beyond one sync per PR,
+  about 740 runner-minutes a day. The median run took 38 minutes.
+- 2026-09-28 phase-2 backlog run: re-syncing every behind PR after each merge cost 5-7 extra full runs per merge, with no
+  throughput gain.
+
+## 2. Goals and non-goals
+
+Goals:
+1. PRs merge into `dev` one at a time, in the order they were armed. Only the PR at the front of the line is rebased and
+   tested; every other armed PR is left untouched.
+2. Every CI check that runs on a PR today still runs on the head that actually merges.
+3. No new standing work for the owner: no scripts to run or maintain.
+
+Non-goals:
+- Raising the one-merge-per-CI-cycle ceiling. Strict protection already imposes it, and only GitHub's native merge queue
+  (organization-owned repos only) can batch.
+- Fork PRs (rare, for example #2826). Approving a fork's held runs would bypass GitHub's approval gate for outside
+  contributors' workflows, so they stay manual.
+- Priority lanes. Add them if FIFO proves wrong in practice.
+- The nightly (sub-project 3), which resumes after this ships.
+
+## 3. Constraints (owner rules)
+
+- No PAT, GitHub App key or deploy key in any workflow. Only the built-in `GITHUB_TOKEN`.
+- Nothing that depends on a new file or change on `main`. `schedule`, `workflow_run`, `check_suite`, `check_run` and
+  `pull_request_target` all read the default branch, so none of them are used.
+- PRs are rebased onto `dev`, never merged with `dev` (owner rebase rule).
+- No local scripts for the owner to run.
+
+## 4. Verified platform facts
+
+Spike PR #2985 (2026-10-03, closed without merge) established:
+
+| # | Fact | Result |
+|---|------|--------|
+| F1 | `workflow_dispatch` on a branch works when the workflow file exists on `main` and the branch's copy declares the trigger, even if `main`'s copy does not | Verified |
+| F2 | A dispatched run's `Derived artifacts reproduce from their sources` check is the PR's required context (`isRequired(pullRequestNumber)` = true) | Verified, but **not sufficient**: it says the check *name* is required, not that a dispatched run satisfies it (V4) |
+| F3 | `GITHUB_TOKEN` can call `updatePullRequestBranch(updateMethod: REBASE, expectedHeadOid)`, and auto-merge stays armed afterwards | Verified |
+| F4 | A `GITHUB_TOKEN` rebase creates an `action_required` `pull_request` run for every PR workflow, held for approval (GitHub docs: "creates workflow runs in an approval-required state") | Verified. Approving them is the design (V4) |
+| F5 | `pull_request` with type `auto_merge_enabled` fires a run from the PR's merge ref | Verified |
+
+From GitHub's documentation:
+
+| # | Fact |
+|---|------|
+| D1 | Events caused by `GITHUB_TOKEN` create no workflow runs, except `workflow_dispatch` and `repository_dispatch` |
+| D2 | Auto-merge is disabled automatically only when someone without write access pushes to the head branch, or the base branch changes |
+| D3 | `pull_request_target`, `schedule`, `check_suite` and `workflow_run` use the default branch's workflow file |
+
+Facts verified in implementation task 1 (each has a fallback):
+
+| # | Question | Result | Fallback if it fails |
+|---|----------|--------|----------------------|
+| V1 | Can `GITHUB_TOKEN` delete a workflow run (the empty `action_required` runs)? | Verified (run 37154004733) | Superseded 2026-10-06: the queue no longer deletes these runs, it approves them (V4) |
+| V2 | Can `GITHUB_TOKEN` cancel a workflow run (runs on a superseded head)? | Verified (run 37154004733, attempt 1; attempt 2's 409 was the already-cancelled target) | Leave superseded runs to finish |
+
+Facts verified live on 2026-10-06:
+
+| # | Fact | Evidence |
+|---|------|----------|
+| V3 | A re-run (`POST /actions/runs/{id}/rerun-failed-jobs` or `/rerun`) adds a new attempt to the **same** check suite. `filter=latest` (what protection reads) then shows only the new result; `filter=all` (what `read_checks` reads) keeps the old failure, so a re-run that fails again still counts as the second failure | #3019 head `6a11342309`: one suite, failure 22:11, success 22:35, PR went `CLEAN` |
+| V4 | A `workflow_dispatch` run's checks are **absent** from the PR's `statusCheckRollup`, so they never satisfy the required check. An approved held `pull_request` run's check is present and does | #3025 (pull_request): 13 rollup contexts, required present, auto-merged. #3026, #2874 (dispatched): 2 contexts, required missing, stuck. Probe #3033: `GITHUB_TOKEN` with the queue's permissions called `POST /actions/runs/37480728527/approve` -> success; the run ran; the rollup then held 9 contexts with the required check SUCCESS/pull_request and the merge state went `UNSTABLE` (mergeable) |
+
+The re-run and approve endpoints are documented REST endpoints covered by `actions: write` (approve is documented for fork
+PRs; V4 shows it also takes these held runs). GitHub only re-runs a completed run.
+
+## 5. Architecture
+
+Everything lives on `dev` and runs on the built-in token.
+
+1. **`.github/workflows/merge-queue.yml` (new).**
+   - Triggers:
+     - `pull_request` with types `auto_merge_enabled`, `auto_merge_disabled` and `closed`, for base `dev`;
+     - `push` to `dev`.
+   - Job `if`: the queue mode is `dry` or `on`, and the event is a push or comes from a same-repo PR.
+   - Steps: check out `dev` (never the PR) and run `python scripts/merge_queue.py`.
+   - Permissions: `contents: write`, `pull-requests: write`, `actions: write`.
+   - No concurrency group. Races are made safe by the action rules in section 7 instead, because concurrency groups cancel
+     pending jobs and those show as red cancelled checks on PRs.
+
+2. **`scripts/merge_queue.py` (new).**
+   - Standard library plus the `gh` CLI that hosted runners already have.
+   - Read layer: one GraphQL query that returns the open PRs into `dev`. For each PR it reads number, head SHA and repo,
+     author type, draft flag, `autoMergeRequest.enabledAt`, `mergeStateStatus`, unresolved thread count, and the required
+     check's state and completion time on the head. It also reads the head commit date and the `derived-artifacts.yml`
+     runs on that head.
+   - Every list read (the open PRs, the check runs and the workflow runs on a head) follows pagination to the end, up to
+     10 pages of 100. A longer list fails the run instead of deciding on part of it, because an armed PR or a live run on
+     a later page would be invisible.
+   - A pure `decide(state, now) -> list[Action]` function holding all queue rules (section 6).
+   - An action layer that performs the decided actions with the guards in section 7.
+
+3. **`.github/workflows/derived-artifacts.yml` (changed).**
+   - Add `workflow_dispatch` with a string input `pr`, and (2026-10-06 revision) a string input `wait_run`, the run a
+     queue kick's tick waits for before deciding.
+   - Define one condition for when the lanes run: `github.event_name == 'pull_request'`, or `workflow_dispatch` with a
+     non-empty `pr`, or `workflow_dispatch` with no `pr` on any ref other than `refs/heads/dev`. Use it for both lanes and
+     both verdict steps, so a manual dispatch with `pr`, or on a PR branch, runs the full fast lanes.
+   - A dispatch with no `pr` on `dev` is a manual queue kick: the lanes and verdicts are skipped, and the required check is
+     not reported red on `dev`. A dispatch with no `pr` on any other branch (the Actions UI "Run workflow" default, or
+     `gh workflow run derived-artifacts.yml --ref <branch>`) runs the full gate instead, so the required check can never be
+     greened on a PR head with zero tests run.
+   - Add a non-required `queue-tick` job:
+     - `needs: derived-artifacts`, with `if: '!cancelled()'` (not `always()`, so a run the queue itself cancelled is
+       skipped, while a failed aggregate still lets the queue evict);
+     - it runs only when the queue mode is `dry` or `on`, and the event is a dispatch, or a `pull_request` from a same-repo
+       PR (armed or not: the payload's `auto_merge` is a trigger-time snapshot that the disarm-push-rearm flow leaves
+       null, and the script itself acts only on the armed line);
+     - job-level write permissions, so the top-level `contents: read` stays for every other job;
+     - it checks out `dev` and runs the same script.
+   - It is not a required check and not part of the aggregate's `needs`, so a queue failure can never turn the required
+     check red. Pushes to `dev` do not run `queue-tick`; `merge-queue.yml` handles them.
+
+4. **Other PR workflows (changed).** Each workflow that runs on `pull_request` must also run correctly from
+   `workflow_dispatch`. The first version needed this so the queue could re-run them on the rebased head. Since the
+   2026-10-06 revision the queue approves their held `pull_request` runs instead, and the rule keeps manual dispatches safe.
+   - 8 of the 11 other PR workflows read PR-only context (`github.event.pull_request`, `head_ref`, or
+     `event_name == 'pull_request'`).
+   - perf-guard, task-19642 and task-32011 have no `workflow_dispatch` trigger yet.
+   - Implementation audits every one. Each gets dispatch-aware conditions and tests.
+   - A workflow that cannot be made to run safely from a dispatch is listed for an owner decision. None is dropped silently.
+
+5. **Docs.**
+   - CLAUDE.md "Merging into dev" and the same rules in AGENTS.md: they depend on the queue mode (section 10).
+   - A new ADR for the queue, cross-referenced from ADR-103.
+   - `branch-protection-baseline.md`.
+
+## 6. Queue rules — `decide`
+
+**The line.** Open PRs with base `dev`, auto-merge armed, not a draft, head repo equal to the base repo, and opened by a
+user (GraphQL `author.__typename == "User"`). They are ordered by `autoMergeRequest.enabledAt`, oldest first.
+- An armed fork PR gets one comment saying fork PRs are not queued and must be merged by hand. It is never part of the line.
+- An armed PR opened by a bot or app (Dependabot, an agent such as the Copilot coding agent, or a deleted "ghost"
+  account) gets one comment saying the same, for the security reason in section 9. It is never part of the line.
+
+**Front PR.** Fresh state is read first. If `mergeStateStatus` is `UNKNOWN`, the queue re-reads it up to 12 times, 10
+seconds apart (after each merge the next front is routinely `UNKNOWN` for a while); if it is still unknown, it does nothing.
+
+| Front PR state | Action |
+|---|---|
+| `BEHIND` | **Rebase** (section 7). On success it approves the new head's held `pull_request` runs (waiting up to 10 x 3 s for the required workflow's to appear), cancels the old head's runs, and comments "rebased onto dev at `<sha>`" |
+| `DIRTY` | **Evict:** conflicts with `dev` |
+| Up to date, no required-check run on the head, or only cancelled ones; head commit older than 3 minutes | **Start:** approve a held run, else re-run a cancelled one. With neither, look again for up to 10 x 3 s (the head's age is its commit date, not its push, so its run may not be listed yet), standing down if a run appears. Then a `no-run` strike: the first warns and holds the line; one at least 10 minutes after that warning evicts (`evict-no-run`, "push a commit, or close and reopen the PR"), since a dispatch would not count (V4). The gap keeps an Actions incident that delays run creation from disarming the PR |
+| Up to date, no run yet, head commit dated within 3 minutes of now, either side (the commit date comes from the author's clock: one a little ahead is young, one further ahead is treated as old and `start` looks for its run) | Wait (the author's own `pull_request` run may not be visible yet). In `on` mode the queue run waits out the window once (at most 3 minutes) and decides again, unless the PR was disarmed or re-armed meanwhile; a head that still looks young after that is started instead of waited on again: a tick woken after a rebase whose held runs had not appeared may be the last event for that head. If that wait would not end within the run's 4-minute budget, the queue wakes a fresh run to wait instead |
+| Up to date, required check queued or in progress | Wait (in flight) |
+| Up to date, required check failed, first failure on this head | **Retry:** re-run the failed run in its own check suite (V3) and comment linking it. If the deciding run *is* the failed run (its queue-tick, while it is still in progress), wake a queue tick: a queue kick, `derived-artifacts.yml` dispatched on `dev` without `pr` and with input `wait_run`, whose tick waits for the run to complete, then re-runs it. (`derived-artifacts.yml`, because GitHub only dispatches a workflow whose file is on `main`; `merge-queue.yml` is not.) A run already live again is left alone, and one held again (its re-run's approval failed) is approved strictly. One retry per head: the retry comment records the run the queue re-ran and its attempt, read fresh before the re-run, and the queue stands down if that read shows the run live or held again. A second retry decision reads the run and the checks fresh. It stands down while the run is live or held, or the check is running, missing or green since the decision. Otherwise it evicts (`evict-failed-twice`) when the decision names another run on the head than the one re-run, or when the required check failed after the re-run started (a re-run keeps its run id, and a run that never reports the check stays a single stand-in). A re-run not visible yet (no higher attempt) is a `rerun-unseen` strike (`evict-rerun-unseen`), and a re-run that finished while the newest failure is still the one from before it started is a `rerun-unreported` strike (`evict-rerun-unreported`); each has its own kind, so one's old warning never hastens the other's eviction (TASK-35024: a decision older than a racing run's successful re-run, or GitHub's lag in showing an accepted one, used to evict a healthy PR). A retry attempt that was cancelled, not failed, is re-run in full without counting against the cap. Re-run errors: a transient error (5xx, 429, rate limit, network) re-raises. Any other error is followed by one re-read of the run, and the queue stands down if it is live or held again (a racing queue run re-ran it). Otherwise a refusal (HTTP 409/422, or a 403 saying the run was created over a month ago) evicts (`evict-rerun`), and any other error re-raises with a `rerun-error` comment, and counts as a refusal only once that comment is at least 10 minutes old. A re-run still not live after its approval polls wakes a queue tick, because a held run never runs its own queue-tick; the wake comes after the retry comment, so a failed comment cannot chain wakes |
+| Up to date, required check failed, second failure on this head | **Evict:** CI failed twice, linking both runs |
+| `CLEAN` or `UNSTABLE` (or `BLOCKED` with no unresolved review threads, usually the state lagging the check), required check green, completed 15 minutes ago or less | Wait (auto-merge is about to fire), unless `compare/dev...<head>` shows `dev` has commits the head lacks: then **Rebase** (the stale-state case of the next row) |
+| `CLEAN` or `UNSTABLE` (or `BLOCKED` with no unresolved review threads), required check green, completed more than 15 minutes ago | First ask GitHub directly (`compare/dev...<head>`). If `dev` has commits the head lacks, **Rebase**: right after a merge the state can still read up to date for the next PR in line, whose green run is often hours old (#3070 was evicted twice that way, TASK-35025). Otherwise **Evict:** auto-merge did not fire, re-arm to retry. A failed compare fails the queue run and never evicts |
+| `BLOCKED`, required check green, one or more unresolved review threads | **Evict:** blocked by unresolved conversations |
+
+A completed `derived-artifacts.yml` run on the head that failed (`failure`, `startup_failure` or `timed_out`) without
+reporting the required check in its check suite counts as a failed required check. A startup failure (for example a broken
+workflow file on the branch) is therefore retried once and then evicted. GitHub may answer that re-run with a 403 the queue
+cannot classify; that fails the queue run with a `rerun-error` warning, and once the warning is 10 minutes old the next
+attempt evicts (`evict-rerun`), so a broken branch can never fail every queue run forever.
+
+After an eviction the queue re-evaluates the new front PR in the same run, at most 10 times. PRs behind the front are
+never rebased, dispatched or commented on.
+
+**Modes**, from the repository variable `MERGE_QUEUE`:
+- unset or `off`: do nothing;
+- `dry`: compute decisions and write them to the job summary, with no side effects;
+- `on`: act.
+
+## 7. Actions and safety invariants
+
+- **Rebase** uses `updatePullRequestBranch(updateMethod: REBASE, expectedHeadOid: <head the queue read>)`. On any failure the
+  queue re-reads the PR. If that shows the same head and not `DIRTY`, it waits 3 seconds and re-reads once more: a racing
+  run's accepted rebase moves the branch about a second after its mutation returns, and a refusal inside that window must
+  not count as this run's own failure. Then:
+  - head moved: someone else acted, almost always a racing queue run, which approves (or wakes for) its own rebase; do
+    nothing;
+  - now `DIRTY`: evict;
+  - GitHub answered "refusing to allow a GitHub App to create or update workflow ... without `workflows` permission":
+    the rebase would have the built-in token rewrite a workflow file, which it may never do. Seen when the PR and dev
+    had both changed the same workflow file since the PR's base (#3058, 2026-10-10); a PR that changes a workflow file
+    dev left alone rebases fine (#3062), as does any PR across workflow files only dev changed (#2892). Evict at once
+    (`evict-workflow-file`) with the file and the fix (rebase by hand, then re-arm); a strike would only make the author
+    wait ten minutes for a hint-free eviction;
+  - anything else (same head, still not `DIRTY`): the first time, post a `rebase-failed` comment quoting the error (first
+    200 characters). A later failure on the same head evicts ("rebase onto dev keeps failing", `evict-rebase`) only if
+    that comment is at least 10 minutes old (its `createdAt`); sooner, the queue leaves it for a later event. A rebase that
+    keeps failing while the PR stays `BEHIND` would otherwise stall the line, and the gap keeps one GitHub slowdown that
+    fails two attempts a minute apart from disarming the PR.
+  - A transient error re-raises before any of this and never counts (section 8). Transient means what gh actually prints
+    for an outage or throttling (captured from gh 2.90.0): `HTTP 5xx` or `HTTP 429` with or without parentheses, a rate
+    limit or abuse-detection message, GraphQL's "Something went wrong while executing your query", or a network failure,
+    where gh prints no line starting `gh: ` (a server message) at all. Only an answer GitHub actually gave about the PR
+    counts as a strike. A transient error can hide a rebase that went through with its response lost, and the loser of
+    the two queue runs each merge wakes is answered the same way: the queue re-reads the PR first, and if the head moved
+    it wakes a tick (that head's runs may be held with nothing else to approve them) and stands down without failing.
+    With the head unmoved, or if the re-read or the wake itself fails, the queue run fails.
+- The mutation returns the pre-rebase head, and the branch moves about a second later. After a successful rebase the queue
+  re-reads the PR up to 10 times, 3 seconds apart, until the head moves, and uses that new head for the comment. If it never
+  moves, the queue posts a `rebase-unmoved` comment and wakes a queue tick, once per head: if the branch moves later,
+  its new head's runs are held and nothing else would wake the queue to approve them. A later unmoved rebase on the same
+  head evicts (`evict-rebase-unmoved`) under the same 10-minute rule; otherwise every event would rebase it again and the
+  line would never move.
+- Once the new head appears, the queue approves its held runs first, then cancels the old head's live runs except its own
+  run and any merge-queue.yml run.
+- **Approve.** Every queue run, in `on` mode, first approves the front PR's held runs (best-effort per run), so the decision
+  sees them as the live runs they become. Only runs whose event is `pull_request` and whose triggering actor is
+  `github-actions[bot]` (the queue's own token) are approved, and only for the front PR, which is same-repo, user-authored
+  and armed by someone with write access. The queue never dispatches the required check (V4).
+- **Start and retry** re-read the head's live `derived-artifacts.yml` runs first; if one is live (a racing queue run acted
+  first), they do nothing. On the start and retry rows, approving a held run is not best-effort: a transient error
+  re-raises, so an outage fails the run instead of falling through to an eviction. Any other refusal is re-read: a run
+  no longer held was approved by a racing queue run (it may even have finished), so the queue stands down; one still held
+  is an `approve-error` strike: warn, and evict (`evict-approve`)
+  only once the warning is 10 minutes old. On the start row, GitHub refusing to re-run the cancelled run evicts at
+  once (`evict-no-run`): the refusal is final, or an unclassified error has already served its gap. A re-run refusal (HTTP 409/422, or a
+  403 for a run over a month old) evicts, after one re-read of the run: if it is live or held again, a racing queue run
+  re-ran it and this one stands down. A transient error (5xx, 429, rate limit, network) re-raises (section 8), so an
+  outage never disarms the fronts it touches. Any other error re-raises with a `rerun-error` comment, and counts as a
+  refusal only once that comment is at least 10 minutes old (as for rebase strikes). The re-read comes before both: whatever code GitHub refused with, a run that is live or
+  held again means a racing queue run re-ran it. A re-run's actor is the queue's token, so GitHub may hold it again; the queue then
+  approves it.
+- Only held runs that pass one predicate are ever approved, on every path: event `pull_request`, triggering actor
+  `github-actions[bot]`, head repository this repository.
+- **Evict** means one comment, then `disablePullRequestAutoMerge`, in that order: a job killed between the two leaves the
+  PR armed, and the next run evicts it again, instead of a PR disarmed with no reason given. If GitHub refuses a queue comment
+  because the PR's conversation is locked, the queue cannot keep its retry or strike counts there, or explain anything, so it
+  takes the PR out of the line without a comment rather than stall the line on it (the "rebased" comment, being only news,
+  is just skipped). Any other comment error fails the run.
+  A failed disarm re-reads the PR: already disarmed (two racing runs evicting the same PR, since a merge fires both `push`
+  to `dev` and `closed`) is fine; still armed fails the run, so no PR stays armed under a "removed" comment. Re-arming
+  puts the PR at the back of the line.
+- **Comments** carry a hidden marker `<!-- merge-queue:<kind>:<head-sha> -->`. Markers count only in the queue's own comments
+  (GraphQL author `github-actions`, a Bot), so a marker hidden in anyone else's comment is ignored (TASK-35024; section 9). The queue never posts a kind twice for the same
+  head. Two racing queue runs can both pass that check, so each looks again after posting and the later one removes its
+  own copy (best-effort: a failed look or removal leaves two copies and never stops the caller's next step). An eviction's kind names its cause (`evict-conflict`, `evict-failed-twice`, `evict-blocked`, `evict-stuck`,
+  `evict-rebase`, `evict-rebase-unmoved`, `evict-workflow-file`, `evict-rerun`, `evict-rerun-unseen`, `evict-rerun-unreported`, `evict-no-run`, `evict-approve`), so a re-armed PR evicted again on the same head for a different reason is still told
+  why.
+- **Forbidden**, and enforced by a guard test:
+  - enabling auto-merge;
+  - merging a PR (GraphQL `mergePullRequest`, REST `PUT .../merge`, or `gh pr merge` without `--disable-auto`);
+  - any git push.
+
+  A merge done with `GITHUB_TOKEN` pushes to `dev` without triggering any workflows (D1), which would silently stop both the
+  queue and dev's post-merge checks.
+- Every action is safe to repeat. Two queue runs racing produce at most one rebase: the pinned head makes the second
+  mutation fail, and the post-failure re-read (above) makes the losing run see the moved head and do nothing, instead of
+  counting the refusal as its own failure. Approving a run another queue run already approved is refused: the approval
+  pass logs it (best-effort), and a start or retry approval re-reads the run and stands down because it is no longer
+  held. Two runs re-running the same run: the second sees it live and stands down, or GitHub refuses its re-run and its
+  re-read finds the run going again, so it stands down too. Evictions are idempotent.
+
+## 8. Failure handling
+
+- **API error or rate limit:** the queue run fails as a non-required job. The next event retries it.
+- **A held run left unapproved:** when the post-rebase wait or a re-run's approval polls run out (best-effort approvals
+  that failed included), the queue wakes a tick, whose approval pass approves it. When a strict approval (start or retry)
+  fails, nothing is woken: an outage raises, so the run fails and the next event retries; any other refusal is a
+  strike. Either way a retry decision on that head approves the held
+  run strictly instead of counting it as a second failure.
+- **A woken tick's wait** (`wait_run`) is bounded at 3 minutes; failed reads are retried within it. A run still live or
+  unreadable after that (a GitHub fault) is decided on anyway, and the next event recovers it.
+- **Job timeouts** (both queue jobs: 10 minutes): a queue run takes on no further front, and starts no young-head wait
+  that would end, more than 4 minutes after it started; it wakes a fresh run instead. The first front is decided whatever
+  the budget; the 3-minute `wait_run` bound keeps its worst case (an UNKNOWN settle, a rebase's polls, about 90 API calls)
+  inside the timeout.
+- **A queue run interrupted between rebase and approval:** the same pass recovers it.
+- **Runner starvation:** the front PR simply waits in flight, as it does today.
+- **Liveness:** the queue wakes on arm, disarm and close events, pushes to `dev`, and finished CI runs for same-repo PRs.
+  - Manual kick: `gh workflow run derived-artifacts.yml --ref dev`, with no `pr` input. It works because that file already
+    exists on `main` (F1).
+  - Known gap: a stall during a stretch with no activity waits for the next event or a manual kick. There is no periodic
+    timer, because `schedule` reads `main`.
+  - The same gap after a strike (rebase, no-run, an unclassified re-run error, a refused approval, `rerun-unseen` or
+    `rerun-unreported`): a strike inside its 10-minute gap
+    stands down and wakes nothing, so on a quiet repo the front (and the line behind it) waits for the next event after
+    the gap. These failures are rare, and evicting sooner would let one GitHub slowdown disarm the PR.
+  - An Actions incident that keeps a head's runs from being created for more than 10 minutes, seen by two events that
+    far apart, still evicts it (`evict-no-run`); re-arm it after the incident.
+- **Owner or agent merges by hand while a PR is in flight:** `dev` moves, the front PR becomes behind, and the queue rebases
+  it again and cancels the superseded run.
+
+## 9. Security
+
+- `pull_request` runs for same-repo PRs get the permissions declared above. Those authors already have write access, so
+  there is no escalation.
+- A queue-approved held run executes the PR branch's own copy of `derived-artifacts.yml` (as the old queue dispatch did), so the branch controls every job in that run,
+  `queue-tick`'s write permissions included. Checking out `dev` inside a job cannot change that, because the branch can
+  edit the job. This equals the existing `pull_request` exposure: a same-repo `pull_request` run also executes the
+  branch's YAML with whatever `permissions:` it declares, and GitHub documents that anyone with write access can raise
+  the token's permissions by editing the workflow file. A wake-up job moved into `dev`'s copy (by dispatching a kick on
+  `dev`) would not help either: the branch could still declare write permissions on any job of the dispatched run, and
+  the extra hop would cost a queued run per CI completion.
+- The one difference is the actor. A queue-approved run runs as `github-actions[bot]`, so GitHub's actor-based gates on
+  `pull_request` runs do not apply to it: Dependabot runs get a read-only token and no secrets, and pushes by agents such
+  as the Copilot coding agent wait for a human's "Approve and run". The queue therefore only queues PRs opened by a user
+  (section 6). With that rule, every PR whose runs the queue approves was opened by a user and armed by someone with
+  write access, on a branch only write-access accounts can push to, and those pushes' own `pull_request` runs could
+  already do anything an approved run can. The queue approves only held runs triggered by its own actor, on the front
+  PR, whose head repository is this repository.
+- Fork PRs get a read-only token and are skipped explicitly.
+- The queue reads its markers only from comments posted as `github-actions` (section 7). A same-repo branch can still post
+  as `github-actions` by declaring `pull-requests: write` in its own workflow, but pushing that branch already takes write
+  access, which can disarm a PR outright, so a forged marker grants nothing more.
+- Both entry points check out and run `dev`'s copy of the script, never the PR's copy.
+- PR titles, bodies and branch names are passed only as API arguments, never interpolated into shell. Workflow expressions
+  feed values through `env:`.
+- Write permissions are granted at job level, only to the queue jobs.
+
+## 10. Agent rules (CLAUDE.md and AGENTS.md)
+
+The queue runs entirely in GitHub Actions and reacts only to GitHub events. Any number of machines, sessions, tools or
+people can open and arm PRs: the order is GitHub's server-side `autoMergeRequest.enabledAt`, and racing queue runs are made
+safe by section 7. What every machine must share is the rules below.
+
+They go into both `CLAUDE.md` (read by Claude Code sessions) and `AGENTS.md` (read by Codex sessions). As of 2026-10-03,
+`AGENTS.md` contains no merge rules at all.
+
+The rules depend on the mode, checked with `gh variable get MERGE_QUEUE`. A rollback therefore needs no docs change.
+
+- **Queue `on`:**
+  - Arm auto-merge once Qodo has reviewed the current head and every thread is resolved, then walk away.
+  - Never `update-branch` an armed PR.
+  - Never merge an armed PR by hand.
+  - Run `gh pr merge <n> --disable-auto` before pushing more work, and `git pull --rebase` before pushing, using
+    `--force-with-lease`.
+  - A conflict-free queue rebase does not need a fresh Qodo review, because CI tests the combined result. New Qodo threads
+    on the rebased head block the merge, and the PR is evicted with the reason.
+  - The queue approves a rebased PR's held runs itself; approving one by hand is harmless. Never dispatch the required
+    check by hand to unblock a PR: a dispatched run's check never counts (V4).
+- **Queue `off` or `dry`:** today's rules apply. Rebase-sync only the PR about to merge, with
+  `gh pr update-branch --rebase <n>`.
+
+## 11. Testing
+
+- **`decide` table tests**, one per row of the section 6 table, plus:
+  - empty line;
+  - FIFO ordering;
+  - PRs behind the front are untouched;
+  - fork and bot-author skip, and comment dedup;
+  - a line, check-run list or workflow-run list that spans two pages;
+  - `UNKNOWN` re-read;
+  - the eviction loop bound;
+  - each mode.
+- **Action-layer tests** against a fake `gh`:
+  - a pinned-head rebase failure never evicts;
+  - held runs are approved only after a successful rebase, and only the queue's own, on the front PR, from this
+    repository; a post-rebase wait that ends with nothing approved wakes a tick;
+  - comments deduplicated by marker;
+  - `dry` makes zero mutating calls;
+  - a retry re-runs the failed run in place; the failed run's own tick wakes a tick instead; a live run is left alone;
+    a second retry on the same head evicts;
+  - a refused re-run evicts and the line moves on, unless a re-read shows a racing run re-ran it (live or held, whatever
+    the refusal's code); a re-run still held after its polls wakes a tick, after the retry comment (a failed comment
+    wakes nothing); a 5xx, 429, rate
+    limit or network error fails the run and disarms nobody; an unclassified error fails once with a comment, then
+    evicts;
+  - a held re-run whose approval failed is approved strictly, never counted as a second failure (a refusal that lasts is
+    an `approve-error` strike, and `_retry` hands the line on when it evicts); a refusal for a run no longer held, even
+    one already finished, stands down; a cancelled retry attempt is re-run without
+    counting against the cap;
+  - start looks again, then warns before a no-run eviction (evicting only 10 minutes after the warning), and approves
+    only held runs the queue caused; an unclassified re-run error counts only 10 minutes after its warning; a bodiless
+    `gh: HTTP 404` is an answer, not a network error; a refusal after a warning line is still a refusal; "blocked" is not
+    "locked"; a transient rebase error wakes a tick only if the head moved, and then stands down instead of failing;
+    a workflow-file refusal evicts at once with the file and the fix; two racing runs leave one copy of a comment; a young head with no run is
+    decided again after the window (`on` mode only, not after a disarm or re-arm, and only within the run budget), and
+    started if it still looks young; a head dated a little ahead is young, one far ahead is not; a `wait_run` read error is retried within the bound; a rebase whose branch never
+    moves wakes one tick; a second rebase strike evicts only 10 minutes after the first, and a transient rebase error
+    never counts (REST, GraphQL, HTML and network shapes as gh prints them), with the gap boundary pinned; a rebase
+    whose head moved anyway wakes one tick; an eviction comments before it disarms and fails the run when the PR is
+    still armed (or unreadable) after a failed disarm; a locked PR leaves the line without a comment, while its
+    "rebased" comment is just skipped; any other comment refusal fails the run; a head that changed during the young
+    wait is not started early; a run past its budget hands the next front to a
+    fresh run;
+  - `main()` passes `WAIT_RUN` through;
+  - dispatched required checks never count, and a live dispatched run is not waited on;
+  - a live run that appeared after the decision stops the action;
+  - a refused rebase is re-read once more before it counts as a failure.
+- **Boundary test:** `main()` through the real `Gh` class down to the `gh` argv, with canned JSON, for a `BEHIND` front
+  PR.
+- **Guard test:** fails if the script can enable auto-merge, merge or push.
+- **Workflow-shape tests:**
+  - `merge-queue.yml` has exactly the triggers above, and none of `pull_request_target`, `schedule`, `workflow_run` or
+    `check_suite`;
+  - permissions are job-level;
+  - `queue-tick` is outside the aggregate's `needs`;
+  - the lane condition is shared by both lanes and both verdict steps.
+- **Pin updates:** the 5 pins that the spike tripped (`Tests/CI/test_ci_queue_pressure_contract.py`,
+  `Tests/CI/test_derived_artifacts_workflow.py`), plus a fresh untruncated search for any pin on the other changed
+  workflows.
+- **Live:** the trial in section 12.
+
+## 12. Rollout and rollback
+
+1. One implementation PR, merged the old way. It contains sections 5 and 10, the tests, the ADR and the measurement script
+   (section 13). It ships with `MERGE_QUEUE` unset, which means off.
+2. The owner sets `MERGE_QUEUE=dry`. For about a day, the logged decisions are compared with what actually happens to armed
+   PRs.
+3. The owner sets `MERGE_QUEUE=on`, first with 2-3 low-risk PRs, then for all traffic.
+4. **Rollback:** `gh variable set MERGE_QUEUE --body off` takes effect immediately. The implementation PR can be reverted.
+
+Setting the variable needs repository admin, so it is an owner action.
+
+## 13. Success measures
+
+A small committed script measures required-workflow runs per merged PR, split by cause (content, sync or rebase, queue
+dispatch). It replaces the evidence script lost with the scratchpad.
+
+After 7 days on, compared with the 2026-09-21..28 baseline:
+- sync and rebase runs per merged PR have a median of at most 1, against a baseline of 186 avoidable runs per 80 PRs;
+- no PR merges out of FIFO order, except after evictions or manual merges;
+- no line stall longer than 60 minutes while an eligible PR exists and runners are free;
+- zero queue actions that enabled auto-merge or merged a PR.
+
+## 14. Owner decisions recorded
+
+- Build an in-repo queue, not an organization transfer for GitHub's native merge queue (2026-10-03).
+- Run the spike before redesigning (2026-10-03), then accept the revised section 1 and section 2, with the 12 review fixes
+  folded in.
+- The queue must not depend on any single machine making PRs (owner question, 2026-10-03). It doesn't: GitHub events and
+  server-side ordering only. The shared rules go into both CLAUDE.md and AGENTS.md (section 10).
+- Still open:
+  - any PR workflow the section-5 audit finds cannot run safely from a dispatch;
+  - setting `MERGE_QUEUE`.

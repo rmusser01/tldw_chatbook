@@ -29,7 +29,6 @@ from ...Chat.console_provider_gateway import ConsoleProviderGateway
 from ...Chat.console_session_settings import build_default_console_session_settings
 from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import get_provider_readiness
-from ...Utils.input_validation import escape_markup
 from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
 )
@@ -284,10 +283,10 @@ class PersonasPreviewController:
                 show its entry's name.
 
         Returns:
-            The display name as markup, since a registry entry's name is user
-            text.
+            The display name as plain text; the preview's readout and status
+            lines render it literally (TASK-34400).
         """
-        return escape_markup(provider_display_name(str(provider_key or ""), config))
+        return provider_display_name(str(provider_key or ""), config)
 
     def provider_readout(self) -> tuple[str, str]:
         """Compute the pre-send provider readout from current config.
@@ -387,11 +386,24 @@ class PersonasPreviewController:
             return True, None
         return False, readiness.user_message
 
-    def open_provider_settings(self) -> None:
-        """Deep-link to Settings > Providers & Models for the readout provider."""
+    def open_provider_settings(self, *, defaults_key: str | None = None) -> None:
+        """Deep-link to Settings > Providers & Models.
+
+        Args:
+            defaults_key: ``None`` names the preview readout's provider (the
+                preview pane's link). ``"chat_defaults"`` names the provider
+                ``console_handoff_readiness`` checks (the header's blocked
+                chip, Roleplay frame B1), so the link lands on the provider
+                the block is about.
+        """
+        provider = self._readout_nav_provider
+        if defaults_key is not None:
+            raw_config = getattr(self.screen.app_instance, "app_config", {}) or {}
+            config = raw_config if isinstance(raw_config, Mapping) else {}
+            provider = self._selection_from_defaults(config, defaults_key).provider
         context: dict[str, Any] = {"category": SettingsCategoryId.PROVIDERS_MODELS}
-        if self._readout_nav_provider:
-            context["provider"] = self._readout_nav_provider
+        if provider:
+            context["provider"] = provider
         self.screen.post_message(NavigateToScreen("settings", context))
 
     async def handle_character_loaded(

@@ -25,11 +25,10 @@ def _seed_schedule(app) -> None:
     from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
         WatchlistBundleService,
     )
+
     db = app.subscriptions_db
     watchlist_id = int(WatchlistBundleService(db).create("Daily Brief")["id"])
-    db.set_watchlist_briefing_settings(
-        watchlist_id, briefing_cadence_seconds=86_400
-    )
+    db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=86_400)
 
 
 @asynccontextmanager

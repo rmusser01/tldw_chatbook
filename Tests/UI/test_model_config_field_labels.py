@@ -52,7 +52,13 @@ from tldw_chatbook.UI.Screens.settings_screen import (
     SettingsScreen,
 )
 from tldw_chatbook.Widgets.Console import console_settings_modal
-from tldw_chatbook.Widgets.Console.console_settings_modal import MODAL_LABEL_WIDTH
+from tldw_chatbook.Widgets.Console.console_settings_field_row import FIELD_ROW_FIELDS
+
+#: The label columns in css/features/_console_panels.tcss: the Model view's
+#: field rows ($ds-size-18) and the shared modal label ($ds-size-23); the
+#: Context view's ($ds-size-24) is wider than the shared one.
+_FIELD_ROW_LABEL_CELLS = 18
+_MODAL_LABEL_CELLS = 23
 
 _GENERATION_CONTROL_IDS = {
     "temperature": "temperature",
@@ -138,21 +144,33 @@ def test_drift_pairs_resolve_to_one_label_each():
 
 
 def test_labels_fit_the_existing_label_columns():
-    """Parent AC#8: no label outgrows the modal's 23-cell label column."""
+    """Parent AC#8, strict (TASK-33006.6 review item 5): every label is
+    narrower than the column it paints in, so it never touches its control."""
+    from rich.cells import cell_len
+
     for name, label in MODEL_FIELD_LABELS.items():
-        assert len(label) <= MODAL_LABEL_WIDTH, name
+        column = _FIELD_ROW_LABEL_CELLS if name in FIELD_ROW_FIELDS else _MODAL_LABEL_CELLS
+        assert cell_len(label) < column, (name, label)
 
 
 def test_modal_settings_paths_name_real_settings_categories():
     """Captures flag 6: the Context view sent users to "F4 Settings > Console
     behavior", a category the Settings rail spells "Console Behavior".
-    Checked against the rail's own titles, in any case (gap review Minor 5)."""
+    Checked against the rail's own titles, in any case (gap review Minor 5).
+    Rewritten on purpose by TASK-33007 capture finding 17: the modal now
+    spells every pointer "Settings ▸ <category> (F4)", as its Model view did,
+    and the Context view's window pointer is the shared MODEL_WINDOW_SETTING."""
+    from tldw_chatbook.Chat import console_context_budget_copy
+
     screen = SettingsScreen.__new__(SettingsScreen)
     screen._internal_prompts_customized_count = 0
     categories = {summary.title for summary in screen._category_summaries()}
-    source = Path(console_settings_modal.__file__).read_text(encoding="utf-8")
-    paths = re.findall(r"F4 Settings > (\w[\w &]*\w)", source)
-    assert paths
+    paths = []
+    for module in (console_settings_modal, console_context_budget_copy):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        assert "F4 Settings >" not in source, module.__name__
+        paths += re.findall(r"Settings ▸ (\w[\w &]*\w)", source)
+    assert {"Console Behavior", "Providers & Models"} <= set(paths)
     assert set(paths) <= categories, set(paths) - categories
 
 
@@ -285,12 +303,14 @@ async def test_conversation_settings_modal_labels_come_from_the_field_table():
     settings = ConsoleSessionSettings(
         provider="llama_cpp", model="model-a", base_url="http://127.0.0.1:9099"
     )
-    controls = {
+    # TASK-33006.1: Model view field rows label with their own 18-cell
+    # class; Connection and the Context view keep the shared 23-cell one.
+    field_rows = {
         f"console-settings-{suffix}": name
         for suffix, name in _GENERATION_CONTROL_IDS.items()
     }
-    controls |= {
-        "console-settings-streaming": "streaming",
+    field_rows["console-settings-streaming"] = "streaming"
+    controls = {
         "console-settings-base-url": "endpoint",
         "console-context-budget-mode": "conversation_budget_mode",
         "console-context-compaction-mode": "compaction_mode",
@@ -300,6 +320,7 @@ async def test_conversation_settings_modal_labels_come_from_the_field_table():
     async with app.run_test(size=(211, 44)) as pilot:
         await app.push_screen(_basic_modal(settings, app))
         await pilot.pause()
+        assert _label_drift(app.screen, field_rows, "console-settings-field-label") == []
         assert _label_drift(app.screen, controls, "console-settings-modal-label") == []
         assert (
             _select_options(app.screen, "console-context-carry-forward")
@@ -357,17 +378,20 @@ async def test_settings_model_default_labels_and_inspector_come_from_the_table(
 
         # Captures flag 7 (parent AC#5): the Automatic refresh list named
         # providers by their list keys ("MistralAI", "Moonshot", "ZAI").
-        labels = {
-            provider: str(
-                screen.query_one(
-                    f"#settings-mc-auto-{provider.lower()}", Checkbox
-                ).label
+        # TASK-33007.6, rewritten on purpose: each label now ends in its
+        # state as a word (Catalog refresh, AC#5).
+        boxes = {
+            provider: screen.query_one(
+                f"#settings-mc-auto-{provider.lower()}", Checkbox
             )
             for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
         }
-        assert labels == {
-            provider: f"{provider_display_name(provider)}: refresh"
-            for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
+        assert {provider: str(box.label) for provider, box in boxes.items()} == {
+            provider: (
+                f"{provider_display_name(provider)}: refresh "
+                f"{'On' if box.value else 'Off'}"
+            )
+            for provider, box in boxes.items()
         }
 
 
@@ -414,27 +438,40 @@ async def test_settings_console_behavior_fallback_labels_come_from_the_table(
         }
         # Captures flag 10: the inspector's Scope row lost its bracketed
         # section names to markup ("Scope:  response fallbacks and  paste").
+        # Rewritten on purpose (#3057 capture finding 11, 06c): the row named
+        # raw config sections; it names the card's own sections instead.
         rendered = [
             str(static.visual) for static in screen.query(".settings-detail-row")
         ]
         scope = [text for text in rendered if text.startswith("Scope: ")]
-        assert scope and all("  " not in text for text in scope), scope
+        assert scope == ["Scope: Global fallback defaults and paste collapse"], scope
 
         # Final review I2: focusing a fallback shows the table's help and
         # range, as the Providers & Models inspector does.
         screen.query_one("#settings-console-default-temperature").focus()
         await pilot.pause()
         field = MODEL_CONFIG_FIELDS["temperature"]
+        # TASK-33007.7 (review M6), rewritten on purpose: the guide no longer
+        # prints the config key; "Saved as" sits in the Inspector's closed
+        # "config key" disclosure, as on Providers & Models.
         guide = [
             str(screen.query_one(f"#settings-console-behavior-field-guide-{i}").content)
-            for i in range(4)
+            for i in range(3)
         ]
         assert guide == [
             f"Focused setting: {field.label}",
             f"Purpose: {field.help}",
-            "Saved as: chat_defaults.temperature",
             f"Validation: {field.valid_range}",
         ]
+        assert not screen.query("#settings-console-behavior-field-guide-3")
+        assert (
+            str(
+                screen.query_one(
+                    "#settings-console-behavior-config-key-saved-as"
+                ).content
+            )
+            == "Saved as: chat_defaults.temperature"
+        )
         for name in GENERATION_FIELD_REQUEST_KEYS:
             screen._active_settings_field_id = (
                 f"settings-console-default-{name.replace('_', '-')}"

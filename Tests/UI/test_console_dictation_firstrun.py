@@ -30,6 +30,7 @@ from Tests.UI.test_console_dictation import (
     _wait_for_mic_label,
 )
 from Tests.UI.test_console_dictation_streaming import _patch_availability
+from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
 from tldw_chatbook.Chat import console_voice_input as voice_module
 from tldw_chatbook.UI.Console_Modules import dictation as dictation_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
@@ -347,9 +348,7 @@ async def test_a_slow_first_run_shows_the_preparing_message_not_a_frozen_button(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
             chip = composer.query_one("#console-voice-status", Static)
 
             await pilot.click("#console-dictation")
@@ -375,9 +374,10 @@ async def test_a_slow_first_run_shows_the_preparing_message_not_a_frozen_button(
             assert len(details) == 1
             assert "recorded" in details[0]
 
-            # The button is pressable, so the download is escapable.
+            # The button is pressable, so the download is escapable, and
+            # TASK-33626.1 labels it with what a press does.
             mic = composer.query_one("#console-dictation", Button)
-            assert str(mic.label) == "Dictate…"
+            assert str(mic.label) == "Cancel"
             assert mic.disabled is False
             assert "cancel" in str(mic.tooltip).lower()
 
@@ -407,15 +407,13 @@ async def test_an_unrelated_ui_refresh_cannot_wipe_the_preparing_message(monkeyp
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
             chip = composer.query_one("#console-voice-status", Static)
 
             await pilot.click("#console-dictation")
             before = await _wait_for_painted(chip, pilot, "speech model")
 
-            console._sync_console_control_bar()
+            await _sync_console_control_bar_now(console)
             await pilot.pause()
 
             assert _painted(chip) == before
@@ -447,9 +445,7 @@ async def test_cancelling_a_long_first_run_returns_to_idle_without_an_error(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
             chip = composer.query_one("#console-voice-status", Static)
             composer.load_draft("keep this draft")
 
@@ -478,8 +474,7 @@ async def test_cancelling_a_long_first_run_returns_to_idle_without_an_error(
             ]
             assert errors == []
             assert any(
-                "cancel" in str(call.args[0]).lower()
-                for call in notify.call_args_list
+                "cancel" in str(call.args[0]).lower() for call in notify.call_args_list
             )
 
             # Releasing the model load afterwards must not resurrect anything.

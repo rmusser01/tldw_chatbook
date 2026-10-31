@@ -307,6 +307,7 @@ async def test_research_window_reports_no_pending_local_checkpoint():
 
 # --- local engine start wiring (task-16322, ADR-068) ---------------------------
 
+
 @pytest.mark.asyncio
 async def test_research_window_starts_local_engine_after_local_create(monkeypatch):
     service = FakeResearchScopeService()
@@ -361,7 +362,9 @@ def test_research_window_engine_start_skips_without_local_service():
 
 
 def test_research_window_engine_start_builds_engine_from_app_service(monkeypatch):
-    from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+    from tldw_chatbook.Research_Interop.local_research_service import (
+        LocalResearchService,
+    )
 
     service = FakeResearchScopeService()
     local_service = LocalResearchService(":memory:")
@@ -382,27 +385,40 @@ def test_research_window_engine_start_builds_engine_from_app_service(monkeypatch
 
 # --- academic lane toggle (task-16328) ------------------------------------------
 
+
 def test_window_academic_toggle_defaults_off_and_persists_in_state():
-    app = SimpleNamespace(research_scope_service=FakeResearchScopeService(),
-                          local_research_service=None)
+    app = SimpleNamespace(
+        research_scope_service=FakeResearchScopeService(), local_research_service=None
+    )
     window = ResearchWindow(app_instance=app)
 
     assert window.academic_enabled is False
     # "rounds" joined the persisted state in task-17371 -- the window now shows
     # and remembers how many multi-hop rounds it will launch with.
-    assert window.save_state() == {"source": "local", "academic": False,
-                                   "limits": "", "policy": "balanced",
-                                   "providers": "", "rounds": 2}
+    assert window.save_state() == {
+        "source": "local",
+        "academic": False,
+        "limits": "",
+        "policy": "balanced",
+        "providers": "",
+        "rounds": 2,
+    }
 
     window.academic_enabled = True
-    assert window.save_state() == {"source": "local", "academic": True,
-                                   "limits": "", "policy": "balanced",
-                                   "providers": "", "rounds": 2}
+    assert window.save_state() == {
+        "source": "local",
+        "academic": True,
+        "limits": "",
+        "policy": "balanced",
+        "providers": "",
+        "rounds": 2,
+    }
 
 
 def test_window_academic_toggle_restores_from_state():
-    app = SimpleNamespace(research_scope_service=FakeResearchScopeService(),
-                          local_research_service=None)
+    app = SimpleNamespace(
+        research_scope_service=FakeResearchScopeService(), local_research_service=None
+    )
     window = ResearchWindow(app_instance=app)
 
     window.restore_state({"source": "local", "academic": True})
@@ -414,15 +430,18 @@ def test_window_academic_toggle_default_comes_from_config(monkeypatch):
     monkeypatch.setattr(
         "tldw_chatbook.UI.Research_Window._academic_lane_default", lambda: True
     )
-    app = SimpleNamespace(research_scope_service=FakeResearchScopeService(),
-                          local_research_service=None)
+    app = SimpleNamespace(
+        research_scope_service=FakeResearchScopeService(), local_research_service=None
+    )
     window = ResearchWindow(app_instance=app)
 
     assert window.academic_enabled is True
 
 
 def test_window_engine_start_passes_paper_fn_only_when_toggle_on(monkeypatch):
-    from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+    from tldw_chatbook.Research_Interop.local_research_service import (
+        LocalResearchService,
+    )
     from tldw_chatbook.Research_Interop import academic_providers
 
     captured = {}
@@ -437,8 +456,9 @@ def test_window_engine_start_passes_paper_fn_only_when_toggle_on(monkeypatch):
     )
     service = FakeResearchScopeService()
     local_service = LocalResearchService(":memory:")
-    app = SimpleNamespace(research_scope_service=service,
-                          local_research_service=local_service)
+    app = SimpleNamespace(
+        research_scope_service=service, local_research_service=local_service
+    )
 
     window_off = ResearchWindow(app_instance=app)
     window_off._start_local_engine("run-1")
@@ -484,13 +504,16 @@ async def test_create_run_carries_parsed_limits(monkeypatch):
     # max_iterations rides along from the rounds control (task-17371) whenever
     # the limits text does not state one; the typed budget keys are untouched.
     assert create_call[2]["limits_json"] == {
-        "max_searches": 3, "max_fetched_docs": 10.0, "max_iterations": 2,
+        "max_searches": 3,
+        "max_fetched_docs": 10.0,
+        "max_iterations": 2,
     }
 
 
 def test_limits_text_persists_in_state():
-    app = SimpleNamespace(research_scope_service=FakeResearchScopeService(),
-                          local_research_service=None)
+    app = SimpleNamespace(
+        research_scope_service=FakeResearchScopeService(), local_research_service=None
+    )
     window = ResearchWindow(app_instance=app)
     window.limits_text = "max_searches=3"
     assert window.save_state()["limits"] == "max_searches=3"
@@ -502,7 +525,9 @@ def test_limits_text_persists_in_state():
 
 @pytest.mark.asyncio
 async def test_ask_follow_up_answers_from_selected_local_run(monkeypatch):
-    from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+    from tldw_chatbook.Research_Interop.local_research_service import (
+        LocalResearchService,
+    )
 
     asked = {}
 
@@ -513,8 +538,11 @@ async def test_ask_follow_up_answers_from_selected_local_run(monkeypatch):
         async def answer_follow_up(self, run_id, question, **kwargs):
             asked["run_id"] = run_id
             asked["question"] = question
-            return {"status": "answered", "answer": "Because the claims say so.",
-                    "question": question}
+            return {
+                "status": "answered",
+                "answer": "Because the claims say so.",
+                "question": question,
+            }
 
     monkeypatch.setattr(
         "tldw_chatbook.Research_Interop.local_research_engine.LocalResearchEngine",
@@ -522,8 +550,9 @@ async def test_ask_follow_up_answers_from_selected_local_run(monkeypatch):
     )
     local_service = LocalResearchService(":memory:")
     service = FakeResearchScopeService()
-    app = SimpleNamespace(research_scope_service=service,
-                          local_research_service=local_service)
+    app = SimpleNamespace(
+        research_scope_service=service, local_research_service=local_service
+    )
     window = ResearchWindow(app_instance=app)
     await window.load_runs("local")
     window.select_run(window.runs[0])
@@ -538,23 +567,30 @@ async def test_ask_follow_up_answers_from_selected_local_run(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ask_follow_up_insufficient_verdict_is_displayed_not_faked(monkeypatch):
-    from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+    from tldw_chatbook.Research_Interop.local_research_service import (
+        LocalResearchService,
+    )
 
     class FakeEngine:
         def __init__(self, service, **kwargs):
             pass
 
         async def answer_follow_up(self, run_id, question, **kwargs):
-            return {"status": "insufficient_evidence", "answer": None,
-                    "reason": "no stored claims",
-                    "suggestion": "Launch a new research run."}
+            return {
+                "status": "insufficient_evidence",
+                "answer": None,
+                "reason": "no stored claims",
+                "suggestion": "Launch a new research run.",
+            }
 
     monkeypatch.setattr(
         "tldw_chatbook.Research_Interop.local_research_engine.LocalResearchEngine",
         FakeEngine,
     )
-    app = SimpleNamespace(research_scope_service=FakeResearchScopeService(),
-                          local_research_service=LocalResearchService(":memory:"))
+    app = SimpleNamespace(
+        research_scope_service=FakeResearchScopeService(),
+        local_research_service=LocalResearchService(":memory:"),
+    )
     window = ResearchWindow(app_instance=app)
     await window.load_runs("local")
     window.select_run(window.runs[0])
@@ -578,8 +614,9 @@ async def test_ask_follow_up_requires_selection_and_local_source(monkeypatch):
         "tldw_chatbook.Research_Interop.local_research_engine.LocalResearchEngine",
         FakeEngine,
     )
-    app = SimpleNamespace(research_scope_service=FakeResearchScopeService(),
-                          local_research_service=None)
+    app = SimpleNamespace(
+        research_scope_service=FakeResearchScopeService(), local_research_service=None
+    )
     window = ResearchWindow(app_instance=app)
 
     result = await window.ask_follow_up("No run selected")  # no selection
@@ -600,9 +637,12 @@ async def test_ask_follow_up_requires_selection_and_local_source(monkeypatch):
 
 # --- local checkpoint approval (task-16482) ---------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_window_approves_latest_local_checkpoint_and_restarts_engine(monkeypatch):
-    from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+    from tldw_chatbook.Research_Interop.local_research_service import (
+        LocalResearchService,
+    )
 
     local_service = LocalResearchService(":memory:")
     run = local_service.launch_run(query="Checkpointed run")
@@ -611,12 +651,18 @@ async def test_window_approves_latest_local_checkpoint_and_restarts_engine(monke
     )
     service = FakeResearchScopeService()
     service.runs["local"] = [
-        SimpleNamespace(id=run["id"], query="Checkpointed run", status="running",
-                        phase="planning", control_state="awaiting_plan_review",
-                        latest_checkpoint_id=checkpoint["id"])
+        SimpleNamespace(
+            id=run["id"],
+            query="Checkpointed run",
+            status="running",
+            phase="planning",
+            control_state="awaiting_plan_review",
+            latest_checkpoint_id=checkpoint["id"],
+        )
     ]
-    app = SimpleNamespace(research_scope_service=service,
-                          local_research_service=local_service)
+    app = SimpleNamespace(
+        research_scope_service=service, local_research_service=local_service
+    )
     window = ResearchWindow(app_instance=app)
     restarted = []
     monkeypatch.setattr(window, "_start_local_engine", restarted.append)
@@ -643,25 +689,40 @@ async def test_window_approves_latest_local_checkpoint_and_restarts_engine(monke
 
 # --- readable bundle inspection (task-16483) --------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_load_bundle_auto_loads_the_report(monkeypatch):
     service = FakeResearchScopeService()
 
     async def get_bundle(run_id, *, mode):
         return {
-            "run": {"id": run_id, "status": "completed", "phase": "completed",
-                    "query": "What is RAG?"},
+            "run": {
+                "id": run_id,
+                "status": "completed",
+                "phase": "completed",
+                "query": "What is RAG?",
+            },
             "artifacts": [
-                {"artifact_name": "plan.json", "content_type": "application/json",
-                 "content": {"query": "What is RAG?"}},
-                {"artifact_name": "report_v1.md", "content_type": "text/markdown",
-                 "content": "# Report\nAnswer[1]."},
+                {
+                    "artifact_name": "plan.json",
+                    "content_type": "application/json",
+                    "content": {"query": "What is RAG?"},
+                },
+                {
+                    "artifact_name": "report_v1.md",
+                    "content_type": "text/markdown",
+                    "content": "# Report\nAnswer[1].",
+                },
             ],
         }
 
     async def get_artifact(run_id, artifact_name, *, mode):
-        return {"artifact_name": artifact_name, "content_type": "text/markdown",
-                "artifact_version": 1, "content": "# Report\nAnswer[1]."}
+        return {
+            "artifact_name": artifact_name,
+            "content_type": "text/markdown",
+            "artifact_version": 1,
+            "content": "# Report\nAnswer[1].",
+        }
 
     service.get_bundle = get_bundle
     service.get_artifact = get_artifact
@@ -682,6 +743,7 @@ async def test_load_bundle_auto_loads_the_report(monkeypatch):
 
 # --- selected-run auto-refresh (task-16486) ---------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_auto_refresh_updates_non_terminal_local_run_preserving_payload():
     service = FakeResearchScopeService()
@@ -696,8 +758,13 @@ async def test_auto_refresh_updates_non_terminal_local_run_preserving_payload():
 
     async def get_run(run_id, *, mode):
         calls["n"] += 1
-        return SimpleNamespace(id=run_id, query="Local query", status="running",
-                               phase="synthesizing", control_state="running")
+        return SimpleNamespace(
+            id=run_id,
+            query="Local query",
+            status="running",
+            phase="synthesizing",
+            control_state="running",
+        )
 
     service.get_run = get_run
     await window._auto_refresh_selected_run()
@@ -734,19 +801,30 @@ async def test_auto_refresh_skips_terminal_and_non_local():
 
 # --- Qodo remediation (task-16814) ------------------------------------------------
 
+
 def test_academic_lane_default_parses_string_booleans(monkeypatch):
     from tldw_chatbook.UI.Research_Window import _parse_config_bool
 
     for raw, expected in [
-        ("false", False), ("False", False), ("0", False), ("no", False),
-        ("off", False), ("", False),
-        ("true", True), ("True", True), ("1", True), ("yes", True), ("on", True),
-        (True, True), (False, False),
+        ("false", False),
+        ("False", False),
+        ("0", False),
+        ("no", False),
+        ("off", False),
+        ("", False),
+        ("true", True),
+        ("True", True),
+        ("1", True),
+        ("yes", True),
+        ("on", True),
+        (True, True),
+        (False, False),
     ]:
         assert _parse_config_bool(raw) is expected, f"{raw!r} should parse {expected}"
 
 
 # --- source policy + providers in the window (task-16791) -------------------------
+
 
 @pytest.mark.asyncio
 async def test_window_policy_and_providers_sent_on_create(monkeypatch):
@@ -766,8 +844,9 @@ async def test_window_policy_and_providers_sent_on_create(monkeypatch):
 
 
 def test_window_policy_persists_in_state():
-    app = SimpleNamespace(research_scope_service=FakeResearchScopeService(),
-                          local_research_service=None)
+    app = SimpleNamespace(
+        research_scope_service=FakeResearchScopeService(), local_research_service=None
+    )
     window = ResearchWindow(app_instance=app)
     window.source_policy = "web_first"
     window.providers_text = "pubmed"
@@ -782,6 +861,7 @@ def test_window_policy_persists_in_state():
 
 
 # --- Qodo remediation on PR 1722 ---------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_create_run_reads_limits_and_providers_from_inputs(monkeypatch):
@@ -817,7 +897,9 @@ def test_window_engine_start_passes_configured_pipeline_params(monkeypatch):
     ("Invalid search_params parameter") before a single search. The window
     must hand the engine the same assembly the Console /research command and
     the baseline recorder use (deep_search_pipeline_params, task-16484)."""
-    from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+    from tldw_chatbook.Research_Interop.local_research_service import (
+        LocalResearchService,
+    )
     from tldw_chatbook.Web_Scraping.WebSearch_APIs import (
         GENERATE_AND_SEARCH_REQUIRED_PARAMS,
     )
@@ -1045,5 +1127,7 @@ def test_typed_max_iterations_wins_whatever_its_casing():
 
     limits = captured["limits_json"]
     assert limits["max_iterations"] == 1, limits
-    assert [k for k in limits if k.lower() == "max_iterations"] == ["max_iterations"], limits
+    assert [k for k in limits if k.lower() == "max_iterations"] == ["max_iterations"], (
+        limits
+    )
     assert limits["max_searches"] == 5

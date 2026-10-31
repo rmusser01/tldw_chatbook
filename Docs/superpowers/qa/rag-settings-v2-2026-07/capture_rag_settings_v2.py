@@ -93,7 +93,9 @@ def _wire_profiles_no_user_profiles(tmp_path: Path, *, active_id: str = "hybrid_
     return mgr, state
 
 
-def _stub_index_status(state: str, *, count: int = 0, provenance: dict | None = None) -> None:
+def _stub_index_status(
+    state: str, *, count: int = 0, provenance: dict | None = None
+) -> None:
     """Deterministic ``fetch_index_status()`` -- patches the module-level
     binding INSIDE ``settings_screen`` (where it was imported by name),
     matching ``Tests/UI/test_settings_rag_profile_region.py``'s
@@ -243,11 +245,15 @@ async def main() -> None:
     #     index already BUILT, an index-determining field (embedding model)
     #     edited, Save clicked -> "Re-index required" confirm modal. AC2. ---
     _mgr3, profile3, _state3 = _wire_profiles(tmp_dir / "session3")
-    _stub_index_status("built", count=1234, provenance={
-        "embedding_model": profile3.rag_config.embedding.model,
-        "chunk_size": profile3.rag_config.chunking.chunk_size,
-        "chunk_overlap": profile3.rag_config.chunking.chunk_overlap,
-    })
+    _stub_index_status(
+        "built",
+        count=1234,
+        provenance={
+            "embedding_model": profile3.rag_config.embedding.model,
+            "chunk_size": profile3.rag_config.chunking.chunk_size,
+            "chunk_overlap": profile3.rag_config.chunking.chunk_overlap,
+        },
+    )
     app3 = QAApp(_build_app_instance())
     async with app3.run_test(size=TERMINAL_SIZE) as pilot:
         screen = pilot.app.screen
@@ -281,16 +287,16 @@ async def main() -> None:
         await _open_rag_category(pilot)
 
         assert (
-            screen.query_one(
-                "#settings-library-rag-enable-reranking", Checkbox
-            ).value
+            screen.query_one("#settings-library-rag-enable-reranking", Checkbox).value
             is False
         )
         screen.query_one(
             "#settings-library-rag-reranking-group", Collapsible
         ).collapsed = False
         await pilot.pause(0.3)
-        svg = app4.export_screenshot(title="RAG checkbox toggles + dimmed rerank fields")
+        svg = app4.export_screenshot(
+            title="RAG checkbox toggles + dimmed rerank fields"
+        )
         (OUT / "04-checkbox-toggles-dimmed-rerank.svg").write_text(svg)
 
     # --- 5. Context-sensitive inspector following a FOCUSED rerank field:
@@ -314,9 +320,7 @@ async def main() -> None:
             "#settings-library-rag-reranking-group", Collapsible
         ).collapsed = False
         await pilot.pause()
-        reranker_input = screen.query_one(
-            "#settings-library-rag-reranker-model", Input
-        )
+        reranker_input = screen.query_one("#settings-library-rag-reranker-model", Input)
         assert reranker_input.disabled is False
         reranker_input.focus()
         await pilot.pause(0.4)

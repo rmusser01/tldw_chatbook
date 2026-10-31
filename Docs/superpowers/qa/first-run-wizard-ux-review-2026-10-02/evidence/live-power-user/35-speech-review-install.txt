@@ -1,0 +1,50 @@
+                                        ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+                                        │                                                 Set up tldw chatbook                                                 │
+                                        ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+                                        ▊                                                                                                                      ▎
+                                        ▊  Install Parakeet v2 (English, INT8)?                                                                                ▎
+                                        ▊                                                                                                                      ▎
+                                        ▊  Source: istupakov/parakeet-tdt-0.6b-v2-onnx                                                                         ▎
+                                        ▊  Revision: 0bbb45a3365852604aef28b538a8f066f4ccaa85                                                                  ▎
+                                        ▊  License: CC-BY-4.0                                                                                                  ▎
+                                        ▊  Terms: Curated Parakeet TDT ONNX export pinned to one immutable upstream revision and verified against the sizes    ▎
+                                        ▊  and SHA-256 digests recorded by TASK-593.                                                                           ▎
+                                        ▊  Source review page: https://creativecommons.org/licenses/by/4.0/                                                    ▎
+                                        ▊  Precision: int8                                                                                                     ▎
+                                        ▊  Contents: 4 files, 630.6 MiB                                                                                        ▎
+                                        ▊  Provenance: Curated by Chatbook · Local integrity recorded                                                          ▎
+                                        ▊                                                                                                                      ▎
+                                        ▊  Source: istupakov/silero-vad-onnx                                                                                   ▎
+                                        ▊  Revision: b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6                                                                  ▎
+                                        ▊  License: mit                                                                                                        ▎
+                                        ▊  Terms: Pinned Silero VAD ONNX model used for offline long-form segmentation.                                        ▎
+                                        ▊  Source review page: https://opensource.org/license/mit                                                              ▎
+                                        ▊  Precision: f32                                                                                                      ▎
+                                        ▊  Contents: 1 files, 2.2 MiB                                                                                          ▎
+                                        ▊  Provenance: Curated by Chatbook · Local integrity recorded                                                          ▎
+                                        ▊                                                                                                                      ▎
+                                        ▊  Download: 632.8 MiB                                                                                                 ▎
+                                        ▊  Already staged: 0.0 MiB                                                                                             ▎
+                                        ▊  Staging overhead: 0.0 MiB                                                                                           ▎
+                                        ▊  Destination:                                                                                                        ▎
+                                        ▊  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/setup-wizard-ux-qa/homes/power1/.local/share/tldw_cli  ▎
+                                        ▊  /default_user/models/managed/artifacts/parakeet-v2/0bbb45a3365852604aef28b538a8f066f4ccaa85-vad-b3e3ee3cce4c/int8   ▎
+                                        ▊  Free space: 109952.2 MiB                                                                                            ▎
+                                        ▊  Enough free space is available for this install.                                                                    ▎
+                                        ▊                                                                                                                      ▎
+                                        ▊  Every declared file is checked against pinned sizes and SHA-256 digests before installation completes.              ▎
+                                        ▊                                                                                                                      ▎
+                                        ▊                                                                                                                      ▎
+                                        ▊                                                                                                                      ▎
+                                        ▊                                                                                                                      ▎
+                                        ▊                                                                                                                      ▎
+                                        ▊                                                                                                                      ▎
+                                        ▊                                                                                                                      ▎
+                                        ▊                                                                                         Cancel         Install       ▎
+                                        ▊                                                                                                                      ▎
+                                        ▊                                                                                                                      ▎
+                                        ▊                                                                                                                      ▎
+                                        ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+                                        │                                                                                                                      │
+                                        └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                           Enter / Ctrl+N next · Ctrl+B back · Esc exit setup

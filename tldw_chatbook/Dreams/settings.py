@@ -21,6 +21,11 @@ DREAMS_DEFAULTS: dict[str, Any] = {
     "seen_item_ttl_days": 90,
     "max_searches_per_day": 30,
     "max_llm_calls_per_day": 60,
+    # --- Track loop caps/floors (Phase 2 Task 6); the single source the
+    # track service reads -- its pre-Task-6 fallback literals are gone.
+    "tracked_item_cap": 20,
+    "track_min_check_interval_hours": 12,
+    "track_quiet_retire_count": 14,
 }
 
 
@@ -38,3 +43,34 @@ def dreams_setting(key: str, default: Any = None) -> Any:
     if default is None and key in DREAMS_DEFAULTS:
         default = DREAMS_DEFAULTS[key]
     return get_cli_setting("dreams", key, default)
+
+
+def dreams_region() -> str:
+    """The configured ``[dreams] region``, or ``""`` when it is not usable.
+
+    The region goes verbatim into the query-synthesis prompt, a tracked
+    question's search query and a story's location, and it can reach the
+    config through Settings, Advanced Config or a text editor. Every read
+    therefore goes through here and applies the rule a topic or goal must
+    pass (review of #2921, item 8): one visible line, bounded, with no
+    control or invisible formatting characters. A value that fails is
+    treated as no region rather than passed on.
+
+    Returns:
+        The trimmed region, or an empty string when unset or refused.
+    """
+    # Imported at call time: this module is on the boot path and the
+    # validator's module is not this one's to load there.
+    from tldw_chatbook.Utils.input_validation import validate_dreams_profile_text
+
+    try:
+        return validate_dreams_profile_text(dreams_setting("region", ""))
+    except ValueError:
+        return ""
+
+
+def dreams_execution_allowed(database: Any) -> bool:
+    """Require current recovery authority for this selected runtime store."""
+    from tldw_chatbook.Backup_Recovery.activation import execution_allowed
+
+    return execution_allowed(("db.dreams",), getattr(database, "db_path", None))

@@ -408,17 +408,14 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         )
         self.query_one("#library-prompt-keywords").display = effective == "advanced"
         self.query_one("#library-prompt-author").display = effective == "advanced"
-        self.query_one("#library-prompt-author-label").display = (
-            effective == "advanced"
-        )
-        self.query_one("#library-prompt-advanced-extras").display = (
-            effective in {"advanced", "info"}
-        )
+        self.query_one("#library-prompt-author-label").display = effective == "advanced"
+        self.query_one("#library-prompt-advanced-extras").display = effective in {
+            "advanced",
+            "info",
+        }
         for selector in ("#library-prompt-system", "#library-prompt-user"):
             self.query_one(selector, TextArea).read_only = (
-                effective != "basic"
-                or self.bulk_read_only
-                or self.identity_mismatch
+                effective != "basic" or self.bulk_read_only or self.identity_mismatch
             )
         if focused_will_hide:
             self.call_after_refresh(
@@ -473,7 +470,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         )
         self.screen.set_focus(target, scroll_visible=False)
 
-    async def sync_saved_editor_state(self, editor_state: PromptEditorState) -> None:
+    async def sync_saved_editor_state(
+        self, editor_state: PromptEditorState
+    ) -> PromptBlockEditorState | None:
         """Adopt saved status and block markers without replacing text fields.
 
         Args:
@@ -487,6 +486,15 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             for lane in state.definition.lanes:
                 for block in lane.blocks:
                     await editor.replace_block_state(block.id, state)
+            # Structural reconciliation can await a mount even during Save.
+            # Keep input accepted in either presentation while that await ran.
+            state = self.capture_live_block_state()
+            while state != editor.state:
+                for lane in state.definition.lanes:
+                    for block in lane.blocks:
+                        await editor.replace_block_state(block.id, state)
+                state = self.capture_live_block_state()
+            self._sync_block_preview(state)
         source = editor_state.source.title()
         kind = editor_state.artifact_type.title()
         format_label = definition_state_display_label(editor_state.definition_state)
@@ -496,6 +504,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.query_one("#library-prompt-info-provenance", Static).update(
             f"Persisted source: {source} · {kind} · {format_label}"
         )
+        return state
 
     def sync_lifecycle_actions(
         self,
@@ -521,9 +530,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         clean_saved = not self.conflict and not is_new and not self.dirty
         save = self.query_one("#library-prompt-save", Button)
         save.display = not self.conflict and (is_new or self.dirty)
-        save.disabled = busy or (
-            not is_new and not self.can_update_original
-        )
+        save.disabled = busy or (not is_new and not self.can_update_original)
         use_console = self.query_one("#library-prompt-insert-console", Button)
         use_console.display = clean_saved
         use_console.disabled = busy
@@ -557,9 +564,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         if self.bulk_read_only:
             return
         self.more_actions_open = not self.more_actions_open
-        self.query_one("#library-prompt-more-actions-region").display = (
-            self.more_actions_open
-        )
+        self.query_one(
+            "#library-prompt-more-actions-region"
+        ).display = self.more_actions_open
 
     def on_key(self, event: events.Key) -> None:
         if event.key != "escape" or not self.more_actions_open:
@@ -584,7 +591,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             return
         browse_result = self.browse_result
         pager = self.pager
-        total: int | str | None = pager.title_count if pager is not None else state.count
+        total: int | str | None = (
+            pager.title_count if pager is not None else state.count
+        )
         if pager is None and browse_result is not None:
             total = (
                 "…"
@@ -741,9 +750,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         page_unavailable = bool(
             browse_result is not None and browse_result.status in {"loading", "error"}
         )
-        page_actions_disabled = (
-            self.mutation_in_flight or self.page_actions_disabled
-        )
+        page_actions_disabled = self.mutation_in_flight or self.page_actions_disabled
         page_action_reason = (
             _MUTATION_PROGRESS
             if self.mutation_in_flight
@@ -923,9 +930,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         classes="library-canvas-action",
                         compact=True,
                         disabled=disabled,
-                        tooltip=(
-                            page_action_reason if disabled else None
-                        ),
+                        tooltip=(page_action_reason if disabled else None),
                     )
             if not page_actions_disabled and select_disabled:
                 selection_reason = _NOTHING_TO_SELECT
@@ -1129,9 +1134,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     classes="library-canvas-action",
                     compact=True,
                     disabled=self.mutation_in_flight,
-                    tooltip=(
-                        _MUTATION_PROGRESS if self.mutation_in_flight else None
-                    ),
+                    tooltip=(_MUTATION_PROGRESS if self.mutation_in_flight else None),
                 )
 
     def _compose_paging(self, result: PromptBrowseResult) -> ComposeResult:
@@ -1251,9 +1254,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             else self.editor_mode
         )
         item_locked = (
-            self.mutation_in_flight
-            or self.bulk_read_only
-            or self.identity_mismatch
+            self.mutation_in_flight or self.bulk_read_only or self.identity_mismatch
         )
         with Vertical(id="library-prompt-editor-shell"):
             with VerticalScroll(id="library-prompt-editor-content"):
@@ -1292,9 +1293,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         compact=True,
                     )
                 yield Button(
-                    library_disabled_action_label(
-                        "‹ Back to list", item_locked
-                    ),
+                    library_disabled_action_label("‹ Back to list", item_locked),
                     id="library-prompt-back",
                     classes="library-canvas-action",
                     compact=True,
@@ -1450,8 +1449,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             classes="library-canvas-action",
                             compact=True,
                             disabled=(
-                                item_locked
-                                or not editor_state.can_convert_as_new
+                                item_locked or not editor_state.can_convert_as_new
                             ),
                         )
                         if convert.disabled:
@@ -1603,8 +1601,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             classes="library-canvas-action",
                             compact=True,
                             disabled=(
-                                item_locked
-                                or not self.membership_state.can_apply
+                                item_locked or not self.membership_state.can_apply
                             ),
                         )
                         yield Static(
@@ -1677,10 +1674,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     id="library-prompt-discard",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=(
-                        item_locked
-                        or self.write_in_flight
-                    ),
+                    disabled=(item_locked or self.write_in_flight),
                     tooltip=(
                         PROMPT_DISCARD_TOOLTIP_BUSY
                         if self.mutation_in_flight or self.write_in_flight
@@ -1703,10 +1697,26 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 with more_region:
                     for label, widget_id, classes in (
                         ("Export…", "library-prompt-export", "library-canvas-action"),
-                        ("Copy Markdown", "library-prompt-copy", "library-canvas-action"),
-                        ("Duplicate", "library-prompt-duplicate", "library-canvas-action"),
-                        ("Collections", "library-prompt-more-collections", "library-canvas-action"),
-                        ("History", "library-prompt-more-history", "library-canvas-action"),
+                        (
+                            "Copy Markdown",
+                            "library-prompt-copy",
+                            "library-canvas-action",
+                        ),
+                        (
+                            "Duplicate",
+                            "library-prompt-duplicate",
+                            "library-canvas-action",
+                        ),
+                        (
+                            "Collections",
+                            "library-prompt-more-collections",
+                            "library-canvas-action",
+                        ),
+                        (
+                            "History",
+                            "library-prompt-more-history",
+                            "library-canvas-action",
+                        ),
                         (
                             "Delete",
                             "library-prompt-delete",
@@ -1780,79 +1790,92 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         manage.disabled = interaction_locked or not (
             state.can_manage or state.can_retry_load
         )
-        self.query_one(
-            "#library-prompt-memberships-apply", Button
-        ).disabled = interaction_locked or not state.can_apply
+        self.query_one("#library-prompt-memberships-apply", Button).disabled = (
+            interaction_locked or not state.can_apply
+        )
 
     def on_prompt_block_editor_block_field_changed(
         self, event: PromptBlockEditor.BlockFieldChanged
     ) -> None:
         """Patch compiled previews in place while the child editor stays mounted."""
+        editor = self.query_one("#library-prompt-block-editor", PromptBlockEditor)
+        if event.state is not editor.state:
+            event.stop()
+            return
         self._sync_block_preview(event.state)
 
     def on_prompt_block_editor_block_action_requested(
         self, event: PromptBlockEditor.BlockActionRequested
     ) -> None:
         """Patch previews after add/move/duplicate/delete without recomposition."""
+        editor = self.query_one("#library-prompt-block-editor", PromptBlockEditor)
+        if event.state is not editor.state:
+            event.stop()
+            return
         self._sync_block_preview(event.state)
+
+    def capture_live_block_state(self) -> PromptBlockEditorState:
+        """Read accepted Basic input even before its Changed message is handled."""
+        editor = self.query_one("#library-prompt-block-editor", PromptBlockEditor)
+        state = editor.state
+        if self.editor_mode != "basic" or self.basic_unavailable_reason:
+            return editor.capture_live_state()
+        for lane_id in ("system", "user"):
+            lane = state.definition.lanes[0 if lane_id == "system" else 1]
+            if len(lane.blocks) > 1:
+                continue
+            text = self.query_one(f"#library-prompt-{lane_id}", TextArea).text
+            if lane.blocks:
+                state = update_block(state, lane.blocks[0].id, content=text)
+            elif text:
+                preferred_id = "instructions" if lane_id == "system" else "message"
+                existing_ids = {
+                    block.id for ln in state.definition.lanes for block in ln.blocks
+                }
+                block_id = (
+                    preferred_id
+                    if preferred_id not in existing_ids
+                    else f"basic-{lane_id}"
+                )
+                state = add_block(
+                    state,
+                    lane_id,
+                    title="Instructions" if lane_id == "system" else "Message template",
+                    content=text,
+                    block_id=block_id,
+                )
+        return state
 
     @on(TextArea.Changed, "#library-prompt-system")
     @on(TextArea.Changed, "#library-prompt-user")
     async def _basic_prompt_text_changed(self, event: TextArea.Changed) -> None:
-        """Apply a Basic lane edit to the existing canonical block identity."""
-        # These mounted fields are Basic's canonical controls and Advanced's
-        # read-only compiled previews.  Never let their mount/programmatic
-        # events reach the screen's legacy dirty handler; admitted Basic edits
-        # publish the semantic block event below instead.
+        """Reconcile live Basic lanes without replaying pre-mount text."""
         event.stop()
         if self.editor_mode != "basic" or self.basic_unavailable_reason:
             return
-        current = self.editor_state
-        if current is None or current.block_editor_state is None:
+        if self.editor_state is None or self.editor_state.block_editor_state is None:
+            return
+        editor = self.query_one("#library-prompt-block-editor", PromptBlockEditor)
+        state = self.capture_live_block_state()
+        if state == editor.state:
             return
         lane_id = "system" if event.text_area.id == "library-prompt-system" else "user"
-        lane = current.block_editor_state.definition.lanes[
-            0 if lane_id == "system" else 1
-        ]
-        if len(lane.blocks) > 1:
+        lane = state.definition.lanes[0 if lane_id == "system" else 1]
+        if not lane.blocks:
             return
-        text = event.text_area.text
-        if lane.blocks:
-            block = lane.blocks[0]
-            if block.content == text:
-                return
-            state = update_block(
-                current.block_editor_state,
-                block.id,
-                content=text,
-            )
-            block_id = block.id
-        else:
-            preferred_id = "instructions" if lane_id == "system" else "message"
-            existing_ids = {
-                block.id
-                for definition_lane in current.block_editor_state.definition.lanes
-                for block in definition_lane.blocks
-            }
-            block_id = (
-                preferred_id
-                if preferred_id not in existing_ids
-                else f"basic-{lane_id}"
-            )
-            state = add_block(
-                current.block_editor_state,
-                lane_id,
-                title="Instructions" if lane_id == "system" else "Message template",
-                content=text,
-                block_id=block_id,
-            )
-        block_editor = self.query_one(
-            "#library-prompt-block-editor", PromptBlockEditor
-        )
-        await block_editor.replace_block_state(block_id, state)
+        block_id = lane.blocks[0].id
+        # First-block reconciliation awaits a mount. Re-read both enabled
+        # children afterward; their Changed messages can still be queued here.
+        while state != editor.state:
+            for live_lane in state.definition.lanes:
+                for block in live_lane.blocks:
+                    await editor.replace_block_state(block.id, state)
+            state = self.capture_live_block_state()
         self._sync_block_preview(state)
         self.post_message(
-            PromptBlockEditor.BlockFieldChanged(block_id, "content", text, state)
+            PromptBlockEditor.BlockFieldChanged(
+                block_id, "content", event.text_area.text, state
+            )
         )
 
     def _sync_block_preview(self, state: PromptBlockEditorState) -> None:

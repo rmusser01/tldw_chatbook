@@ -741,6 +741,11 @@ async def test_citation_semantic_result_keeps_shape_and_governed_source():
 
 
 def _install_flashrank(monkeypatch, *, ranked=None, init_error=None, run_error=None):
+    # Each test installs a DIFFERENT fake flashrank backend; the ranker is
+    # a process-wide singleton now, so drop the cached instance or later
+    # tests would keep reusing the previous test's ranker.
+    pfs._reset_flashrank_ranker_for_tests()
+
     class _Ranker:
         def __init__(self, **_kwargs):
             if init_error is not None:
@@ -765,7 +770,9 @@ def _install_flashrank(monkeypatch, *, ranked=None, init_error=None, run_error=N
 def test_successful_flashrank_overwrite_writes_final_score_marker(monkeypatch):
     _install_flashrank(
         monkeypatch,
-        ranked=[SimpleNamespace(index=0, score=-1.25)],
+        # Real flashrank 0.2.10 contract: the input passage dicts come
+        # back with a "score" key added (mapped through the passage "id").
+        ranked=[{"id": 0, "text": "t", "score": -1.25}],
     )
     result = _result(
         score=0.5,
@@ -783,7 +790,7 @@ def test_successful_flashrank_overwrite_writes_final_score_marker(monkeypatch):
 def test_invalid_flashrank_score_falls_back_without_marker(monkeypatch):
     _install_flashrank(
         monkeypatch,
-        ranked=[SimpleNamespace(index=0, score=math.nan)],
+        ranked=[{"id": 0, "text": "t", "score": math.nan}],
     )
     result = _result(
         score=0.5,
@@ -805,8 +812,8 @@ def test_flashrank_metadata_validation_is_atomic_across_all_results(monkeypatch)
     _install_flashrank(
         monkeypatch,
         ranked=[
-            SimpleNamespace(index=0, score=0.9),
-            SimpleNamespace(index=1, score=0.8),
+            {"id": 0, "text": "t0", "score": 0.9},
+            {"id": 1, "text": "t1", "score": 0.8},
         ],
     )
     first = _result(result_id="m1", score=0.5, metadata={"producer": "first"})
@@ -827,8 +834,8 @@ def test_flashrank_duplicate_indexes_fallback_without_mutation(monkeypatch):
     _install_flashrank(
         monkeypatch,
         ranked=[
-            SimpleNamespace(index=0, score=0.9),
-            SimpleNamespace(index=0, score=0.8),
+            {"id": 0, "text": "t0", "score": 0.9},
+            {"id": 0, "text": "t0", "score": 0.8},
         ],
     )
     first = _result(result_id="m1", score=0.5, metadata={"producer": "first"})
@@ -881,6 +888,9 @@ def test_flashrank_fallback_never_claims_reranker_and_keeps_prior_semantics(
 ):
     if failure_stage == "import":
         monkeypatch.setitem(sys.modules, "flashrank", None)
+        # Singleton must be empty for the ImportError path to be exercised
+        # rather than a previously-cached ranker silently reused.
+        pfs._reset_flashrank_ranker_for_tests()
     elif failure_stage == "initialization":
         _install_flashrank(monkeypatch, init_error=RuntimeError("init failed"))
     else:
@@ -1312,6 +1322,7 @@ async def test_console_staged_local_evidence_records_exact_prompt_capture():
         marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
         allowed_ordinals=(1,),
         evidence_context=captured.context,
+        require_markers=False,
     )
     run_payload = captured.citation_builder.evidence_run_payloads[0]
     assert run_payload.raw_query is None
@@ -1390,9 +1401,10 @@ async def test_console_send_adapter_preserves_chunk_lineage_score_and_rank():
     candidates = captured.citation_builder.evidence_run_payloads[0].candidates
     assert len(candidates) == 2
     assert [candidate.rank for candidate in candidates] == [1, 2]
-    assert [
-        candidate.source_identity["source_id"] for candidate in candidates
-    ] == ["m1", "m2"]
+    assert [candidate.source_identity["source_id"] for candidate in candidates] == [
+        "m1",
+        "m2",
+    ]
     assert candidates[0].lineage["chunk_id"] == "chunk-1"
     assert candidates[0].score == 0.0
 
@@ -1433,8 +1445,7 @@ async def test_console_estimate_stays_pre_authority_while_send_rechecks() -> Non
     try:
         assert console_prompted_source_count(launch) == 2
         assert console_prompted_evidence_text(launch) == (
-            "[S1] MEDIA — Source 1\nBody 1\n---\n"
-            "[S2] MEDIA — Source 2\nBody 2"
+            "[S1] MEDIA — Source 1\nBody 1\n---\n[S2] MEDIA — Source 2\nBody 2"
         )
         assert media_db.query_count == 0
 
@@ -1568,6 +1579,7 @@ async def test_console_canonical_capture_failure_keeps_exact_repair_contract(
             marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
             allowed_ordinals=(1,),
             evidence_context=expected_context,
+            require_markers=False,
         ),
     )
     assert captured.prompt_evidence_set_id is None
@@ -1620,6 +1632,7 @@ async def test_console_builder_unavailable_returns_exact_repair_contract():
             marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
             allowed_ordinals=(1,),
             evidence_context="[S1] MEDIA — Legacy staged source\nlegacy body",
+            require_markers=False,
         ),
     )
     assert captured.prompt_evidence_set_id is None

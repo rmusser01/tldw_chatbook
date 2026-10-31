@@ -360,6 +360,13 @@ from ...Library.library_rag_state import (
     library_rag_scope_summary,
     update_search_history,
 )
+from ...Workspaces.display_state import library_workspace_item_type
+from ...Workspaces.link_on_use import (
+    LinkOnUseDecision,
+    UnlinkOutcome,
+    decide_link_on_use,
+    unlink_item_from_workspace,
+)
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH, LIBRARY_ROW_INGEST_MEDIA
 from ...Widgets.Library import (
     LibrarySearchRagPanel,
@@ -409,6 +416,10 @@ class LibraryRagSearchController:
         # docstring group (a)).
         active_library_rail,
         console_setup_would_block,
+        # -- TASK-34000.24: the workspace depth state and its invalidation,
+        # for the link-on-use rule Search `u` shares with the readers.
+        library_workspace_depth_state,
+        invalidate_library_workspace_depth_state,
         open_library_item_by_id,
         safe_text,
         select_library_rail_row,
@@ -526,6 +537,10 @@ class LibraryRagSearchController:
         self._rag_search_state_accessor = rag_search_state_accessor
         self._active_library_rail_fn = active_library_rail
         self._console_setup_would_block_fn = console_setup_would_block
+        self._library_workspace_depth_state_fn = library_workspace_depth_state
+        self._invalidate_library_workspace_depth_state_fn = (
+            invalidate_library_workspace_depth_state
+        )
         self._open_library_item_by_id_fn = open_library_item_by_id
         self._safe_text_fn = safe_text
         self._select_library_rail_row_fn = select_library_rail_row
@@ -621,6 +636,17 @@ class LibraryRagSearchController:
         """The injected ``console_setup_would_block``. See ``__init__``'s
         docstring."""
         return self._console_setup_would_block_fn
+
+    @property
+    def _library_workspace_depth_state(self) -> Any:
+        """The injected ``library_workspace_depth_state`` (TASK-34000.24)."""
+        return self._library_workspace_depth_state_fn
+
+    @property
+    def _invalidate_library_workspace_depth_state(self) -> Any:
+        """The injected ``invalidate_library_workspace_depth_state``
+        (TASK-34000.24)."""
+        return self._invalidate_library_workspace_depth_state_fn
 
     @property
     def _open_library_item_by_id(self) -> Any:
@@ -1255,32 +1281,139 @@ class LibraryRagSearchController:
                 )
             return
 
+        # TASK-34000.24: the same link-on-use decision the Media reader's
+        # `c` acts on (fix round 1, I-2: ONE decision function) -- a local
+        # item is linked into the active workspace before it is staged, so
+        # `u` and `c` leave the same membership behind; a sampled row whose
+        # block a link cannot resolve refuses here exactly as the reader
+        # would; an item the depth state never sampled links too (I-1).
+        decision, item_type, item_id = self._link_library_rag_result_on_use(
+            panel_state.selected_result
+        )
+        if decision.kind == "refuse":
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(decision.copy, severity="warning", markup=False)
+            return
+        link = decision.result
+
         # Task-2852 (b): Console's blocking first-run setup card visually
-        # covers the whole workbench, so if we said nothing here the user's
+        # covers the whole workbench, so if we said nothing the user's
         # selection would silently vanish into a locked "Get started"
         # screen. The handoff still proceeds -- the evidence really is
         # staged, and a matching receipt appears on the locked Console
-        # surface (AC #2, `console_setup_staged_receipt`) -- this is just
-        # the immediate, pre-navigation half of that receipt.
-        if self._console_setup_would_block():
+        # surface (AC #2, `console_setup_staged_receipt`) -- this is the
+        # immediate half of that receipt. Final review of TASK-34000.24
+        # (F7, 2026-10-20): the lock is read here but the notice is sent
+        # only AFTER the opener reports success -- a refused stage now says
+        # "Console could not take it", and "staged" beside it would be a
+        # second, false sentence.
+        console_locked = bool(self._console_setup_would_block())
+
+        try:
+            staged = opener(
+                source="Library Search/RAG",
+                title=panel_state.selected_result.title,
+                payload=build_library_rag_console_live_work_payload(
+                    panel_state.selected_result,
+                    query=panel_state.query_state.query,
+                ),
+                status="staged",
+                recovery="Review citations before sending.",
+                action_label="Review evidence in Console",
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Library Search/RAG Console handoff failed."
+            )
+            staged = False
+        # Fix round 1 (I-2): the receipt is said only AFTER Console took the
+        # stage, and a refused stage (``False``) or a raising opener takes
+        # the membership this press wrote back with it -- the reader's own
+        # rule. ``None`` is a caller that does not report. Fix round 2
+        # (item 3): either way the user hears ONE plain sentence in the
+        # reader's grammar -- the "stayed linked" variant when the unlink
+        # failed, the plain one otherwise -- never silence.
+        if staged is False:
+            failure = (
+                f"Can't use this {item_type or 'item'} in Console — Console could "
+                "not take it. Next: try again."
+            )
+            if link is not None and link.written:
+                outcome = unlink_item_from_workspace(
+                    getattr(self.app_instance, "workspace_registry_service", None),
+                    link.workspace_id,
+                    item_type=item_type,
+                    item_id=item_id,
+                )
+                self._invalidate_library_workspace_depth_state()
+                if outcome is UnlinkOutcome.FAILED:
+                    failure = (
+                        f"Can't use this {item_type} in Console — Console could "
+                        f"not take it, and the {item_type} stayed linked to "
+                        f"{link.workspace_name}. Next: try again."
+                    )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(failure, severity="warning", markup=False)
+            return
+        if console_locked:
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify(
                     LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE,
                     severity="information",
                 )
+        if link is not None and link.written:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    f"Linked to {link.workspace_name} · staged in Console",
+                    severity="information",
+                    markup=False,
+                )
 
-        opener(
-            source="Library Search/RAG",
-            title=panel_state.selected_result.title,
-            payload=build_library_rag_console_live_work_payload(
-                panel_state.selected_result,
-                query=panel_state.query_state.query,
-            ),
-            status="staged",
-            recovery="Review citations before sending.",
-            action_label="Review evidence in Console",
+    def _link_library_rag_result_on_use(
+        self, result: Any
+    ) -> tuple[LinkOnUseDecision, str, str]:
+        """Decide a LOCAL evidence row's link-on-use (TASK-34000.24).
+
+        The membership is keyed by the record's own id -- what
+        ``LibraryRagResultRow.local_record_id`` parses off the retrieval
+        spelling (``local:media:3`` -> ``3``) and what the Library row model
+        reads -- never under the retrieval spelling, or the reader's gate
+        would stay closed after the link. A row that is not a local record
+        (server authority, an unusable id) stages as-is, unlinked.
+
+        Args:
+            result: The selected ``LibraryRagResultRow``.
+
+        Returns:
+            ``(decision, item_type, item_id)`` -- the seam's one decision
+            (fix round 1, I-2) plus the membership key the caller needs to
+            take its own write back.
+        """
+        item_type = library_workspace_item_type(
+            str(getattr(result, "open_source_type", "") or "")
         )
+        if item_type not in {"media", "note", "conversation"}:
+            return LinkOnUseDecision(kind="stage"), "", ""
+        try:
+            item_id = str(result.local_record_id() or "").strip()
+        except (ValueError, AttributeError):
+            # Not a local record (server authority, unusable id): no local
+            # membership to write.
+            return LinkOnUseDecision(kind="stage"), "", ""
+        decision = decide_link_on_use(
+            self._library_workspace_depth_state().source_rows,
+            getattr(self.app_instance, "workspace_registry_service", None),
+            item_type=item_type,
+            item_id=item_id,
+            title=str(getattr(result, "title", "") or ""),
+        )
+        if decision.result is not None and decision.result.written:
+            self._invalidate_library_workspace_depth_state()
+        return decision, item_type, item_id
 
     async def _apply_library_rag_search_outcome(
         self,

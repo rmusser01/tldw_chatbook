@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Network
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Pending — save with s | Review readiness across Settings categories.                                               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Network                                                                                                                   │  │  │ Selected category: Network              │
+│                              │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │                                                                                                                       │  │  │  │  Save with s: the TLS trust setting     │
+│      Overview (view)         │  │  │ │  TLS trust for outbound API traffic                                                                                   │  │  │  │  applies to newly created clients;      │
+│      Providers & Models      │  │  │ │                         ┌───────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │  already-open connections keep their    │
+│      Web Search              │  │  │ │ Certificate verification│ Verify certificates (default)                                                           ▼ │ │  │  │  │  trust policy until restart.            │
+│      Speech & TTS            │  │  │ │                         └───────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  │ Local-only: saves write your config     │
+│  Interface                   │  │  │ │ CA bundle path          │ /path/to/corp-ca.pem (used by 'Custom CA bundle')                                           │  │  │  │ file.                                   │
+│      Appearance              │  │  │ │                                                                                                                       │  │  │  │ Impact and boundaries                   │
+│      Theme                   │  │  │ └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  │  │ TLS trust for outbound API traffic      │
+│      Splash Screen           │  │  │                                                                                                                            │  │  │ (corporate DPI networks).               │
+│      Console Behavior        │  │  │                                                                                                                            │  │  │  Runtime owner: Settings persisted      │
+│  Data & Privacy              │  │  │                                                                                                                            │  │  │  defaults; outbound clients apply them  │
+│      Storage                 │  │  │                                                                                                                            │  │  │  per connection                         │
+│      Workspaces              │  │  │                                                                                                                            │  │  │  Writes allowed: Yes                    │
+│      Tool Profiles           │  │  │                                                                                                                            │  │  │  Owns: network.ssl_verify               │
+│      Privacy & Security      │  │  │                                                                                                                            │  │  │  Affected config: outbound TLS          │
+│ █  > Network                 │  │  │                                                                                                                            │  │  │  certificate verification and optional  │
+│      My Profile              │  │  │                                                                                                                            │  │  │  CA bundle path                         │
+│  Troubleshooting             │  │  │                                                                                                                            │  │  │  Recovery: restore system verification  │
+│      Diagnostics (view)      │  │  │                                                                                                                            │  │  │  or choose a readable CA bundle, then   │
+│      About (view)            │  │  │                                                                                                                            │  │  │  save                                   │
+│      Agents                  │  │  │                                                                                                                            │  │  │  Boundary: changes affect newly         │
+│  Expert                      │  │  │                                                                                                                            │  │  │  created clients; open connections      │
+│      Hooks                   │  │  │                                                                                                                            │  │  │  keep their current trust policy        │
+│      Internal Prompts        │  │  │                                                                                                                            │  │  │                                         │
+│      Advanced Config         │  │  │                                                                                                                            │  │  │                                         │
+│   Domain Defaults ▸ (11)     │  │  │                                                                                                                            │  │  │                                         │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

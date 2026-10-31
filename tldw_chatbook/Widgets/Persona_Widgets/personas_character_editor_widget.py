@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
@@ -24,6 +25,7 @@ from textual.widgets import Button, DataTable, Input, Label, Static, TextArea
 
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
+from .portrait_performance_editor import PortraitPerformanceEditor
 from .personas_character_tts_widget import PersonasCharacterTTSWidget
 from .personas_visual_identity_pack_widget import PersonasVisualIdentityPackWidget
 from .personas_pane_messages import (
@@ -636,9 +638,11 @@ class PersonasCharacterEditorWidget(Container):
                         id="personas-char-editor-expr-header",
                         classes="destination-section",
                     )
+                    # TASK-34400: style names are user-authored templates.
                     yield Static(
                         "Style: Custom",
                         id="personas-char-editor-style-readout",
+                        markup=False,
                     )
                     yield Button(
                         "Style…",
@@ -699,7 +703,9 @@ class PersonasCharacterEditorWidget(Container):
                             classes="personas-char-editor-expr-thumb",
                         )
             yield Container(id="personas-char-editor-visual-identity-host")
-        yield Static("", id="personas-char-editor-validation")
+            yield PortraitPerformanceEditor()
+        # TASK-34400: validation errors echo card text (names, book entries).
+        yield Static("", id="personas-char-editor-validation", markup=False)
         with Horizontal(classes="ds-toolbar"):
             yield Button(
                 "Save", id="personas-char-editor-save", classes="console-action-primary"
@@ -744,6 +750,8 @@ class PersonasCharacterEditorWidget(Container):
         self, data: Dict[str, Any], *, visual_identity_pending: bool = False
     ) -> None:
         """Fill the form from ``data`` (tolerant of legacy key aliases)."""
+        if self.is_mounted:
+            self.query_one(PortraitPerformanceEditor).reset()
         self._visual_identity_session_token += 1
         self._actor_pack_mode = False
         self._loading = True
@@ -766,31 +774,54 @@ class PersonasCharacterEditorWidget(Container):
         if self.is_mounted:
             self._sync_actor_pack_mode()
 
-    def mark_saved(self, record: Dict[str, Any]) -> None:
-        """Re-baseline dirty state to a just-persisted record (save-in-place).
-
-        Adopts the saved record as the new base (so the next Save carries the
-        new ``version`` and any DB-normalized keys), rebaselines the greetings
-        list, resets the dirty snapshot from the CURRENT form (which already
-        shows the saved values), and clears validation. Does NOT repopulate
-        the form - the user's saved edits stay on screen.
+    def mark_saved(
+        self,
+        record: Dict[str, Any],
+        *,
+        submitted_snapshot: tuple | None = None,
+        submitted_attachment_snapshot: tuple | None = None,
+    ) -> bool:
+        """Adopt the saved record and acknowledge only the submitted drafts.
 
         Args:
-            record: The just-persisted character record (carries the
-                incremented optimistic-lock ``version``).
+            record: Persisted character, including its actual id and version.
+            submitted_snapshot: Raw form at submission. Omit for synchronous
+                callers acknowledging the current form.
+            submitted_attachment_snapshot: Avatar values captured for this Save.
+                Omit for synchronous callers acknowledging the current attachment.
+
+        Returns:
+            Whether newer form edits or attachments remain unsaved.
         """
+        live_attachment = self._attachment_snapshot()
         self._character_data = dict(record or {})
-        self._greetings = [
-            str(g) for g in (self._character_data.get("alternate_greetings") or [])
-        ]
-        self._loaded_snapshot = self._form_snapshot()
         self._loaded_attachment_snapshot = self._attachment_snapshot()
-        self._dirty_posted = False
+        if (
+            submitted_attachment_snapshot is not None
+            and live_attachment != submitted_attachment_snapshot
+        ):
+            # Adopt persisted identity/version without replacing a later upload.
+            for key, value in zip(("image", "avatar"), live_attachment, strict=True):
+                if value is None:
+                    self._character_data.pop(key, None)
+                else:
+                    self._character_data[key] = value
+        if submitted_snapshot is None:
+            self._greetings = [
+                str(g) for g in (self._character_data.get("alternate_greetings") or [])
+            ]
+            submitted_snapshot = self._form_snapshot()
+        self._loaded_snapshot = submitted_snapshot
+        self._dirty_posted = (
+            self._form_snapshot() != self._loaded_snapshot
+            or self.has_unsaved_attachment()
+        )
         self.query_one("#personas-char-editor-validation", Static).update("")
         # A create-session's first Save assigns the brand-new character its
         # id here - the expression slots must flip from disabled to enabled
         # in that same moment (see _sync_expression_slots_enabled).
         self._sync_expression_slots_enabled()
+        return self._dirty_posted
 
     def _populate_form(self, data: Dict[str, Any]) -> None:
         self._character_data = dict(data or {})
@@ -1324,6 +1355,7 @@ class PersonasCharacterEditorWidget(Container):
         until-then-unsaved character gains its id).
         """
         enabled = self.expression_character_id() is not None
+        self.query_one(PortraitPerformanceEditor).set_allowed(enabled)
         hint_text = "" if enabled else "Save the character to add expressions."
         self.query_one(
             "#personas-char-editor-expr-import", Button
@@ -1692,7 +1724,8 @@ class PersonasCharacterEditorWidget(Container):
         table = self.query_one("#personas-char-editor-greetings-table", DataTable)
         table.clear()
         for i, greeting in enumerate(self._greetings):
-            table.add_row(self._greeting_preview(greeting), key=str(i))
+            # TASK-34400: a str cell parses as markup; greetings are card text.
+            table.add_row(Text(self._greeting_preview(greeting)), key=str(i))
 
     def _load_greeting_into_edit(self, index: int) -> None:
         if 0 <= index < len(self._greetings):
@@ -1980,7 +2013,11 @@ class PersonasCharacterEditorWidget(Container):
         self._user_touched = True
         if any(level == "error" for _fid, _msg, level in self._run_validation()):
             return
-        self.post_message(CharacterSaveRequested(self.get_character_data()))
+        self.post_message(
+            CharacterSaveRequested(
+                self.get_character_data(), submitted_snapshot=self._form_snapshot()
+            )
+        )
 
     @on(Button.Pressed, "#personas-char-editor-cancel")
     def _cancel_pressed(self, event: Button.Pressed) -> None:

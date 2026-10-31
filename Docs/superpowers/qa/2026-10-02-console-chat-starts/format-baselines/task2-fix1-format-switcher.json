@@ -1,0 +1,31 @@
+{
+  "base_ref": "c9b3738434b9a1f95a37e0930491b47aa96a779f",
+  "base_sha": "c9b3738434b9a1f95a37e0930491b47aa96a779f",
+  "baseline_red_paths": [
+    "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py"
+  ],
+  "files": {
+    "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py": {
+      "debt_units": 5,
+      "formatter_required": true,
+      "normalized_diff_sha256": "624c9f5d6336752ec024c1d05db91fe9f07df09edb347535acd4eac5b53bfa50",
+      "source_hunks": [
+        [
+          108,
+          113
+        ],
+        [
+          1954,
+          1960
+        ]
+      ],
+      "source_sha256": "721faf68aa6b65fd8ed68e569263ad02cecbf28ae38b77016106dbb12d266ae7"
+    }
+  },
+  "generated_at_utc": "2026-10-03T04:16:20.751997+00:00",
+  "paths": [
+    "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py"
+  ],
+  "ruff_version": "ruff 0.16.6",
+  "schema_version": 1
+}

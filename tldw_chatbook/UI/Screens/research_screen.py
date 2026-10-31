@@ -64,7 +64,9 @@ class ResearchScreen(BaseAppScreen):
         except Exception:
             window = self.research_window
         if window is None:
-            logger.debug("Deferring ResearchScreen restore_state until window is composed")
+            logger.debug(
+                "Deferring ResearchScreen restore_state until window is composed"
+            )
             self._pending_restore_state = dict(state or {})
             return
         window.restore_state(state)

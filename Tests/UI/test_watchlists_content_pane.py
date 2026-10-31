@@ -43,14 +43,18 @@ def _render_to_console(renderable, *, width: int = 100) -> tuple[str, str]:
 def test_article_renders_title_source_and_body():
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
 
-    out = str(render_article({
-        "title": "Claude Opus 4.5 is now available",
-        "source_name": "Anthropic News",
-        "published_date": "2026-07-28",
-        "content": "The model is available in the API today.",
-        "content_kind": "article",
-        "content_format": "text",
-    }))
+    out = str(
+        render_article(
+            {
+                "title": "Claude Opus 4.5 is now available",
+                "source_name": "Anthropic News",
+                "published_date": "2026-07-28",
+                "content": "The model is available in the API today.",
+                "content_kind": "article",
+                "content_format": "text",
+            }
+        )
+    )
 
     assert "Claude Opus 4.5 is now available" in out
     assert "Anthropic News" in out
@@ -61,12 +65,16 @@ def test_article_with_no_body_explains_why():
     """`content` is NULL for every pre-existing item. Never render blank."""
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
 
-    out = str(render_article({
-        "title": "An item from before bodies were captured",
-        "source_name": "Old Feed",
-        "content": None,
-        "content_kind": "article",
-    }))
+    out = str(
+        render_article(
+            {
+                "title": "An item from before bodies were captured",
+                "source_name": "Old Feed",
+                "content": None,
+                "content_kind": "article",
+            }
+        )
+    )
 
     assert "no body captured" in out.lower()
     assert "re-check" in out.lower()
@@ -88,13 +96,17 @@ def test_markup_shaped_body_is_rendered_as_characters_not_interpreted():
     """
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
 
-    plain, ansi = _render_to_console(render_article({
-        "title": "[bold red]not a style[/]",
-        "source_name": "Hostile Feed",
-        "content": "[link=evil]click[/link] then [docs](https://example.test)",
-        "content_kind": "article",
-        "content_format": "text",
-    }))
+    plain, ansi = _render_to_console(
+        render_article(
+            {
+                "title": "[bold red]not a style[/]",
+                "source_name": "Hostile Feed",
+                "content": "[link=evil]click[/link] then [docs](https://example.test)",
+                "content_kind": "article",
+                "content_format": "text",
+            }
+        )
+    )
 
     # The characters reach the screen exactly as the feed wrote them...
     assert "[bold red]not a style[/]" in plain
@@ -172,15 +184,19 @@ async def test_open_content_wraps_only_the_body_in_a_vertical_scroll():
 def test_change_renders_percent_type_and_diff_lines():
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_change
 
-    out = str(render_change({
-        "title": "anthropic.com/news",
-        "source_name": "Anthropic",
-        "content": "+ Opus 4.5 available\n- Opus 4.1 available",
-        "content_kind": "change",
-        "content_format": "diff",
-        "change_percentage": 12.0,
-        "change_type": "structural",
-    }))
+    out = str(
+        render_change(
+            {
+                "title": "anthropic.com/news",
+                "source_name": "Anthropic",
+                "content": "+ Opus 4.5 available\n- Opus 4.1 available",
+                "content_kind": "change",
+                "content_format": "diff",
+                "change_percentage": 12.0,
+                "change_type": "structural",
+            }
+        )
+    )
 
     assert "12" in out and "%" in out
     assert "structural" in out
@@ -203,13 +219,26 @@ def test_dispatch_selects_the_renderer_by_kind():
     """
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_for
 
-    change = str(render_for({
-        "title": "site", "content": "+ x", "content_kind": "change",
-        "change_percentage": 3.0, "change_type": "text",
-    }))
-    article = str(render_for({
-        "title": "post", "content": "prose", "content_kind": "article",
-    }))
+    change = str(
+        render_for(
+            {
+                "title": "site",
+                "content": "+ x",
+                "content_kind": "change",
+                "change_percentage": 3.0,
+                "change_type": "text",
+            }
+        )
+    )
+    article = str(
+        render_for(
+            {
+                "title": "post",
+                "content": "prose",
+                "content_kind": "article",
+            }
+        )
+    )
 
     # A discriminator only the change arm emits...
     assert "3" in change and "%" in change
@@ -249,13 +278,17 @@ def test_a_markdown_body_is_rendered_as_markdown_not_as_raw_source():
     """
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
 
-    plain, _ansi = _render_to_console(render_article({
-        "title": "Release notes",
-        "source_name": "Anthropic News",
-        "content": "# Heading\n\nSee [the docs](https://example.test) for *more*.",
-        "content_kind": "article",
-        "content_format": "markdown",
-    }))
+    plain, _ansi = _render_to_console(
+        render_article(
+            {
+                "title": "Release notes",
+                "source_name": "Anthropic News",
+                "content": "# Heading\n\nSee [the docs](https://example.test) for *more*.",
+                "content_kind": "article",
+                "content_format": "markdown",
+            }
+        )
+    )
 
     assert "Heading" in plain
     assert "the docs" in plain
@@ -271,13 +304,17 @@ def test_a_plain_text_body_is_never_run_through_the_markdown_renderer():
     """
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
 
-    plain, _ansi = _render_to_console(render_article({
-        "title": "Plain",
-        "source_name": "Feed",
-        "content": "# not a heading, just a hash",
-        "content_kind": "article",
-        "content_format": "text",
-    }))
+    plain, _ansi = _render_to_console(
+        render_article(
+            {
+                "title": "Plain",
+                "source_name": "Feed",
+                "content": "# not a heading, just a hash",
+                "content_kind": "article",
+                "content_format": "text",
+            }
+        )
+    )
 
     assert "# not a heading, just a hash" in plain
 
@@ -289,14 +326,18 @@ def test_change_headline_states_the_diff_summary():
     """
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_change
 
-    out = str(render_change({
-        "title": "anthropic.com/news",
-        "content": "+ a\n- b",
-        "content_kind": "change",
-        "change_percentage": 12.0,
-        "change_type": "structural",
-        "diff_summary": "2 lines changed",
-    }))
+    out = str(
+        render_change(
+            {
+                "title": "anthropic.com/news",
+                "content": "+ a\n- b",
+                "content_kind": "change",
+                "change_percentage": 12.0,
+                "change_type": "structural",
+                "diff_summary": "2 lines changed",
+            }
+        )
+    )
 
     assert "2 lines changed" in out
 
@@ -304,10 +345,17 @@ def test_change_headline_states_the_diff_summary():
 def test_change_with_no_body_explains_why():
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_change
 
-    out = str(render_change({
-        "title": "site", "content": None, "content_kind": "change",
-        "change_percentage": 5.0, "change_type": "text",
-    }))
+    out = str(
+        render_change(
+            {
+                "title": "site",
+                "content": None,
+                "content_kind": "change",
+                "change_percentage": 5.0,
+                "change_type": "text",
+            }
+        )
+    )
     assert "no body captured" in out.lower()
 
 
@@ -319,13 +367,17 @@ def test_diff_lines_with_markup_shaped_text_keep_our_colour_and_gain_none():
     """
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_change
 
-    plain, ansi = _render_to_console(render_change({
-        "title": "site",
-        "content": "+ [bold red]injected[/]",
-        "content_kind": "change",
-        "change_percentage": 1.0,
-        "change_type": "text",
-    }))
+    plain, ansi = _render_to_console(
+        render_change(
+            {
+                "title": "site",
+                "content": "+ [bold red]injected[/]",
+                "content_kind": "change",
+                "change_percentage": 1.0,
+                "change_type": "text",
+            }
+        )
+    )
 
     assert "+ [bold red]injected[/]" in plain
     assert "\\[" not in plain
@@ -486,10 +538,10 @@ def test_j_and_k_are_bound_and_do_not_collide_with_any_ancestor_bindings():
     assert "j" in screen_keys, "j must be bound on WatchlistsCollectionsScreen"
     assert "k" in screen_keys, "k must be bound on WatchlistsCollectionsScreen"
 
-    # `BaseAppScreen` defines no `BINDINGS` of its own, so this resolves
-    # through the MRO to Textual's `Screen.BINDINGS` (tab/shift+tab/copy at
-    # the time of writing) -- checking the resolved attribute, not assuming
-    # BaseAppScreen is empty, is the point of the audit.
+    # `BaseAppScreen` re-declares Screen's tab/shift+tab/copy keys (the shared
+    # adaptive-pane-shell ADR: tab/shift+tab become the opt-in region actions,
+    # copy is re-spread from `Screen.BINDINGS`) -- checking the resolved
+    # attribute, not assuming its contents, is the point of the audit.
     ancestor_keys = _keys(BaseAppScreen.BINDINGS)
     ancestor_keys |= _keys(TldwCli.BINDINGS)
     ancestor_keys |= _keys(DataTable.BINDINGS)
@@ -849,7 +901,9 @@ async def test_j_skips_items_hidden_by_a_filter_and_does_not_mark_them_read():
         # `new` bucket would vanish exactly when the bug being guarded
         # against occurred.
         hidden_raw_id = seeded_ids["Hide me"]
-        reviewed_raw_ids = {row["id"] for row in db.get_new_items(status="reviewed", limit=10)}
+        reviewed_raw_ids = {
+            row["id"] for row in db.get_new_items(status="reviewed", limit=10)
+        }
         assert hidden_raw_id not in reviewed_raw_ids, (
             "j must never open -- and therefore never mark read -- an item "
             "hidden by the active filter"
@@ -1085,7 +1139,7 @@ async def test_the_open_item_survives_a_same_page_rebuild():
 
 @pytest.mark.asyncio
 async def test_k_with_nothing_open_goes_to_the_last_item_not_nowhere():
-    """"The current item is not in the list" is its own case, not index -1.
+    """ "The current item is not in the list" is its own case, not index -1.
 
     With nothing open, the old code computed `-1 + delta`, so `k` produced
     `-2`, failed the bounds check, and silently did nothing at all -- while
@@ -1364,7 +1418,9 @@ async def test_mark_unread_refuses_to_overwrite_an_item_ingested_by_the_real_ges
         screen.post_message(IngestRequested(screen.selected_entity))
         for _ in range(40):
             await pilot.pause(0.05)
-            if raw_id in {row["id"] for row in db.get_new_items(status="ingested", limit=10)}:
+            if raw_id in {
+                row["id"] for row in db.get_new_items(status="ingested", limit=10)
+            }:
                 break
         assert raw_id in {
             row["id"] for row in db.get_new_items(status="ingested", limit=10)
@@ -1375,9 +1431,7 @@ async def test_mark_unread_refuses_to_overwrite_an_item_ingested_by_the_real_ges
         # whole screen; querying immediately after the DB write races that
         # recompose. Wait for the pane to resettle before querying it -- the
         # sibling test at :1631 does the same for the identical reason.
-        await wait_for_selector(
-            screen, pilot, "#watchlists-content-pane", timeout=4.0
-        )
+        await wait_for_selector(screen, pilot, "#watchlists-content-pane", timeout=4.0)
 
         # The staleness this fix exists for -- assert it, do not assume it.
         content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
@@ -1426,14 +1480,20 @@ async def test_mark_unread_still_works_on_an_item_that_is_merely_read():
         pane.select_item_by_id(str(item["id"]))
         for _ in range(40):
             await pilot.pause(0.05)
-            if raw_id in {row["id"] for row in db.get_new_items(status="reviewed", limit=10)}:
+            if raw_id in {
+                row["id"] for row in db.get_new_items(status="reviewed", limit=10)
+            }:
                 break
-        assert raw_id in {row["id"] for row in db.get_new_items(status="reviewed", limit=10)}
+        assert raw_id in {
+            row["id"] for row in db.get_new_items(status="reviewed", limit=10)
+        }
 
         screen.query_one("#content-mark-unread-button", Button).press()
         for _ in range(40):
             await pilot.pause(0.05)
-            if raw_id in {row["id"] for row in db.get_new_items(status="new", limit=10)}:
+            if raw_id in {
+                row["id"] for row in db.get_new_items(status="new", limit=10)
+            }:
                 break
 
         assert raw_id in {
@@ -1473,9 +1533,13 @@ async def test_mark_unread_fails_closed_when_the_status_cannot_be_confirmed():
         pane.select_item_by_id(str(item["id"]))
         for _ in range(40):
             await pilot.pause(0.05)
-            if raw_id in {r["id"] for r in db.get_new_items(status="reviewed", limit=10)}:
+            if raw_id in {
+                r["id"] for r in db.get_new_items(status="reviewed", limit=10)
+            }:
                 break
-        assert raw_id in {r["id"] for r in db.get_new_items(status="reviewed", limit=10)}
+        assert raw_id in {
+            r["id"] for r in db.get_new_items(status="reviewed", limit=10)
+        }
 
         async def _unavailable(**_kwargs):
             raise RuntimeError("backend unavailable")
@@ -1825,7 +1889,9 @@ def test_a_hostile_markdown_body_never_emits_a_terminal_hyperlink():
     )
     # The markdown branch really did run: a plain-text render would still
     # show the raw link syntax.
-    assert "[Anthropic docs](" not in plain, "the body must have been parsed as markdown"
+    assert "[Anthropic docs](" not in plain, (
+        "the body must have been parsed as markdown"
+    )
     # And the destination is disclosed rather than hidden behind the label.
     assert "https://evil.test/steal" in plain
     assert "https://evil.test/autolink" in plain
@@ -1969,9 +2035,7 @@ def _seed_change_item_with_snapshots(db, *, snapshot_rows):
     from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 
     url = "https://anthropic.com/news"
-    source_id = db.add_subscription(
-        name="Anthropic", type="url", source=url
-    )
+    source_id = db.add_subscription(name="Anthropic", type="url", source=url)
     with db.transaction() as conn:
         persist_subscription_item(
             conn,
@@ -2026,7 +2090,9 @@ async def test_full_page_button_opens_the_newest_snapshot_in_a_modal():
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
-    from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
+    from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import (
+        SnapshotViewModal,
+    )
 
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -2077,7 +2143,9 @@ async def test_previous_snapshot_button_opens_the_second_newest_snapshot():
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
-    from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
+    from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import (
+        SnapshotViewModal,
+    )
 
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -2127,7 +2195,9 @@ async def test_previous_snapshot_with_only_one_stored_degrades_to_an_honest_toas
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
-    from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
+    from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import (
+        SnapshotViewModal,
+    )
 
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -2156,8 +2226,7 @@ async def test_previous_snapshot_with_only_one_stored_degrades_to_an_honest_toas
         assert "no previous snapshot" in str(args[0]).lower()
         assert kwargs.get("severity") == "warning"
         assert kwargs.get("markup") is False, (
-            "this item's own url/title are not this app's text to interpret "
-            "as markup"
+            "this item's own url/title are not this app's text to interpret as markup"
         )
         assert not isinstance(host.screen_stack[-1], SnapshotViewModal), (
             "AC#2: an absent snapshot must never open an empty modal"
@@ -2177,7 +2246,9 @@ async def test_snapshot_modal_renders_remote_markup_as_literal_text():
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
-    from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
+    from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import (
+        SnapshotViewModal,
+    )
 
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -2214,8 +2285,12 @@ async def test_snapshot_modal_renders_remote_markup_as_literal_text():
             "the tag text must reach the screen verbatim, characters intact"
         )
         assert "[link=evil]click[/link]" in plain
-        assert "\x1b[31m" not in ansi, "the [bold red] tag must not have styled anything"
-        assert "\x1b]8;;" not in ansi, "the [link=...] tag must not have become a hyperlink"
+        assert "\x1b[31m" not in ansi, (
+            "the [bold red] tag must not have styled anything"
+        )
+        assert "\x1b]8;;" not in ansi, (
+            "the [link=...] tag must not have become a hyperlink"
+        )
 
         modal.query_one("#svm-close", Button).press()
         await pilot.pause(0.3)
@@ -2233,16 +2308,20 @@ def test_an_html_body_renders_as_readable_prose_with_the_link_visible_as_text():
     """
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
 
-    out = str(render_article({
-        "title": "Claude Opus 4.5 is now available",
-        "source_name": "Anthropic News",
-        "content": (
-            "<p>Article URL: <a href=\"https://example.test/opus\">"
-            "read more</a></p><p>It is <strong>fast</strong>.</p>"
-        ),
-        "content_kind": "article",
-        "content_format": "text",
-    }))
+    out = str(
+        render_article(
+            {
+                "title": "Claude Opus 4.5 is now available",
+                "source_name": "Anthropic News",
+                "content": (
+                    '<p>Article URL: <a href="https://example.test/opus">'
+                    "read more</a></p><p>It is <strong>fast</strong>.</p>"
+                ),
+                "content_kind": "article",
+                "content_format": "text",
+            }
+        )
+    )
 
     assert "<p>" not in out and "</p>" not in out, "block tags must be gone"
     assert "<a href" not in out, "the raw anchor tag must be gone"
@@ -2265,22 +2344,30 @@ def test_html_derived_prose_is_still_inert_when_actually_rendered():
 
     hostile = (
         "<p>[bold red]not a style[/] and "
-        "<a href=\"javascript:alert(1)\">click</a></p>"
+        '<a href="javascript:alert(1)">click</a></p>'
         "<p>\x1b]8;;http://evil.test\x07label\x1b]8;;\x07 tail</p>"
     )
-    plain, ansi = _render_to_console(render_article({
-        "title": "Hostile",
-        "source_name": "Hostile Feed",
-        "content": hostile,
-        "content_kind": "article",
-        "content_format": "text",
-    }))
+    plain, ansi = _render_to_console(
+        render_article(
+            {
+                "title": "Hostile",
+                "source_name": "Hostile Feed",
+                "content": hostile,
+                "content_kind": "article",
+                "content_format": "text",
+            }
+        )
+    )
 
-    assert "[bold red]not a style[/]" in plain, "bracket text must survive as characters"
+    assert "[bold red]not a style[/]" in plain, (
+        "bracket text must survive as characters"
+    )
     assert "\x1b[31m" not in ansi, "the [bold red] tag must not have styled anything"
     assert "\x1b]8;;" not in ansi, "no OSC-8 hyperlink may reach the terminal"
     assert "\x1b" not in plain, "the raw ESC byte must not have survived at all"
-    assert "label" in plain and "tail" in plain, "the surrounding text must still render"
+    assert "label" in plain and "tail" in plain, (
+        "the surrounding text must still render"
+    )
 
 
 def test_a_non_html_body_is_left_alone_apart_from_control_bytes():
@@ -2291,13 +2378,17 @@ def test_a_non_html_body_is_left_alone_apart_from_control_bytes():
     """
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
 
-    out = str(render_article({
-        "title": "Plain text feed",
-        "source_name": "Feed",
-        "content": "1 < 2 and 2 < 3, plainly written, no markup at all.",
-        "content_kind": "article",
-        "content_format": "text",
-    }))
+    out = str(
+        render_article(
+            {
+                "title": "Plain text feed",
+                "source_name": "Feed",
+                "content": "1 < 2 and 2 < 3, plainly written, no markup at all.",
+                "content_kind": "article",
+                "content_format": "text",
+            }
+        )
+    )
 
     assert "1 < 2 and 2 < 3, plainly written, no markup at all." in out
 
@@ -2478,9 +2569,10 @@ async def test_reader_offers_open_while_inspector_offers_ingest_and_queue():
         await pilot.pause()
         assert str(app.query_one("#content-open-button", Button).label) == "Open"
         assert str(app.query_one("#inspector-ingest-button", Button).label) == "Ingest"
-        assert str(
-            app.query_one("#inspector-queue-briefing-button", Button).label
-        ) == "Queue for briefing"
+        assert (
+            str(app.query_one("#inspector-queue-briefing-button", Button).label)
+            == "Queue for briefing"
+        )
 
 
 @pytest.mark.asyncio
@@ -2498,9 +2590,10 @@ async def test_the_inspector_queue_button_label_reflects_queued_state():
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert str(
-            app.query_one("#inspector-queue-briefing-button", Button).label
-        ) == "Unqueue from briefing"
+        assert (
+            str(app.query_one("#inspector-queue-briefing-button", Button).label)
+            == "Unqueue from briefing"
+        )
 
 
 @pytest.mark.asyncio

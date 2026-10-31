@@ -43,7 +43,9 @@ def finalize_chunks(
         if resolved.method_lower in ("code", "code_ast"):
             effective_code_mode = resolved.code_mode_for_method
             if effective_code_mode is None:
-                effective_code_mode = "ast" if resolved.method_lower == "code_ast" else "auto"
+                effective_code_mode = (
+                    "ast" if resolved.method_lower == "code_ast" else "auto"
+                )
             md.setdefault("code_mode_used", effective_code_mode)
 
         rel = _relative_position(
@@ -72,7 +74,9 @@ def finalize_chunks(
     return out
 
 
-def copy_chunks_for_finalization(chunks: list[NormalizedChunk]) -> list[NormalizedChunk]:
+def copy_chunks_for_finalization(
+    chunks: list[NormalizedChunk],
+) -> list[NormalizedChunk]:
     """Copy normalized chunks so finalization can adjust metadata safely."""
     return [
         NormalizedChunk(text=chunk.text, metadata=dict(chunk.metadata))

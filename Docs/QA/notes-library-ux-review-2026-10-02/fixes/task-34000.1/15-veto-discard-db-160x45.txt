@@ -1,0 +1,4 @@
+# read-only DB query right after 'Discard and quit' (160x45): the vetoed draft (title 'Reading list ' with a
+# trailing space, body + ' vetoedtail') was NOT saved; the row is still v4 from the max-wait autosave.
+4|[Reading list]| The Dispossessed |  | abcdefghijklmnopq
+1|[📚 Reading queue 2026 ✨]|essed | - ✅ Done: Project Hail Mary 🚀 | 

@@ -1,0 +1,74 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="pytest" errors="0" failures="4" skipped="0" tests="8" time="150.468" timestamp="2026-10-25T10:47:05.910084-07:00" hostname="DESKTOP-BISU2HE">
+    <testcase classname="Tests.UI.test_schedules_reminder_edit_identity" name="test_pending_edits_preserve_captured_reminder_values[serial]" time="23.636" />
+    <testcase classname="Tests.UI.test_schedules_reminder_edit_identity" name="test_pending_edits_preserve_captured_reminder_values[different]" time="22.158">
+      <failure message="Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\task1-red-correct-import\pytest\test_pending_edits_preserve_ca1\private-profile-process\pytest.log&#10;--- child failure: AssertionError: assert ['UTC', 'Europe/London'] == ['America/New...urope/London']&#10;  &#10;  At index 0 diff: 'UTC' != 'America/New_York'&#10;  Use -v to get more diff&#10;request = &lt;FixtureRequest for &lt;Coroutine test_pending_edits_preserve_captured_reminder_values[different]&gt;&gt;&#10;tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/textual-settings-patterns/tldw_tui/.test-tmp/task-36728-36729/task1-red-correct-import/pytest/test_pending_edits_preserve_ca1/private-profile-process/pytest/test_pending_edits_preserve_ca0')&#10;scenario = 'different'&#10;&#10;    @pytest.mark.parametrize(&quot;scenario&quot;, [&quot;serial&quot;, &quot;different&quot;, &quot;same&quot;])&#10;    @private_profile_test&#10;    async def test_pending_edits_p">..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\task1-red-correct-import\pytest\test_pending_edits_preserve_ca1\private-profile-process\pytest.log
+E   --- child failure: AssertionError: assert ['UTC', 'Europe/London'] == ['America/New...urope/London']
+E     
+E     At index 0 diff: 'UTC' != 'America/New_York'
+E     Use -v to get more diff
+E   request = &lt;FixtureRequest for &lt;Coroutine test_pending_edits_preserve_captured_remind</failure>
+    </testcase>
+    <testcase classname="Tests.UI.test_schedules_reminder_edit_identity" name="test_pending_edits_preserve_captured_reminder_values[same]" time="19.386" />
+    <testcase classname="Tests.UI.test_schedules_reminder_edit_identity" name="test_pending_feedback_cannot_replace_another_reminders_error[saved]" time="17.776">
+      <failure message="Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\task1-red-correct-import\pytest\test_pending_feedback_cannot_r0\private-profile-process\pytest.log&#10;--- child failure: AssertionError: assert '' == 'B still needs correction'&#10;  &#10;  - B still needs correction&#10;request = &lt;FixtureRequest for &lt;Coroutine test_pending_feedback_cannot_replace_another_reminders_error[saved]&gt;&gt;&#10;tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/textual-settings-patterns/tldw_tui/.test-tmp/task-36728-36729/task1-red-correct-import/pytest/test_pending_feedback_cannot_r0/private-profile-process/pytest/test_pending_feedback_cannot_r0')&#10;monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001BDF3CDDA90&gt;&#10;completion = 'saved'&#10;&#10;    @pytest.mark.parametrize(&quot;completion&quot;, [&quot;saved&quot;, &quot;refused&quot;, &quot;exception&quot;])&#10;    @private_profile_test&#10;    async def test_pe">..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\task1-red-correct-import\pytest\test_pending_feedback_cannot_r0\private-profile-process\pytest.log
+E   --- child failure: AssertionError: assert '' == 'B still needs correction'
+E     
+E     - B still needs correction
+E   request = &lt;FixtureRequest for &lt;Coroutine test_pending_feedback_cannot_replace_another_reminders_error[saved]&gt;&gt;
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1</failure>
+    </testcase>
+    <testcase classname="Tests.UI.test_schedules_reminder_edit_identity" name="test_pending_feedback_cannot_replace_another_reminders_error[refused]" time="15.300">
+      <failure message="Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\task1-red-correct-import\pytest\test_pending_feedback_cannot_r1\private-profile-process\pytest.log&#10;--- child failure: AssertionError: assert 'A was refused' == 'B still needs correction'&#10;  &#10;  - B still needs correction&#10;  + A was refused&#10;request = &lt;FixtureRequest for &lt;Coroutine test_pending_feedback_cannot_replace_another_reminders_error[refused]&gt;&gt;&#10;tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/textual-settings-patterns/tldw_tui/.test-tmp/task-36728-36729/task1-red-correct-import/pytest/test_pending_feedback_cannot_r1/private-profile-process/pytest/test_pending_feedback_cannot_r0')&#10;monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001E2889BDC10&gt;&#10;completion = 'refused'&#10;&#10;    @pytest.mark.parametrize(&quot;completion&quot;, [&quot;saved&quot;, &quot;refused&quot;, &quot;exception&quot;])&#10;    @private">..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\task1-red-correct-import\pytest\test_pending_feedback_cannot_r1\private-profile-process\pytest.log
+E   --- child failure: AssertionError: assert 'A was refused' == 'B still needs correction'
+E     
+E     - B still needs correction
+E     + A was refused
+E   request = &lt;FixtureRequest for &lt;Coroutine test_pending_feedback_cannot_replace_another_reminders_error[refused]&gt;&gt;
+E   tmp_pa</failure>
+    </testcase>
+    <testcase classname="Tests.UI.test_schedules_reminder_edit_identity" name="test_pending_feedback_cannot_replace_another_reminders_error[exception]" time="15.722">
+      <failure message="Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\task1-red-correct-import\pytest\test_pending_feedback_cannot_r2\private-profile-process\pytest.log&#10;--- child failure: AssertionError: assert 'Failed to save this edit.' == 'B still needs correction'&#10;  &#10;  - B still needs correction&#10;  + Failed to save this edit.&#10;request = &lt;FixtureRequest for &lt;Coroutine test_pending_feedback_cannot_replace_another_reminders_error[exception]&gt;&gt;&#10;tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/textual-settings-patterns/tldw_tui/.test-tmp/task-36728-36729/task1-red-correct-import/pytest/test_pending_feedback_cannot_r2/private-profile-process/pytest/test_pending_feedback_cannot_r0')&#10;monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001B235CCAEA0&gt;&#10;completion = 'exception'&#10;&#10;    @pytest.mark.parametrize(&quot;completion&quot;, [&quot;saved&quot;, &quot;refused&quot;">..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\task1-red-correct-import\pytest\test_pending_feedback_cannot_r2\private-profile-process\pytest.log
+E   --- child failure: AssertionError: assert 'Failed to save this edit.' == 'B still needs correction'
+E     
+E     - B still needs correction
+E     + Failed to save this edit.
+E   request = &lt;FixtureRequest for &lt;Coroutine test_pending_feedback_cannot_replace_another_reminders_err</failure>
+    </testcase>
+    <testcase classname="Tests.UI.test_schedules_reminder_edit_identity" name="test_invalid_edit_keeps_its_row_retryable[local]" time="16.746" />
+    <testcase classname="Tests.UI.test_schedules_reminder_edit_identity" name="test_invalid_edit_keeps_its_row_retryable[server:1]" time="18.197" />
+  </testsuite>
+</testsuites>

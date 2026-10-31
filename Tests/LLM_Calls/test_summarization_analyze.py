@@ -37,19 +37,24 @@ def _require_chunker_available():
 
 
 def _stub_summarizer(monkeypatch, response: str = "PROVIDER SUMMARY."):
-    """Replace the openai provider function with a signature-checked recorder."""
-    real = sgl.summarize_with_openai
+    """Replace the openai chat-dispatch core with a signature-checked recorder.
+
+    TASK-34895: openai routes through _summarize_via_chat_api, so that is
+    the seam analyze()'s dispatch actually resolves; stubbing it stands in
+    for the provider exactly the way the old per-provider function did.
+    """
+    real = sgl._summarize_via_chat_api
     sig = inspect.signature(real)
     calls: list[Dict[str, Any]] = []
 
-    def fake_summarize_with_openai(*args, **kwargs):
+    def fake_core(*args, **kwargs):
         # Bind against the real signature so the dispatch call shape can
         # never drift from the seam it stands in for.
         sig.bind(*args, **kwargs)
         calls.append({"args": args, "kwargs": kwargs})
         return response
 
-    monkeypatch.setattr(sgl, "summarize_with_openai", fake_summarize_with_openai)
+    monkeypatch.setattr(sgl, "_summarize_via_chat_api", fake_core)
     return calls
 
 
@@ -105,32 +110,39 @@ class TestDispatchNameAliases:
     names instead of failing with "Invalid API Name"."""
 
     @pytest.mark.parametrize(
-        "chat_name, provider_func_name",
+        "chat_name, spec_key",
         [
-            ("koboldcpp", "summarize_with_kobold"),
-            ("oobabooga", "summarize_with_oobabooga"),
-            ("mistralai", "summarize_with_mistral"),
-            ("llama_cpp", "summarize_with_llama"),
-            ("local_ollama", "summarize_with_ollama"),
-            ("local_vllm", "summarize_with_vllm"),
-            ("local_llamacpp", "summarize_with_llama"),
-            ("local_llamafile", "summarize_with_llama"),
-            ("local_llm", "summarize_with_local_llm"),
+            # TASK-34895: every implemented spelling now resolves to a
+            # _SummarizerChatSpec key routed through the chat-dispatch
+            # core (the per-provider functions are retired as dispatch
+            # seams); the alias table's job is unchanged -- normalize the
+            # chat dispatcher's spellings to the spec keys.
+            ("koboldcpp", "kobold"),
+            ("oobabooga", "ooba"),
+            ("mistralai", "mistral"),
+            ("llama_cpp", "llama.cpp"),
+            ("local_ollama", "ollama"),
+            ("local_vllm", "vllm"),
+            ("local_llamacpp", "llama.cpp"),
+            ("local_llamafile", "llama.cpp"),
+            ("local_llm", "local-llm"),
         ],
     )
     def test_chat_dispatch_spellings_route_to_a_provider(
-        self, monkeypatch, chat_name: str, provider_func_name: str
+        self, monkeypatch, chat_name: str, spec_key: str
     ):
-        real = getattr(sgl, provider_func_name)
+        real = sgl._summarize_via_chat_api
         sig = inspect.signature(real)
-        calls: list[Dict[str, Any]] = []
+        routed: list[str] = []
 
-        def fake_provider(*args, **kwargs):
+        def fake_core(*args, **kwargs):
+            # Bind against the real signature so the dispatch call shape
+            # can never drift from the seam it stands in for.
             sig.bind(*args, **kwargs)
-            calls.append({"args": args, "kwargs": kwargs})
+            routed.append(args[0])
             return "ALIASED SUMMARY."
 
-        monkeypatch.setattr(sgl, provider_func_name, fake_provider)
+        monkeypatch.setattr(sgl, "_summarize_via_chat_api", fake_core)
 
         result = sgl._dispatch_to_api(
             "Body text.",
@@ -143,7 +155,7 @@ class TestDispatchNameAliases:
         )
 
         assert result == "ALIASED SUMMARY."
-        assert calls
+        assert routed == [spec_key]
 
     def test_unknown_name_still_errors_in_band(self):
         result = sgl._dispatch_to_api(

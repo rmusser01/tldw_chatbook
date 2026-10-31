@@ -918,6 +918,10 @@ def _sync_harness(*, refresh_raises: bool = False):
         ),
         _show_model_thinking=lambda: False,
         _library_activity=SimpleNamespace(sync_transcript=lambda _transcript: {}),
+        # TASK-33621.51: the sync also projects Library outcome lines.
+        _library_outcome=SimpleNamespace(
+            sync_transcript=lambda _transcript, _messages: {}
+        ),
         _console_transcript_region_or_none=lambda: None,
         _console_presentation_context=lambda: MagicMock(),
         _console_change_review_provider=lambda: None,

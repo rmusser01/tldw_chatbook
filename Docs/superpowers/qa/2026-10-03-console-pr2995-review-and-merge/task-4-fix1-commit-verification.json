@@ -1,0 +1,25 @@
+{
+  "commit": "c0b251a71422536a3da2be421dd60f79e2cb230a",
+  "parent": "d3b2ade44b49afc96f78c592ac271e3231472b27",
+  "committed_paths": [
+    "Tests/DB/test_automatic_chat_starts.py",
+    "tldw_chatbook/DB/automatic_work.py"
+  ],
+  "committed_bytes_match_self_review": true,
+  "owned_paths_clean": true,
+  "index_empty": true,
+  "remaining_status": " M Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md\n M \"backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md\"\n",
+  "full_task4_sha256": {
+    "tldw_chatbook/Chat/console_chat_start.py": "d0cd0a4da8dd3a4cd2f185b2323d26a3517a975bc2860cf815f8437cea300c0a",
+    "tldw_chatbook/Chat/console_chat_controller.py": "c61b7eef26668563ce94dc27fe9d3f9ce180183b06b735aa367b163ed7511b03",
+    "tldw_chatbook/Chat/message_metadata.py": "c8aa1bdf33d9297dce415cc0332460f89f3720bdb3cedab6c872171ca61a99a0",
+    "tldw_chatbook/DB/automatic_work.py": "53e3cc87df9d6029aa34076b2456a9333a041caac8ed558342c88bb797ba6f1c",
+    "Tests/Chat/test_console_chat_start.py": "c293994106834cbc20b631117206134ad1e656a91ae76d0ba527edf8bd30388b",
+    "Tests/DB/test_automatic_chat_starts.py": "7055d0addda58c916d3a3f68f96e6b57ebb5c2de03f343c7dc842012c1ff2b6a",
+    "Tests/Chat/test_console_durable_commit_offload.py": "347156b6e1faec1be189fd0a9b55e7e3389e40bfc54d569177cf1a687b2cdfcb",
+    "Tests/Chat/test_console_durable_commit_diagnostics.py": "897e290fcfd6ce0393579d60857c3a64bbeb00f9bd2522b2279f2a66a327c72a",
+    "Tests/Chat/test_console_close_during_durable_postcommit.py": "f4dcfe727f4903ce5778e786ba8087ff63df3f2db1d739bff5729486eb6adabc",
+    "Tests/Agents/test_automatic_child_scope.py": "22dff01f9d6b003b42063c36ded068a3f0cda020b20724b5573827347c396e71"
+  },
+  "full_task4_aggregate_sha256": "7b099980ab9b73d5d7383f3e2dc2a4d47514e8ceac4a73d5e41350df07ac89cc"
+}

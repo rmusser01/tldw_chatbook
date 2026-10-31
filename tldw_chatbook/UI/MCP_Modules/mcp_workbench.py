@@ -7,7 +7,7 @@ import asyncio
 import inspect
 import json
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
@@ -431,12 +431,12 @@ MCP_HUB_MODES: dict[str, dict[str, str]] = {
         "button_id": "mcp-mode-permissions",
         "placeholder": "",
     },
-    # T7 (MCP Hub Phase 5): Audit mode now hosts the real `MCPAuditMode`
-    # canvas (see compose()) -- "placeholder" is unused for it, same as
-    # "servers"/"tools"/"permissions" above, kept "" for shape parity. This
-    # was the last MCP_HUB_MODES entry still on the generic phase-placeholder
-    # path; compose()'s placeholder-rendering loop is gone along with it.
-    "audit": {"label": "Audit", "button_id": "mcp-mode-audit", "placeholder": ""},
+    # T7 (MCP Hub Phase 5): Audit mode hosts the real `MCPAuditMode` canvas
+    # (see compose()); "placeholder" is unused here, kept "" for shape parity.
+    # TASK-35155: chip copy says "History" -- the canvas is the log of what
+    # tool calls did and the app already calls it "execution history"; the
+    # mode KEY stays "audit" (keys/ids/routes are not copy).
+    "audit": {"label": "History", "button_id": "mcp-mode-audit", "placeholder": ""},
 }
 
 _LEGACY_SECTIONS = [
@@ -451,6 +451,18 @@ _LEGACY_SECTIONS = [
 # the `.mcp-compact` class and the triad rebalances toward the canvas (see
 # BUNDLED_CSS and its _agentic_terminal.tcss mirror).
 _COMPACT_WIDTH = 120
+
+# task-35151: width threshold (cols) below which the triad CANNOT render as
+# three columns -- the compact minimums sum (rail 16 + canvas 30 + inspector
+# 20, kept in lockstep with BUNDLED_CSS/_agentic_terminal.tcss). Below it
+# Textual's fr resolution degenerates (each pane takes fraction x pane
+# width, pushing the canvas offscreen -- measured in Settings' detail pane:
+# rail 112 / canvas 392 / inspector 112 at a 56-column pane), so
+# `.mcp-stacked` flips the grid to ADR-148's stacked triad instead:
+# the bounded, internally scrolling inspector band under the rail+canvas
+# row. Both thresholds key on the workbench's OWN width, which is the
+# pane-relative width in every host (Settings detail pane, bare harness).
+_STACKED_WIDTH = 66
 
 # T5: local-profile lifecycle actions this workbench can dispatch, keyed by
 # the short verb used throughout `_in_flight_action`/notifications. Maps to
@@ -628,7 +640,7 @@ class MCPWorkbench(Container):
         """Posted by `set_mode()` whenever the active mode actually changes,
         so the hosting screen can keep its mode-chip highlight in sync.
         `set_mode` is the single emission point: it covers every path that
-        changes the mode without going through `MCPScreen._activate_mode()`
+        changes the mode without going through the host surface's mode action
         (a click or keybinding) -- state restore and inspector hub actions
         ("Open tool catalog"/"Open audit") alike. The screen's chip sync is
         idempotent, so the redundant notification on the _activate_mode
@@ -676,6 +688,45 @@ class MCPWorkbench(Container):
         width: 2fr;
         min-width: 20;
     }
+    /* task-35151: the rail+canvas row wrapper (see compose()). The row
+    carries the rail+canvas fr sum so each pane's share of the grid is
+    unchanged from the pre-wrapper triad; its compact min-width is the
+    rail+canvas minimums' sum, so the grid-level fr resolution keeps the
+    same fit threshold it had before. Bare-harness copy; the REAL app gets
+    the identical rules from _agentic_terminal.tcss (app-tier CSS beats
+    widget DEFAULT_CSS on ties in this Textual version -- the established
+    lockstep pattern documented there). */
+    #mcp-hub-row {
+        width: 8fr;
+        min-width: 0;
+        height: 100%;
+        min-height: 0;
+    }
+    #mcp-hub-grid.mcp-compact #mcp-hub-row {
+        width: 9fr;
+        min-width: 46;
+    }
+    /* task-35151: below `_STACKED_WIDTH` the compact minimums cannot all
+    fit and fr resolution degenerates, so ADR-148's stacked triad takes
+    over: rail+canvas row on top, bounded internally-scrolling inspector
+    band below. Placed after the `.mcp-compact` rules it overrides. */
+    #mcp-hub-grid.mcp-stacked {
+        layout: vertical;
+    }
+    #mcp-hub-grid.mcp-stacked #mcp-hub-row {
+        width: 100%;
+        min-width: 40;
+        height: 1fr;
+        min-height: 2;
+    }
+    #mcp-hub-grid.mcp-stacked #mcp-hub-canvas {
+        min-width: 24;
+    }
+    #mcp-hub-grid.mcp-stacked #mcp-hub-inspector {
+        width: 100%;
+        height: 40%;
+        min-height: 1;
+    }
     """
 
     def __init__(self, app_instance: Any = None, **kwargs: Any) -> None:
@@ -683,6 +734,11 @@ class MCPWorkbench(Container):
         self._app_instance = app_instance
         self._mcp_recovery_token = None
         self._mcp_recovery_busy = False
+        # TASK-34953: the 0.25s save-status timer refreshes the config-file
+        # identity (stat read) only every 8th tick (~2s); direct post-save
+        # calls force a fresh read via the refresh flag.
+        self._save_status_tick = 0
+        self._save_file_identity_cache: tuple[tuple, tuple | None] | None = None
         self._active_mode = "servers"
         #: Mode requested before the deferred canvases mounted (task-2901);
         #: replayed by `_mount_deferred_canvases`.
@@ -916,31 +972,38 @@ class MCPWorkbench(Container):
         return getattr(self.app_instance, "unified_mcp_service", None)
 
     def compose(self) -> ComposeResult:
+        # task-35151: rail + canvas ride inside #mcp-hub-row so the grid's
+        # children are [row, inspector]. Wide screens see the same triad as
+        # before (the row carries the rail+canvas fr sum, so every pane's
+        # share of the grid is unchanged); `.mcp-stacked` flips the grid to
+        # `layout: vertical` below the compact minimums, turning the same DOM
+        # into ADR-148's stacked triad -- inspector band under the row.
         with Horizontal(id="mcp-hub-grid", classes="destination-workbench"):
-            yield MCPRail(
-                source=self._source,
-                snapshots=[],
-                selected_server_key=None,
-                scope_options=[("Personal", "personal")],
-                scope_value=self._scope,
-                scope_ref_options=[],
-                scope_ref_value=self._scope_ref,
-                id="mcp-hub-rail",
-                classes="destination-workbench-pane",
-            )
-            with ContentSwitcher(
-                initial="mcp-mode-canvas-servers",
-                id="mcp-hub-canvas",
-                classes="destination-workbench-pane",
-            ):
-                yield MCPServersMode(id="mcp-mode-canvas-servers")
-                # task-2901: Tools/Permissions/Audit (T5/T6/T7 canvases —
-                # every `MCP_HUB_MODES` entry is a real canvas) arrive
-                # hidden behind the ContentSwitcher and are NOT composed
-                # here. They mount as `_reload_guarded`'s first step
-                # (`_mount_deferred_canvases`), before `reload()` pushes
-                # data into them — off the click→paint critical path with
-                # the load pipeline's ordering intact.
+            with Horizontal(id="mcp-hub-row"):
+                yield MCPRail(
+                    source=self._source,
+                    snapshots=[],
+                    selected_server_key=None,
+                    scope_options=[("Personal", "personal")],
+                    scope_value=self._scope,
+                    scope_ref_options=[],
+                    scope_ref_value=self._scope_ref,
+                    id="mcp-hub-rail",
+                    classes="destination-workbench-pane",
+                )
+                with ContentSwitcher(
+                    initial="mcp-mode-canvas-servers",
+                    id="mcp-hub-canvas",
+                    classes="destination-workbench-pane",
+                ):
+                    yield MCPServersMode(id="mcp-mode-canvas-servers")
+                    # task-2901: Tools/Permissions/Audit (T5/T6/T7 canvases —
+                    # every `MCP_HUB_MODES` entry is a real canvas) arrive
+                    # hidden behind the ContentSwitcher and are NOT composed
+                    # here. They mount as `_reload_guarded`'s first step
+                    # (`_mount_deferred_canvases`), before `reload()` pushes
+                    # data into them — off the click→paint critical path with
+                    # the load pipeline's ordering intact.
             yield MCPInspector(
                 id="mcp-hub-inspector", classes="destination-workbench-pane"
             )
@@ -1003,13 +1066,17 @@ class MCPWorkbench(Container):
         self._sync_compact_class()
 
     def _sync_compact_class(self) -> None:
-        """Toggle `.mcp-compact` on `#mcp-hub-grid` below ~120 cols (F-057).
+        """Toggle `.mcp-compact`/`.mcp-stacked` on `#mcp-hub-grid` (F-057/task-35151).
 
-        The class drives the triad-rebalancing rules in BUNDLED_CSS (and
-        their _agentic_terminal.tcss mirror): narrower rail/inspector
-        shares so the canvas keeps its primary columns in-viewport. Width
-        0 (pre-layout) means "not compact" -- the full triad renders first
-        and the first real resize corrects it.
+        `.mcp-compact` (below ~120 cols) drives the triad-rebalancing rules
+        in BUNDLED_CSS (and their _agentic_terminal.tcss mirror): narrower
+        rail/inspector shares so the canvas keeps its primary columns
+        in-viewport. `.mcp-stacked` (below `_STACKED_WIDTH`) drives ADR-148's
+        stacked triad -- the inspector band under the rail+canvas row --
+        because at that width the compact minimums cannot all fit and the
+        three-column layout is geometrically impossible. Width 0 (pre-layout)
+        means "not compact" -- the full triad renders first and the first
+        real resize corrects it.
         """
         try:
             grid = self.query_one("#mcp-hub-grid")
@@ -1019,6 +1086,7 @@ class MCPWorkbench(Container):
             return
         width = self.size.width
         grid.set_class(0 < width < _COMPACT_WIDTH, "mcp-compact")
+        grid.set_class(0 < width < _STACKED_WIDTH, "mcp-stacked")
 
     def _start_initial_load(self) -> None:
         """Kick off the mount-time reload once the subtree is mounted."""
@@ -1124,11 +1192,11 @@ class MCPWorkbench(Container):
 
     # -- data loading ---------------------------------------------------------
 
-    async def reload(self) -> None:
+    async def reload(self, *, force: bool = False) -> None:
         self._reloading = True
         # Raised here, not only in `on_mount`: `reload()` always CLEARS this in
         # its `finally`, so every caller must also raise it or a direct reload
-        # (MCPScreen's manual refresh calls this straight) would fetch with no
+        # (the Tools & MCP pane's manual refresh calls this straight) would fetch
         # spinner and then clear a flag it never set.
         self.is_loading = True
         try:
@@ -1156,7 +1224,9 @@ class MCPWorkbench(Container):
                             "MCP workbench context load failed", exc
                         ),
                     )
-            self._snapshots = await self._collect_snapshots()
+            self._snapshots = await self._collect_snapshots_stale_gated(
+                service, force=force
+            )
             self._preselect_single_problem_on_load()
             await self._sync_children()
             self._rebind_inspector_advanced_context(service)
@@ -1357,6 +1427,73 @@ class MCPWorkbench(Container):
             isinstance(a, Mapping) and a.get("name") == "external_server.create"
             for a in actions
         )
+
+    async def _collect_snapshots_stale_gated(
+        self, service: Any, *, force: bool = False
+    ) -> list[ReadinessSnapshot]:
+        """Snapshot walk gated on the catalog fingerprint (TASK-34965).
+
+        Re-entering the workbench re-collects every server snapshot on a
+        fresh widget each visit. The service already maintains a
+        governance-grade catalog fingerprint (``run_catalog_fingerprint``,
+        used to validate cached run compositions), so a revisit with an
+        unchanged fingerprint AND unchanged config reuses the cached
+        snapshots; ``_sync_children`` still rebuilds the fresh DOM from
+        them. Anything that changed (permissions, servers, lifecycle
+        runtime state, config) alters the fingerprint and forces the full
+        walk, as do server-source mode, admission refusals, and
+        ``force`` (the manual/runtime refresh paths).
+        """
+        if force or self._source != "local" or service is None:
+            return await self._collect_snapshots()
+        fingerprint_runner = getattr(service, "run_catalog_fingerprint", None)
+        if not callable(fingerprint_runner):
+            return await self._collect_snapshots()
+        # Review fix: name the profiles the cached snapshots describe so the
+        # fingerprint's connection-state projection actually joins the token.
+        # The default ``profiles=()`` excluded connection states entirely, so
+        # a server connect/disconnect with no store change served stale
+        # readiness. Review follow-up: this route is NOT reusable, so a
+        # production revisit builds a FRESH widget whose `_catalog_records`
+        # is empty -- deriving profiles from it silently excluded
+        # connection states from the fingerprint on every revisit. The
+        # CACHE's records describe exactly the snapshots the token would
+        # validate, so they lead; the widget's own records cover the
+        # same-widget forced path; a true first visit passes () and always
+        # takes the full walk (the cache is empty too).
+        cache = getattr(self.app_instance, "_mcp_workbench_snapshot_cache", None)
+        records_for_profiles = (
+            cache[2] if cache is not None else None
+        ) or self._catalog_records
+        profiles = tuple(
+            (profile_id, bool(record.get("plugin_owner")))
+            for profile_id, record in records_for_profiles.items()
+        )
+        try:
+            fingerprint = await fingerprint_runner(profiles)
+        except Exception:  # noqa: BLE001 - admission refusal: full load
+            return await self._collect_snapshots()
+        token = (fingerprint, current_config_identity())
+        if cache is not None and cache[0] == token:
+            # Review fix (task-34965): a cache hit must restore the local
+            # profile catalog along with the snapshots. `_catalog_records`
+            # feeds the Hub Tools catalog, EDIT_CONFIG's record lookup and
+            # show_import, and it is only populated inside
+            # `_collect_snapshots()` -- leaving it empty on a hit broke all
+            # three. The records are plain dicts re-derived from the same
+            # fingerprinted store, so they are equally cacheable; both the
+            # cache entry and `self._catalog_records` are only ever replaced
+            # wholesale, never mutated in place, so sharing the dict is safe.
+            _, snapshots, catalog_records = cache
+            self._catalog_records = catalog_records
+            return snapshots
+        snapshots = await self._collect_snapshots()
+        self.app_instance._mcp_workbench_snapshot_cache = (
+            token,
+            snapshots,
+            self._catalog_records,
+        )
+        return snapshots
 
     async def _collect_snapshots(self) -> list[ReadinessSnapshot]:
         snapshots: list[ReadinessSnapshot] = []
@@ -3282,6 +3419,19 @@ class MCPWorkbench(Container):
             context_reset or original_context == service_context
         )
 
+    def suspend_recovery_review(self) -> None:
+        """Invalidate an accepted recovery review's UI receipt on host suspend.
+
+        The review's own confirmation opens before busy is set. Once accepted,
+        leaving the host surface invalidates its UI receipt even if the user
+        returns before the retained native write finishes. ADR-240: this is
+        the single owner of that semantics -- the retired MCP shell screen
+        carried it in its own ``on_screen_suspend``; the Settings host and
+        any other host call this method from theirs.
+        """
+        if self._mcp_recovery_busy:
+            self._mcp_recovery_token = None
+
     def on_mcp_permissions_mode_recovery_review_requested(
         self,
         event: MCPPermissionsMode.RecoveryReviewRequested,
@@ -3632,7 +3782,11 @@ class MCPWorkbench(Container):
                 # generic sentence -- bounded so a verbose exception can't
                 # turn the toast into a stack dump. `_toast()` escapes the
                 # text (service messages embed store-derived ids).
-                reason = str(exc).strip().splitlines()[0][:140] if str(exc).strip() else type(exc).__name__
+                reason = (
+                    str(exc).strip().splitlines()[0][:140]
+                    if str(exc).strip()
+                    else type(exc).__name__
+                )
                 self.app.notify(
                     _toast(f"Permission update failed: {reason}"),
                     severity="error",
@@ -4301,7 +4455,9 @@ class MCPWorkbench(Container):
             exclusive=True,
         )
 
-    def _master_save_projection(self) -> tuple[bool, str, bool]:
+    def _master_save_projection(
+        self, *, file_identity_refresh: bool = False
+    ) -> tuple[bool, str, bool]:
         """Describe the latest choice without changing runtime tool authority."""
         enabled = coerce_bool_setting(
             get_cli_setting(
@@ -4311,8 +4467,10 @@ class MCPWorkbench(Container):
         )
         owner = getattr(self.app_instance, "_mcp_local_config_saves", None)
         config_path = get_cli_config_path()
-        generation = current_config_identity()[0]
-        file_revision = config_file_revision(config_path)
+        generation, file_revision = self._save_status_file_identity(
+            refresh=file_identity_refresh
+        )
+        generation = generation[0]
         default = "Applies immediately - no Save needed."
         if owner is None:
             return enabled, default, False
@@ -4378,7 +4536,9 @@ class MCPWorkbench(Container):
             and not canvas._pruning
         )
 
-    def _sync_master_save_status(self) -> None:
+    def _sync_master_save_status(
+        self, *, file_identity_refresh: bool = True
+    ) -> None:
         canvases = [
             canvas
             for canvas_type in (MCPToolsMode, MCPServersMode)
@@ -4387,7 +4547,9 @@ class MCPWorkbench(Container):
         ]
         if not canvases:
             return
-        enabled, text, error = self._master_save_projection()
+        enabled, text, error = self._master_save_projection(
+            file_identity_refresh=file_identity_refresh
+        )
         owner = getattr(self.app_instance, "_mcp_local_config_saves", None)
         state = owner.state_for("local_tools_enabled") if owner is not None else None
         pending = bool(
@@ -4405,9 +4567,33 @@ class MCPWorkbench(Container):
                 pending=pending,
             )
 
+    def _save_status_file_identity(
+        self, *, refresh: bool = False
+    ) -> tuple[tuple, tuple[int, int, int, int] | None]:
+        """Config identity + config-file revision for save-status stamps.
+
+        Args:
+            refresh: Force a fresh stat read; the 0.25s timer instead uses
+                the coarse ~2s cache so idle ticks do not touch the file.
+        """
+        if refresh or self._save_file_identity_cache is None:
+            self._save_file_identity_cache = (
+                current_config_identity(),
+                config_file_revision(get_cli_config_path()),
+            )
+        return self._save_file_identity_cache
+
     def _sync_local_config_save_status(self) -> None:
-        self._sync_root_save_status()
-        self._sync_master_save_status()
+        # TASK-34953: external config edits only need a coarse detection
+        # cadence; the in-memory save-state stamp parts stay per-tick.
+        self._save_status_tick += 1
+        refresh_file_identity = self._save_status_tick % 8 == 1
+        self._sync_root_save_status(
+            file_identity_refresh=refresh_file_identity
+        )
+        self._sync_master_save_status(
+            file_identity_refresh=refresh_file_identity
+        )
 
     async def _observe_local_master_save(self, task) -> None:
         outcome = await asyncio.shield(task)
@@ -4470,7 +4656,9 @@ class MCPWorkbench(Container):
             exclusive=True,
         )
 
-    def _sync_root_save_status(self) -> None:
+    def _sync_root_save_status(
+        self, *, file_identity_refresh: bool = True
+    ) -> None:
         """Project current-profile receipts, including after screen recreation."""
         if not self.is_attached or not self.query(MCPToolsMode):
             return
@@ -4481,13 +4669,16 @@ class MCPWorkbench(Container):
         state = owner.state_for("workspace_root") if owner is not None else None
         if state is None:
             return
+        config_identity, file_revision = self._save_status_file_identity(
+            refresh=file_identity_refresh
+        )
         stamp = (
             canvas,
             state.revision,
             state.result is None,
             owner.completion_revision,
-            current_config_identity(),
-            config_file_revision(get_cli_config_path()),
+            config_identity,
+            file_revision,
         )
         if stamp == getattr(self, "_root_save_projection", None):
             return
@@ -4497,8 +4688,8 @@ class MCPWorkbench(Container):
         self._root_save_projection = stamp
         canvas.project_workspace_root_save(
             state,
-            generation=current_config_identity()[0],
-            file_revision=config_file_revision(get_cli_config_path()),
+            generation=config_identity[0],
+            file_revision=file_revision,
         )
 
     async def _observe_workspace_root_save(self, task) -> None:
@@ -4710,9 +4901,7 @@ class MCPWorkbench(Container):
         if not callable(list_rules):
             return ()
         try:
-            return tuple(
-                list_rules(tool.server_key, tool.name, profile_id=profile_id)
-            )
+            return tuple(list_rules(tool.server_key, tool.name, profile_id=profile_id))
         except Exception as exc:
             logger.warning(
                 "{}",
@@ -4753,9 +4942,7 @@ class MCPWorkbench(Container):
         except Exception as exc:
             logger.warning(
                 "{}",
-                _safe_diagnostic_message(
-                    "MCP session-approval list failed", exc
-                ),
+                _safe_diagnostic_message("MCP session-approval list failed", exc),
             )
             return ()
 
@@ -4829,9 +5016,7 @@ class MCPWorkbench(Container):
                 cascade=None,
                 profile_context=context,
                 arg_rules=self._arg_rules_for_row(builtin_tool, context.profile_id),
-                session_approvals=self._session_approvals_for_row(
-                    context.profile_id
-                ),
+                session_approvals=self._session_approvals_for_row(context.profile_id),
             )
             return
         tool = (
@@ -5219,7 +5404,9 @@ class MCPWorkbench(Container):
             tool.description, tool.input_schema
         ):
             self.app.notify(
-                _toast("Tool definition changed. Select the tool again before re-allowing."),
+                _toast(
+                    "Tool definition changed. Select the tool again before re-allowing."
+                ),
                 severity="warning",
             )
             return
@@ -5308,9 +5495,7 @@ class MCPWorkbench(Container):
                     exc,
                 ),
             )
-            self.app.notify(
-                _toast("Removing the rule failed."), severity="error"
-            )
+            self.app.notify(_toast("Removing the rule failed."), severity="error")
             await self.query_one(MCPInspector).retry_permission_action(
                 event.permission_view
             )
@@ -5336,7 +5521,8 @@ class MCPWorkbench(Container):
             profile_context=successor,
             arg_rules=(
                 self._arg_rules_for_row(tool, successor.profile_id)
-                if tool is not None else ()
+                if tool is not None
+                else ()
             ),
             session_approvals=self._session_approvals_for_row(successor.profile_id),
             expected_view=event.permission_view,
@@ -5400,8 +5586,8 @@ class MCPWorkbench(Container):
         )
 
     async def open_test_for_selected_tool(self) -> None:
-        """T8: entry point for the `t` keybinding (mcp_screen.py's
-        `action_mcp_test_tool`) -- open the Test Tool panel for whatever
+        """T8: entry point for the `t` keybinding (the Settings Tools & MCP
+        pane's `test_selected_tool`) -- open the Test Tool panel for whatever
         tool the inspector currently has selected.
 
         Mirrors `open_add_server_form()`'s T13 rationale for a keybinding
@@ -6398,9 +6584,7 @@ class MCPWorkbench(Container):
             await self._sync_children()
             if connect_after and payload.get("profile_id"):
                 profile_id = str(payload["profile_id"])
-                self._start_lifecycle(
-                    f"local:{profile_id}", profile_id, "connect"
-                )
+                self._start_lifecycle(f"local:{profile_id}", profile_id, "connect")
         finally:
             self._profile_save_in_flight = False
 
@@ -6512,12 +6696,6 @@ class MCPWorkbench(Container):
 
     # -- T8: mcpServers import (paste or file) ---------------------------------
 
-    def _import_panel_or_none(self) -> MCPImportPanel | None:
-        try:
-            return self.query_one(MCPImportPanel)
-        except Exception:
-            return None
-
     async def on_mcp_import_panel_file_requested(
         self, event: MCPImportPanel.FileRequested
     ) -> None:
@@ -6527,7 +6705,9 @@ class MCPWorkbench(Container):
         def on_file_selected(file_path: Any) -> None:
             if file_path:
                 self.run_worker(
-                    self._load_import_file(str(file_path)),
+                    self._load_import_file(
+                        str(file_path), event.panel.file_text_receiver()
+                    ),
                     group="mcp-import-file",
                     exclusive=True,
                 )
@@ -6542,7 +6722,9 @@ class MCPWorkbench(Container):
             callback=on_file_selected,
         )
 
-    async def _load_import_file(self, file_path: str) -> None:
+    async def _load_import_file(
+        self, file_path: str, publish: Callable[[str], None] | None = None
+    ) -> None:
         """Read a user-picked mcpServers config file into the import panel.
 
         F1 fix: `EnhancedFileOpen` lets the user browse anywhere on disk, so
@@ -6582,9 +6764,8 @@ class MCPWorkbench(Container):
                 _toast(f"Could not read {file_path}: {exc}"), severity="error"
             )
             return
-        panel = self._import_panel_or_none()
-        if panel is not None:
-            panel.set_file_text(text)
+        if publish is not None:
+            publish(text)
 
     async def on_mcp_import_panel_cancelled(
         self, event: MCPImportPanel.Cancelled
@@ -6666,9 +6847,7 @@ class MCPWorkbench(Container):
             return
         worker.cancel()
         self.app.notify("Cancelling…")
-        self.run_worker(
-            self._sync_children, group="mcp-lifecycle-sync", exclusive=True
-        )
+        self.run_worker(self._sync_children, group="mcp-lifecycle-sync", exclusive=True)
 
     # -- lifecycle actions (T5: connect/test/refresh/disconnect) --------------
 
@@ -6717,9 +6896,7 @@ class MCPWorkbench(Container):
         # decoupled from the lifecycle worker above, which may be sitting on
         # a slow (or, in tests, gated) network/subprocess call and must not
         # block this optimistic UI update.
-        self.run_worker(
-            self._sync_children, group="mcp-lifecycle-sync", exclusive=True
-        )
+        self.run_worker(self._sync_children, group="mcp-lifecycle-sync", exclusive=True)
 
     async def _lifecycle_wrapper(
         self, profile_id: str, action: str, method: Any

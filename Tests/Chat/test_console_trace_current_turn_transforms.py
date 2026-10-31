@@ -119,9 +119,8 @@ async def trace_harness(tmp_path, monkeypatch, request):
         append = store.append_stream_chunk
 
         def record_partial(message_id, chunk):
-            result = append(message_id, chunk)
+            append(message_id, chunk)
             harness.partial_received.set()
-            return result
 
         monkeypatch.setattr(store, "append_stream_chunk", record_partial)
     controller.provider_gateway = gateway

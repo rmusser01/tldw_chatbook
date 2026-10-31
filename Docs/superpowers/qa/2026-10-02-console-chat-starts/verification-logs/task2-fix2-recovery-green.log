@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+3.22s call     Tests/Chat/test_console_chat_start.py::test_manual_recovery_clears_handoff_attention_but_retains_launch_history[not_started-Not started-runtime_disabled-0]
+1.57s call     Tests/Chat/test_console_chat_start.py::test_manual_recovery_clears_handoff_attention_but_retains_launch_history[review_required-Review required-settlement_unconfirmed-1]
+
+(4 durations < 1s hidden.)
+2 passed, 95 deselected in 5.48s

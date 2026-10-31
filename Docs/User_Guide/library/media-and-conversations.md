@@ -262,7 +262,11 @@ see its own row below) is a second bulk action next to "Export selected".
 Pressing it swaps the strip for a confirmation naming the count — "Delete N
 selected items? You can undo right away, or restore later from Trash." —
 with "Delete" / "Cancel", the same in-place armed-button pattern
-as the media viewer's own single-item "Delete" (never a popup modal).
+as the media viewer's own single-item "Delete" (never a popup modal). The
+viewer's confirmation names the one item it will move — "Move
+"team-handbook" to Trash? You can undo right away, or restore later from
+Trash." — so you can tell which document is about to go even when the
+Items list has another row highlighted.
 Confirming moves every checked item to trash (the same soft-delete the
 viewer's Delete uses) and updates the list and the rail's "Media N" count
 immediately; if any item fails, the rest of the batch still completes and a
@@ -461,9 +465,14 @@ silently replacing it with a partial or broad Library snapshot.
 
 Reader stays mounted beside Items and keeps one mode visible at a time:
 **Read**, **Analysis**, **Highlights**, or **Info**. The chosen mode persists
-while you move through items. Missing analysis or highlights produces an
-item-specific empty state; it does not silently switch modes. Leaving **Read**
-for another mode and returning drops you back at the same place in the text —
+while you move through items. An open item also survives a trip through the
+Library rail: press Notes (or any other rail row) and come back, and the
+Reader shows the same item on the same tab at the same place, with its Items
+row still marked `loaded` — only **‹ Back** (or Escape, in the narrower
+layouts where it leaves the Reader) returns you to the list. Missing analysis
+or highlights produces an item-specific empty state; it does not silently
+switch modes. Leaving **Read** for another mode and returning drops you back
+at the same place in the text —
 the reading position is restored even though the rendered body has to lay out
 again first.
 
@@ -533,7 +542,9 @@ still spans the pane.
   straight back.
   Analysis is produced at import time (the "Analyze after import" option),
   written by hand here, or generated in place: **"Generate"** (**"Regenerate"**
-  once one exists) calls the configured analysis provider without leaving
+  once one exists) calls the configured analysis provider — the `provider`
+  and `model` named under `[analysis_defaults]` in `config.toml`, the same
+  table bulk **Analyze** and "Analyze after import" use — without leaving
   the reading flow. With no provider configured it reads **"○ Generate"**
   and an always-visible line beneath the button names the reason and the
   next step ("No analysis provider is configured · Set one in Settings ▸
@@ -557,10 +568,24 @@ still spans the pane.
 | Button | What it does |
 |---|---|
 | "Find" | Opens the search bar for the tab you are reading — the transcript on Read, the analysis on Analysis — focused and ready to type; a second press or Escape closes it. Walking with `]`/`[` keeps an active query but never moves your cursor into the field. This never filters Items. `Ctrl+F` opens it from the keyboard. When the tab you are on has nothing to search — Highlights and Info have no text — it reads "○ Find" and prints that tab's own reason on the line directly under the toolbar, not only in a tooltip (task-32362). |
-| "Use in Console" | Stages this item as context for your next Console message. |
+| "Note" | Opens a new note that names this document: the note is titled after the item and its first line is a `[title](media://…)` link back to it, with the caret on the line below, ready to type. `n` does the same from the keyboard (not while the Find box or the Items filter has focus — there it types an `n`). The Reader keeps your place: pressing the Media rail row brings back the same item, on the same tab, at the same scroll position, and the note stays open on your next visit to Notes. For a server item the button reads "○ Note" with the reason "Notes beside server items need server support". |
+| "Use in Console" | Stages this item as context for your next Console message, linking it to the active workspace on the way if it is not a member yet — the same one-press link that notes and conversations do. A receipt under the toolbar says which workspace by name ("Linked to Local Default · staged in Console", or "Already linked to …" when it was a member already) with an **Undo link** beside it that removes the membership a press in this reader session added (a link made by Search ▸ evidence ▸ `u` has no Undo there; remove it from the workspace's own sources). An Undo pressed after the active workspace changed says so instead of removing anything. The receipt stands only while that workspace is the active one; after a switch it is withheld and the next press links into the new workspace. `c` does the same from the keyboard. If the link itself fails, nothing is staged and the message names the workspace and the next step; a raw workspace id is never shown. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
-| "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line (two on a Reader too narrow to fit all four actions side by side), never off the fold — the button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
-| "Move to trash" | Two-step, title-specific confirmation. The one destructive action in this strip is set apart from the neutral ones — a left margin and the Library's quiet danger ink — so it never ends the row flush and unmarked. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
+| "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line, never off the fold. The button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
+| "Move to trash" | Two-step, title-specific confirmation: the armed copy reads "Move "team-handbook" to Trash? You can undo right away, or restore later from Trash.", naming the item the Reader shows. The one destructive action in this strip is set apart from the neutral ones — a left margin and the Library's quiet danger ink — so it never ends the row flush and unmarked. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
+
+Read later, Edit metadata › Save, Move to trash and Use in Console all act on
+the item the Reader shows, whichever row the Items list has highlighted. That
+matters after opening an item by link — an import receipt's "Open in
+Library", a landing "Open", or a Search/RAG result: the list cursor lands on
+that item (and on no row at all if it is not on the current page), and the
+actions never fall back to the first row.
+
+The primary row holds five actions (Find, Note, Read later, Use in Console,
+More). On a Reader too narrow to fit all five side by side — counting
+"More ▴" so the row never reflows when More opens — the row is already two
+rows (Find · Note · Read later over Use in Console · More), More open or
+closed.
 
 *Verified against fix/media-riders-o — 2026-09-07 (tasks 31958/31959: live
 in tmux at 235x52 on a seeded scratch profile. A `plaintext` item with
@@ -714,6 +739,13 @@ conversation into a pane headed **"Conversation reader"** with:
 - the transcript itself, one block per message, each headed
   `user` / `assistant` and the message's timestamp.
 
+**The reader stays in step with Console.** Each time the Conversations list
+reads again — when you come back to Library from Console, page, or filter —
+the open conversation's saved transcript is checked. If messages were deleted
+(or brought back with Undo), edited, or added in Console since the reader
+loaded it, the reader reloads it in place, so its message count matches the
+list. Read/Info and your Find text are kept.
+
 One rough edge is known and tracked separately: the status line shows the
 raw conversation UUID and each message shows a full ISO timestamp rather
 than an age string. ("Open in Console" moved into the reader header,
@@ -809,14 +841,36 @@ loads immediately.
 **Escape** closes transient Reader state first — the Find bar, then the More
 strip — and then steps out of the Reader to the Items list; the footer chip
 always names the next step it will take. The chip is the authority, and it
-has four readings: **`esc close`** over anything transient (the Find bar, the
-More strip, an open type/sort strip, an armed delete or edit),
-**`esc focus Items`** from the open document, **`esc focus Library`** from the
+has five readings: **`esc close`** over anything transient (the Find bar, the
+More strip, an open type/sort strip, an open edit form), **`esc cancel`** over
+an armed "Move to trash" confirm, **`esc focus Items`** from the open document,
+**`esc focus Library`** from the
 Items row, and **`esc back`** wherever the next pane out is collapsed rather
 than on screen — the Items row at 100x30 and narrower, and the rail row in any
 layout the Reader still has a real exit from. In the three-pane layout the rail
 row is the last stop, and the footer drops the `esc` chip there rather than
 advertise a key that does nothing. No step lands in a text box.
+
+**Unsaved text is never dropped by a key.** While the Analysis form or the
+Edit metadata form holds text that differs from what is saved, Escape keeps
+the form and says so ("Unsaved analysis — Save or Discard changes first." /
+"Unsaved media details — Save or Discard changes first."), and the footer
+reads `esc save or discard first` instead of `esc close`. Save keeps the
+text; the form's Cancel reads **Discard changes** and is the one way to drop
+it while keeping the item (Ctrl+Q's "Discard and quit" and deleting the item
+from the Items list -- Select ▸ Delete selected -- drop it too, each after its
+own question). Switching Reader tabs keeps what
+you typed, and "‹ Back", another Items row (clicked, or reached with
+Up/Down), a rail row, Export…, a review set, Use in Console, Move to trash
+and the nav bar all refuse the same way until you save or discard; Ctrl+Q
+asks before it quits. Every refusal brings the form back on screen, on its
+own tab, with Save and Discard changes. The Items filter still filters the
+list, but it never moves the Reader off the form: the item you are editing
+stays, even when the filter hides its row or matches nothing, and Clear
+brings the list back around it. An untouched form still closes on one
+Escape or Cancel, and over an armed "Move to trash" confirm the chip reads
+`esc cancel` and Escape cancels the confirm first.
+
 Stepping out of the Reader moves focus, not the document: in the three-pane
 layout (verified at 235x52) the Items pane is already showing the list, so
 the item keeps painting beside it and `]`/`[` keep working from the row.
@@ -832,7 +886,8 @@ layout tour above).
 heavy border while it holds focus, so the state is visible in a plain-text
 capture and not by colour alone (no overlay, so the text stays readable).
 From a focused Items row beside the Reader, the Reader's own keys stay
-live and are advertised with it: **]** / **[** walk items, **l** toggles
+live and are advertised with it: **]** / **[** walk items, **n** takes a
+note from the open document, **l** toggles
 read-later, **c** sends the item to Console, **t** arms Move to trash, and
 **s** enters Select mode — focus lands on the first (or first
 still-checked) row, so Down and Space work immediately, and Space toggles
@@ -929,6 +984,17 @@ Escape's return to the list live at 100x30).*
   majority of a wide terminal — measured at 235x52: reader 132 columns,
   list 49. At 100x30 the rail steps aside and the two panes share the stage
   (reader 44, list 45); at 60x24 the reader is the single stage.
+- **Media links on use, like notes and conversations.** The Media
+  reader's "Use in Console" (and `c`) used to refuse every item that was
+  not already a member of the active workspace, naming a raw workspace id
+  and a "copy or link" action that does not exist for media, while Search
+  ▸ evidence ▸ `u` staged the same item with no workspace rule at all.
+  Both now take the same path: the item is linked to the active workspace
+  and staged in one step, and the receipt names the workspace by its display
+  name. Only a link the reader's own press made offers "Undo link" there; a
+  link made from Search evidence has no Undo in the reader (remove it from
+  the workspace's sources). An item that is never used stays unlinked, so
+  the Default workspace still means what it meant.
 - **Staging now actually reaches the model.** "Use in Console" (media)
   and "Open in Console" (conversations) used to stage content that
   displayed as attached but never made it into what the model was sent

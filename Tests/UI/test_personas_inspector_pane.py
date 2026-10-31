@@ -1183,9 +1183,9 @@ async def test_append_keeps_old_widgets_and_new_rows_use_conversation_selection(
         await pilot.click("#personas-conversation-row-conv-3")
         await pilot.pause()
 
-        assert [
-            message.conversation_id for message in app.conversation_messages
-        ] == ["conv-3"]
+        assert [message.conversation_id for message in app.conversation_messages] == [
+            "conv-3"
+        ]
         assert app.older_conversation_messages == []
 
 
@@ -1261,9 +1261,7 @@ async def test_append_completion_preserves_interaction_during_real_mount(
             expected_highlight = list_view.children[0]
             expected_focus = list_view
         else:
-            expected_focus = app.query_one(
-                "#personas-inspector-rail-collapse", Button
-            )
+            expected_focus = app.query_one("#personas-inspector-rail-collapse", Button)
             expected_focus.focus()
             expected_highlight = loading_tail
         await pilot.pause()
@@ -1317,9 +1315,7 @@ async def test_append_does_not_steal_focus_or_highlight_a_new_row():
         list_view.focus()
         list_view.index = len(list_view.children) - 1
         await pane.show_older_conversations_loading()
-        collapse_button = app.query_one(
-            "#personas-inspector-rail-collapse", Button
-        )
+        collapse_button = app.query_one("#personas-inspector-rail-collapse", Button)
         collapse_button.focus()
         await pilot.pause()
         assert collapse_button.has_focus is True

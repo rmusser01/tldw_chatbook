@@ -9,10 +9,19 @@ from types import SimpleNamespace
 import pytest
 
 from tldw_chatbook.Chat.console_ephemeral import ACTION_SAVE_CHAT
+
+# The menu mounts the real composer/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
+
+import asyncio
+
+from textual import on
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
     ACTION_GENERATE_CAPTION,
     ACTION_GENERATE_IMAGE,
     ACTION_ATTACH_CONTEXT,
+    ACTION_LIBRARY_ACCESS,
     ACTION_IMPERSONATE,
     ACTION_SAVE_CHATBOOK,
     build_composer_menu_entries,
@@ -40,6 +49,7 @@ def test_menu_lists_the_requested_actions_in_order():
     assert ids == [
         "prompts",
         ACTION_ATTACH_CONTEXT,
+        ACTION_LIBRARY_ACCESS,
         ACTION_SAVE_CHATBOOK,
         ACTION_GENERATE_IMAGE,
         ACTION_GENERATE_CAPTION,
@@ -114,23 +124,26 @@ def test_prompts_preserves_normal_and_temporary_menu_prefixes():
         can_save_chatbook=False,
     )
 
-    assert [entry.action_id for entry in normal[:3]] == [
+    assert [entry.action_id for entry in normal[:4]] == [
         "prompts",
         ACTION_ATTACH_CONTEXT,
+        ACTION_LIBRARY_ACCESS,
         ACTION_SAVE_CHATBOOK,
     ]
-    assert [entry.action_id for entry in temporary[:4]] == [
+    assert [entry.action_id for entry in temporary[:5]] == [
         ACTION_SAVE_CHAT,
         "prompts",
         ACTION_ATTACH_CONTEXT,
+        ACTION_LIBRARY_ACCESS,
         ACTION_SAVE_CHATBOOK,
     ]
     assert [entry.action_id for entry in normal[1:]] == [
         entry.action_id for entry in temporary[2:]
     ]
     # Existing temporary-chat policy still changes Save Chatbook's visible
-    # disabled reason; the new row must not flatten that distinction.
-    assert normal[2].description != temporary[3].description
+    # disabled reason; the new rows (Library access included) must not
+    # flatten that distinction.
+    assert normal[3].description != temporary[4].description
 
 
 @pytest.mark.unit
@@ -146,13 +159,14 @@ def test_prompt_improvement_undo_is_conditional_and_stays_in_hamburger_menu():
     actionable = build_composer_menu_entries(improvement_undo_available=True)
 
     assert action_undo not in {entry.action_id for entry in idle}
-    assert [entry.action_id for entry in actionable[:4]] == [
+    assert [entry.action_id for entry in actionable[:5]] == [
         "prompts",
         ACTION_ATTACH_CONTEXT,
+        ACTION_LIBRARY_ACCESS,
         ACTION_SAVE_CHATBOOK,
         action_undo,
     ]
-    undo = actionable[3]
+    undo = actionable[4]
     assert undo.label == "Undo Prompt change"
     assert undo.description == (
         "Restore the draft captured before the latest Prompt change."
@@ -163,10 +177,11 @@ def test_prompt_improvement_undo_is_conditional_and_stays_in_hamburger_menu():
         ephemeral=True,
         improvement_undo_available=True,
     )
-    assert [entry.action_id for entry in temporary[:5]] == [
+    assert [entry.action_id for entry in temporary[:6]] == [
         ACTION_SAVE_CHAT,
         "prompts",
         ACTION_ATTACH_CONTEXT,
+        ACTION_LIBRARY_ACCESS,
         ACTION_SAVE_CHATBOOK,
         action_undo,
     ]
@@ -709,6 +724,51 @@ def test_console_active_session_is_ephemeral_reads_the_active_flag():
     assert screen._console_active_session_is_ephemeral() is True
 
 
+def _state(**overrides):
+    from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+
+    base = dict(
+        provider_label="Provider: Anthropic",
+        model_label="Model: claude-3-haiku",
+        assistant_label="Assistant: General",
+        rag_label="RAG: off",
+        sources_label="Sources: 0 staged",
+        tools_label="Tools: 0 ready",
+        approvals_label="Approvals: 0 pending",
+        sources_active=False,
+        tools_active=False,
+        approvals_active=False,
+    )
+    base.update(overrides)
+    return ConsoleControlState(**base)
+
+
+
+def _temporary_segment_visible(console) -> bool:
+    """TASK-35160: the Temporary marker is a SEGMENT on the one-line strip."""
+    from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusText
+
+    line = console.query_one("#console-status-text", ConsoleStatusText)
+    return any(
+        name == "temporary" for name, _start, _end in line.segment_spans
+    )
+
+
+def _temporary_segment_text(console) -> str:
+    from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusText
+
+    line = console.query_one("#console-status-text", ConsoleStatusText)
+    renderable = line.renderable
+    text = (
+        renderable.plain if hasattr(renderable, "plain") else str(line.render())
+    )
+    for name, start, end in line.segment_spans:
+        if name == "temporary":
+            return text[start:end]
+    return ""
+
+
+
 @pytest.mark.asyncio
 async def test_activate_console_session_for_workspace_keeps_temporary_chip_honest():
     """task-7 review: three callers reach ``_activate_console_session_for_
@@ -743,14 +803,13 @@ async def test_activate_console_session_for_workspace_keeps_temporary_chip_hones
         # trusting the chip's compose-time default.
         assert store.active_session_id == temp.id
         console._sync_console_temporary_chip()
-        chip = console.query_one("#console-temporary-chip", ConsoleTemporaryChip)
-        assert chip.display is True
+        assert _temporary_segment_visible(console) is True
 
         # "switch to an existing session in the workspace" branch.
         console._workspace._activate_console_session_for_workspace("workspace-b")
         await pilot.pause()
         assert store.active_session_id == normal.id
-        assert chip.display is False, (
+        assert _temporary_segment_visible(console) is False, (
             "switching to a saved session's workspace must clear a stale Temporary chip"
         )
 
@@ -758,8 +817,8 @@ async def test_activate_console_session_for_workspace_keeps_temporary_chip_hones
         console._workspace._activate_console_session_for_workspace("workspace-a")
         await pilot.pause()
         assert store.active_session_id == temp.id
-        assert chip.display is True
-        assert "Temporary" in str(chip.render())
+        assert _temporary_segment_visible(console) is True
+        assert "Temporary" in _temporary_segment_text(console)
 
         # "create a new session for the workspace" branch: a brand-new
         # workspace with no existing session. `create_session` here never
@@ -768,7 +827,7 @@ async def test_activate_console_session_for_workspace_keeps_temporary_chip_hones
         console._workspace._activate_console_session_for_workspace("workspace-c")
         await pilot.pause()
         assert store.active_session_id not in (normal.id, temp.id)
-        assert chip.display is False
+        assert _temporary_segment_visible(console) is False
 
 
 @pytest.mark.asyncio
@@ -805,8 +864,7 @@ async def test_character_picker_new_chat_clears_a_stale_temporary_chip():
         temp = store.create_session(title="Temp", ephemeral=True)
         store.switch_session(temp.id)
         console._sync_console_temporary_chip()
-        chip = console.query_one("#console-temporary-chip", ConsoleTemporaryChip)
-        assert chip.display is True
+        assert _temporary_segment_visible(console) is True
 
         # Bypass the real character-card DB lookup (irrelevant to this
         # regression) while exercising the real create/switch/notify body.
@@ -820,7 +878,7 @@ async def test_character_picker_new_chat_clears_a_stale_temporary_chip():
         await pilot.pause()
 
         assert store.active_session_id != temp.id
-        assert chip.display is False
+        assert _temporary_segment_visible(console) is False
 
 
 @pytest.mark.asyncio
@@ -839,6 +897,7 @@ async def test_workspace_conversation_row_click_on_open_tab_keeps_temporary_chip
     from Tests.UI.test_console_native_chat_flow import (
         _click_console_workspace_conversation_for_session,
         _configure_native_ready_console,
+        _workspace_conversation_row_by_id,
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
     from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -860,20 +919,23 @@ async def test_workspace_conversation_row_click_on_open_tab_keeps_temporary_chip
         normal = store.create_session(title="Normal chat")
         temp = store.create_session(title="Temp chat", ephemeral=True)
         await console._sync_native_console_chat_ui()
-        await pilot.pause()
+        # The rail rows are recomposed on a later screen tick than one pause.
+        for _ in range(40):
+            if _workspace_conversation_row_by_id(console, f"native:{temp.id}"):
+                break
+            await pilot.pause(0.05)
 
-        chip = console.query_one("#console-temporary-chip", ConsoleTemporaryChip)
         # `temp` is active (created last). Establish a verified-correct
         # baseline via the real sync path.
         assert store.active_session_id == temp.id
         console._sync_console_temporary_chip()
-        assert chip.display is True
+        assert _temporary_segment_visible(console) is True
 
         await _click_console_workspace_conversation_for_session(
             console, pilot, store, normal.id
         )
         await pilot.pause(0.2)
-        assert chip.display is False, (
+        assert _temporary_segment_visible(console) is False, (
             "switching onto the already-open saved tab must clear a stale "
             "Temporary chip"
         )
@@ -882,8 +944,8 @@ async def test_workspace_conversation_row_click_on_open_tab_keeps_temporary_chip
             console, pilot, store, temp.id
         )
         await pilot.pause(0.2)
-        assert chip.display is True
-        assert "Temporary" in str(chip.render())
+        assert _temporary_segment_visible(console) is True
+        assert "Temporary" in _temporary_segment_text(console)
 
 
 @pytest.mark.asyncio
@@ -935,13 +997,12 @@ async def test_temporary_chip_survives_screen_recreation_return():
         assert store.active_session_id is not None
         assert console._console_active_session_is_ephemeral() is True
 
-        chip = console.query_one("#console-temporary-chip", ConsoleTemporaryChip)
-        assert chip.display is True, (
-            "the Temporary chip must be visible after the real mount/"
+        assert _temporary_segment_visible(console) is True, (
+            "the Temporary segment must be visible after the real mount/"
             "restore navigation path, not just after a manual "
             "_sync_console_temporary_chip() call"
         )
-        assert "Temporary" in str(chip.render())
+        assert "Temporary" in _temporary_segment_text(console)
 
 
 @pytest.mark.unit
@@ -951,17 +1012,35 @@ def test_temporary_chip_posts_save_requested_on_activation():
     Mirrors ``ConsoleApprovalsChip``'s own activation contract test -- Task 8
     wires the handler for this message.
     """
+    from textual.app import App, ComposeResult
+
     from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleStatusChips,
+        ConsoleStatusText,
         ConsoleTemporaryChip,
     )
 
-    chip = ConsoleTemporaryChip.__new__(ConsoleTemporaryChip)
-    posted: list[object] = []
-    chip.post_message = lambda message: posted.append(message)  # type: ignore[assignment]
+    captured: list[object] = []
 
-    chip.action_save_chat()
+    class _Host(App):
+        def compose(self) -> ComposeResult:
+            yield ConsoleStatusChips(_state(), id="console-status-chips")
 
-    assert any(isinstance(m, ConsoleTemporaryChip.SaveRequested) for m in posted)
+        @on(ConsoleTemporaryChip.SaveRequested)
+        def _capture(self, event: ConsoleTemporaryChip.SaveRequested) -> None:
+            captured.append(event)
+
+    async def _drive():
+        app = _Host()
+        async with app.run_test(size=(160, 6)) as pilot:
+            await pilot.pause()
+            line = app.query_one("#console-status-text", ConsoleStatusText)
+            line.action_open_segment("temporary")
+            await pilot.pause()
+
+    asyncio.run(_drive())
+
+    assert any(isinstance(m, ConsoleTemporaryChip.SaveRequested) for m in captured)
 
 
 @pytest.mark.unit
@@ -1245,6 +1324,26 @@ def test_save_chat_menu_choice_dispatches_to_the_promote_handler():
     )
 
     screen._handle_console_composer_menu_choice(ACTION_SAVE_CHAT)
+
+    assert calls == [True]
+
+
+@pytest.mark.unit
+def test_library_access_menu_choice_opens_the_policy_editor():
+    """Review (TASK-35160 follow-up 4): the Library access row reaches the
+    real policy-editor open path -- the SAME ``open_access`` the removed
+    status-line segment's click used, not a second implementation."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = ChatScreen.__new__(ChatScreen)
+    calls: list[bool] = []
+    screen._library_policy = SimpleNamespace(
+        open_access=lambda: calls.append(True)
+    )
+
+    screen._handle_console_composer_menu_choice(ACTION_LIBRARY_ACCESS)
 
     assert calls == [True]
 

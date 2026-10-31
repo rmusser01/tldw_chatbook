@@ -1,0 +1,5 @@
+# Two threads in ONE process each try the global managed-acquisition session lease (same store), as the wizard's Voice (OmniVoice) and Speech (Parakeet) install workers would.
+# Script: lease_test.py (ModelArtifactService in a tmp root; ArtifactOperationLease(ACQUISITION_SESSION_LEASE_KEY, EXCLUSIVE, timeout 0.1s))
+second-thread lease attempt: ArtifactLeaseTimeoutError
+# acquisition.py:1202-1205 maps ArtifactLeaseTimeoutError -> AcquisitionBusyError('another managed acquisition session is already active');
+# model_browser_state.py:534-536 renders it as: 'Another {model_label} install is already in progress. Try again shortly.'

@@ -139,12 +139,9 @@ def test_import_legacy_conversation_without_sidecar(db, tmp_path) -> None:
 def test_imported_library_activity_remains_inert_sidecar_data(db) -> None:
     conversation_id = _seed_conversation(db)
     _seed_library_activity(db, conversation_id)
-    document = build_trajectory_export(
-        db, conversation_id, include_payloads=True
-    )
+    document = build_trajectory_export(db, conversation_id, include_payloads=True)
     assert any(
-        row["event_kind"] == "library_activity"
-        for row in document["trajectory_rows"]
+        row["event_kind"] == "library_activity" for row in document["trajectory_rows"]
     )
 
     snapshot = load_trajectory_snapshot(document)

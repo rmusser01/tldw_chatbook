@@ -662,9 +662,7 @@ def test_reset_all_clears_legacy_and_revision_bumps_every_memory_and_event() -> 
         active_leaf_message_id=leaf_id,
         before_message_id=None,
     )
-    db.set_conversation_context_summary(
-        conversation_id, "Legacy recap.", root_id
-    )
+    db.set_conversation_context_summary(conversation_id, "Legacy recap.", root_id)
     repository = ConsoleContextRepository(db)
     base_memory = ConsoleMemoryRecord(
         memory_id="reset-all-memory-1",

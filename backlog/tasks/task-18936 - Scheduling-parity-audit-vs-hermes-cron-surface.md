@@ -1,10 +1,10 @@
 ---
 id: TASK-18936
 title: 'Scheduling parity audit vs hermes-agent cron surface'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-19 10:25'
-updated_date: '2026-08-19 10:25'
+updated_date: '2026-10-11 00:00'
 labels:
   - scheduling
   - audit
@@ -49,12 +49,42 @@ Audit of chatbook's Scheduling module against hermes-agent's cron surface, perfo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 This audit's inventory claims are re-verified against the implementing code at implementation time (file paths, handler registry, workbench actions) and corrections recorded here — at minimum: `tldw_chatbook/Scheduling/{models,db/scheduled_tasks_db,services/scheduling_service,scheduler/loop,scheduler/queue}.py`, `tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py`, handler wiring in `app.py` (~line 6829)
+- [x] #1 This audit's inventory claims are re-verified against the implementing code at implementation time (file paths, handler registry, workbench actions) and corrections recorded here — at minimum: `tldw_chatbook/Scheduling/{models,db/scheduled_tasks_db,services/scheduling_service,scheduler/loop,scheduler/queue}.py`, `tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py`, handler wiring in `app.py` (~line 6829) — DONE 2026-10-11 at dev `9f8533686c`; corrections recorded in the Re-verification note below (schema v7; six handler keys, not three; wiring moved to `app_service_wiring.py` ~2725-2830/3560; missed-fire/run-now/timeout gaps closed by TASK-18937/18938/18939)
 - [x] #2 Each identified gap has a decision recorded: file a follow-up task, fold into an existing task, or explicitly reject with a reason (e.g. pluggable scheduler/scale-to-zero as not relevant to local-first) — DONE 2026-08-19: missed-fire → TASK-18937; run-now/retry → TASK-18938; timeout knob → TASK-18939; server-offloaded agent_task execution (owner's stated long-term goal, tldw_server as hermes-style hosted gateway) → TASK-18940 (ADR required, amends ADR-018); pluggable CronScheduler/scale-to-zero → REJECTED, hosted-gateway concept with no local-first relevance; per-job model picker → folded into TASK-18940 AC#7
 - [x] #3 The missed-fire gap is precisely characterized: what happens today when the app is closed across a due one_time reminder and across N missed recurring occurrences (verified against `mark_reminder_dispatched` and `_compute_next_run_at`, not asserted from reading alone — a seeded-DB test is acceptable evidence) — DONE 2026-08-19: probe evidence recorded in the Description (overdue fires once late and looks like on-time success; recurring collapses N owed occurrences to 1; `missed_at` never written by any path)
-- [ ] #4 Findings and decisions are summarized to the owner and the "as powerful as hermes" claim is answered with evidence (verdict table above is the starting point, corrected as needed)
-- [ ] #5 Any follow-up tasks created carry IDs swept against all remotes + worktrees at creation time (lessons-backlog-hygiene)
+- [x] #4 Findings and decisions are summarized to the owner and the "as powerful as hermes" claim is answered with evidence (verdict table above is the starting point, corrected as needed) — DONE 2026-10-11: corrected verdict table in the Owner summary below; answer is now "as powerful or better on every local-execution axis; the one net gap (server-executed agent work) is TASK-18940, in progress"
+- [x] #5 Any follow-up tasks created carry IDs swept against all remotes + worktrees at creation time (lessons-backlog-hygiene) — DONE 2026-10-11 sweep re-run: TASK-18937/18938/18939/18940 exist exactly once each in `backlog/tasks/` (no duplicates in tasks/ or drafts/); 18937-18939 are Done with implementation evidence, 18940 In Progress
 <!-- AC:END -->
+
+### Re-verification (2026-10-11, dev `9f8533686c`)
+
+The original inventory was written 2026-08-19; the module has moved. Corrections, all verified in code this date:
+
+1. **Handler registry is six keys, not three.** `app_service_wiring.py` builds `handlers = {"reminder" (ReminderHandler→NotificationDispatchService), "watchlist_job" (WatchlistCheckHandler, conditional), "briefing_job" (briefing_handler, conditional), "dreams_cycle", "automation_definition"}` at wiring (~lines 2769-2821) and adds `"dream_track_check"` later (~3560). The audit's "three registered handlers" is stale. Handler wiring is no longer in `app.py` (~6829); it lives in `tldw_chatbook/app_service_wiring.py`.
+2. **Schema is v7, not the early track.** `ScheduledTasksDB._CURRENT_SCHEMA_VERSION = 7`; `reminder_tasks` now carries `missed_at`, `missed_count`, and `timeout_seconds` (columns written at the dispatch seam, per TASK-18937/18939).
+3. **The missed-fire GAP is closed** (TASK-18937, Done): `mark_reminder_dispatched` writes `missed_at` + `missed_count` for elapsed undispatched occurrences; Queue tab and detail pane render a distinct "missed while away" state (◇ glyph) derived from `missed_at`, not the status enum. The probe findings in the Description above describe pre-18937 behavior and are retained as historical evidence.
+4. **The run-now/retry GAP is closed** (TASK-18938, Done): `SchedulerLoop.run_reminder_now` shares the `dispatch_reminder` seam with `tick`; workbench exposes `action_run_task_now` and `action_pause_resume` — the audit's "no run-control actions at all" is stale.
+5. **The timeout GAP is closed** (TASK-18939, Done): `[scheduling] handler_timeout_seconds` (default 300, ≤0 disables) + per-task `reminder_tasks.timeout_seconds`.
+6. **Automation execution has partially landed since the audit.** `automation_definition` rows are real queue rows dispatched locally (the `recurring_question` family per the wiring comment block); `agent_task` family execution remains the server-seam work of TASK-18940 (In Progress). The audit's blanket "execution is `execution_unavailable`" claim is therefore now true only for the `agent_task` family.
+7. **New module files not in the audit's inventory** (all verified present): `recovery.py`, `task_incidents.py`, `automation_execution.py`, `automation_health.py`, `automation_preview.py`, `scheduler_heartbeat.py`, `schedule_compute.py`, `schedule_input_parsing.py`, `schedule_vocabulary.py`, `slot_keys.py`, plus `handlers/{automation,dreams,dream_track,reminder,watchlist_check,briefing}_handler.py` and the `schedules/` workbench sub-package (`conflicts_tab.py`, `definition_detail.py`, `results_tab.py`, `task_detail.py`, `unified_rows.py`, `workbench_host_screen.py`, `sync_status_widget.py`).
+
+### Owner summary (2026-10-11) — "as powerful as hermes?" corrected verdict table
+
+| Capability | Audit verdict (2026-08-19) | Current verdict (2026-10-11) |
+|---|---|---|
+| Core engine (poll, dispatch, cron, tz) | PARITY | PARITY (unchanged; honest startup reporting retained) |
+| Storage durability + audit | PARITY OR BETTER | BETTER (schema v7; incidents + heartbeat added) |
+| Sync/offline local-first | BETTER | BETTER (unchanged) |
+| Missed-fire surfacing | GAP | **PARITY** — closed by TASK-18937 |
+| Manual run / Run now | GAP | **PARITY** — closed by TASK-18938 |
+| Retry/backoff/run controls | GAP | **PARITY** — run-now doubles as retry; pause/resume live |
+| Execution-timeout configurability | GAP | **PARITY** — closed by TASK-18939 |
+| Automation Blueprints execution | NET GAP (execution_unavailable) | PARTIAL — `recurring_question` executes locally; `agent_task` awaits TASK-18940 (server seam, In Progress) |
+| Per-job model picker | GAP (folded into 18940 AC#7) | GAP — pending TASK-18940 |
+| Pluggable scheduler / scale-to-zero | GAP | REJECTED (hosted-gateway concept; no local-first relevance) |
+| First-class surfacing | Rough PARITY | PARITY (routed workbench + sub-package panes) |
+
+**Answer to the owner's claim:** on local-execution axes the module is now as powerful as or better than hermes's cron surface — every gap the audit identified except server-executed agent work has been closed by the 18937-18939 follow-ups. The single remaining net gap is server-offloaded `agent_task` execution (hermes runs scheduled agent work via its gateway; chatbook's server seam is TASK-18940, In Progress), which is also the owner's stated long-term direction (tldw_server as the hosted gateway). Local reminders execute offline by design per ADR-018 and remain the offline fallback.
 
 ## Implementation Plan
 
@@ -68,3 +98,11 @@ Reason: this is an audit/verification task; any follow-up that changes schedulin
 3. Record per-gap decisions (follow-up tasks filed with swept IDs, or documented rejections)
 4. Summarize verdict table to the owner
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+- Approach: audit-closure only — no code changes. The 2026-08-19 audit work (inventory, missed-fire probe, follow-up filing) was already complete for ACs #2/#3; this session closed the remaining ACs #1/#4/#5.
+- AC#1: re-verified every inventory claim against dev `9f8533686c`; recorded seven corrections in the "Re-verification (2026-10-11)" section (handler count 3→6, wiring location app.py→app_service_wiring.py, schema v1-era→v7, three gap closures landed via 18937/18938/18939, partial automation execution, new module files).
+- AC#4: corrected verdict table + owner answer recorded in the "Owner summary (2026-10-11)" section.
+- AC#5: re-swept TASK-18937/18938/18939/18940 — each exists exactly once in backlog/tasks/, no drafts or duplicates.
+- Modified files: this task file only.

@@ -183,7 +183,9 @@ async def test_the_transcribing_label_truncates_from_the_right_not_the_left():
         chip = composer.query_one("#console-voice-status", Static)
         painted = _painted(chip)
         assert "◉" in painted
-        assert "Transcr" in painted, f"expected the label's start to survive, got {painted!r}"
+        assert "Transcr" in painted, (
+            f"expected the label's start to survive, got {painted!r}"
+        )
         assert "scribing" not in painted, (
             f"the label was still truncated from the left, got {painted!r}"
         )
@@ -366,7 +368,9 @@ async def test_production_css_busy_status_stays_meaningful_at_narrow_width():
         chip = composer.query_one("#console-voice-status", Static)
         painted = _painted(chip)
         assert painted == "Queued"
-        assert str(chip.tooltip) == "Local transcription busy — dictation will run next."
+        assert (
+            str(chip.tooltip) == "Local transcription busy — dictation will run next."
+        )
         assert composer.query_one("#console-dictation").region.right <= app.size.width
         assert _visible(chip)
         assert chip.region.x + chip.region.width <= composer.region.right
@@ -439,7 +443,9 @@ async def test_the_mic_tooltips_claim_nothing_the_backend_no_longer_does():
             tooltip = str(mic.tooltip)
             lowered = tooltip.lower()
             assert tooltip, f"{state} has no tooltip"
-            assert len(tooltip) <= 90, f"{state} tooltip is too long to hover: {tooltip}"
+            assert len(tooltip) <= 90, (
+                f"{state} tooltip is too long to hover: {tooltip}"
+            )
             for word in forbidden:
                 assert word not in lowered, f"{state} tooltip still claims {word!r}"
 

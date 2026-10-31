@@ -46,7 +46,9 @@ class ConversationAttachPicker(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with Vertical(classes="conversation-attach-body"):
             yield Label("Attach to conversation", markup=False)
-            yield Input(placeholder="Search conversations…", id="conversation-attach-search")
+            yield Input(
+                placeholder="Search conversations…", id="conversation-attach-search"
+            )
             yield ListView(id="conversation-attach-list")
             with Vertical(id="conversation-attach-actions"):
                 yield Button(

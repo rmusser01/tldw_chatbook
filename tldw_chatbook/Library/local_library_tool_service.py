@@ -147,9 +147,7 @@ def _bound_preview(value: Any) -> str:
 
 def _bound_organization_text(value: Any, *, max_chars: int) -> str:
     """Display-normalize organization metadata at its contract-specific bound."""
-    text, _ = normalize_display_text(
-        str(value)[:max_chars], max_bytes=max_chars * 4
-    )
+    text, _ = normalize_display_text(str(value)[:max_chars], max_bytes=max_chars * 4)
     return text
 
 
@@ -208,9 +206,7 @@ def _note_organization_metadata(raw: Mapping[str, Any]) -> dict[str, Any]:
         "folders_truncated": bool(raw.get("folders_truncated")),
         "keyword_metadata": keyword_metadata,
         "keyword_metadata_total": int(raw.get("keyword_metadata_total") or 0),
-        "keyword_metadata_truncated": bool(
-            raw.get("keyword_metadata_truncated")
-        ),
+        "keyword_metadata_truncated": bool(raw.get("keyword_metadata_truncated")),
         "organization_version": str(raw.get("organization_version") or ""),
         "trust_notice": _NOTE_ORGANIZATION_TRUST_NOTICE,
     }
@@ -220,7 +216,9 @@ def _note_organization_metadata(raw: Mapping[str, Any]) -> dict[str, Any]:
     return metadata
 
 
-def _notes_organization_error(exc: NotesOrganizationRepositoryError) -> LibraryToolError:
+def _notes_organization_error(
+    exc: NotesOrganizationRepositoryError,
+) -> LibraryToolError:
     """Translate private Notes reasons to bounded public recovery guidance."""
 
     reason = str(getattr(exc, "reason_code", "invalid_organization"))
@@ -500,9 +498,7 @@ class LocalLibraryToolService:
         """Private in-process entry retaining opaque transaction authority."""
 
         try:
-            return self._dispatch(
-                tool_name, arguments, agent_lesson_context=context
-            )
+            return self._dispatch(tool_name, arguments, agent_lesson_context=context)
         except LibraryToolError as exc:
             return exc.to_payload()
         except (sqlite3.Error, OSError):
@@ -670,7 +666,12 @@ class LocalLibraryToolService:
                 _, folder_sync_id = parse_public_id(
                     arguments["folder_id"], expected_type="folder"
                 )
-            if query is None and keyword is None and folder is None and folder_sync_id is None:
+            if (
+                query is None
+                and keyword is None
+                and folder is None
+                and folder_sync_id is None
+            ):
                 raise _invalid(
                     "at least one of query, keyword, folder_id, or folder is required"
                 )
@@ -841,7 +842,9 @@ class LocalLibraryToolService:
         max_chars = validate_max_chars(arguments.get("max_chars"))
         cursor = self._cursor_state(arguments, public_id)
         start = cursor["off"] if cursor is not None else 0
-        detail = backend.get_library_media_text(raw_id, start=start, max_chars=max_chars)
+        detail = backend.get_library_media_text(
+            raw_id, start=start, max_chars=max_chars
+        )
         if detail is None:
             raise _not_found()
         revision = str(detail.get("version"))
@@ -921,9 +924,7 @@ class LocalLibraryToolService:
         if self._policy_enforcer is None:
             return
         try:
-            self._policy_enforcer.require_allowed(
-                action_id=SAVE_NOTE_POLICY_ACTION_ID
-            )
+            self._policy_enforcer.require_allowed(action_id=SAVE_NOTE_POLICY_ACTION_ID)
         except PolicyDeniedError as exc:
             raise LibraryToolError(
                 ERROR_FEATURE_UNAVAILABLE,
@@ -931,9 +932,7 @@ class LocalLibraryToolService:
                 f" ({SAVE_NOTE_POLICY_ACTION_ID}): {exc.user_message}",
                 details={
                     "policy_action": SAVE_NOTE_POLICY_ACTION_ID,
-                    "reason_code": str(
-                        getattr(exc, "reason_code", "authority_denied")
-                    ),
+                    "reason_code": str(getattr(exc, "reason_code", "authority_denied")),
                 },
             ) from exc
 
@@ -975,9 +974,7 @@ class LocalLibraryToolService:
             )
 
             try:
-                portable_collision_key(
-                    folder, maximum=SAVE_NOTE_FOLDER_MAX_CHARS
-                )
+                portable_collision_key(folder, maximum=SAVE_NOTE_FOLDER_MAX_CHARS)
             except NotesOrganizationRepositoryError:
                 raise _invalid(
                     "folder must be a single valid folder name (one level, no slashes)"
@@ -1029,13 +1026,14 @@ class LocalLibraryToolService:
                 raise _invalid("ensure_keywords must not contain duplicates")
             normalized_keywords.append(normalized)
 
-        expected_organization_version = arguments.get(
-            "expected_organization_version"
-        )
+        expected_organization_version = arguments.get("expected_organization_version")
         if expected_organization_version is not None and (
             not isinstance(expected_organization_version, str)
             or len(expected_organization_version) != ORGANIZATION_VERSION_CHARS
-            or any(character not in "0123456789abcdef" for character in expected_organization_version)
+            or any(
+                character not in "0123456789abcdef"
+                for character in expected_organization_version
+            )
         ):
             raise _invalid(
                 "expected_organization_version must be a 64-character lowercase hexadecimal token"
@@ -1043,7 +1041,11 @@ class LocalLibraryToolService:
         organization_requested = bool(
             normalized_keywords or folder is not None or folder_sync_id is not None
         )
-        if note_id is not None and organization_requested and expected_organization_version is None:
+        if (
+            note_id is not None
+            and organization_requested
+            and expected_organization_version is None
+        ):
             raise _invalid(
                 "expected_organization_version is required for organization-changing updates"
             )
@@ -1078,9 +1080,7 @@ class LocalLibraryToolService:
         self._enforce_save_note_policy()
         if "agent-lesson" in validated["ensure_keywords"] and (
             "_agent_lesson_context"
-            not in inspect.signature(
-                backend.save_note_with_organization
-            ).parameters
+            not in inspect.signature(backend.save_note_with_organization).parameters
         ):
             raise LibraryToolError(
                 ERROR_APPROVAL_REQUIRED,
@@ -1420,5 +1420,6 @@ class LocalLibraryToolService:
             if serialized_size(payload) <= MAX_RESULT_BYTES:
                 break
         return payload
+
 
 __all__ = ["LocalLibraryToolService"]

@@ -72,9 +72,7 @@ class _ControlledEvalRunner:
         selected = self.results[:max_samples] if max_samples else self.results
         for completed, result in enumerate(selected, 1):
             if progress_callback:
-                callback_result = progress_callback(
-                    completed, len(selected), result
-                )
+                callback_result = progress_callback(completed, len(selected), result)
                 if inspect.isawaitable(callback_result):
                     await callback_result
         return selected
@@ -137,6 +135,7 @@ class TestEvaluationOrchestrator:
     @pytest.mark.asyncio
     async def test_cancel_all_evaluations(self, orchestrator):
         """Test asynchronous close drains all active evaluations."""
+
         async def owned_work(run_id):
             try:
                 await asyncio.Event().wait()
@@ -145,9 +144,7 @@ class TestEvaluationOrchestrator:
 
         for index in range(3):
             run_id = f"run_{index}"
-            orchestrator._active_tasks[run_id] = asyncio.create_task(
-                owned_work(run_id)
-            )
+            orchestrator._active_tasks[run_id] = asyncio.create_task(owned_work(run_id))
         await asyncio.sleep(0)
 
         with patch.object(orchestrator.db, "close") as close:
@@ -360,9 +357,7 @@ class TestEvaluationOrchestrator:
         assert f"{failure_source} exploded" in run["error_message"]
 
     @pytest.mark.asyncio
-    async def test_error_results_are_retained_and_make_run_failed(
-        self, orchestrator
-    ):
+    async def test_error_results_are_retained_and_make_run_failed(self, orchestrator):
         task_id, model_id = _seed_run_inputs(orchestrator)
         results = [
             _orchestrator_result("clean"),
@@ -422,9 +417,7 @@ class TestEvaluationOrchestrator:
         assert run_id not in orchestrator._active_tasks
 
     @pytest.mark.asyncio
-    async def test_run_started_callback_failure_starts_no_samples(
-        self, orchestrator
-    ):
+    async def test_run_started_callback_failure_starts_no_samples(self, orchestrator):
         task_id, model_id = _seed_run_inputs(orchestrator)
         sample_started = False
 
@@ -544,9 +537,7 @@ class TestEvaluationOrchestrator:
         assert run_id not in orchestrator.concurrent_manager._active_runs
 
     @pytest.mark.asyncio
-    async def test_aclose_drains_active_run_before_closing_database(
-        self, orchestrator
-    ):
+    async def test_aclose_drains_active_run_before_closing_database(self, orchestrator):
         task_id, model_id = _seed_run_inputs(orchestrator)
         run_id_ready = asyncio.Future()
         sample_started = asyncio.Event()
@@ -561,7 +552,9 @@ class TestEvaluationOrchestrator:
                 "tldw_chatbook.Evals.eval_orchestrator.EvalRunner",
                 return_value=BlockingRunner([]),
             ),
-            patch.object(orchestrator.db, "close", wraps=orchestrator.db.close) as close,
+            patch.object(
+                orchestrator.db, "close", wraps=orchestrator.db.close
+            ) as close,
         ):
             run_task = asyncio.create_task(
                 orchestrator.run_evaluation(
@@ -656,6 +649,7 @@ class TestEvaluationOrchestrator:
             assert len(tasks) == 2
             assert tasks[0]["name"] == "Task 1"
             mock_list.assert_called_once()
+
 
 class TestOrchestratorIntegration:
     """Integration tests for the orchestrator."""

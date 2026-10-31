@@ -158,3 +158,77 @@ print('retired and reopened')
 @pytest.mark.parametrize('case', ['nested_failure','preexisting_failure','raw_success','raw_parser','core_success','core_parser'])
 def test_context_policy_preserves_enclosing_owners_and_native_failures(tmp_path,case):
     _run(tmp_path,case,'policy-review',script=_ENCLOSING,timeout=30)
+
+
+_WARM = _SCRIPT.split("assert config.get_cli_setting")[0] + r'''
+from tldw_chatbook.Backup_Recovery import raw_participants as raw,storage_admission as storage
+from tldw_chatbook.Chat import console_chat_controller as controller
+assert config.save_setting_to_cli_config('console','conversation_budget_tokens',1234)
+read=controller.ConsoleChatController._global_context_policy_overrides
+getter=controller.get_cli_setting
+owners=[]
+def observed(section,key,default=None):
+ owners.append(raw._runtime_operation())
+ return getter(section,key,default)
+controller.get_cli_setting=observed
+first=read(None)
+assert first.custom_budget_tokens==1234 and len(owners)==9 and owners[0] is not None
+assert read(None)==first
+assert len(owners)==9,'a warm read reopened the checked config operation'
+pause=storage._begin_local_pause()
+try:
+ try:read(None)
+ except bootstrap.RecoveryRequired as error:assert error.args==('storage_locally_paused',)
+ else:raise AssertionError('a local pause must still refuse after a warm read')
+finally:pause.resume()
+assert config.save_setting_to_cli_config('console','conversation_budget_tokens',4321)
+assert read(None).custom_budget_tokens==4321
+assert len(owners)==18 and owners[9] is not None and owners[9] is not owners[0]
+assert not storage._raw_operations and raw._runtime_operation() is None
+print('retired and reopened')
+'''
+
+
+def test_a_warm_context_policy_read_reuses_the_installed_config(tmp_path):
+    """TASK-33620.15.1: the Console sync reads these nine keys every tick.
+
+    Each read opened a full checked config operation (storage admission,
+    pause probes, pinned-directory opens) to read an unchanged in-memory
+    config: about half of the transcript sync's main-thread time, live. A
+    read of the same installed config now reuses the result; a local pause
+    still refuses, and a save is read through a fresh checked operation.
+    """
+    _run(tmp_path, "warm", "context-policy-warm", script=_WARM, timeout=30)
+
+
+_RELOADED = _SCRIPT.split("assert config.get_cli_setting")[0] + r'''
+from tldw_chatbook.Chat import console_chat_controller as controller
+assert config.save_setting_to_cli_config('console','conversation_budget_tokens',1234)
+read=controller.ConsoleChatController._global_context_policy_overrides
+getter=controller.get_cli_setting
+keys=[]
+def reloading(section,key,default=None):
+ keys.append(key)
+ if len(keys)==2:
+  fresh={**config._CONFIG_CACHE}
+  fresh['console']={**fresh['console'],'conversation_budget_tokens':4321}
+  config._CONFIG_CACHE=fresh
+ return getter(section,key,default)
+controller.get_cli_setting=reloading
+mixed=read(None)
+assert len(keys)==9 and mixed.custom_budget_tokens==4321
+assert read(None).custom_budget_tokens==4321
+assert len(keys)==18,'a read that straddled a reload was reused'
+assert read(None).custom_budget_tokens==4321
+assert len(keys)==18,'a read of one installed config was not reused'
+print('retired and reopened')
+'''
+
+
+def test_a_read_straddling_a_reload_is_not_reused(tmp_path):
+    """TASK-33620.15.1 review: only a read of one installed config is memoized.
+
+    A reload installed between the nine reads left a result mixing two
+    configs; keyed by the new dict, every later warm read would reuse it.
+    """
+    _run(tmp_path, "reloaded", "context-policy-reloaded", script=_RELOADED, timeout=30)

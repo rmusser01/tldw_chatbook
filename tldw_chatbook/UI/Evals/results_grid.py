@@ -181,7 +181,7 @@ FAILED_MARK = "—"
 
 
 def _join_target_names(names: Sequence[str]) -> str:
-    """"A", "A and B", or an Oxford-commaed "A, B, and C" -- every warned
+    """ "A", "A and B", or an Oxford-commaed "A, B, and C" -- every warned
     target must be individually named (see ``degenerate_canary_text``
     below), never collapsed to "N targets" or "a target", which is not
     actionable when a bench has several.
@@ -275,7 +275,11 @@ def _failure_summary(
 
     Returns:
         ``(failed, total, dominant_reason)``. ``dominant_reason`` is
-        ``None`` when nothing failed.
+        ``None`` when nothing failed. ``total`` counts ATTEMPTED cells
+        only -- for a run whose group is not yet completed that is below
+        the snapshot's full grid size, which is exactly why the
+        "All N cells failed … run the bench again" sentence must be gated
+        on group status (task-1511), never on ``failed == total`` alone.
     """
     total = len(cells)
     failed = 0
@@ -283,9 +287,40 @@ def _failure_summary(
     for cap_or_err in cells.values():
         if isinstance(cap_or_err, CellError):
             failed += 1
-            reason_counts[cap_or_err.reason] = reason_counts.get(cap_or_err.reason, 0) + 1
-    dominant_reason = max(reason_counts, key=reason_counts.__getitem__) if reason_counts else None
+            reason_counts[cap_or_err.reason] = (
+                reason_counts.get(cap_or_err.reason, 0) + 1
+            )
+    dominant_reason = (
+        max(reason_counts, key=reason_counts.__getitem__) if reason_counts else None
+    )
     return failed, total, dominant_reason
+
+
+def _rolled_up_group_status(run_statuses: Sequence[Any]) -> str:
+    """The run GROUP's status from its per-target runs' own statuses.
+
+    task-1511: the exact precedence ``EvalsViewModel.run_groups()``'s own
+    pivot applies (any run "running" -> "running"; else any "cancelled" or
+    run-level "failed" -> "cancelled"; else "completed", including the
+    "pending with nothing else alongside it" fall-through, which only a
+    group whose runs never started can hold) -- re-implemented here on
+    ``load_grid``'s own ``run_statuses`` rather than reading the view
+    model, because the grid is a WIDGET that renders from its own loaded
+    snapshot and must not pivot every run in the database (the same
+    cost-based ruling ``_register_grid_shortcuts`` already makes for the
+    same classification).
+
+    The two rules MUST stay in lockstep: the rail's leading glyph and the
+    grid's callout both claim to describe the same run, and a run that
+    reads "in flight" in the rail but "All cells failed — run the bench
+    again" in the grid is the exact divergence this roll-up exists to
+    prevent.
+    """
+    if any(status == "running" for status in run_statuses):
+        return "running"
+    if any(status in ("cancelled", "failed") for status in run_statuses):
+        return "cancelled"
+    return "completed"
 
 
 @dataclass(frozen=True)
@@ -405,7 +440,9 @@ def _probe_observed_in_target(
     """
     for snippet in snippets:
         cap = cells.get((snippet["id"], target_id))
-        if isinstance(cap, CellCapture) and any(tok.token == probe for tok in cap.top_k):
+        if isinstance(cap, CellCapture) and any(
+            tok.token == probe for tok in cap.top_k
+        ):
             return True
     return False
 
@@ -494,6 +531,12 @@ class ResultsGrid(NotifyMixin, Vertical):
         #: otherwise be unreachable from the grid entirely.
         self._probe_index: int = 0
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Hide inert grid commands when loading yielded no usable table."""
+        if any(binding.action == action for binding in self.BINDINGS):
+            return self._grid is not None
+        return super().check_action(action, parameters)
+
     # -- compose -----------------------------------------------------
 
     def compose(self) -> ComposeResult:
@@ -508,8 +551,7 @@ class ResultsGrid(NotifyMixin, Vertical):
             self._grid = load_grid(db, self._run_group_id)
         except ValueError:
             yield Static(
-                "This run's data could not be loaded; it may have been "
-                "deleted.",
+                "This run's data could not be loaded; it may have been deleted.",
                 id="evals-grid-error",
             )
             return
@@ -590,8 +632,52 @@ class ResultsGrid(NotifyMixin, Vertical):
         # same user-derived-text hazard the Statics above and
         # `degenerate_canary_text` below already guard against. Absent
         # entirely -- not an empty container -- when nothing failed.
+        #
+        # task-1511: the copy is gated on the GROUP's rolled-up status
+        # (`_rolled_up_group_status`, from this grid's own
+        # `run_statuses`). `_failure_summary`'s total counts ATTEMPTED
+        # cells, so for a run still in flight whose first K cells all
+        # failed, `failed == total_cells` is true while the run is still
+        # going -- "All N cells failed … then run the bench again" was a
+        # lie about a live run, and it stayed baked onto a hard-cancelled
+        # run's view forever (the self-correct-at-completion select()
+        # never fires for those). Only a COMPLETED group may claim "all
+        # cells" -- a completed run has attempted its full snapshot grid,
+        # so the sentence is true there and keeps its existing copy
+        # verbatim (consistent with the rail's ✓✗ all-cells-failed glyph
+        # for exactly that completed case, per TASK-1480's amendment).
         failed, total_cells, dominant_reason = self._failure_summary
-        if failed:
+        group_status = _rolled_up_group_status(self._grid.get("run_statuses") or ())
+        full_grid_size = len(snapshot.get("snippets") or ()) * len(
+            snapshot.get("targets") or ()
+        )
+        if group_status == "running":
+            # In flight: report the fact, prescribe nothing -- the run is
+            # still going and may yet capture the rest.
+            if failed:
+                yield Static(
+                    f"Run in flight — {failed} of {total_cells} attempted "
+                    f"cells failed so far — {dominant_reason}.",
+                    id="evals-grid-failure-callout",
+                    classes="ds-recovery-callout",
+                    markup=False,
+                )
+        elif group_status == "cancelled":
+            # Cancelled (or run-level failed, folded here exactly as the
+            # rail's ✗ glyph folds it): name the cancellation and the TRUE
+            # attempted/total proportions -- a partial grid is explained
+            # by the cancellation regardless of whether the attempted
+            # cells also failed, so this renders even with zero failures
+            # whenever the grid is partial.
+            if failed or total_cells < full_grid_size:
+                yield Static(
+                    f"Run cancelled — {total_cells} of {full_grid_size} cells "
+                    f"attempted, {failed} failed.",
+                    id="evals-grid-failure-callout",
+                    classes="ds-recovery-callout",
+                    markup=False,
+                )
+        elif failed:
             if failed == total_cells:
                 # Every cell failed: the run is otherwise unusable, so name
                 # the concrete next step (bench Run is recoverable -- see
@@ -604,7 +690,9 @@ class ResultsGrid(NotifyMixin, Vertical):
             else:
                 # Partial failure: the run still has usable data, so this
                 # states the fact without prescribing a remedy.
-                failure_text = f"{failed} of {total_cells} cells failed — {dominant_reason}."
+                failure_text = (
+                    f"{failed} of {total_cells} cells failed — {dominant_reason}."
+                )
             yield Static(
                 failure_text,
                 id="evals-grid-failure-callout",
@@ -665,12 +753,8 @@ class ResultsGrid(NotifyMixin, Vertical):
             return
         self._render_table()
         self._render_header()
-        # `l`/`b`/`s` are advertised in the footer the instant a run group
-        # is selected (see evals_screen.py's _register_grid_shortcuts),
-        # but Textual key bindings only resolve against the FOCUSED
-        # widget's ancestor chain -- nothing focuses the grid's DataTable
-        # by default, so those keys would be dead until the user tabs or
-        # clicks in, silently contradicting what the footer just promised.
+        # Start in the table so grid commands are immediately reachable.
+        # The screen projects this binding scope into its footer and F1 help.
         self.query_one("#evals-grid-table", DataTable).focus()
 
     # -- baseline option plumbing -------------------------------------
@@ -856,7 +940,9 @@ class ResultsGrid(NotifyMixin, Vertical):
             return
         bench_name = str(self._grid["snapshot"].get("bench_name") or "run")
         safe_name = (
-            "".join(c for c in bench_name if c.isalnum() or c in (" ", "-", "_")).strip()
+            "".join(
+                c for c in bench_name if c.isalnum() or c in (" ", "-", "_")
+            ).strip()
             or "run"
         )
         filters = Filters(
@@ -888,7 +974,9 @@ class ResultsGrid(NotifyMixin, Vertical):
         try:
             validated_path = validate_path_simple(selected_path, require_exists=False)
         except ValueError as exc:
-            logger.warning(f"Rejected results-grid export path {selected_path!r}: {exc}")
+            logger.warning(
+                f"Rejected results-grid export path {selected_path!r}: {exc}"
+            )
             self._notify(f"Rejected export path: {exc}", severity="warning")
             return
 
@@ -986,7 +1074,11 @@ class ResultsGrid(NotifyMixin, Vertical):
             probe_readings: dict[str, dict[str, Any]] = {}
             for probe in probes:
                 reading = analysis.resolve_probe(
-                    cap, probe, ever_observed=ever_observed_by_target.get(tid, {}).get(probe, False)
+                    cap,
+                    probe,
+                    ever_observed=ever_observed_by_target.get(tid, {}).get(
+                        probe, False
+                    ),
                 )
                 probe_readings[probe] = {
                     "state": reading.state,
@@ -1176,7 +1268,9 @@ class ResultsGrid(NotifyMixin, Vertical):
                 )
                 row.append(text)
                 if show_delta_extras and divergence_value is not None:
-                    column_group_rows[tid].append((snippet.get("group"), divergence_value))
+                    column_group_rows[tid].append(
+                        (snippet.get("group"), divergence_value)
+                    )
             if show_delta_extras:
                 row_caps = [
                     caps_by_capture.get((sid, target["id"])) for target in targets
@@ -1212,7 +1306,9 @@ class ResultsGrid(NotifyMixin, Vertical):
         re-deriving which cells were real comparisons.
         """
         if lens == "delta":
-            return self._render_delta(sid=sid, tid=tid, cap_or_err=cap_or_err, cells=cells)
+            return self._render_delta(
+                sid=sid, tid=tid, cap_or_err=cap_or_err, cells=cells
+            )
 
         if cap_or_err is None:
             return "", None  # unrun -- never "0"
@@ -1361,7 +1457,9 @@ class ResultsGrid(NotifyMixin, Vertical):
         cap_or_err: CellCapture | CellError | None,
         cells: dict[tuple[str, str], CellCapture | CellError],
     ) -> tuple[str, Optional[float]]:
-        reading = self._delta_reading(sid=sid, tid=tid, cap_or_err=cap_or_err, cells=cells)
+        reading = self._delta_reading(
+            sid=sid, tid=tid, cap_or_err=cap_or_err, cells=cells
+        )
         return reading.text, (reading.jsd if reading.is_real_comparison else None)
 
     def _group_mean_rows(
@@ -1421,10 +1519,7 @@ class ResultsGrid(NotifyMixin, Vertical):
 
         def sort_key(snippet: dict[str, Any]) -> tuple[bool, float]:
             sid = snippet["id"]
-            caps = [
-                cells.get((sid, target["id"]))
-                for target in targets
-            ]
+            caps = [cells.get((sid, target["id"])) for target in targets]
             valid = [c for c in caps if isinstance(c, CellCapture)]
             if len(valid) < 2:
                 # ``is_undefined=True`` sorts after ``False`` regardless of
@@ -1457,7 +1552,9 @@ class ResultsGrid(NotifyMixin, Vertical):
         if probe is None:
             return {}
         return {
-            target["id"]: _probe_observed_in_target(snippets, cells, target["id"], probe)
+            target["id"]: _probe_observed_in_target(
+                snippets, cells, target["id"], probe
+            )
             for target in targets
         }
 
@@ -1501,12 +1598,8 @@ class ResultsGrid(NotifyMixin, Vertical):
             return  # summary row / non-data column: no cell detail to show
 
         snapshot = self._grid["snapshot"]
-        snippet = next(
-            (s for s in snapshot["snippets"] if s["id"] == row_key), None
-        )
-        target = next(
-            (t for t in snapshot["targets"] if t["id"] == column_key), None
-        )
+        snippet = next((s for s in snapshot["snippets"] if s["id"] == row_key), None)
+        target = next((t for t in snapshot["targets"] if t["id"] == column_key), None)
         if snippet is None or target is None:
             return
 

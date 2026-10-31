@@ -149,3 +149,58 @@ async def test_a_callers_own_post_recompose_pass_still_runs_before_the_restore()
             f"the caller's own pass must run first; got {screen.order}"
         )
         assert await _focused_id(pilot) == "probe-input"
+
+
+class _TwoInputScreen(_FocusProbeScreen):
+    """Two focusable widgets, so one can be removed while the other holds focus."""
+
+    def compose(self) -> ComposeResult:
+        from textual.containers import Container
+
+        with Container(id="screen-content"):
+            yield Input(id="probe-first")
+            yield Input(id="probe-second")
+
+
+class _TwoInputApp(App):
+    def on_mount(self) -> None:
+        self.push_screen(_TwoInputScreen())
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_set_focus_refuses_a_pruning_or_detached_widget_and_keeps_the_live_focus() -> None:
+    """TASK-34000.26 AC#1: a focus write never lands on a widget being removed.
+
+    Textual 8.2.8's ``Screen.set_focus`` checks only ``focusable`` (which reads
+    ``visible``, never ``_pruning``), so a write that lands after ``App._prune``
+    marked the target is accepted and ``screen.focused`` stays on the corpse
+    after the detach -- the review's S-10 dead keyboard. The screen refuses
+    such a write and leaves focus where it was, so a caller that checks
+    ``self.focused is widget`` sees "not landed" and retries against the live
+    tree. A ``None`` write is still honoured.
+    """
+    async with _TwoInputApp().run_test() as pilot:
+        screen = pilot.app.screen
+        first = screen.query_one("#probe-first", Input)
+        second = screen.query_one("#probe-second", Input)
+        screen.set_focus(first)
+        await pilot.pause()
+        assert screen.focused is first
+
+        removal = second.remove()
+        assert second._pruning is True
+        screen.set_focus(second)
+        assert screen.focused is first, (
+            "a focus write onto a widget being removed must be refused"
+        )
+
+        await removal
+        assert not second.is_attached
+        screen.set_focus(second)
+        assert screen.focused is first, (
+            "a focus write onto a detached widget must be refused"
+        )
+
+        screen.set_focus(None)
+        assert screen.focused is None

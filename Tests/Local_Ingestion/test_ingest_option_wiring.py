@@ -260,9 +260,7 @@ class TestEncodingSelection:
         payload = parse_local_file_for_ingest(str(source), {"encoding": "utf8-bom"})
 
         assert payload["content"] == "perfectly fine utf-8 text"
-        encoding_warnings = [
-            w for w in payload["warnings"] if "utf8-bom" in w
-        ]
+        encoding_warnings = [w for w in payload["warnings"] if "utf8-bom" in w]
         assert encoding_warnings, (
             f"no warning names the unknown encoding: {payload['warnings']}"
         )
@@ -355,9 +353,7 @@ class TestChunkToggleReachesProcessors:
         )
 
         assert calls[0]["perform_chunking"] is True
-        assert payload["chunks"] == [
-            {"text": "PDF text", "metadata": {"chunk_num": 0}}
-        ]
+        assert payload["chunks"] == [{"text": "PDF text", "metadata": {"chunk_num": 0}}]
 
     def test_ebook_chunk_off_passes_perform_chunking_false(
         self, tmp_path: Path, monkeypatch
@@ -549,9 +545,7 @@ class TestTextTypeChunkingEndToEnd:
         assert _chunk_rows(media_db, media_id) == []
         assert _chunking_status(media_db, media_id) == "pending"
 
-    def test_html_chunk_on_stores_chunks(
-        self, tmp_path: Path, media_db: MediaDatabase
-    ):
+    def test_html_chunk_on_stores_chunks(self, tmp_path: Path, media_db: MediaDatabase):
         source = tmp_path / "many.html"
         source.write_text(
             f"<html><body><p>{_MANY_SENTENCES}</p></body></html>", encoding="utf-8"
@@ -677,8 +671,9 @@ class TestTextTypeAnalysis:
         assert calls[0]["api_key"] == "sk-test-not-real"
         assert calls[0]["streaming"] is False
         # The document content must actually travel in the payload.
-        assert "Some meaningful notes to analyze." in (
-            calls[0]["messages_payload"][0]["content"]
+        assert (
+            "Some meaningful notes to analyze."
+            in (calls[0]["messages_payload"][0]["content"])
         )
 
         media_id, _uuid, _msg = persist_parsed_media(payload, media_db)
@@ -764,9 +759,7 @@ class TestTextTypeAnalysis:
         source.write_text("Content.", encoding="utf-8")
         calls = self._install_chat_stub(monkeypatch)
 
-        payload = parse_local_file_for_ingest(
-            str(source), {"perform_analysis": True}
-        )
+        payload = parse_local_file_for_ingest(str(source), {"perform_analysis": True})
 
         assert payload["analysis_content"] == ""
         assert calls == []
@@ -834,9 +827,7 @@ class TestTextTypeAnalysis:
     ):
         source = tmp_path / "notes.txt"
         source.write_text("Content that resists analysis.", encoding="utf-8")
-        self._install_chat_stub(
-            monkeypatch, response=RuntimeError("provider exploded")
-        )
+        self._install_chat_stub(monkeypatch, response=RuntimeError("provider exploded"))
 
         payload = parse_local_file_for_ingest(
             str(source),
@@ -902,9 +893,7 @@ class TestProcessorAnalysisErrorStrings:
 
         def fake_process_pdf(**kwargs):
             _assert_kwargs_accepted(real, kwargs)
-            return self._pdf_stub_result(
-                "Error: Summarization failed unexpectedly."
-            )
+            return self._pdf_stub_result("Error: Summarization failed unexpectedly.")
 
         monkeypatch.setattr(
             "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_pdf",
@@ -947,9 +936,7 @@ class TestProcessorAnalysisErrorStrings:
         assert any("Analysis failed" in w for w in payload["warnings"])
         assert "Invalid API Name" in payload["analysis_failed_reason"]
 
-    def test_real_document_summary_still_surfaces(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_real_document_summary_still_surfaces(self, tmp_path: Path, monkeypatch):
         source = tmp_path / "report.docx"
         source.write_bytes(b"PK\x03\x04" + b"\x00" * 32)
         real = _real_process_document()
@@ -1012,9 +999,7 @@ class TestProcessorAnalysisCredentialGates:
     ):
         import importlib
 
-        module = importlib.import_module(
-            f"tldw_chatbook.Local_Ingestion.{module_name}"
-        )
+        module = importlib.import_module(f"tldw_chatbook.Local_Ingestion.{module_name}")
         func = getattr(module, func_name)
         assert "keyless_ok" in inspect.signature(func).parameters
         # The gate must consult the shared predicate -- a re-relaxed gate
@@ -1174,8 +1159,7 @@ class TestDocumentOptionWiring:
         parse_local_file_for_ingest(str(source), {})
 
         assert (
-            calls[0]["processing_method"]
-            == sig.parameters["processing_method"].default
+            calls[0]["processing_method"] == sig.parameters["processing_method"].default
         )
         assert calls[0]["enable_ocr"] == sig.parameters["enable_ocr"].default
         assert calls[0]["ocr_language"] == sig.parameters["ocr_language"].default
@@ -1294,9 +1278,7 @@ class TestPdfOcrDetailWiring:
 
         parse_local_file_for_ingest(str(source), {})
 
-        assert (
-            calls[0]["ocr_language"] == sig.parameters["ocr_language"].default
-        )
+        assert calls[0]["ocr_language"] == sig.parameters["ocr_language"].default
         assert calls[0]["ocr_backend"] == sig.parameters["ocr_backend"].default
 
 
@@ -1320,9 +1302,7 @@ class TestEbookChunkMethodWiring:
                 "title": "t",
                 "author": "a",
                 "keywords": [],
-                "chunks": [
-                    {"text": "Chapter 1", "metadata": {"chunk_num": 0}}
-                ],
+                "chunks": [{"text": "Chapter 1", "metadata": {"chunk_num": 0}}],
                 "analysis": "",
                 "metadata": {},
                 "error": None,
@@ -1391,8 +1371,7 @@ class TestAVTranslationAndVadWiring:
 
         real_method = RealAudioProcessor.process_audio_files
         assert (
-            "translation_target_language"
-            in inspect.signature(real_method).parameters
+            "translation_target_language" in inspect.signature(real_method).parameters
         )
         calls: list[Dict[str, Any]] = []
 
@@ -1410,9 +1389,7 @@ class TestAVTranslationAndVadWiring:
             _StubAudioProcessor,
         )
 
-        parse_local_file_for_ingest(
-            str(source), {"translation_target_language": "en"}
-        )
+        parse_local_file_for_ingest(str(source), {"translation_target_language": "en"})
 
         assert calls[0]["translation_target_language"] == "en"
 
@@ -1551,11 +1528,10 @@ class TestPublicWrapperChunkDefaults:
         result = ingest_local_file(source, media_db)
 
         assert result["chunks_created"] > 1, (
-            "omitting chunk_options must mean 'chunk with defaults', not "
-            "'never chunk'"
+            "omitting chunk_options must mean 'chunk with defaults', not 'never chunk'"
         )
-        assert len(_chunk_rows(media_db, result["media_id"])) == (
-            result["chunks_created"]
+        assert (
+            len(_chunk_rows(media_db, result["media_id"])) == (result["chunks_created"])
         )
 
     def test_ingest_local_file_explicit_none_stores_no_chunks(
@@ -1697,9 +1673,7 @@ class TestAVTrimWiring:
             LocalAudioProcessor as RealAudioProcessor,
         )
 
-        params = inspect.signature(
-            RealAudioProcessor.process_audio_files
-        ).parameters
+        params = inspect.signature(RealAudioProcessor.process_audio_files).parameters
         assert "start_time" in params and "end_time" in params
         calls = _install_audio_stub(monkeypatch)
 
@@ -1770,9 +1744,7 @@ class TestAVTrimWiring:
                 "warnings": [],
             }
 
-        monkeypatch.setattr(
-            processor, "_extract_audio_from_video", fake_extract
-        )
+        monkeypatch.setattr(processor, "_extract_audio_from_video", fake_extract)
         monkeypatch.setattr(
             processor.audio_processor, "_process_single_audio", fake_single_audio
         )
@@ -1935,9 +1907,7 @@ class TestAVTrimArgvSemantics:
         assert _interpret_ffmpeg_window(video_argv) == expected
         assert _interpret_ffmpeg_window(audio_argv) == expected
 
-    def test_bounded_trim_keeps_fast_input_seeking(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_bounded_trim_keeps_fast_input_seeking(self, tmp_path: Path, monkeypatch):
         """Correctness first, speed second -- but not speed sacrificed.
 
         Absolute-stop semantics could have been bought by moving ``-ss``
@@ -1964,9 +1934,7 @@ class TestAVRecursiveSummaryWiring:
             LocalAudioProcessor as RealAudioProcessor,
         )
 
-        params = inspect.signature(
-            RealAudioProcessor.process_audio_files
-        ).parameters
+        params = inspect.signature(RealAudioProcessor.process_audio_files).parameters
         assert "summarize_recursively" in params
         calls = _install_audio_stub(monkeypatch)
 
@@ -2044,9 +2012,7 @@ class TestAVRecursiveSummaryWiring:
 
 
 class TestAVCookiesFileWiring:
-    def test_cookies_file_reaches_video_processor(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_cookies_file_reaches_video_processor(self, tmp_path: Path, monkeypatch):
         source = _write_fake_mp4(tmp_path)
         calls = _install_video_stub(monkeypatch)
 
@@ -2058,9 +2024,7 @@ class TestAVCookiesFileWiring:
         assert calls[0]["use_cookies"] is True
         assert calls[0]["cookies"] == "/home/user/cookies.txt"
 
-    def test_cookies_absent_defaults_off_for_video(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_cookies_absent_defaults_off_for_video(self, tmp_path: Path, monkeypatch):
         source = _write_fake_mp4(tmp_path)
         calls = _install_video_stub(monkeypatch)
 
@@ -2089,9 +2053,7 @@ class TestAVCookiesFileWiring:
         assert "use_cookies" not in calls[0]
         assert "cookies" not in calls[0]
 
-    def test_cookies_problem_travels_to_the_payload(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_cookies_problem_travels_to_the_payload(self, tmp_path: Path, monkeypatch):
         """(xhigh review round) A cookies path the option boundary refused
         must be visible on the job, not swallowed. It rides the same
         options -> payload channel as the analysis skip reason."""
@@ -2107,9 +2069,7 @@ class TestAVCookiesFileWiring:
             },
         )
 
-        assert payload["cookies_problem"] == (
-            "Cookies file not found: /tmp/gone.txt"
-        )
+        assert payload["cookies_problem"] == ("Cookies file not found: /tmp/gone.txt")
         assert "Cookies file not found: /tmp/gone.txt" in payload["warnings"]
 
 
@@ -2261,9 +2221,7 @@ class TestImageWiring:
         assert payload["media_type"] == "image"
         assert payload["content"] == "OCR TEXT"
 
-    def test_image_defaults_match_the_real_signature(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_image_defaults_match_the_real_signature(self, tmp_path: Path, monkeypatch):
         """The parse branch's fallbacks mirror ``process_image``'s own
         declared defaults, pinned against ``inspect.signature`` so a
         processor default change fails here instead of drifting."""
@@ -2489,9 +2447,7 @@ class TestImageWiring:
             "the processor's single fallback chunk was persisted as-is"
         )
 
-    def test_image_analysis_dispatches_via_chat_tail(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_image_analysis_dispatches_via_chat_tail(self, tmp_path: Path, monkeypatch):
         """Analysis over the OCR text runs through the arc's chat_api_call
         tail (full [analysis_defaults] shape, keyless support) -- NOT
         ``process_image``'s own analyze() path, whose direct dispatch is
@@ -2536,6 +2492,6 @@ class TestImageWiring:
 
         assert payload["analysis_content"] == "IMAGE ANALYSIS."
         assert calls, "no dispatch reached the chat_api_call boundary"
-        assert "OCR text worth analyzing." in (
-            calls[0]["messages_payload"][0]["content"]
+        assert (
+            "OCR text worth analyzing." in (calls[0]["messages_payload"][0]["content"])
         )

@@ -72,6 +72,7 @@ async def test_footer_renders_workbench_shortcuts():
     ``_remaining_global_text``), so "F1" appears exactly once even though
     both the context AND the (undeduped) global constant would otherwise
     spell it "F1 help"."""
+
     class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
@@ -84,7 +85,11 @@ async def test_footer_renders_workbench_shortcuts():
 
         footer.set_workbench_shortcuts(
             source="console",
-            shortcuts=(("F6", "next pane"), ("F1", "help"), ("Ctrl+K", "switch session")),
+            shortcuts=(
+                ("F6", "next pane"),
+                ("F1", "help"),
+                ("Ctrl+K", "switch session"),
+            ),
         )
         await pilot.pause()
 
@@ -598,3 +603,33 @@ async def test_footer_workbench_shortcuts_join_a_key_less_hint_cleanly():
 
         assert "esc notes | after esc: / focus search" in rendered, rendered
         assert "  " not in rendered, rendered
+
+
+# The footer reads guarded config while it composes, so this gated node keeps
+# the bootstrap profile and runs in the admission-sensitive lane (TASK-32873).
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", [211, 100, 60, 30])
+async def test_a_global_key_the_screen_lists_as_unavailable_is_left_out(width):
+    """Phase 8 capture finding 1 (round 2): under the Get started card F6
+    does nothing, yet the global cluster still drew "F6 next pane". A screen
+    that lists a reserved key as unavailable (a third ``False`` in its pair)
+    takes it out of the footer at every width tier; the other globals stay."""
+
+    class TestApp(ConsolidatedCSSApp):
+        def compose(self):
+            yield AppFooterStatus(id="footer")
+
+    app = TestApp()
+    async with app.run_test(size=(width, 12)) as pilot:
+        footer = app.query_one("#footer", AppFooterStatus)
+        footer.set_workbench_shortcuts(
+            source="console",
+            shortcuts=(("Enter", "continue setup"), ("F6", "next pane", False)),
+        )
+        await pilot.pause()
+        rendered = _rendered_footer_text(footer)
+
+        assert "F6" not in rendered, rendered
+        assert "F6" not in footer.shortcut_text, footer.shortcut_text
+        assert "Ctrl+Q" in rendered, rendered

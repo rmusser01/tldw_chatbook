@@ -729,9 +729,7 @@ def test_successor_timeout_invalidates_inflight_survivor_finalization(tmp_path):
     release_survivor_end.set()
     _wait_until(lambda: len(publications) == 2)
     assert publications[1].kind == "subagent_post_turn"
-    assert "successor baseline timeout" in (
-        publications[1].records[0].tracking_error
-    )
+    assert "successor baseline timeout" in (publications[1].records[0].tracking_error)
 
     assert coordinator.finalize(successor, run_id="run-2", kind="turn")
     assert coordinator.wait_idle(timeout=1)
@@ -843,9 +841,7 @@ def test_late_nested_root_inherits_timeout_and_invalidates_inflight_lane(
                 TurnChangeRecord(
                     root=str(root),
                     tracking_error=handle.errors.get(str(root), ""),
-                    baseline_sha=(
-                        "" if str(root) in handle.errors else "baseline"
-                    ),
+                    baseline_sha=("" if str(root) in handle.errors else "baseline"),
                     end_sha="" if str(root) in handle.errors else "end",
                 )
                 for root in handle.roots
@@ -886,8 +882,7 @@ def test_late_nested_root_inherits_timeout_and_invalidates_inflight_lane(
         item for item in publications if item.run_id == "parent-run"
     )
     errors_by_root = {
-        record.root: record.tracking_error
-        for record in parent_publication.records
+        record.root: record.tracking_error for record in parent_publication.records
     }
     assert errors_by_root[str(parent.resolve())]
     assert errors_by_root[str(child.resolve())]
@@ -941,9 +936,7 @@ def test_survivor_keeps_valid_roots_when_one_baseline_times_out(tmp_path):
 
         @staticmethod
         def continuation(handle):
-            roots = [
-                root for root in handle.roots if str(root) in handle.end_shas
-            ]
+            roots = [root for root in handle.roots if str(root) in handle.end_shas]
             if not roots:
                 return None
             follow_on = TurnHandle(roots)
@@ -978,9 +971,7 @@ def test_survivor_keeps_valid_roots_when_one_baseline_times_out(tmp_path):
 
     coordinator.settle_survivors("assistant-1")
     assert coordinator.wait_idle(timeout=1)
-    survivor = next(
-        item for item in publications if item.kind == "subagent_post_turn"
-    )
+    survivor = next(item for item in publications if item.kind == "subagent_post_turn")
     by_root = {record.root: record for record in survivor.records}
     assert by_root[str(left.resolve())].tracking_error
     assert not by_root[str(right.resolve())].tracking_error
@@ -1140,9 +1131,7 @@ def test_late_nested_root_preserves_sequence_ahead_of_queued_multi_root(
                     BaselineRootPreparation(root=parent, registered=("child",)),
                     BaselineRootPreparation(root=child),
                 )
-            return tuple(
-                BaselineRootPreparation(root=item) for item in handle.roots
-            )
+            return tuple(BaselineRootPreparation(root=item) for item in handle.roots)
 
         def populate_prepared_baseline(self, handle, preparations):
             handle.roots[:] = [item.root for item in preparations]

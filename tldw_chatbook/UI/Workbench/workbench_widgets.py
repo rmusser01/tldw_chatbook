@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Hashable, Iterable
 from typing import Any
 
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.content import Content
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
@@ -234,17 +235,101 @@ class DestinationHeader(Vertical):
         Console runs this on every printable keystroke.
         """
         self.state = state
-        if state == self._synced_state:
+        synced = self._synced_state
+        if state == synced:
             return
-        self.query_one("#workbench-header-title", Static).update(state.title)
-        self.query_one("#workbench-header-subtitle", Static).update(state.subtitle)
-        self.query_one("#workbench-header-status", Static).update(
-            state.status_label or _status_label(state.status)
-        )
+        # TASK-36012: and per Static -- a Console send changes the status and
+        # subtitle, never the title, so the title keeps its layout.
+        for widget_id, read in (
+            ("#workbench-header-title", lambda s: s.title),
+            ("#workbench-header-subtitle", lambda s: s.subtitle),
+            (
+                "#workbench-header-status",
+                lambda s: s.status_label or _status_label(s.status),
+            ),
+        ):
+            copy = read(state)
+            if synced is _UNSYNCED or copy != read(synced):
+                self.query_one(widget_id, Static).update(copy)
         self.set_class(not state.subtitle, "has-empty-subtitle")
         _sync_status_classes(self, state.status)
         _sync_density_classes(self, state.density)
         self._synced_state = state
+
+
+def _whole_text(value: Hashable, width: int) -> str:
+    """``FittedText``'s default fit: the value's text, whatever the width."""
+    return str(value)
+
+
+class FittedText(Widget):
+    """One line of literal text, refitted to the widget's own width on every render.
+
+    For a slot whose text must shorten in a controlled way as space changes:
+    ``fit(value, width)`` decides what survives in ``width`` cells, so the
+    caller keeps what matters and ends a cut with its own resolved ellipsis.
+    CSS ``text-overflow: ellipsis`` cannot do either (it always paints a
+    literal ``…``, even in ASCII glyph mode). The text is never parsed as
+    markup, so an untrusted name renders literally, and ``set_value``
+    repaints only on a change (task-15452: ``Static.update`` has no
+    equality check of its own). Declares no CSS: every rule belongs to the
+    owning destination's sheet.
+    """
+
+    def __init__(
+        self,
+        value: Hashable = "",
+        fit: Callable[[Any, int], str] | None = None,
+        *,
+        hide_when_empty: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        """Build the label.
+
+        Args:
+            value: What to show; handed to ``fit`` with the current width.
+            fit: ``(value, width) -> text``. Defaults to the whole value.
+            hide_when_empty: Hide the widget while ``value`` is falsy (a chip
+                that should take no space when it has nothing to say).
+            **kwargs: Forwarded to ``Widget`` (``id``, ``classes``, ...).
+        """
+        super().__init__(**kwargs)
+        self._value: Hashable = value
+        self._fit: Callable[[Any, int], str] = fit or _whole_text
+        self._hide_when_empty = hide_when_empty
+        if hide_when_empty:
+            self.display = bool(value)
+
+    @property
+    def value(self) -> Hashable:
+        """The value currently shown."""
+        return self._value
+
+    @property
+    def fitted_text(self) -> str:
+        """The text exactly as it paints at the current content width."""
+        return self._fit(self._value, self.content_size.width)
+
+    def set_value(self, value: Hashable) -> None:
+        """Show ``value``; does nothing when it is already shown.
+
+        Args:
+            value: The new value.
+        """
+        if value == self._value:
+            return
+        self._value = value
+        if self._hide_when_empty:
+            self.display = bool(value)
+        self.refresh(layout=True)
+
+    def render(self) -> Content:
+        """Fit the value to the current content width, as literal text.
+
+        Returns:
+            Content: The fitted text with no markup parsing.
+        """
+        return Content(self.fitted_text)
 
 
 class CommandStrip(Horizontal):
@@ -386,10 +471,13 @@ class ModeStrip(Horizontal):
         return f"workbench-mode-{_safe_id(mode.id)}"
 
     def _build_mode(self, mode: WorkbenchMode) -> Static:
+        # TASK-33002.19: labels carry user text (a provider id, an endpoint's
+        # name), so markup is off; `update` in `_sync_mode_label` follows it.
         label = Static(
             mode.label,
             id=self._mode_id(mode),
             classes=mode.css_classes,
+            markup=False,
         )
         setattr(label, "_workbench_mode_id", mode.id)
         return label

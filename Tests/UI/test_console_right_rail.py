@@ -60,7 +60,10 @@ from tldw_chatbook.Widgets.Console.console_send_authority_summary import (
 )
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_console_native_chat_flow import (
+    _configure_native_ready_console,
+    _sync_console_control_bar_now,
+)
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -463,7 +466,9 @@ async def test_agent_fleet_section_lives_in_the_right_rail():
         node = section
         while node is not None and node is not body:
             node = node.parent
-        assert node is body, "fleet section must be a descendant of the Inspect rail body"
+        assert node is body, (
+            "fleet section must be a descendant of the Inspect rail body"
+        )
 
 
 @pytest.mark.asyncio
@@ -708,13 +713,18 @@ async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
             ]
         }
         monkeypatch.setattr(
-            screen, "_console_provider_blocker_copy",
-            lambda *, settings_readiness=None: "Provider setup needed"
+            screen,
+            "_console_provider_blocker_copy",
+            lambda *, settings_readiness=None: "Provider setup needed",
         )
         monkeypatch.setattr(
             screen,
             "_console_provider_recovery_action",
-            lambda *, settings_readiness=None: ("Open Settings", "settings", "Open provider settings"),
+            lambda *, settings_readiness=None: (
+                "Open Settings",
+                "settings",
+                "Open provider settings",
+            ),
         )
 
         state = screen._build_console_inspector_state(None)
@@ -766,7 +776,9 @@ async def test_active_run_alone_never_produces_a_setup_recovery_row(monkeypatch)
         )
         readiness = build_console_settings_readiness(
             settings,
-            app_config={"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
+            app_config={
+                "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+            },
             environ={},
             active_run=True,
         )
@@ -1038,7 +1050,7 @@ async def test_control_sync_shares_one_inspector_snapshot_with_both_consumers(
             ),
         )
 
-        screen._sync_console_control_bar()
+        await _sync_console_control_bar_now(screen)
 
         assert builds == [snapshot]
         assert summary_states == [snapshot]
@@ -1098,7 +1110,7 @@ async def test_strict_inspector_rejection_keeps_authority_summary_at_prior_snaps
         )
 
         with pytest.raises(ownership.UnownedInspectorContentError):
-            screen._sync_console_control_bar()
+            await _sync_console_control_bar_now(screen)
 
         assert summary.last_state is prior
 

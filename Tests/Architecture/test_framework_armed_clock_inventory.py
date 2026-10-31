@@ -272,8 +272,7 @@ def test_inventory_rows_are_not_stale(framework_clocks) -> None:
     assert not stale, (
         "FRAMEWORK_ARMED_CLOCK_ROWS entries with no matching live "
         "construction -- the instance was fixed or moved (TASK-23022?); "
-        "retire these rows:\n"
-        + "\n".join(f"  {row}" for row in stale)
+        "retire these rows:\n" + "\n".join(f"  {row}" for row in stale)
     )
 
 
@@ -285,8 +284,8 @@ def test_every_row_states_a_kind() -> None:
         for key, reason in sorted(FRAMEWORK_ARMED_CLOCK_ROWS.items())
         if not reason.startswith(kinds)
     ]
-    assert not bad, (
-        f"Classifications must start with one of {kinds}:\n" + "\n".join(bad)
+    assert not bad, f"Classifications must start with one of {kinds}:\n" + "\n".join(
+        bad
     )
 
 

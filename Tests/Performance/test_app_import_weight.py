@@ -54,7 +54,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The full heavy-dependency guard set from the task 163 plan. NONE of these
@@ -200,7 +199,7 @@ def _run_isolated_python(tmp_path: Path, code: str) -> subprocess.CompletedProce
     )
 
 
-_MEASURE_SNIPPET = """
+_MEASURE_SNIPPET = f"""
 import json
 import sys
 import time
@@ -209,7 +208,7 @@ t0 = time.perf_counter()
 import tldw_chatbook.app
 elapsed = time.perf_counter() - t0
 
-loaded = sorted(m for m in {heavy_modules!r} if m in sys.modules)
+loaded = sorted(m for m in {HEAVY_MODULES!r} if m in sys.modules)
 tldw_modules = sorted(
     m for m in sys.modules
     if m.startswith("tldw_chatbook") and sys.modules[m] is not None
@@ -221,7 +220,7 @@ print(json.dumps({{
     "tldw_modules": tldw_modules,
     "loaded_heavy": loaded,
 }}))
-""".format(heavy_modules=HEAVY_MODULES)
+"""
 
 
 def _measure_app_import(tmp_path: Path) -> dict:
@@ -234,6 +233,178 @@ def _measure_app_import(tmp_path: Path) -> dict:
     # and, in some configurations, to stdout before the print()).
     last_line = result.stdout.strip().splitlines()[-1]
     return json.loads(last_line)
+
+
+def test_ingest_diagnostics_load_only_when_a_failure_has_diagnostics(tmp_path):
+    """App startup and legacy failures do not pay for provider diagnostics."""
+    result = _run_isolated_python(
+        tmp_path,
+        """
+import pickle
+import sys
+
+import tldw_chatbook.app
+from tldw_chatbook.Local_Ingestion.local_file_ingestion import DirectLocalSTTIngestError
+from tldw_chatbook.STT.contracts import TranscriptionFailureCode
+from tldw_chatbook.STT.executor import ExecutorFailure
+
+module = "tldw_chatbook.STT.failure_diagnostics"
+assert module not in sys.modules, "app import eagerly loaded STT diagnostics"
+legacy = ExecutorFailure(1, "attempt-1", TranscriptionFailureCode.INFERENCE_FAILED)
+parse_error = DirectLocalSTTIngestError("failed", error_detail={}, failed_attempt={})
+assert legacy.diagnostic is None
+assert parse_error.stt_diagnostic is None
+assert module not in sys.modules, "legacy failure eagerly loaded STT diagnostics"
+
+from tldw_chatbook.STT.failure_diagnostics import (
+    STTExceptionCategory, STTFailureDiagnostic, STTFailureStage,
+)
+diagnostic = STTFailureDiagnostic(STTFailureStage.INFERENCE, STTExceptionCategory.RUNTIME_ERROR)
+failure = ExecutorFailure(
+    1, "attempt-2", TranscriptionFailureCode.INFERENCE_FAILED, diagnostic=diagnostic,
+)
+assert pickle.loads(pickle.dumps(failure)) == failure
+parse_error = DirectLocalSTTIngestError(
+    "failed", error_detail={}, failed_attempt={}, diagnostic=diagnostic,
+)
+assert parse_error.stt_diagnostic is diagnostic
+print("diagnostics deferred and failure transport preserved")
+""",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip().splitlines()[-1] == (
+        "diagnostics deferred and failure transport preserved"
+    )
+
+
+def test_local_conversation_state_normalization_avoids_api_models(tmp_path):
+    """Local row reads must not initialize unrelated API request models."""
+    result = _run_isolated_python(
+        tmp_path,
+        """
+import importlib.abc
+import sys
+
+blocked = "tldw_chatbook.tldw_api.chat_conversation_schemas"
+assert blocked not in sys.modules
+class RefuseApiSchema(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == blocked:
+            raise AssertionError("local state normalization imported API schemas")
+
+sys.meta_path.insert(0, RefuseApiSchema())
+from tldw_chatbook.Chat.chat_conversation_service import (
+    _normalize_state, normalize_conversation_row,
+)
+states = ("in-progress", "resolved", "backlog", "non-viable")
+for value in (None, "", "   "):
+    assert _normalize_state(value) is None
+    assert normalize_conversation_row({"id": "local", "state": value})["state"] == "in-progress"
+for state in states:
+    value = " " + state.upper() + " "
+    assert _normalize_state(value) == state
+    assert normalize_conversation_row({"id": "local", "state": value})["state"] == state
+for value in ("future", 17):
+    try:
+        _normalize_state(value)
+    except ValueError as error:
+        assert str(error) == f"Invalid state '{value}'. Allowed: {', '.join(states)}"
+    else:
+        raise AssertionError("invalid conversation state accepted")
+assert blocked not in sys.modules
+print("local state vocabulary validated without API schemas")
+""",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip().splitlines()[-1] == (
+        "local state vocabulary validated without API schemas"
+    )
+
+
+def test_plugin_facade_defers_package_management_until_use(tmp_path):
+    """A metadata facade must not import inspection or open its storage worker."""
+    result = _run_isolated_python(
+        tmp_path,
+        """
+import asyncio
+import json
+import sys
+from pathlib import Path
+
+from tldw_chatbook.Plugins.service import PluginService
+
+root = Path.home() / "plugin-profile"
+service = PluginService(root, workspace_lookup=lambda _: None)
+try:
+    print(json.dumps({
+        "loaded_management": sorted(name for name in (
+            "tldw_chatbook.Plugins.coordinator",
+            "tldw_chatbook.Plugins.inspection",
+            "tldw_chatbook.Plugins.schemas",
+        ) if name in sys.modules),
+        "worker_started": service._thread is not None,
+        "storage_created": root.exists(),
+    }))
+finally:
+    asyncio.run(service.aclose())
+""",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    observed = json.loads(result.stdout.strip().splitlines()[-1])
+    assert observed == {
+        "loaded_management": [],
+        "worker_started": False,
+        "storage_created": False,
+    }
+
+
+@pytest.mark.parametrize("module", ["coordinator", "inspection", "schemas"])
+def test_deferred_plugin_import_failure_settles_readiness(tmp_path, module):
+    """First-use import failure reaches every waiter and leaves no live worker."""
+    code = """
+import asyncio
+import importlib.abc
+import json
+import sys
+from pathlib import Path
+
+from tldw_chatbook.Plugins.service import PluginService
+
+blocked = BLOCKED_MODULE
+assert blocked not in sys.modules
+class RefuseImport(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == blocked:
+            raise ImportError("deliberate deferred import failure")
+
+sys.meta_path.insert(0, RefuseImport())
+root = Path.home() / "plugin-profile"
+service = PluginService(root, workspace_lookup=lambda _: None)
+ready = service._start()
+assert service._start() is ready
+try:
+    for _ in range(2):
+        try:
+            ready.result(timeout=5)
+        except ImportError as error:
+            assert str(error) == "deliberate deferred import failure"
+        else:
+            raise AssertionError("startup must fail")
+finally:
+    service._thread.join(timeout=5)
+    assert not service._thread.is_alive()
+    if ready.done():
+        asyncio.run(service.aclose())
+assert service._closed
+assert not (root / "plugins").exists()
+print(json.dumps({"failure_published": True, "worker_stopped": True}))
+""".replace("BLOCKED_MODULE", repr("tldw_chatbook.Plugins." + module))
+    result = _run_isolated_python(tmp_path, code)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == {
+        "failure_published": True,
+        "worker_stopped": True,
+    }
 
 
 def test_app_import_defers_advanced_tool_readiness(tmp_path: Path) -> None:
@@ -397,3 +568,37 @@ def test_ensure_numpy_resolves_real_numpy_when_installed() -> None:
     assert resolved is not None
     assert resolved.__name__ == "numpy"
     assert Embeddings_Lib.np is resolved
+
+
+def test_template_catalog_defers_provider_exports() -> None:
+    script = """
+import sys
+import tldw_chatbook.Media_Creation as package
+from tldw_chatbook.Media_Creation import generation_templates
+
+assert generation_templates.BUILTIN_TEMPLATES
+assert 'tldw_chatbook.Media_Creation.image_generation_service' not in sys.modules
+assert 'tldw_chatbook.Media_Creation.swarmui_client' not in sys.modules
+
+from tldw_chatbook.Media_Creation import ImageGenerationService, SwarmUIClient
+from tldw_chatbook.Media_Creation.image_generation_service import ImageGenerationService as Service
+from tldw_chatbook.Media_Creation.swarmui_client import SwarmUIClient as Client
+assert ImageGenerationService is Service
+assert SwarmUIClient is Client
+try:
+    package.missing_export
+except AttributeError:
+    pass
+else:
+    raise AssertionError('Unknown exports must raise AttributeError')
+"""
+    result = subprocess.run(  # nosec B603 -- fixed interpreter and import-only script
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[2],
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

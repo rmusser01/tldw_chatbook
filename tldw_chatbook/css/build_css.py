@@ -251,7 +251,6 @@ CSS_MODULES = [
     # rules now live in _settings_splash_theme.tcss at this same manifest
     # position so cascade order is unchanged.
     "components/_settings_splash_theme.tcss",
-    "components/_settings_personal_context.tcss",
     "components/_profile_interview.tcss",
     # TASK-394: generic, app-wide component styles moved OUT of the splash/theme
     # module. Kept at this manifest position (immediately after it) so the
@@ -269,9 +268,12 @@ CSS_MODULES = [
     # screen_agentic_{library,settings}.tcss sheets.
     "features/_console.tcss",
     "features/_console_panels.tcss",
+    "features/_console_response_rules.tcss",
     "features/_library.tcss",
     "features/_library_panels.tcss",
+    "features/_library_notes_panels.tcss",
     "features/_library_artifacts.tcss",
+    "components/_settings_personal_context.tcss",
     "features/_settings.tcss",
     "features/_home.tcss",
     "features/_chat.tcss",
@@ -294,7 +296,9 @@ CSS_MODULES = [
     # live users (CodeRepoCopyPasteWindow, MediaViewerPanel) and were moved
     # verbatim to components/_shared_components.tcss to preserve them.
     "features/_llm-management.tcss",
-    "features/_tools-settings.tcss",
+    # task-33244: "features/_tools-settings.tcss" removed -- it styled the
+    # navigation-unreachable legacy Tools & Settings window, deleted along
+    # with the window; the canonical Settings hub styles its own surfaces.
     "features/_ingest.tcss",
     # task-745: "features/_ingest_tldw_api_tabs.tcss" removed -- it styled the
     # standalone ingest window's tab strip and API form, deleted in task-684.4.
@@ -330,6 +334,9 @@ CSS_MODULES = [
     "features/_logs.tcss",
     "features/_writing.tcss",
     "features/_workflows.tcss",
+    # Roleplay frame B1: Roleplay's own vocabulary, split whole into
+    # screen_feature_roleplay.tcss (see SCREEN_OWNED_SPLITS).
+    "features/_roleplay.tcss",
     "features/config_search.tcss",
     "features/feature_alerts.tcss",
     # ADR-161 task 5: the pattern gallery's layout glue (dialog/nav preview
@@ -389,6 +396,10 @@ MODAL_OWNED_SPLIT_SHEETS: dict[str, tuple[str, str]] = {
         "tldw_chatbook.Widgets.Console.console_message_delete_receipt",
         "ConsoleMessageDeleteReceiptModal",
     ),
+    "screen_modal_file_notes_history.tcss": (
+        "tldw_chatbook.Widgets.Library.library_file_notes_workspace",
+        "FileNotesHistoryDialog",
+    ),
 }
 
 #: Tokens that PREFIX-match an owner but are composed by widgets on OTHER
@@ -403,7 +414,7 @@ MODAL_OWNED_SPLIT_SHEETS: dict[str, tuple[str, str]] = {
 #: PR #2281 became moot when the console split was dissolved -- every
 #: console rule but the Delete receipt's rides the boot bundle now -- and
 #: the settings pin moved to the settings split below.)
-SETTINGS_SPLIT_PINNED_TOKENS = frozenset({"settings-input-label"})
+SETTINGS_SPLIT_PINNED_TOKENS = frozenset({"settings-input-label", "personal-context-recovery-dialog"})
 
 _SPLIT_HEADER = """/* ========================================
  * GENERATED FILE - DO NOT EDIT DIRECTLY
@@ -465,6 +476,7 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
         modules=(
             "features/_library.tcss",
             "features/_library_panels.tcss",
+            "features/_library_notes_panels.tcss",
             "features/_library_artifacts.tcss",
         ),
         sheets={"library": "screen_agentic_library.tcss"},
@@ -476,12 +488,12 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
     # composed by Widgets/Persona_Widgets/personas_policy_rules_editor.py,
     # so its rule must ride the boot bundle, not the lazy settings sheet.
     ScreenOwnedSplit(
-        modules=("features/_settings.tcss",),
+        modules=("components/_settings_personal_context.tcss", "features/_settings.tcss"),
         sheets={"settings": "screen_agentic_settings.tcss"},
         # Hook review shares this existing lazy source with canonical Settings;
         # its own modal CSS_PATH loads it when opened from Console first.
         prefixes={
-            "settings": ("settings", "console-hooks", "hook-review", "-wide-viewport")
+            "settings": ("settings", "personal-context", "console-hooks", "hook-review", "-wide-viewport")
         },
         pinned=SETTINGS_SPLIT_PINNED_TOKENS,
     ),
@@ -519,6 +531,49 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
         sheets={"workflows": "screen_feature_workflows.tcss"},
         prefixes={"workflows": ("workflow", "workflows")},
         pinned=frozenset(),
+    ),
+    # Roleplay frame B1 (spec R18, G18): Roleplay's rules load on the first
+    # visit to Roleplay. Narrow prefixes, never bare `personas`. Exact-token
+    # compose-site audit (2026-10-03, repo-relative paths, control-checked):
+    # `personas-header*`, `personas-library*` and `personas-work*` are composed
+    # only in UI/Screens/personas_screen.py and Widgets/Persona_Widgets/; the
+    # `roleplay-*` and `personas-more*`/`personas-try*` prefixes have no compose
+    # site yet. `personas-library-rows` stays pinned in boot (its `:focus` rule,
+    # Tests/UI/test_personas_library_rail_focus_outline.py). The last four
+    # entries claim SHARED tokens exactly (DestinationHeader's fixed child
+    # classes and Textual's `-active`), so Roleplay's copies of the inline
+    # header and grip rules leave boot; legal only because every Roleplay
+    # selector also carries a Roleplay token, which
+    # Tests/UI/test_roleplay_stylesheet.py enforces (a bare `.-active` rule
+    # here would restyle every app button after the first Ctrl+4).
+    ScreenOwnedSplit(
+        modules=("features/_roleplay.tcss",),
+        sheets={"roleplay": "screen_feature_roleplay.tcss"},
+        prefixes={
+            "roleplay": (
+                "roleplay-shell",
+                "roleplay-rail",
+                "roleplay-nav",
+                "roleplay-items",
+                "personas-header",
+                "personas-library",
+                "personas-work",
+                "personas-more",
+                "personas-try",
+                "workbench-header-title",
+                "workbench-header-subtitle",
+                "workbench-header-status",
+                "-active",
+                # Roleplay frame B2a (TASK-33910.3): OptionList's highlighted-row
+                # component class, claimed exactly so the items list's
+                # focus-only cursor rules (`.roleplay-items-list > ...`) leave
+                # boot. A unit moves only when every token is Roleplay's, and
+                # Tests/UI/test_roleplay_stylesheet.py keeps each selector
+                # anchored by a Roleplay token (SHARED_CLAIMS).
+                "option-list--option-highlighted",
+            )
+        },
+        pinned=frozenset({"personas-library-rows"}),
     ),
     # TASK-32187: the largest un-split bundle module (57,721 B). Its token
     # vocabulary is NOT a single `watchlists-*` prefix -- the screen's panes
@@ -558,6 +613,22 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
         },
         prefixes={"console_delete_receipt": ("console-delete-receipt",)},
         pinned=frozenset(),
+    ),
+    # TASK-36386 / ADR-097: the File Notes revision-history dialog is a
+    # rarely opened Library modal, so its `file-notes-history*` ids leave the
+    # boot bundle for a sheet its own CSS_PATH loads on first open -- see
+    # MODAL_OWNED_SPLIT_SHEETS. features/_notes.tcss holds no other rule.
+    # Owner audit 2026-10-23, repo-relative paths: the moved ids are composed
+    # only in Widgets/Library/library_file_notes_workspace.py
+    # (FileNotesHistoryDialog). The pin is the workspace's own History
+    # button (`#file-notes-history`, same file, LibraryFileNotesWorkspace):
+    # it matches the prefix but is on screen whenever File Notes is, so a
+    # rule naming it must ride the bundle.
+    ScreenOwnedSplit(
+        modules=("features/_notes.tcss",),
+        sheets={"file_notes_history": "screen_modal_file_notes_history.tcss"},
+        prefixes={"file_notes_history": ("file-notes-history",)},
+        pinned=frozenset({"file-notes-history"}),
     ),
     ScreenOwnedSplit(
         modules=("features/_watchlists.tcss",),

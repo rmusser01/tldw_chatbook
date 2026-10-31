@@ -60,6 +60,29 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TransactionContextM
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 
+@pytest.fixture(autouse=True)
+def owned_acceptance_databases(request, monkeypatch, owned_console_databases):
+    """Register only this module's exact returned and direct database owners.
+
+    Args:
+        request: Supplies this module's local helper binding.
+        monkeypatch: Restores the helper after the test.
+        owned_console_databases: Existing supported shutdown/quiescence owner.
+
+    Yields:
+        Registration for directly constructed database/controller pairs.
+    """
+    build_store = _ready_store
+
+    def store_owner(*args, **kwargs):
+        result = build_store(*args, **kwargs)
+        owned_console_databases(result[0])
+        return result
+
+    monkeypatch.setattr(request.module, "_ready_store", store_owner)
+    yield owned_console_databases
+
+
 class _AcceptedCancellationGateway:
     """Hold after durable acceptance and dispatch ownership are observable."""
 
@@ -635,6 +658,7 @@ def test_success_persists_exact_attachment_state_hash_sync_intent_and_private_ch
 async def test_explicit_accepted_cancellation_settles_stopped_without_receipt(
     tmp_path: Path,
     cancellation: str,
+    owned_acceptance_databases,
 ) -> None:
     db = CharactersRAGDB(
         tmp_path / f"accepted-{cancellation}.sqlite",
@@ -651,6 +675,7 @@ async def test_explicit_accepted_cancellation_settles_stopped_without_receipt(
         base_url="http://127.0.0.1:9099",
         agent_runtime_enabled=False,
     )
+    owned_acceptance_databases(db, controller)
     task = asyncio.create_task(controller.submit_draft("accepted turn"))
     await asyncio.wait_for(gateway.started.wait(), timeout=1)
     assistant_id = controller._active_assistant_message_ids[session.id]
@@ -679,6 +704,7 @@ async def test_explicit_accepted_cancellation_settles_stopped_without_receipt(
 @pytest.mark.asyncio
 async def test_reasonless_accepted_cancellation_settles_failed_with_receipt(
     tmp_path: Path,
+    owned_acceptance_databases,
 ) -> None:
     db = CharactersRAGDB(
         tmp_path / "accepted-unexpected.sqlite",
@@ -695,6 +721,7 @@ async def test_reasonless_accepted_cancellation_settles_failed_with_receipt(
         base_url="http://127.0.0.1:9099",
         agent_runtime_enabled=False,
     )
+    owned_acceptance_databases(db, controller)
     task = asyncio.create_task(controller.submit_draft("accepted turn"))
     await asyncio.wait_for(gateway.started.wait(), timeout=1)
     assistant_id = controller._active_assistant_message_ids[session.id]

@@ -39,6 +39,7 @@ import pytest
 from textual.css.query import QueryError
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _build_test_app
 from tldw_chatbook.Chat.console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
@@ -49,6 +50,7 @@ from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterControlle
 from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
     ConsoleDraftSpendRefresh,
 )
+from tldw_chatbook.UI.Console_Modules.context_spend import ConsoleContextSpendController
 from tldw_chatbook.UI.Console_Modules.dictation import ConsoleDictationController
 from tldw_chatbook.UI.Console_Modules.fleet import ConsoleFleetLifecycleController
 from tldw_chatbook.UI.Console_Modules.hands_free import ConsoleHandsFreeController
@@ -72,6 +74,8 @@ from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceControlle
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Workspaces.models import RuntimeBindingKind, RuntimeBindingStatus
 
+pytestmark = pytest.mark.bootstrap_profile
+
 #: (screen attribute, controller class), in the order the wiring builds them.
 _EXPECTED_SLOTS: list[tuple[str, type]] = [
     ("_workspace", ConsoleWorkspaceController),
@@ -85,6 +89,7 @@ _EXPECTED_SLOTS: list[tuple[str, type]] = [
 #: Complete controller graph for the Task-3070.8 construction-order contract.
 #: Kept separate because `_EXPECTED_SLOTS` is a historical common-interface subset.
 _ALL_CONTROLLER_SLOTS: list[tuple[str, type]] = [
+    ("_context_spend", ConsoleContextSpendController),
     ("_image", ConsoleImageController),
     ("_video", ConsoleVideoController),
     ("_retrieval", ConsoleRetrievalController),
@@ -327,22 +332,39 @@ async def test_review_selection_controller_is_late_bound_without_sibling_objects
     store = object()
     conversation_id = "conversation"
     provider = object()
-    roots = object()
+    roots = "/bound/root"
     runs_db = object()
     bindings = object()
     native_messages = object()
     screen._ensure_console_chat_store = lambda: store
     active_status = next(iter(FEEDBACK_ACTIVE_RUN_STATUSES))
+    # TASK-33620.15.1.3: the roots are read narrowly -- the session's own
+    # workspace through the app's Change Review consent service -- never by
+    # building a whole turn snapshot. Roots come back as strings, as the
+    # snapshot stores them, so the doubles are strings too.
     chat_controller = SimpleNamespace(
-        store=SimpleNamespace(active_session_id="session"),
+        store=SimpleNamespace(
+            active_session_id="session",
+            session_workspace_id=lambda session_id: f"workspace-of-{session_id}",
+        ),
         run_state=SimpleNamespace(status=active_status),
         _agent_conversation_id=lambda session_id: (conversation_id, session_id),
         run_active_for_workspace=lambda root: ("active", root),
-        resolve_turn_execution_context=lambda session_id: SimpleNamespace(
-            workspace_roots=(roots, session_id)
-        ),
     )
     screen._console_chat_controller = chat_controller
+    # The runtime binds its own app onto the controller it is handed.
+    monkeypatch.setattr(
+        chat_controller.app,
+        "change_review_consent_service",
+        SimpleNamespace(
+            admit_turn=lambda workspace_id: SimpleNamespace(
+                ready_roots=(roots, workspace_id),
+                ready_aliases=(),
+                skipped_roots=(),
+            )
+        ),
+        raising=False,
+    )
     screen._ensure_console_chat_controller = lambda: chat_controller
     screen._ensure_console_agent_bridge = lambda: SimpleNamespace(
         runs_db=runs_db,
@@ -374,7 +396,10 @@ async def test_review_selection_controller_is_late_bound_without_sibling_objects
     )
     assert controller._run_active_accessor() is True
     assert controller._run_active_for_root("root") == ("active", "root")
-    assert controller._workspace_roots_accessor() == (roots, "session")
+    assert controller._workspace_roots_accessor() == (
+        roots,
+        "workspace-of-session",
+    )
     assert controller._agent_runs_db_accessor() is runs_db
     assert controller._capture_policy_bindings_accessor("session", "conversation") == (
         bindings,
@@ -385,7 +410,9 @@ async def test_review_selection_controller_is_late_bound_without_sibling_objects
     assert controller._native_messages_accessor() is native_messages
 
 
-def test_send_price_controller_is_constructed_with_late_bound_screen_edges() -> None:
+def test_send_price_controller_is_constructed_with_late_bound_screen_edges(
+    monkeypatch,
+) -> None:
     screen = _unmounted_console()
     controller = getattr(screen, "_send_price", None)
     assert isinstance(controller, ConsoleSendPriceController), (
@@ -397,7 +424,6 @@ def test_send_price_controller_is_constructed_with_late_bound_screen_edges() -> 
     launch = object()
     projection = object()
     screen._session._ensure_active_console_session_settings = lambda: settings
-    screen._console_chat_store = store
     screen._pending_console_launch_context = launch
     screen._ensure_console_chat_controller = lambda: SimpleNamespace(
         provider_messages_for_next_send_estimate=(
@@ -405,13 +431,17 @@ def test_send_price_controller_is_constructed_with_late_bound_screen_edges() -> 
         )
     )
 
-    assert controller._settings_accessor() is settings
-    assert controller._chat_store_accessor() is store
-    assert controller._pending_launch_accessor() is launch
-    assert controller._provider_history_accessor("session-1") == (
-        projection,
-        "session-1",
-    )
+    # This compatibility property writes through to the runtime owner. Restore
+    # the real store before teardown, rather than leaving an opaque test token.
+    with monkeypatch.context() as scoped:
+        scoped.setattr(screen, "_console_chat_store", store)
+        assert controller._settings_accessor() is settings
+        assert controller._chat_store_accessor() is store
+        assert controller._pending_launch_accessor() is launch
+        assert controller._provider_history_accessor("session-1") == (
+            projection,
+            "session-1",
+        )
 
 
 def test_draft_spend_refresh_is_wired_with_late_bound_screen_edges() -> None:
@@ -604,7 +634,9 @@ async def test_fleet_controller_is_constructed_with_late_bound_screen_edges() ->
     await workers.pop()()
     controller._retry_wake_soon()
     assert controller._wake_has_pending("conversation-a") is True
-    assert controller._wake_delivering_session_ids() == frozenset({"session-a", "session-b"})
+    assert controller._wake_delivering_session_ids() == frozenset(
+        {"session-a", "session-b"}
+    )
     assert controller._console_wake_turn_active("session-b")
     assert controller._fleet_has_unsettled_children() is True
     assert wake_calls == [("wire", screen.app_instance), "seed", "retry", "retry"]
@@ -797,14 +829,16 @@ def test_composer_accessor_is_late_bound(attr, accessor_name):
         ("_message", "_current_chat_store_accessor"),
     ],
 )
-def test_current_chat_store_accessor_reads_the_live_attribute(attr, accessor_name):
+def test_current_chat_store_accessor_reads_the_live_attribute(
+    attr, accessor_name, monkeypatch
+):
     """`lambda: self._console_chat_store` -- a bare attribute read, late."""
     screen = _unmounted_console()
     sentinel = object()
-    screen._console_chat_store = sentinel
-
-    accessor = getattr(getattr(screen, attr), accessor_name)
-    assert accessor() is sentinel, f"{attr}.{accessor_name} snapshotted the value"
+    with monkeypatch.context() as scoped:
+        scoped.setattr(screen, "_console_chat_store", sentinel)
+        accessor = getattr(getattr(screen, attr), accessor_name)
+        assert accessor() is sentinel, f"{attr}.{accessor_name} snapshotted the value"
 
 
 def test_workspace_resolves_the_session_sibling_at_call_time():
@@ -959,3 +993,143 @@ def test_prompts_resolves_the_session_sibling_at_call_time():
     )
 
     assert screen._prompts._ensure_active_console_session_settings_fn() is sentinel
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_session_verified_adoption_edges_are_late_bound(request, monkeypatch):
+    screen = _unmounted_console()
+    session = screen._session
+    with monkeypatch.context() as patch:
+        selection, summary, draft = (object() for _ in range(3))
+        controller = SimpleNamespace()
+        calls = []
+        patch.setattr(screen, "_console_chat_controller", controller)
+        patch.setattr(screen, "_build_console_provider_selection", lambda: selection)
+        patch.setattr(
+            screen._context_spend,
+            "_build_console_settings_summary_state",
+            lambda: summary,
+        )
+        patch.setattr(
+            screen._context_spend,
+            "_apply_console_settings_summary_state",
+            lambda value: calls.append(value),
+        )
+        patch.setattr(
+            screen,
+            "_console_settings_initial_draft",
+            lambda *args, **kwargs: (calls.append((args, kwargs)), draft)[1],
+        )
+        assert session._current_chat_controller_accessor() is controller
+        assert session._build_current_provider_selection_fn() is selection
+        assert session._build_settings_summary_fn() is summary
+        session._apply_settings_summary_fn(summary)
+        assert (
+            session._settings_initial_draft_fn(
+                selection, summary, exposed_fields=frozenset()
+            )
+            is draft
+        )
+        assert calls == [
+            summary,
+            ((selection, summary), {"exposed_fields": frozenset()}),
+        ]
+    assert session.is_attached is False
+    host = ConsolidatedCSSApp()
+    async with host.run_test(size=(120, 40)) as pilot:
+        await host.push_screen(screen)
+        await pilot.pause()
+        assert session.is_attached is True
+        await host.pop_screen()
+        await pilot.pause()
+        assert session.is_attached is False
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_context_spend_keeps_real_screen_proofs_and_live_module_callbacks(
+    request, monkeypatch
+):
+    from tldw_chatbook.UI.Screens import chat_screen
+
+    screen = _unmounted_console()
+    owner = screen._context_spend
+    settings, gateway, controller, result = (object() for _ in range(4))
+    calls = []
+    monkeypatch.setattr(screen, "_ensure_console_provider_gateway", lambda: gateway)
+    monkeypatch.setattr(
+        chat_screen.spend,
+        "cached_context_window_for_display",
+        lambda *args: (calls.append(args), result)[1],
+    )
+    assert owner._context_window_for_display(settings) is result
+    assert calls.pop() == (screen, gateway, settings)
+
+    pricing_reader = lambda: result
+    monkeypatch.setattr(chat_screen, "get_pricing_catalog", pricing_reader)
+    monkeypatch.setattr(
+        chat_screen.spend,
+        "pricing_catalog_for_display",
+        lambda *args: (calls.append(args), result)[1],
+    )
+    assert owner._display_pricing_catalog() is result
+    assert calls.pop() == (screen, pricing_reader)
+
+    def for_screen(actual_screen, *, max_age):
+        calls.append((actual_screen, max_age))
+        return SimpleNamespace(inputs=lambda *args: (calls.append(args), result)[1])
+
+    monkeypatch.setattr(
+        chat_screen.spend.ConsoleContextReadSnapshot, "for_screen", for_screen
+    )
+    monkeypatch.setattr(chat_screen, "CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS", 7.0)
+    assert owner._context_inputs(controller, "session") is result
+    assert calls == [(screen, 7.0), (controller, "session")]
+    calls.clear()
+    for method, module_name in (
+        ("_build_cost_snapshot", "build_cost_snapshot"),
+        ("_build_context_estimate", "build_console_context_estimate"),
+        ("_estimate_tokens_locally", "_estimate_tokens_locally"),
+    ):
+        monkeypatch.setattr(
+            chat_screen,
+            module_name,
+            lambda *args, **kwargs: (calls.append((args, kwargs)), result)[1],
+        )
+        assert getattr(owner, method)(settings, option=controller) is result
+        assert calls.pop() == ((settings,), {"option": controller})
+    assert calls == []
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_context_spend_re_resolves_runtime_framework_and_checked_timer_entry(
+    request, monkeypatch
+):
+    screen = _unmounted_console()
+    owner = screen._context_spend
+    result = object()
+    calls = []
+    monkeypatch.setattr(
+        screen,
+        "_console_runtime",
+        lambda: SimpleNamespace(
+            response_rule_usage=lambda session_id: (calls.append(session_id), result)[1]
+        ),
+    )
+    assert owner._response_rule_usage("session") is result
+    assert calls == ["session"]
+    monkeypatch.setattr(screen, "query_one_optional", lambda *args, **kwargs: result)
+    assert owner.query_one_optional("#late") is result
+    monkeypatch.setattr(
+        screen, "_sync_console_cost_chip", lambda: calls.append("checked-screen-entry")
+    )
+    owner._sync_console_cost_chip()
+    assert calls == ["session", "checked-screen-entry"]
+    monkeypatch.setattr(
+        screen,
+        "_console_runtime",
+        lambda: SimpleNamespace(response_rule_usage=lambda session_id: None),
+    )
+    assert owner._response_rule_usage("session") is None

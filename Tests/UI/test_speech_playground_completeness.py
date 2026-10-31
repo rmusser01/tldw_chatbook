@@ -79,14 +79,19 @@ async def test_the_always_present_surface_is_present_for_every_provider(provider
     unguarded, so any of them missing for any provider is an uncaught
     `NoMatches` at the moment the user presses Generate.
     """
-    always_present = REQUIRED_PLAYGROUND_CONTROLS - {
-        control
-        for other in PROVIDER_PARAMS
-        for control in PROVIDER_PARAMS[other]
-    } - {"reference-audio-btn", "clear-reference-audio-btn",
-         "reference-audio-status", "higgs-voice-upload-btn",
-         "higgs-clear-voice-btn", "higgs-voice-status",
-         "higgs-voice-upload-row"}
+    always_present = (
+        REQUIRED_PLAYGROUND_CONTROLS
+        - {control for other in PROVIDER_PARAMS for control in PROVIDER_PARAMS[other]}
+        - {
+            "reference-audio-btn",
+            "clear-reference-audio-btn",
+            "reference-audio-status",
+            "higgs-voice-upload-btn",
+            "higgs-clear-voice-btn",
+            "higgs-voice-status",
+            "higgs-voice-upload-row",
+        }
+    )
 
     mounted = await _ids_for(provider)
     missing = always_present - mounted

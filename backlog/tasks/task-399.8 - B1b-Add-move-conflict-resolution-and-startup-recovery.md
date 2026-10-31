@@ -1,9 +1,10 @@
 ---
 id: TASK-399.8
 title: B1b Add move conflict resolution and startup recovery
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-07-23 14:24'
+updated_date: '2026-10-04'
 labels:
   - notes
   - filesystem
@@ -39,3 +40,15 @@ Roll-up tracker for the three PR-sized B1b children that add identity-preserving
 - [TASK-399.8.1](task-399.8.1%20-%20B1b1-Add-identity-preserving-rename-move-and-recovery-classification.md) — rename/move and classifier expansion
 - [TASK-399.8.2](task-399.8.2%20-%20B1b2-Build-bounded-conflict-comparison-and-resolution-UX.md) — bounded three-sided conflict UX
 - [TASK-399.8.3](task-399.8.3%20-%20B1b3-Integrate-writable-lifecycle-and-open-the-B1-release-gate.md) — lifecycle barriers and release gate
+
+## Closeout 2026-10-04
+
+Closed moot with children landed (roll-up tracker; owned no separate PR).
+Children TASK-399.8.1 and TASK-399.8.2 are Done — identity-preserving
+`move_file` and the bounded Base/Draft/Disk compare with resolution choices.
+TASK-399.8.3 is closed superseded: no read/write transition or B1 release
+gate ever shipped because the feature went straight to writable under
+ADR-029 (TASK-969, PR #992). With .3 superseded, the all-or-nothing gate this
+tracker exists to roll up is moot.
+
+Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).

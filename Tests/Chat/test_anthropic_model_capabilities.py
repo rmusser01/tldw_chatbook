@@ -196,7 +196,10 @@ def test_legacy_models_still_receive_temperature(mock_post, model):
 def test_legacy_model_still_receives_fixed_thinking_budget(mock_post):
     """AC #6 regression pin: `budget_tokens` is live-verified 200 on Opus 4.6."""
     sent = _sent_payload(
-        mock_post, "claude-opus-4-6", thinking_effort="high", thinking_budget_tokens=4096
+        mock_post,
+        "claude-opus-4-6",
+        thinking_effort="high",
+        thinking_budget_tokens=4096,
     )
     assert sent["thinking"] == {"type": "enabled", "budget_tokens": 4096}
     # thinking enabled -> sampling suppressed, as before this change.

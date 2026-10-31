@@ -1,0 +1,43 @@
+"""Reproduce the unchanged fork/schema fixture diagnostics at FIX_BASE."""
+from pathlib import Path
+import hashlib
+import json
+import os
+import subprocess
+import sys
+
+base = "459e666970ef9e7aa4e148705cddafb9621a72d1"
+root = Path(__file__).resolve().parent
+baseline = root / "final-fix-baseline"
+paths = ["tldw_chatbook", "Tests", "pyproject.toml"]
+if not baseline.exists():
+    baseline.mkdir()
+    archive = root / "final-fix-baseline.tar"
+    with archive.open("wb") as stream:
+        subprocess.run(["git", "archive", base, *paths], stdout=stream, check=True)
+    subprocess.run(["tar", "-xf", str(archive), "-C", str(baseline)], check=True)
+    archive.unlink()
+entries = subprocess.check_output(["git", "ls-tree", "-r", "-z", base, "--", *paths]).split(b"\0")
+manifest = []
+for entry in entries:
+    if not entry:
+        continue
+    info, rawpath = entry.split(b"\t", 1)
+    mode, kind, digest = info.split()
+    path = baseline / os.fsdecode(rawpath)
+    data = os.fsencode(os.readlink(path)) if mode == b"120000" else path.read_bytes()
+    actual = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+    assert actual == digest.decode(), str(path)
+    manifest.append({"path": os.fsdecode(rawpath), "mode": mode.decode(), "blob_sha1": actual})
+(root / "final-fix-baseline-manifest.json").write_text(json.dumps({"base": base, "paths": paths, "verified_blobs": len(manifest), "files": manifest}, indent=2) + "\n")
+print("Verified", len(manifest), "immutable baseline blobs")
+if "--verify-only" in sys.argv:
+    sys.exit(0)
+command = [sys.executable, "-m", "pytest", "Tests/Chat/test_console_chat_fork.py", "Tests/Agents/test_agent_chat_create_tools.py", "-q", "--tb=short", "-k", "configuration_and_leaf_writers_block or new_chat_schema_shape", "--basetemp", str(root / "pytest-final-fix-baseline")]
+with (root / "final-fix-baseline.log").open("w") as log:
+    print("BASE", base, "; all", len(manifest), "tracked production/tests/pyproject blobs verified against Git object hashes", file=log, flush=True)
+    print("CWD", baseline, file=log, flush=True)
+    print("COMMAND", repr(command), file=log, flush=True)
+    result = subprocess.run(command, cwd=baseline, stdout=log, stderr=subprocess.STDOUT)
+    print("EXIT", result.returncode, file=log)
+sys.exit(result.returncode)

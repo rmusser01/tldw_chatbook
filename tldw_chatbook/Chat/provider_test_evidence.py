@@ -141,6 +141,11 @@ _FAILURE_CATEGORIES = frozenset(
         "connection_error",
     }
 )
+#: The categories "model_listing_unavailable" may carry: none (no usable
+#: list), an HTTP status (a 404, 429, 5xx) or, since the owner's decision of
+#: 2026-10-17 (PR #3144, D2), "forbidden" -- a 403, which rejects no key (only
+#: a 401 does, owner ruling 2026-10-02) but, sent no key, may want one.
+LISTING_UNAVAILABLE_CATEGORIES = frozenset({None, "http_status", "forbidden"})
 # TASK-25833: these are read by a first-time user deciding what to do next,
 # not by the implementer. Each names what happened in plain language and the
 # one action that addresses it -- "The model listing request had a connection
@@ -228,6 +233,27 @@ def console_generation_test_availability(
     return ConsoleGenerationTestAvailability.UNSUPPORTED
 
 
+def model_facet(
+    model: object, endpoint: str, model_ids: Collection[str]
+) -> ModelFacet:
+    """The model facet of a snapshot (TASK-33005.10: one derivation).
+
+    Args:
+        model: The selected model; blank or not a string is missing.
+        endpoint: The endpoint facet of the evidence for this connection.
+        model_ids: The models that evidence's listing returned.
+
+    Returns:
+        ``confirmed`` only for a model a reached listing returned.
+    """
+    model_id = model.strip() if isinstance(model, str) else ""
+    if not model_id:
+        return "missing"
+    if endpoint == "reachable" and model_id in model_ids:
+        return "confirmed"
+    return "unconfirmed"
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderReadinessSnapshot:
     """Independent configuration, credential, endpoint, model, and generation facets."""
@@ -284,10 +310,10 @@ class ProviderReadinessSnapshot:
             raise ValueError("Incomplete readiness cannot authenticate credentials.")
         if self.endpoint == "unreachable":
             return
-        if self.endpoint == "model_listing_unavailable" and self.category in {
-            None,
-            "http_status",
-        }:
+        if (
+            self.endpoint == "model_listing_unavailable"
+            and self.category in LISTING_UNAVAILABLE_CATEGORIES
+        ):
             return
         if self.category is not None:
             raise ValueError("Endpoint failure category conflicts with its facet.")
@@ -544,7 +570,7 @@ class ProviderTestEvidence:
             if self.model_ids:
                 raise ValueError("Unreachable evidence cannot include model IDs.")
         elif self.endpoint == "model_listing_unavailable":
-            if self.model_ids or self.category not in {None, "http_status"}:
+            if self.model_ids or self.category not in LISTING_UNAVAILABLE_CATEGORIES:
                 raise ValueError("Model-listing evidence is inconsistent.")
         elif self.model_ids or self.category is not None:
             raise ValueError("Untested evidence cannot include probe results.")
@@ -606,6 +632,15 @@ class _MutationResult(Protocol):
 #: of the probe that BEGAN last, so a slow probe settling late on one surface
 #: never overwrites a newer one from another (and a clock step cannot either).
 _BEGIN_ORDER = count(1)
+#: TASK-33005.10: ``next()`` on a shared count is atomic only under the GIL,
+#: and stores on different threads allocate from it (the free-threaded build
+#: the owner plans gives no such guarantee), so allocation takes this lock.
+_BEGIN_ORDER_LOCK = Lock()
+
+
+def _next_begin_order() -> int:
+    with _BEGIN_ORDER_LOCK:
+        return next(_BEGIN_ORDER)
 
 
 class _ProviderTestToken:
@@ -614,7 +649,7 @@ class _ProviderTestToken:
     __slots__ = ("order",)
 
     def __init__(self) -> None:
-        self.order = next(_BEGIN_ORDER)
+        self.order = _next_begin_order()
 
     def __repr__(self) -> str:
         return "<ProviderTestToken>"
@@ -626,7 +661,7 @@ class _ProviderGenerationTestToken:
     __slots__ = ("order",)
 
     def __init__(self) -> None:
-        self.order = next(_BEGIN_ORDER)
+        self.order = _next_begin_order()
 
     def __repr__(self) -> str:
         return "<ProviderGenerationTestToken>"
@@ -650,10 +685,28 @@ class ProviderTestEvidenceStore:
     back for an exact connection. A rebound earlier result (a
     ``ProviderTestEvidence`` outcome) was published when it was observed, so
     it is not published again. Without ``app`` the store is draft-only.
+
+    TASK-33005.9: ``credential_of`` is for a surface whose draft identity
+    counts credential edits instead of digesting the key (the first-run
+    wizard). It returns the key a probe begun now sends; the probe's facts
+    publish under that key's :func:`connection_credential_revision`, the
+    connection every other surface keys. Such a store reads no facts back:
+    its identities are not connections, so an invalidated result would be
+    read back for the very identity it tested.
     """
 
-    def __init__(self, app: Callable[[], object] | None = None) -> None:
+    def __init__(
+        self,
+        app: Callable[[], object] | None = None,
+        *,
+        credential_of: Callable[[], object] | None = None,
+    ) -> None:
         self._app = app
+        self._credential_of = credential_of
+        #: (draft identity, the connection its facts publish under).
+        self._connection: tuple[ProviderDraftIdentity, ProviderDraftIdentity] | None = (
+            None
+        )
         self._shared_owner: ProviderConnectionEvidence | None = None
         self._lock = RLock()
         self._operation_epoch = 0
@@ -687,6 +740,7 @@ class ProviderTestEvidenceStore:
 
         if type(identity) is not ProviderDraftIdentity:
             raise ValueError("Provider draft identity is invalid.")
+        connection = self._probe_connection(identity)
         with self._lock:
             if identity.draft_generation < self._latest_generation:
                 raise ValueError("Draft generation is older than current evidence.")
@@ -695,6 +749,7 @@ class ProviderTestEvidenceStore:
                 self._clear_all_test_state()
                 self._advance_generation_operation()
             self._advance_operation()
+            self._connection = None if connection is None else (identity, connection)
             token = _ProviderTestToken()
             self._current_token = token
             self._current_token_epoch = self._operation_epoch
@@ -767,8 +822,9 @@ class ProviderTestEvidenceStore:
             )
             self._evidence = settled
             self._advance_operation()
+            connection = self._shared_identity(identity)
         if type(outcome) is not ProviderTestEvidence:
-            self._publish(settled, token.order, generation=False)
+            self._publish(settled, token.order, connection, generation=False)
         return True
 
     def begin_generation(
@@ -894,8 +950,9 @@ class ProviderTestEvidenceStore:
             self._evidence = settled
             self._generation_cancel_restore = None
             self._advance_generation_operation()
+            connection = self._shared_identity(identity)
         if type(outcome) is not ProviderTestEvidence:
-            self._publish(settled, token.order, endpoint=False)
+            self._publish(settled, token.order, connection, endpoint=False)
         return True
 
     def evidence_for(
@@ -905,7 +962,8 @@ class ProviderTestEvidenceStore:
 
         A linked store falls back to another surface's settled result for the
         same connection, re-stamped with ``identity`` -- but never for an
-        identity ``begin`` would refuse (TASK-33001.3's invariant).
+        identity ``begin`` would refuse (TASK-33001.3's invariant), nor in a
+        ``credential_of`` store, whose identities are not connections.
         """
 
         if type(identity) is not ProviderDraftIdentity:
@@ -913,7 +971,10 @@ class ProviderTestEvidenceStore:
         with self._lock:
             if self._evidence is not None and self._evidence.identity == identity:
                 return self._evidence
-            if identity.draft_generation < self._latest_generation:
+            if (
+                identity.draft_generation < self._latest_generation
+                or self._credential_of is not None
+            ):
                 return None
         shared = self._shared()
         return shared.evidence_for(identity) if shared is not None else None
@@ -1088,14 +1149,23 @@ class ProviderTestEvidenceStore:
                     saved_identity.draft_generation,
                 )
 
+            tested_connection = self._shared_identity(tested_identity)
+            saved_connection = saved_identity
+            if can_preserve and self._credential_of and tested_connection is not None:
+                # Same key (the revisions match): only the source moves.
+                saved_connection = replace(
+                    tested_connection,
+                    credential_source=saved_identity.credential_source,
+                )
+                self._connection = (saved_identity, saved_connection)
             self._clear_all_test_state()
             self._advance_generation_operation()
             if can_preserve and evidence is not None:
                 self._evidence = replace(evidence, identity=saved_identity)
             self._advance_operation()
         shared = self._shared() if can_preserve else None
-        if shared is not None:
-            shared.carry(tested_identity, saved_identity)
+        if shared is not None and tested_connection is not None:
+            shared.carry(tested_connection, saved_connection)
         return can_preserve
 
     def _shared(self) -> ProviderConnectionEvidence | None:
@@ -1109,15 +1179,43 @@ class ProviderTestEvidenceStore:
         self,
         evidence: ProviderTestEvidence,
         order: int,
+        connection: ProviderDraftIdentity | None,
         *,
         endpoint: bool = True,
         generation: bool = True,
     ) -> None:
-        shared = self._shared()
+        shared = self._shared() if connection is not None else None
         if shared is not None:
+            if connection != evidence.identity:
+                evidence = replace(evidence, identity=connection)
             shared.publish(
                 evidence, order=order, endpoint=endpoint, generation=generation
             )
+
+    def _probe_connection(
+        self, identity: ProviderDraftIdentity
+    ) -> ProviderDraftIdentity | None:
+        """The connection a probe of ``identity`` begun now publishes under."""
+
+        if self._credential_of is None:
+            return identity
+        try:
+            credential = self._credential_of()
+        except Exception:  # noqa: BLE001 - the probe runs; its result stays private
+            return None
+        return replace(
+            identity, credential_revision=connection_credential_revision(credential)
+        )
+
+    def _shared_identity(
+        self, identity: ProviderDraftIdentity
+    ) -> ProviderDraftIdentity | None:
+        """Under the lock: the connection ``identity``'s facts publish under."""
+
+        if self._credential_of is None:
+            return identity
+        held = self._connection
+        return held[1] if held is not None and held[0] == identity else None
 
     def _reject_settlement(
         self,
@@ -1513,8 +1611,47 @@ def _validate_probe_result(
     elif endpoint == "unreachable":
         if model_ids:
             raise ValueError("Unreachable probe result cannot include model IDs.")
-    elif model_ids or category not in {None, "http_status"}:
+    elif model_ids or category not in LISTING_UNAVAILABLE_CATEGORIES:
         raise ValueError("Model-listing probe result is inconsistent.")
+
+
+def listing_refused_without_a_key(evidence: object) -> bool:
+    """Whether a model listing that sent no key was answered 403.
+
+    The owner's decision of 2026-10-17 (PR #3144, D2): such a listing still
+    reads "model listing unavailable" and blocks nothing, but the server may
+    want a key, so a surface adds a hint naming its key field. "Sent no key"
+    is revision 0, whichever source names it (``_connection_key``'s rule): an
+    explicit "environment" naming an unset variable sends none either. A probe
+    result carries no identity, so it never qualifies.
+
+    Args:
+        evidence: A ``ProviderTestEvidence`` (or a bare probe result).
+
+    Returns:
+        True for a 403 listing whose identity sent no credential.
+    """
+    return (
+        getattr(evidence, "endpoint", None) == "model_listing_unavailable"
+        and getattr(evidence, "category", None) == "forbidden"
+        and getattr(getattr(evidence, "identity", None), "credential_revision", None)
+        == 0
+    )
+
+
+def listing_unavailable_endpoint_copy(evidence: object) -> str:
+    """Settings' Endpoint-row words for a listing that gave no usable list.
+
+    Args:
+        evidence: The stored evidence, or a settled probe, behind the row.
+
+    Returns:
+        The suffix, with the API key field named after a keyless 403.
+    """
+    copy = " · model listing unavailable; chat endpoint not tested"
+    if listing_refused_without_a_key(evidence):
+        copy += "; if this server needs a key, enter one in the API key field"
+    return copy
 
 
 def _validate_generation_result(generation: object, category: object) -> None:

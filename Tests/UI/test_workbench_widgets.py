@@ -145,9 +145,7 @@ def test_state_child_sorting_matches_latest_snapshot(
         attribute_name,
     )
 
-    assert [
-        getattr(child, attribute_name) for child in widget.children
-    ] == desired_ids
+    assert [getattr(child, attribute_name) for child in widget.children] == desired_ids
 
 
 # ---------------------------------------------------------------------------

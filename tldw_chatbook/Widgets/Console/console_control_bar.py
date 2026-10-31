@@ -126,9 +126,15 @@ class ConsoleControlBar(Vertical):
     def _set_recovery_height(self, visible: bool) -> None:
         """Set the exact bar height for its recovery-row visibility."""
         height = 2 if visible else 1
-        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
-        self.set_styles(height=None)
-        self.add_class("h-2" if visible else "h-1")
+        classes = {name for name in self.classes if not name.startswith("h-")}
+        classes.add(f"h-{height}")
+        # Clearing a scalar style requests a whole-screen layout even when no
+        # inline rule is set, and this runs on every 0.2 s run tick through the
+        # auto-speak sync (TASK-33620.15.7): clear only a rule that exists.
+        if self.styles.inline.has_rule("height"):
+            self.set_styles(height=None)
+        # One atomic update; Textual skips restyling when classes are unchanged.
+        self.set_classes(classes)
         self.styles.min_height = height
         self.styles.max_height = height
 
@@ -187,7 +193,11 @@ class ConsoleControlBar(Vertical):
                 widget = self.query_one(selector, Static)
             except NoMatches:
                 continue
-            widget.update(label)
+            # TASK-33620.15.7: every label here is a hidden zero-size compat
+            # widget (`_compatibility_layout_widget`), so new copy never moves
+            # anything and unchanged copy is not written at all.
+            if widget.content != label:
+                widget.update(label, layout=False)
 
     @staticmethod
     def _action_widget_id(action: WorkbenchAction) -> str:
@@ -300,7 +310,9 @@ class ConsoleControlBar(Vertical):
             for action in self._visible_actions():
                 yield self._action(action)
         with Horizontal(id="console-auto-speak-row") as speech_row:
-            speech_row.remove_class(*(name for name in speech_row.classes if name.startswith("h-")))
+            speech_row.remove_class(
+                *(name for name in speech_row.classes if name.startswith("h-"))
+            )
             speech_row.set_styles(height=None)
             speech_row.add_class("h-1")
             speech_row.styles.min_height = 1
@@ -322,11 +334,14 @@ class ConsoleControlBar(Vertical):
             resume.display = False
             yield resume
             speech_row.display = False
+        # TASK-33002.19: these labels carry user text (a provider id, an
+        # endpoint's name), so markup is off; `update` in `sync_state` follows.
         yield self._compatibility_layout_widget(
             Static(
                 _summary_line(self.state),
                 id="console-control-status-line",
                 classes="console-control-summary-line",
+                markup=False,
             )
         )
         yield self._compatibility_layout_widget(
@@ -334,6 +349,7 @@ class ConsoleControlBar(Vertical):
                 self.state.provider_label,
                 id="console-provider-label",
                 classes="console-control-label console-hidden-control",
+                markup=False,
             )
         )
         yield self._compatibility_layout_widget(
@@ -341,6 +357,7 @@ class ConsoleControlBar(Vertical):
                 self.state.model_label,
                 id="console-model-label",
                 classes="console-control-label console-hidden-control",
+                markup=False,
             )
         )
         yield self._compatibility_layout_widget(
@@ -348,6 +365,7 @@ class ConsoleControlBar(Vertical):
                 self.state.assistant_label,
                 id="console-assistant-label",
                 classes="console-control-label console-hidden-control",
+                markup=False,
             )
         )
         yield self._compatibility_layout_widget(
@@ -355,6 +373,7 @@ class ConsoleControlBar(Vertical):
                 self.state.rag_label,
                 id="console-rag-label",
                 classes="console-control-label console-hidden-control",
+                markup=False,
             )
         )
         yield self._compatibility_layout_widget(
@@ -362,6 +381,7 @@ class ConsoleControlBar(Vertical):
                 self.state.sources_label,
                 id="console-sources-label",
                 classes="console-control-label console-hidden-control",
+                markup=False,
             )
         )
         yield self._compatibility_layout_widget(
@@ -369,6 +389,7 @@ class ConsoleControlBar(Vertical):
                 self.state.tools_label,
                 id="console-tools-label",
                 classes="console-control-label console-hidden-control",
+                markup=False,
             )
         )
         yield self._compatibility_layout_widget(
@@ -376,6 +397,7 @@ class ConsoleControlBar(Vertical):
                 self.state.approvals_label,
                 id="console-approvals-label",
                 classes="console-control-label console-hidden-control",
+                markup=False,
             )
         )
         yield self._compatibility_layout_widget(

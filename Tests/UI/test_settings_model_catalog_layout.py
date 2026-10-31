@@ -10,9 +10,14 @@ These tests load the REAL application stylesheet (``tldw_cli_modular.tcss``)
 via ``_SettingsCssHarness`` and assert, at 120x35 / 100x30 / 80x24, that the
 group sizes to its content and that its header and hint copy actually render
 when the detail pane is scroll-stepped.
+
+TASK-33007.6, rewritten on purpose: the group now sits inside the closed
+one-row "Catalog refresh" disclosure under Advanced, whose title replaced the
+"Automatic refresh" header, so the test opens it first and reads that title.
 """
 
 import pytest
+from textual.widgets import Collapsible
 
 from Tests.UI.test_destination_shells import _active_destination_screen
 from Tests.UI.test_screen_navigation import _build_test_app
@@ -21,8 +26,8 @@ from Tests.UI.test_settings_category_sweep import (
     _settle_settings,
 )
 from Tests.UI.test_settings_narrow_layout import (
-    _SettingsCssHarness,
     _scrolled_region_rows,
+    _SettingsCssHarness,
 )
 
 
@@ -36,6 +41,10 @@ async def test_model_catalog_group_renders_all_controls(size):
         await _settle_settings(pilot)
         await _click_settings_category(pilot, "providers-models")
         screen = _active_destination_screen(host)
+        screen.query_one(
+            "#settings-advanced-catalog-refresh", Collapsible
+        ).collapsed = False
+        await pilot.pause()
 
         group = screen.query_one("#settings-model-catalog-group")
         assert str(group.styles.height) == "auto", (
@@ -65,5 +74,5 @@ async def test_model_catalog_group_renders_all_controls(size):
         text = " ".join(
             "".join(ch if ch.isalnum() else " " for ch in " ".join(rows)).split()
         )
-        assert "Automatic refresh" in text, "section header never rendered"
+        assert "Catalog refresh" in text, "section header never rendered"
         assert "applies immediately" in text, "instant-apply hint copy never rendered"

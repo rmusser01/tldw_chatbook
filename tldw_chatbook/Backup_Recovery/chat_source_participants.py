@@ -247,7 +247,7 @@ def _cache_names(source):
     if name == "LocalChatDictionaryService":
         return ("_history",)
     if name == "ChatConversationService":
-        return ("_rag_context_store",)
+        return ("_rag_context_store", "_staged_rag_context_records")
     return ()
 
 

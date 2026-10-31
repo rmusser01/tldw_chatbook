@@ -5,20 +5,25 @@ import asyncio
 import pytest
 from textual.widgets import Button, Select, Switch
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_navigation_decisions import _until
 from Tests.UI.test_console_screen_reuse import (
     _boot_settled,
     _press_until_screen,
-    _scratch_env,
 )
 
 
 @pytest.mark.asyncio
 @pytest.mark.ui
+@private_profile_test
 async def test_fresh_install_selects_independent_buddy_and_opens_pinned_chat_from_home(
-    monkeypatch, tmp_path
+    request: pytest.FixtureRequest, monkeypatch, tmp_path
 ):
-    _scratch_env(monkeypatch, tmp_path)
+    from tldw_chatbook.config import save_settings_to_cli_config
+
+    assert save_settings_to_cli_config(
+        {"first_run": {"setup_completed": True}, "splash_screen": {"enabled": False}}
+    )
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.UI.Navigation.buddy_management import (
         get_buddy_management,
@@ -92,3 +97,45 @@ async def test_fresh_install_selects_independent_buddy_and_opens_pinned_chat_fro
         await pilot.press("escape")
         assert app.screen is home
         assert manager.controller.current_preferences() == before_cancel
+
+
+@pytest.mark.asyncio
+@pytest.mark.ui
+@private_profile_test
+async def test_roleplay_manage_buddy_constructs_controller_from_disabled_profile(
+    request: pytest.FixtureRequest,
+):
+    from tldw_chatbook.config import save_settings_to_cli_config
+
+    assert save_settings_to_cli_config(
+        {
+            "first_run": {"setup_completed": True},
+            "splash_screen": {"enabled": False},
+            "persona_buddy": {"enabled": False},
+        }
+    )
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.UI.Navigation.buddy_management import get_buddy_management
+    from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
+        BuddyManagementModal,
+    )
+
+    app = TldwCli()
+    async with app.run_test(size=(170, 48)) as pilot:
+        await _boot_settled(app, pilot)
+        await _press_until_screen(pilot, "ctrl+4", "PersonasScreen")
+        await pilot.pause()
+        assert app.persona_buddy_controller is None
+        button = app.screen.query_one("#personas-buddy-use", Button)
+        assert not button.disabled
+        button.focus(scroll_visible=True)
+        await pilot.pause()
+        await pilot.press("enter")
+        await _until(lambda: isinstance(app.screen, BuddyManagementModal))
+        await pilot.pause()
+        controller = get_buddy_management(app).controller
+        assert controller is app.persona_buddy_controller
+        assert controller.current_preferences().enabled is False
+        assert app.screen.query_one("#buddy-enabled", Switch).value is False
+        await pilot.press("escape")
+        assert type(app.screen).__name__ == "PersonasScreen"

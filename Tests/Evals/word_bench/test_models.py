@@ -33,8 +33,16 @@ def test_snippet_hash_tracks_text_not_id():
 
 
 def test_target_steering_field_is_mode_specific():
-    raw = Target(id="t1", name="base", provider="llama_cpp", model_id="m", prefix="Note: ")
-    chat = Target(id="t2", name="safe", provider="llama_cpp", model_id="m", system_prompt="Be safe.")
+    raw = Target(
+        id="t1", name="base", provider="llama_cpp", model_id="m", prefix="Note: "
+    )
+    chat = Target(
+        id="t2",
+        name="safe",
+        provider="llama_cpp",
+        model_id="m",
+        system_prompt="Be safe.",
+    )
     assert raw.is_valid_for_mode("raw") is True
     assert raw.is_valid_for_mode("chat") is False
     assert chat.is_valid_for_mode("chat") is True
@@ -49,12 +57,25 @@ def test_target_without_steering_is_valid_in_both_modes():
 
 def test_target_rejects_both_steering_fields_at_once():
     with pytest.raises(ValueError, match="prefix.*system_prompt|system_prompt.*prefix"):
-        Target(id="t4", name="bad", provider="p", model_id="m", prefix="a", system_prompt="b")
+        Target(
+            id="t4",
+            name="bad",
+            provider="p",
+            model_id="m",
+            prefix="a",
+            system_prompt="b",
+        )
 
 
 def test_bench_config_rejects_unknown_prompt_mode():
     with pytest.raises(ValueError, match="prompt_mode"):
-        BenchConfig(name="b", prompt_mode="telepathy", top_k=20, dataset_id="d", target_ids=("t1",))
+        BenchConfig(
+            name="b",
+            prompt_mode="telepathy",
+            top_k=20,
+            dataset_id="d",
+            target_ids=("t1",),
+        )
 
 
 def test_bench_config_rejects_duplicate_target_ids():
@@ -65,7 +86,10 @@ def test_bench_config_rejects_duplicate_target_ids():
     missing column."""
     with pytest.raises(ValueError, match="target_ids must be unique"):
         BenchConfig(
-            name="b", prompt_mode="raw", top_k=20, dataset_id="d",
+            name="b",
+            prompt_mode="raw",
+            top_k=20,
+            dataset_id="d",
             target_ids=("t1", "t1"),
         )
 
@@ -89,7 +113,10 @@ def test_bench_config_rejects_a_non_string_target_id():
     parameter-binding error out of db.get_model."""
     with pytest.raises(ValueError, match=r"target_ids.*123.*int"):
         BenchConfig(
-            name="b", prompt_mode="raw", top_k=20, dataset_id="d",
+            name="b",
+            prompt_mode="raw",
+            top_k=20,
+            dataset_id="d",
             target_ids=("t1", 123),
         )
 
@@ -101,8 +128,12 @@ def test_bench_config_rejects_a_non_string_target_id_even_when_lenient():
     never protect the read path this validation exists for."""
     with pytest.raises(ValueError, match=r"target_ids.*123.*int"):
         BenchConfig(
-            name="b", prompt_mode="raw", top_k=20, dataset_id="d",
-            target_ids=("t1", 123), strict=False,
+            name="b",
+            prompt_mode="raw",
+            top_k=20,
+            dataset_id="d",
+            target_ids=("t1", 123),
+            strict=False,
         )
 
 
@@ -112,7 +143,10 @@ def test_bench_config_rejects_target_ids_that_is_not_a_list_or_tuple():
     would otherwise happily iterate character-by-character)."""
     with pytest.raises(ValueError, match="target_ids must be a list or tuple"):
         BenchConfig(
-            name="b", prompt_mode="raw", top_k=20, dataset_id="d",
+            name="b",
+            prompt_mode="raw",
+            top_k=20,
+            dataset_id="d",
             target_ids="t1",  # type: ignore[arg-type]
         )
 
@@ -140,9 +174,13 @@ def test_truncated_mass_clamps_when_observed_mass_exceeds_one():
     distribution, must not produce a negative 'unobserved' mass -- Task 3
     builds its 'other' bucket from this value."""
     cap = CellCapture(
-        prompt_mode="raw", k_requested=1, k_returned=1, content_offset=0,
+        prompt_mode="raw",
+        k_requested=1,
+        k_returned=1,
+        content_offset=0,
         top_k=(TokenProb(token=" a", logprob=0.5, bytes_=(), token_id=1),),
-        canary="pass", captured_at="2026-07-26T00:00:00Z",
+        canary="pass",
+        captured_at="2026-07-26T00:00:00Z",
     )
     assert cap.truncated_mass == 0.0
     assert 0.0 <= cap.truncated_mass <= 1.0
@@ -168,7 +206,9 @@ def test_cell_error_is_distinguishable_from_capture():
 
 def test_preflight_result_maps_to_contract_status_label():
     ok = PreflightResult(state="ok", k_returned=20, canary="pass")
-    unreachable = PreflightResult(state="unreachable", k_returned=None, canary="unchecked")
+    unreachable = PreflightResult(
+        state="unreachable", k_returned=None, canary="unchecked"
+    )
     degenerate = PreflightResult(state="ok", k_returned=20, canary="degenerate")
     assert ok.status_label == "Ready"
     assert unreachable.status_label == "Unavailable"
@@ -191,10 +231,15 @@ def test_preflight_result_continuation_defaults_to_empty_string():
 
 def test_preflight_result_continuation_can_be_set_explicitly():
     result = PreflightResult(
-        state="ok", k_returned=20, canary="degenerate",
+        state="ok",
+        k_returned=20,
+        canary="degenerate",
         continuation="<|channel><|channel>thought\n<channel|>The sky is **blue",
     )
-    assert result.continuation == "<|channel><|channel>thought\n<channel|>The sky is **blue"
+    assert (
+        result.continuation
+        == "<|channel><|channel>thought\n<channel|>The sky is **blue"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -208,14 +253,22 @@ def test_bench_config_capture_continuations_defaults_to_false():
     config_data lacking the key) must keep constructing without supplying
     it, and get the flag OFF."""
     config = BenchConfig(
-        name="b", prompt_mode="raw", top_k=20, dataset_id="d", target_ids=("t1",),
+        name="b",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id="d",
+        target_ids=("t1",),
     )
     assert config.capture_continuations is False
 
 
 def test_bench_config_capture_continuations_can_be_set_explicitly():
     config = BenchConfig(
-        name="b", prompt_mode="raw", top_k=20, dataset_id="d", target_ids=("t1",),
+        name="b",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id="d",
+        target_ids=("t1",),
         capture_continuations=True,
     )
     assert config.capture_continuations is True
@@ -228,18 +281,26 @@ def test_cell_capture_continuation_defaults_to_empty_string():
     constructing without supplying it, and read back "" rather than
     raising or defaulting to None."""
     cap = CellCapture(
-        prompt_mode="raw", k_requested=5, k_returned=1, content_offset=0,
+        prompt_mode="raw",
+        k_requested=5,
+        k_returned=1,
+        content_offset=0,
         top_k=(TokenProb(token=" a", logprob=-0.5, token_id=1),),
-        canary="pass", captured_at="2026-08-01T00:00:00Z",
+        canary="pass",
+        captured_at="2026-08-01T00:00:00Z",
     )
     assert cap.continuation == ""
 
 
 def test_cell_capture_continuation_can_be_set_explicitly():
     cap = CellCapture(
-        prompt_mode="raw", k_requested=5, k_returned=1, content_offset=0,
+        prompt_mode="raw",
+        k_requested=5,
+        k_returned=1,
+        content_offset=0,
         top_k=(TokenProb(token=" a", logprob=-0.5, token_id=1),),
-        canary="pass", captured_at="2026-08-01T00:00:00Z",
+        canary="pass",
+        captured_at="2026-08-01T00:00:00Z",
         continuation=" blue skies ahead",
     )
     assert cap.continuation == " blue skies ahead"

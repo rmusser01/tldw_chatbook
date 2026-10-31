@@ -238,18 +238,24 @@ def test_disable_true_flag_disables_when_no_enabled():
 
 
 def test_regex_flag_normalized():
-    e = normalize_world_book_import({"entries": [{"keys": ["w[ao]rden"], "content": "c", "regex": True}]})["entries"][0]
+    e = normalize_world_book_import(
+        {"entries": [{"keys": ["w[ao]rden"], "content": "c", "regex": True}]}
+    )["entries"][0]
     assert e["regex"] is True
 
 
 def test_bad_regex_pattern_rejects_file():
     with pytest.raises(ValueError, match="Entry 1"):
-        normalize_world_book_import({"entries": [{"keys": ["(a+)+"], "content": "c", "regex": True}]})
+        normalize_world_book_import(
+            {"entries": [{"keys": ["(a+)+"], "content": "c", "regex": True}]}
+        )
 
 
 def test_bad_pattern_ignored_when_not_regex():
     # A would-be-bad "pattern" in a non-regex entry is a literal keyword — never validated.
-    e = normalize_world_book_import({"entries": [{"keys": ["(a+)+"], "content": "c"}]})["entries"][0]
+    e = normalize_world_book_import({"entries": [{"keys": ["(a+)+"], "content": "c"}]})[
+        "entries"
+    ][0]
     assert e["keys"] == ["(a+)+"] and e["regex"] is False
 
 
@@ -264,10 +270,19 @@ def test_character_book_to_block_basic():
         "token_budget": 300,
         "recursive_scanning": True,
         "entries": [
-            {"keys": ["coffee"], "content": "The machine explodes.",
-             "enabled": True, "insertion_order": 1, "position": 0},
-            {"keys": ["airlock"], "content": "It sticks.",
-             "enabled": True, "insertion_order": 2},
+            {
+                "keys": ["coffee"],
+                "content": "The machine explodes.",
+                "enabled": True,
+                "insertion_order": 1,
+                "position": 0,
+            },
+            {
+                "keys": ["airlock"],
+                "content": "It sticks.",
+                "enabled": True,
+                "insertion_order": 2,
+            },
         ],
     }
     block, imported, skipped = character_book_to_world_book_block(book, "X Lorebook")
@@ -282,11 +297,22 @@ def test_character_book_to_block_basic():
 
 
 def test_character_book_to_block_skips_unsalvageable_and_counts():
-    book = {"name": "B", "entries": [
-        {"keys": ["ok"], "content": "good", "enabled": True, "insertion_order": 1},
-        {"content": "no keys", "enabled": True, "insertion_order": 2},   # no keys -> skip
-        {"keys": ["x"], "enabled": True, "insertion_order": 3},          # no content -> skip
-    ]}
+    book = {
+        "name": "B",
+        "entries": [
+            {"keys": ["ok"], "content": "good", "enabled": True, "insertion_order": 1},
+            {
+                "content": "no keys",
+                "enabled": True,
+                "insertion_order": 2,
+            },  # no keys -> skip
+            {
+                "keys": ["x"],
+                "enabled": True,
+                "insertion_order": 3,
+            },  # no content -> skip
+        ],
+    }
     block, imported, skipped = character_book_to_world_book_block(book, "X Lorebook")
     assert imported == 1 and skipped == 2
     assert len(block["entries"]) == 1
@@ -294,7 +320,8 @@ def test_character_book_to_block_skips_unsalvageable_and_counts():
 
 def test_character_book_to_block_empty_name_uses_fallback():
     block, _, _ = character_book_to_world_book_block(
-        {"name": "", "entries": []}, "Elara Lorebook")
+        {"name": "", "entries": []}, "Elara Lorebook"
+    )
     assert block["name"] == "Elara Lorebook"
 
 
@@ -304,8 +331,12 @@ def test_character_book_to_block_non_dict_returns_none():
 
 
 def test_character_book_to_block_entries_as_object_form():
-    book = {"name": "B", "entries": {"0": {"keys": ["k"], "content": "c",
-            "enabled": True, "insertion_order": 1}}}
+    book = {
+        "name": "B",
+        "entries": {
+            "0": {"keys": ["k"], "content": "c", "enabled": True, "insertion_order": 1}
+        },
+    }
     block, imported, skipped = character_book_to_world_book_block(book, "X")
     assert imported == 1 and block["entries"][0]["keys"] == ["k"]
 
@@ -336,9 +367,7 @@ def test_lorebook_imports_even_when_v2_validation_reports_problems():
             # sibling fields the validator complains about.
             "character_book": {
                 "name": "Drowned Archive",
-                "entries": [
-                    {"keys": ["tide"], "content": "The water rises at dusk."}
-                ],
+                "entries": [{"keys": ["tide"], "content": "The water rises at dusk."}],
             },
         },
     }

@@ -79,7 +79,7 @@ _EMPTY_SKILLS_COPY = (
 )
 _EMPTY_SKILLS_FILTER_COPY = "No skills match your filter."
 
-# Trust panel copy/gating (Task 4). Mirrors ``skills_screen.py``'s own
+# Trust panel copy/gating (Task 4). Mirrors the retired skills screen's
 # ``_skill_trust_copy``/``SKILLS_TRUST_REVIEWABLE_STATUSES`` values (kept a
 # separate, smaller copy here rather than importing that screen's private
 # helpers -- this editor only needs the trust STATE line + two gating
@@ -1376,9 +1376,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 markup=False,
             )
             status_copy = " · ".join(
-                copy
-                for copy in (pager.status_copy, *layout.boundary_reasons)
-                if copy
+                copy for copy in (pager.status_copy, *layout.boundary_reasons) if copy
             )
             if status_copy:
                 yield Static(
@@ -1540,8 +1538,12 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         if self.import_review_name:
             # task-422: the success copy says "re-review it in the trust
             # panel" -- this is the direct path there.
+            # escape_markup: `Button(label=...)` parses its label as Textual
+            # markup (TASK-1513); `import_review_name` is the imported
+            # skill's filename-derived name, so a stray `[/]` in it would
+            # raise MarkupError the moment this row composes.
             yield Button(
-                f'Review "{self.import_review_name}"…',
+                f'Review "{escape_markup(self.import_review_name)}"…',
                 id="library-skills-import-review",
                 classes="library-canvas-action",
                 compact=True,

@@ -83,7 +83,9 @@ def test_runtime_tool_results_are_captured_too():
     turns = [
         ModelTurn(
             text="",
-            tool_calls=(ToolCall(name="find_tools", args={"query": "x"}, call_id="c1"),),
+            tool_calls=(
+                ToolCall(name="find_tools", args={"query": "x"}, call_id="c1"),
+            ),
             assistant_message={"role": "assistant", "content": ""},
         ),
         ModelTurn(text="done"),
@@ -330,7 +332,10 @@ def test_spawn_tool_call_record_is_emitted_before_the_spawn_dispatch_runs():
     def fake_spawn(task):
         # Simulate a child writing its own records mid-dispatch, exactly
         # as a real nested _run_one does through the shared writer.
-        hook("model", {"content": "child turn 1", "tool": "", "status": "", "call_id": ""})
+        hook(
+            "model",
+            {"content": "child turn 1", "tool": "", "status": "", "call_id": ""},
+        )
         hook(
             "tool_call",
             {"content": "{}", "tool": "child_tool", "status": "", "call_id": ""},

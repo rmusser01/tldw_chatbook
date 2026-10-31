@@ -1,17 +1,17 @@
 /* ========================================
  * GENERATED FILE - DO NOT EDIT DIRECTLY
  * ========================================
- * library-owned rules split out of features/_library.tcss + features/_library_panels.tcss + features/_library_artifacts.tcss
+ * library-owned rules split out of features/_library.tcss + features/_library_panels.tcss + features/_library_notes_panels.tcss + features/_library_artifacts.tcss
  * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
  * CSS_PATH, so these bytes are parsed on first visit instead of before
- * first paint. Edit features/_library.tcss + features/_library_panels.tcss + features/_library_artifacts.tcss and re-run build_css.py.
+ * first paint. Edit features/_library.tcss + features/_library_panels.tcss + features/_library_notes_panels.tcss + features/_library_artifacts.tcss and re-run build_css.py.
  * ======================================== */
 
 $ds-surface-panel: $panel;
 $ds-surface-raised: $surface;
 $ds-surface-inspector: $surface;
 $ds-grid-line: $tldw-boundary;
-$ds-column-line: $surface-lighten-2;
+$ds-column-line: $tldw-boundary;
 $ds-text-primary: $text;
 $ds-text-muted: $text-muted;
 $ds-text-disabled: $text-disabled;
@@ -31,6 +31,7 @@ $ds-status-approval-required: $warning;
 $ds-status-blocked: $error;
 $ds-status-error: $error;
 $ds-status-error-readable: $text-error;
+$ds-status-warning-readable: $text-warning;
 $ds-text-placeholder: $text-muted;
 $ds-text-disabled-readable: $text-muted;
 $ds-status-paused: $warning;
@@ -76,7 +77,6 @@ $ds-console-workspace-grid-height: 1fr;
 $ds-console-composer-height: 1;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;
-$ds-library-note-task-actions-min-width: 61;
 $ds-workflow-navigator-width: 27;
 $ds-library-source-action-width: auto;
 $ds-library-source-action-min-width: 0;
@@ -96,6 +96,7 @@ $ds-control-height: 3;
 $ds-control-height-compact: 1;
 $ds-textarea-min-height: 5;
 $ds-model-switcher-width: 140;
+$ds-chat-settings-width: 176;
 $ds-width-full: 100%;
 $ds-width-fill: 1fr;
 $ds-width-auto: auto;
@@ -157,6 +158,7 @@ $ds-size-90: 90;
 $ds-size-92: 92;
 $ds-size-94: 94;
 $ds-size-96: 96;
+$ds-size-100: 100;
 $ds-splash-progress-cap: 100;
 $ds-size-104: 104;
 $ds-size-110: 110;
@@ -194,6 +196,11 @@ $ds-watchlists-artifacts-detail-share: 8fr;
 $ds-agentic-mcp-table-cap: 70%;
 $ds-agentic-prompt-vars-pane: 27;
 $ds-agentic-mcp-compact-canvas-share: 7fr;
+$ds-agentic-mcp-row-share: 8fr;
+$ds-agentic-mcp-compact-row-share: 9fr;
+$ds-wizards-voice-long-share: 21fr;
+$ds-wizards-voice-mid-share: 14fr;
+$ds-wizards-voice-short-share: 11fr;
 $ds-research-chat-pane-floor: 58;
 $ds-new-ingest-media-panel-share: 65%;
 $ds-new-ingest-activity-panel-share: 35%;
@@ -271,8 +278,6 @@ $ds-theme-preview-dark-ink: #000000;
 $ds-theme-preview-light-ink: #FFFFFF;
 $ds-theme-preview-invalid: #808080;
 
-$ds-console-settings-wide-max-width: 196;
-
 $ds-inspector-modal-width: 120;
 $ds-inspector-modal-height: 42;
 $ds-inspector-section-width: 28;
@@ -281,6 +286,14 @@ $ds-conversation-action-width: 4;
 $ds-conversation-action-ascii-width: 9;
 $ds-inspector-usage-list-width: 60;
 $ds-conversation-menu-width: 30;
+
+$ds-portrait-blink-min: 3s;
+$ds-portrait-blink-max: 7s;
+$ds-portrait-idle-cycle: 6s;
+$ds-portrait-idle-offset-px: 0;
+
+$ds-portrait-review-cols: 24;
+$ds-portrait-review-lines: 13;
 
 
 .tldw-agentic-split-preamble-end { }
@@ -678,7 +691,7 @@ $ds-conversation-menu-width: 30;
    neither shifts nor is clipped, and `outline: none` suppresses the generic
    `*:focus{outline:solid}` fallback (core/_reset.tcss). */
 .library-rail-row:focus {
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -693,7 +706,7 @@ $ds-conversation-menu-width: 30;
    `outline: none` suppresses the generic `*:focus{outline:solid}`
    fallback (core/_reset.tcss). */
 .library-hub-recent:focus {
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -747,7 +760,7 @@ $ds-conversation-menu-width: 30;
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -1184,15 +1197,14 @@ with stray left-edge border fragments), and padding 0 1 so the full
     border: none;
 }
 
-/* TASK-32623: reserve the widest action row so toggling Discard cannot move
-   its sibling mode controls. Compact rows already have fixed geometry. */
-#library-note-task-actions {
-    min-width: $ds-library-note-task-actions-min-width;
-}
-
-#library-shell-grid.library-notes-compact #library-note-task-actions {
-    min-width: $ds-size-0;
-}
+/* TASK-32623's guarantee (toggling Discard never moves the mode controls)
+   is kept by construction since TASK-34000.8: Discard new note stays IN
+   LAYOUT (`visibility: hidden` reserves its cells) instead of being
+   `display`-toggled, so `#library-note-task-actions` is always its widest
+   width and needs no hand-measured `min-width`. The 61-cell reservation
+   that lived here applied from the shell's 120-column breakpoint up, where
+   the editor pane is 48 cells wide -- it pushed Save and Use in Console
+   off the pane (review N-05). */
 
 /* Branch continuations are list rows, not toolbar actions. Keep their full
    status and recovery copy visible when the compact toolbar geometry above
@@ -1945,6 +1957,32 @@ with stray left-edge border fragments), and padding 0 1 so the full
     padding: $ds-space-0;
 }
 
+/* TASK-34000.25 (fix round 1): the primary row holds two label-sized groups
+   (Find · Note · Read later | Use in Console · More). Wide enough for the
+   whole row they sit side by side; narrower than the derived threshold (`library-media-reader-toolbar-stacked`)
+   (`LibraryMediaViewer._primary_toolbar_one_row_min_width`, applied from the
+   viewer's own `on_resize`) the second group drops under the first, so
+   "More ▴" never clips. The `.ds-toolbar` gutter is untouched. */
+#library-media-reader-primary-toolbar {
+    height: auto;
+}
+
+#library-media-reader-primary-toolbar.library-media-reader-toolbar-stacked {
+    layout: vertical;
+}
+
+.library-media-reader-primary-group {
+    width: auto;
+    height: auto;
+}
+
+.library-media-reader-primary-group > Button {
+    width: auto;
+    min-width: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+}
+
 /* task-4025: the Trash view's rows share the media list's row contract
    verbatim (one comma-joined rule, not a forked copy) -- the trash rows
    keep their OWN class only so `_focus_library_list_entry`'s
@@ -1984,7 +2022,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
    task-31983 (critique #6 P1): `-selected` above uses this SAME background,
    so focus and selection were indistinguishable -- the row the keyboard was
    ON looked exactly like the open row and arrow-nav read as a dead key. The
-   `border-left: thick $ds-action-focus` bar is the focus-only, non-colour
+   `border-left: thick $ds-active-fg` bar is the focus-only, non-colour
    cue `-selected` does NOT carry, so the two stay distinct even when a row
    is both focused AND selected (arrow onto the open row). The left edge
    replaces the 1-column left padding (`padding: 0 1` -> `0 1 0 0`), so the
@@ -1994,7 +2032,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -2023,7 +2061,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -2038,13 +2076,41 @@ with stray left-edge border fragments), and padding 0 1 so the full
     max-width: $ds-width-full;
 }
 
+/* TASK-34000.7 (review N-04): the list IS the scroll owner at every width.
+   `#library-notes-list` is a plain Vertical, whose Textual default is
+   `overflow: hidden`; only the compact rule (`_library.tcss`,
+   `.library-notes-compact #library-notes-list`) ever gave it `overflow-y:
+   auto`. At 120+ columns the tree therefore ignored the wheel, and Down/Tab
+   moved focus onto rows painted below the pane border (`focus()` asks each
+   ancestor to scroll the row in; a hidden owner declines), so Enter opened
+   notes the user never saw. Same contract as the compact rule, no per-size
+   numbers: the rows left after the toolbars, scrolling vertically, never
+   horizontally. The one-cell scrollbar matches `#library-rail` so the two
+   overflow cues read as one. */
+#library-notes-list {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
 /* task-32127/32128: Button's own 16-cell minimum made "New / Sort: Newest /
    Select" 48 cells wide -- wider than the list pane itself, so Select, the
    Title sort option and the delete receipt's Undo were painted past the
    pane edge. The compact stage already sized these to their content; the
    ordinary stage does the same now, since the pane is never wide enough to
-   justify a 16-cell "New". */
-#library-notes-canvas .library-canvas-action {
+   justify a 16-cell "New".
+   TASK-34000.8 (review N-05): the editor header's buttons in the WORK pane
+   are content-sized by the same rule. Scoped to the list canvas alone, the
+   header's six compact Buttons each kept the 16-cell minimum -- about 40
+   cells of padding on a row whose pane has 48 cells at 120x36 -- which is
+   what pushed Save and Use in Console past the pane edge. */
+#library-notes-canvas .library-canvas-action,
+#library-note-work-pane .library-canvas-action {
     width: auto;
     min-width: $ds-size-0;
 }
@@ -2111,7 +2177,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -2186,7 +2252,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -2216,7 +2282,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -2670,6 +2736,21 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #library-note-context-region {
     border: solid $ds-grid-line;
+}
+
+/* TASK-34000.13 (review N-10): the delete prompt is a Vertical inside the
+   Info VerticalScroll, and only the compact rule (`_library.tcss`) ever
+   gave it a height. On the wide stage it kept Textual's default
+   `height: 1fr; overflow: hidden`, which inside a scrolling parent means
+   "the rows left over": one row at 120x36 (the copy clipped, Cancel and
+   Delete painted on the screen's last row, outside the Info border) and
+   eleven at 160x45. Size it by its content at every width -- the copy may
+   wrap and the button row under it must still paint. The compact rule's
+   two-row box still outranks this one by specificity. */
+#library-note-delete-confirmation {
+    height: auto;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
 }
 
 #library-note-preview-region:focus,
@@ -3234,6 +3315,49 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: auto;
     color: $ds-text-muted;
     margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+/* TASK-34000.24: the "Use in Console" workspace-link receipt row under the
+   Reader's primary toolbar ("Linked to Local Default · staged in Console" +
+   "Undo link"). One row at every width: the receipt text ellipsises, the
+   Undo keeps its own label-sized cells (the conversation reader stacks its
+   receipt and Undo on two rows; the Media Reader at 80x24 has no second row
+   to give). Library-prefixed tokens only, so the block lands on the lazily
+   loaded Library sheet (ADR-097). */
+#library-media-viewer #library-media-link-receipt-row {
+    width: $ds-width-full;
+    height: $ds-home-control-button-height;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+/* Id-scoped on purpose: `#library-media-viewer Static { width: 100% }`
+   (specificity 1,0,1) beat a bare class here and gave the receipt the whole
+   row, pushing "Undo link" off the pane -- found live at 160x45 while the
+   button's `.display` was True (the separator in the viewer's DEFAULT_CSS
+   lost its width the same way). */
+#library-media-viewer #library-media-link-receipt {
+    width: $ds-width-fill;
+    height: $ds-home-control-button-height;
+    color: $ds-text-muted;
+    text-overflow: ellipsis;
+    text-wrap: nowrap;
+    /* Left gutter only, and an Undo with neither margin nor padding:
+       measured at 160x45 (fix round 1, M-9) the Reader pane gives this row
+       56 cells; "Linked to Local Default · staged in Console" is 43, the
+       gutter 1, and the compact Undo paints 9 + 2 intrinsic = 11, so the
+       default receipt fits with one cell to spare (receipt 45, Undo 11).
+       With the canvas-action padding the Undo took 13 and the receipt
+       clipped to "staged in Conso…". The "Already linked to …" spelling
+       (51) cannot fit beside the Undo at this width and ellipsises after
+       the workspace name; a long custom name ellipsises at the name. */
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+}
+
+#library-media-viewer #library-media-link-undo {
+    width: auto;
+    min-width: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
 }
 
 #library-media-title {
@@ -3874,6 +3998,18 @@ Input.library-media-speaker-input:focus {
     color: $ds-text-muted;
 }
 
+/* TASK-34000.21: the query row's reserved quiet line now names the model
+ * that will be billed ("To openai · gpt-4.1-mini: question + evidence").
+ * The row is one cell high (`h-1`), so a sentence wider than the panel --
+ * a real `claude-sonnet-4-5-20250929` at 80 columns, not only a contrived
+ * name -- used to word-wrap onto a clipped second row, leaving the user
+ * with "To openai ·" and no model at all. Clip on one row with an ellipsis
+ * instead: the recipient and the start of the model stay readable. */
+#library-rag-query-quiet-line {
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
 .library-rag-empty-guidance {
     margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
     padding: $ds-space-0 $ds-space-1;
@@ -4214,7 +4350,12 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     height: auto;
     text-style: bold;
 }
-
+/* Library Notes panels: the workbench's row wrappers, New note, and lasting sync
+   (roots, status, review and history rows). Carved verbatim from the tail of
+   _library_panels.tcss on 2026-10-20 (ADR-161 spec 3.5's 2,000-line ceiling,
+   TASK-24451: "split the sheet by vocabulary"); it is listed directly after
+   that sheet in CSS_MODULES and the library split, so cascade order is
+   unchanged. */
 /* Presentation-only row wrappers keep the established wide stacked
    workbench. Compact rules below switch only these wrappers to rows. */
 #library-notes-filter-row,
@@ -4298,6 +4439,86 @@ LibraryIngestCanvas #library-ingest-latest-batch {
 .library-notes-sync-attention-actions > Button {
     width: $ds-width-full;
 }
+
+
+/* TASK-34000.10 (review N-07): a validation veto marks the field itself. The
+   vetoed field carries `library-note-field-invalid` (an error outline, the
+   `-ingest-option-invalid` precedent) and the Static directly under it shows
+   the coordinator's own reason; the hint is display-gated from Python (an
+   empty Static still takes its row), so the sheet only shapes and colours it.
+   Every selector token is Library-prefixed (ADR-097): the splitter moves
+   these rules onto the Library screen's lazily-loaded sheet, off the boot
+   bundle. The focused-field accent is also `tall`, so the outline keeps the
+   field's size; the error tier is the readable one (task-2230, a11y). */
+.library-note-field-hint {
+    height: auto;
+    color: $ds-status-error-readable;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#library-note-title.library-note-field-invalid,
+#library-note-keywords.library-note-field-invalid,
+#library-note-context-keywords.library-note-field-invalid,
+#library-note-body.library-note-field-invalid {
+    border: tall $ds-status-error-readable;
+}
+
+/* Compact (under 120 columns): the editor Inputs are borderless there
+   (`#library-shell-grid.library-notes-compact #library-note-title { border:
+   none }`, specificity (2,1,0), which beats the outline rule above), so the
+   mark is the field's text itself in the readable error colour, bold. Fix
+   round 1 (I-3); pinned by the painted cells at 80x24. */
+#library-shell-grid.library-notes-compact #library-note-title.library-note-field-invalid,
+#library-shell-grid.library-notes-compact #library-note-keywords.library-note-field-invalid,
+#library-shell-grid.library-notes-compact #library-note-context-keywords.library-note-field-invalid {
+    color: $ds-status-error-readable;
+    text-style: bold;
+}
+
+/* Compact (under 120 columns): the hint takes exactly one row while a veto
+   stands, so the body gives up one row and no more. Measured at the 60x20
+   floor: the wrapped reason took two rows and the body fell from five to
+   two. The status row above still carries the whole reason (its own compact
+   rule wraps it over two rows), so the clipped tail here loses nothing. */
+#library-shell-grid.library-notes-compact .library-note-field-hint {
+    height: $ds-size-1;
+    max-height: $ds-size-1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* TASK-34000.11 (AC#1): the `[[` note-link picker. A screen-owned overlay
+   (`overlay: screen` + offset set in code, the Console popup's technique)
+   that sits under the body's caret row in insert mode and at the top of the
+   Preview region in follow mode; it never takes focus. Width and height are
+   measured from the rows in code (`ds-runtime`); the sheet owns the bounds
+   and the chrome. `display: none` here AND in code, so a bare test app is
+   right without the bundle. */
+.library-note-link-picker {
+    display: none;
+    width: $ds-width-auto;
+    min-width: $ds-size-30;
+    max-width: $ds-size-70;
+    height: $ds-height-auto;
+    max-height: $ds-size-10;
+    border: round $ds-focus-accent;
+    background: $ds-surface-panel;
+    padding: $ds-space-0;
+}
+
+/* Textual's default OptionList chrome (tall border + padding) costs two
+   rows that an eight-row picker cannot spare; the picker carries the border. */
+.library-note-link-picker OptionList {
+    height: $ds-height-auto;
+    border: none;
+    padding: $ds-space-0;
+    background: $ds-surface-panel;
+    /* One row per title: a title wider than the picker is cut with an
+       ellipsis, never wrapped (live, the seed's very long title took two
+       rows and pushed the eighth row out of view). */
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
 /* Artifacts compose the shared reader and standard interactive control states. */
 #library-artifacts-reader-shell {
     height: $ds-height-fill;
@@ -4325,6 +4546,26 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     width: $ds-width-auto;
     min-width: $ds-space-0;
     margin-right: $ds-space-inline;
+}
+/* TASK-34000.23: the Reports empty-state actions sit under the sentence that
+   names them; the consent block is a quiet framed card the CTA opens. Every
+   selector token is Library-owned so the splitter keeps these rules on the
+   Library sheet (ADR-097 boot budget). */
+#library-artifacts-empty-actions {
+    height: $ds-height-auto;
+    width: $ds-width-full;
+}
+#library-artifacts-demo-confirm {
+    height: $ds-height-auto;
+    width: $ds-width-full;
+    border: round $ds-grid-line;
+    padding: $ds-space-0 $ds-space-inset;
+    margin-bottom: $ds-space-stack;
+}
+#library-artifacts-demo-copy {
+    height: $ds-height-auto;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-stack;
 }
 #library-artifacts-list,
 #library-artifacts-body {

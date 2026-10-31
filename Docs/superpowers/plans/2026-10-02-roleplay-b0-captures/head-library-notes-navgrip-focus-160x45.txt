@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────────────────────────────────────────────┐  N  Select a note to edit it here.                   │
+│   a  │ Library notes · Ready · Next: Create a note or add from files.                                 │  o                                                   │
+│   v  │ Notes (5)                                                                                      │  t                                                   │
+│      │ These notes live in the Library's own database — for notes that live in a folder on disk,      │  e                                                   │
+│      │ switch to Folder files. To copy or keep a folder synced, choose Add from files.                │  s                                                   │
+│      │                                                                                                │                                                      │
+│      │ Filter                                                                                         │                                                      │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      │
+│      │ ▊ Filter notes… (Enter)                                                                      ▎ │                                                      │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      │
+│      │                                                                                                │                                                      │
+│      │    New     Sort: Newest     Select                                                             │                                                      │
+│      │    Add from files…     Export                                                                  │                                                      │
+│ ---> │ Folders & placement                                                                            │                                                      │
+│      │    New folder     Add to folder     Move note                                                  │                                                      │
+│      │    ○ Remove placement                                                                          │                                                      │
+│      │                                                                                                │                                                      │
+│      │                                                                                                │                                                      │
+│      │  ▸ Agent_Lessons                                                                               │<---                                                  │
+│      │  ▾ Unfiled                                                                                     │                                                      │
+│      │    Recipe: cardamom buns · 55m                                                                 │                                                      │
+│      │    Meeting notes 2026-09-30 · 55m                                                              │                                                      │
+│      │    Reading list · 55m                                                                          │                                                      │
+│ ---> │    Character voice cheatsheet · 55m                                                            │                                                      │
+│      │    Aetheria session 12 prep · 55m                                                              │                                                      │
+│      │                                                                                                │                                                      │
+│      │                                                                                                │                                                      │
+│      │                                                                                                │                                                      │
+│      │                                                                                                │                                                      │
+│      │                                                                                                │                                                      │
+│      │                                                                                                │                                                      │
+│      │                                                                                                │                                                      │
+│      │                                                                                                │                                                      │
+│      │                                                                                                │                                                      │
+│      │                                                                                                │                                                      │
+│      │                                                                                                │                                                      │
+│      └────────────────────────────────────────────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc focus rail | F1 help · Ctrl+P palette · Ctrl+Q quit

@@ -1,0 +1,6 @@
+textual 8.2.8
+baseline f1 hits: ['f1']
+focused while pruning: True pruning: True
+after removal: focused is old: True attached: False binding chain: ['Button']
+keys after dead focus -> hits: [] focused still old: True
+after a click -> hits: ['f1'] focused: a

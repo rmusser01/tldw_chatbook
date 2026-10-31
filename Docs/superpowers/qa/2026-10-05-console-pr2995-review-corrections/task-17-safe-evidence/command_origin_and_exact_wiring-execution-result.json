@@ -1,0 +1,76 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-vv",
+    "-p",
+    "no:randomly",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pr2995-task17-execution-a1u8mmnj/pytest",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_never_lands_on_the_chat_switched_to[enter]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_never_lands_on_the_chat_switched_to[send-button]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_takes_only_the_draft_its_send_captured[appended]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_takes_only_the_draft_its_send_captured[replaced]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[doctor]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[skills]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[fewer-permission-prompts]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_command_never_starts_in_a_chat_it_was_not_sent_from",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-17-safe-evidence/command_origin_and_exact_wiring-execution.xml"
+  ],
+  "exit": 0,
+  "elapsed_seconds": 51.932596417,
+  "stdout": "command_origin_and_exact_wiring-execution.stdout",
+  "stderr": "command_origin_and_exact_wiring-execution.stderr",
+  "log": "command_origin_and_exact_wiring-execution.log",
+  "complete_outputs": true,
+  "pid": 48713,
+  "closed_process": true,
+  "head_after": "54a18180211ed2ecbf450db78202d28d97a7b995",
+  "source_after_unchanged": true,
+  "junit": "command_origin_and_exact_wiring-execution.xml",
+  "cases": [
+    {
+      "classname": "Tests.UI.test_console_command_origin_chat",
+      "name": "test_a_named_system_prompt_never_lands_on_the_chat_switched_to[enter]",
+      "time": "6.609"
+    },
+    {
+      "classname": "Tests.UI.test_console_command_origin_chat",
+      "name": "test_a_named_system_prompt_never_lands_on_the_chat_switched_to[send-button]",
+      "time": "5.494"
+    },
+    {
+      "classname": "Tests.UI.test_console_command_origin_chat",
+      "name": "test_a_named_system_prompt_takes_only_the_draft_its_send_captured[appended]",
+      "time": "6.090"
+    },
+    {
+      "classname": "Tests.UI.test_console_command_origin_chat",
+      "name": "test_a_named_system_prompt_takes_only_the_draft_its_send_captured[replaced]",
+      "time": "5.710"
+    },
+    {
+      "classname": "Tests.UI.test_console_command_origin_chat",
+      "name": "test_a_command_answers_in_the_chat_it_was_sent_from[doctor]",
+      "time": "5.617"
+    },
+    {
+      "classname": "Tests.UI.test_console_command_origin_chat",
+      "name": "test_a_command_answers_in_the_chat_it_was_sent_from[skills]",
+      "time": "4.983"
+    },
+    {
+      "classname": "Tests.UI.test_console_command_origin_chat",
+      "name": "test_a_command_answers_in_the_chat_it_was_sent_from[fewer-permission-prompts]",
+      "time": "5.078"
+    },
+    {
+      "classname": "Tests.UI.test_console_command_origin_chat",
+      "name": "test_a_command_never_starts_in_a_chat_it_was_not_sent_from",
+      "time": "5.704"
+    }
+  ],
+  "case_count": 8,
+  "failed_cases": [],
+  "skipped_cases": []
+}

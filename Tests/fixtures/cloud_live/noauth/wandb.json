@@ -1,0 +1,36 @@
+{
+  "server": "wandb",
+  "base_url": "https://api.inference.wandb.ai/v1",
+  "probe_model": "probe-model",
+  "listing": {
+    "status": 401,
+    "body": {
+      "error": {
+        "code": "invalid_api_key",
+        "message": "Missing bearer authentication in header",
+        "type": "invalid_request_error"
+      }
+    }
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "code": "invalid_api_key",
+        "message": "Missing bearer authentication in header",
+        "type": "invalid_request_error"
+      }
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "code": "invalid_api_key",
+        "message": "Invalid Authentication",
+        "type": "invalid_request_error"
+      }
+    }
+  },
+  "probed_at": "2026-09-30T04:20:02+00:00"
+}

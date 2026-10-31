@@ -1,0 +1,37 @@
+{
+  "tldw_chatbook/Chat/console_chat_start.py": {
+    "before": "1031a2ec8c39ec1b41e94c6153d9e335a5ed44eac7d349f1e43191001bbfb084",
+    "after": "3d628d4394da0ecad3a4d04166623608116e709a434dab204b13ab71e6b5b2e0",
+    "AST_preserved": true,
+    "baseline_formatter_debt": 0,
+    "original_test_prefix_preserved": false
+  },
+  "tldw_chatbook/DB/automatic_work.py": {
+    "before": "09d8f2e12dfe993844c9b5f8cf4d34cd6f6f7760026150f7c89bfd1baf80f75f",
+    "after": "09d8f2e12dfe993844c9b5f8cf4d34cd6f6f7760026150f7c89bfd1baf80f75f",
+    "AST_preserved": true,
+    "baseline_formatter_debt": 0,
+    "original_test_prefix_preserved": false
+  },
+  "tldw_chatbook/Chat/console_chat_fork.py": {
+    "before": "6d86308c24ad8d2b33f625047b6fea52c9280542bd0c23230de7268cf8ca3afb",
+    "after": "6d86308c24ad8d2b33f625047b6fea52c9280542bd0c23230de7268cf8ca3afb",
+    "AST_preserved": true,
+    "baseline_formatter_debt": 0,
+    "original_test_prefix_preserved": false
+  },
+  "Tests/Chat/test_console_chat_start.py": {
+    "before": "64252c34b5d41f453067aa2ed67e7d85bd7672f062154bd4327c2baec6a182ae",
+    "after": "d0fc1e4524e7260458ed32625156fd8dc7a9c68f681bcbaf18d5729a12e3c748",
+    "AST_preserved": true,
+    "baseline_formatter_debt": 0,
+    "original_test_prefix_preserved": true
+  },
+  "Tests/DB/test_automatic_chat_starts.py": {
+    "before": "7956240bb7d8339105f8b5892ce347dffafc202e1a61cfd2d9f54093c42d5b7a",
+    "after": "65d2dc93bc58f9e20e249fc59e0624ad94e36d1ccd2eeed7cea5ffc8d265edd7",
+    "AST_preserved": true,
+    "baseline_formatter_debt": 0,
+    "original_test_prefix_preserved": true
+  }
+}

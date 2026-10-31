@@ -43,9 +43,10 @@ def test_trace_export_publishes_shared_labels_and_full_warning() -> None:
     assert TRACE_EXPORT_PROFILE_LABELS[TraceExportProfile.REDACTED_DIAGNOSTIC] == (
         "Redacted diagnostic (recommended)"
     )
-    assert "Credentials remain forbidden" in TRACE_EXPORT_PROFILE_COPY[
-        TraceExportProfile.FULL_TRACE
-    ]
+    assert (
+        "Credentials remain forbidden"
+        in TRACE_EXPORT_PROFILE_COPY[TraceExportProfile.FULL_TRACE]
+    )
 
     confirmation = full_trace_confirmation(noun="Trace")
     assert confirmation.title == "Export full Trace?"
@@ -398,7 +399,9 @@ async def test_v2_import_surfaces_profile_integrity_privacy_and_import_event(
         assert "w export" in painted
         assert "o import trace" in painted
         operation = next(
-            record for record in imported._all_records() if record.kind == "trace_import"
+            record
+            for record in imported._all_records()
+            if record.kind == "trace_import"
         )
         assert operation.payload["manifest"] == imported._imported_trace.manifest
         assert operation.payload["integrity"]["verdict"] == "valid"

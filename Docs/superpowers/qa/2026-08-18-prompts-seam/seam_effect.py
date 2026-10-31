@@ -17,6 +17,7 @@ Reports, in `plain` (the only mode that uses the Library's four-seam fan-out):
   exception still returns `(True, [])`, so a zero would otherwise be
   ambiguous between no-match and threw.
 """
+
 from __future__ import annotations
 
 import os
@@ -45,7 +46,9 @@ def main() -> int:
     import tempfile
 
     if os.environ.get("RAG_EVAL") != "1":
-        raise SystemExit("refusing to run without RAG_EVAL=1 (this builds a real index)")
+        raise SystemExit(
+            "refusing to run without RAG_EVAL=1 (this builds a real index)"
+        )
 
     import tldw_chatbook
     from tldw_chatbook.Library.library_local_rag_search_service import (
@@ -70,7 +73,9 @@ def main() -> int:
 
     seam_failures: list[str] = []
     sink_id = logger.add(
-        lambda m: seam_failures.append(str(m)) if SEAM_FAILED_MARKER in str(m) else None,
+        lambda m: (
+            seam_failures.append(str(m)) if SEAM_FAILED_MARKER in str(m) else None
+        ),
         level="WARNING",
     )
 
@@ -86,8 +91,10 @@ def main() -> int:
             svc = getattr(rt.app, "prompt_scope_service", None)
             print(f"\nPROBE PROOF: app.prompt_scope_service = {type(svc).__name__}")
             state, rows = rt.run(seam._search_prompts("prompt", K))
-            print(f"PROBE PROOF: _search_prompts state = {state} "
-                  f"(UNAVAILABLE/FAILED both mean the rows are meaningless)")
+            print(
+                f"PROBE PROOF: _search_prompts state = {state} "
+                f"(UNAVAILABLE/FAILED both mean the rows are meaningless)"
+            )
             print(f"PROBE PROOF: smoke-query rows = {len(rows)}")
             # TASK-18903: `if not state` would be ALWAYS FALSE -- every Enum
             # member is truthy. Compare with `is`, or this guard goes inert.
@@ -108,18 +115,21 @@ def main() -> int:
                         seam.search(q.query, SOURCE_TYPES, "rag", top_k=K, scope=scope)
                     )
                     rws, _b, err = _extract_rows(res)
-                except Exception as exc:                       # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001
                     rws, err = [], f"{type(exc).__name__}: {exc}"
                 if err:
                     errors.append(f"{q.id}: {err}")
                     continue
                 docs = rows_to_doc_ids(rws, lookup)
                 n_prompt = sum(
-                    1 for r in rws
+                    1
+                    for r in rws
                     if (r.get("provenance") or {}).get("source_type") == "prompt"
                 )
                 results[q.id] = (
-                    any(s in set(docs) for s in q.relevant_slugs), len(rws), n_prompt
+                    any(s in set(docs) for s in q.relevant_slugs),
+                    len(rws),
+                    n_prompt,
                 )
     finally:
         # The runtime owns SQLite connections, a Chroma store and the event
@@ -129,7 +139,7 @@ def main() -> int:
         if rt is not None:
             try:
                 rt.close()
-            except Exception as exc:                          # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 print(f"NOTE: runtime.close() failed after the run: {exc!r}")
         logger.remove(sink_id)
 
@@ -146,22 +156,32 @@ def main() -> int:
     prompts = [q for q in golden if q.category == "prompt"]
     for q in prompts:
         hit, n, n_p = results[q.id]
-        print(f"  {'HIT ' if hit else 'MISS'} {q.id:22s} rows={n:2d} prompt-rows={n_p:2d}"
-              f"  target={q.relevant_slugs[0]}")
+        print(
+            f"  {'HIT ' if hit else 'MISS'} {q.id:22s} rows={n:2d} prompt-rows={n_p:2d}"
+            f"  target={q.relevant_slugs[0]}"
+        )
     hits = sum(1 for q in prompts if results[q.id][0])
-    print(f"  -> {hits}/{len(prompts)} (aggregate cell would read {hits/len(prompts):.3f})")
+    print(
+        f"  -> {hits}/{len(prompts)} (aggregate cell would read {hits / len(prompts):.3f})"
+    )
 
     print("\n=== the COST the harness comment predicted ===")
     others = [q for q in golden if q.category != "prompt"]
     with_prompt_rows = [q.id for q in others if results[q.id][2] > 0]
-    print(f"  non-prompt queries whose plain fan-out now contains prompt rows: "
-          f"{len(with_prompt_rows)} of {len(others)}")
+    print(
+        f"  non-prompt queries whose plain fan-out now contains prompt rows: "
+        f"{len(with_prompt_rows)} of {len(others)}"
+    )
     for qid in with_prompt_rows[:15]:
         hit, n, n_p = results[qid]
-        print(f"      {qid:30s} [{by_id[qid].category:20s}] rows={n:2d} "
-              f"prompt-rows={n_p} hit={hit}")
-    print(f"  non-prompt queries currently HITTING: "
-          f"{sum(1 for q in others if results[q.id][0])} of {len(others)}")
+        print(
+            f"      {qid:30s} [{by_id[qid].category:20s}] rows={n:2d} "
+            f"prompt-rows={n_p} hit={hit}"
+        )
+    print(
+        f"  non-prompt queries currently HITTING: "
+        f"{sum(1 for q in others if results[q.id][0])} of {len(others)}"
+    )
     return 0
 
 

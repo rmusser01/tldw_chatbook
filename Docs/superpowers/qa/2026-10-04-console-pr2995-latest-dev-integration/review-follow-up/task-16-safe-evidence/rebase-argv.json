@@ -1,0 +1,11 @@
+{
+  "HEAD": "6cd44c72ffef6d19fca21eab3a05bdcade7c1811",
+  "argv": [
+    "git",
+    "rebase",
+    "a78a9a900b4901e33c031f830dd2d80224d5147d"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "environment_overrides": {},
+  "source_sha256": {}
+}

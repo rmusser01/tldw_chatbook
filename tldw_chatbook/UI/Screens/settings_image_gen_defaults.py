@@ -21,7 +21,7 @@ import math
 import os
 import shutil
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -30,7 +30,11 @@ import httpx
 from loguru import logger
 
 from tldw_chatbook.config import _get_effective_config_path
-from tldw_chatbook.Utils.egress import EgressBlockedError, check_url_or_raise, origin_set
+from tldw_chatbook.Utils.egress import (
+    EgressBlockedError,
+    check_url_or_raise,
+    origin_set,
+)
 from tldw_chatbook.Utils.input_validation import validate_url
 
 if TYPE_CHECKING:
@@ -114,10 +118,24 @@ FIELD_SCHEMA: dict[str, tuple[FieldSpec, ...]] = {
     ),
     "comfyui": (
         FieldSpec("base_url", "Base URL", "origin"),
-        FieldSpec("request_timeout_seconds", "Request timeout (seconds)", "float", min_value=0.1),
-        FieldSpec("connect_timeout_seconds", "Connect timeout (seconds)", "float", min_value=0.1),
-        FieldSpec("poll_interval_seconds", "Poll interval (seconds)", "float", min_value=0.1),
-        FieldSpec("total_deadline_seconds", "Total deadline (seconds)", "float", min_value=0.1),
+        FieldSpec(
+            "request_timeout_seconds",
+            "Request timeout (seconds)",
+            "float",
+            min_value=0.1,
+        ),
+        FieldSpec(
+            "connect_timeout_seconds",
+            "Connect timeout (seconds)",
+            "float",
+            min_value=0.1,
+        ),
+        FieldSpec(
+            "poll_interval_seconds", "Poll interval (seconds)", "float", min_value=0.1
+        ),
+        FieldSpec(
+            "total_deadline_seconds", "Total deadline (seconds)", "float", min_value=0.1
+        ),
         FieldSpec("default_seed", "Default seed", "int", min_value=-1),
         FieldSpec("default_steps", "Default steps", "int", min_value=1),
         FieldSpec("default_sampler", "Default sampler", "text"),
@@ -220,7 +238,9 @@ def build_backend_rows(cfg: ImageGenerationConfig) -> list[ImageGenBackendRow]:
     return rows
 
 
-def effective_placeholder(cfg: ImageGenerationConfig, backend_id: str, toml_key: str) -> str:
+def effective_placeholder(
+    cfg: ImageGenerationConfig, backend_id: str, toml_key: str
+) -> str:
     """Return the resolved effective value for an unset non-secret field.
 
     Used as the editor's placeholder text so an empty field never hides what
@@ -239,11 +259,16 @@ def effective_placeholder(cfg: ImageGenerationConfig, backend_id: str, toml_key:
 
     flat_field = _NON_SECRET[(backend_id, toml_key)]
     value = getattr(cfg, flat_field, None)
-    if backend_id == "comfyui" and toml_key in {
-        "default_seed",
-        "default_steps",
-        "default_sampler",
-    } and value is None:
+    if (
+        backend_id == "comfyui"
+        and toml_key
+        in {
+            "default_seed",
+            "default_steps",
+            "default_sampler",
+        }
+        and value is None
+    ):
         return "Use packaged workflow"
     return "" if value is None else str(value)
 
@@ -551,6 +576,20 @@ def diff_to_sections(
     return sections, deletions
 
 
+def unsaved_field_count(dirty_keys: Iterable[str]) -> int:
+    """Count the fields behind a Settings draft's dirty keys (TASK-33002.11).
+
+    A backend field stages as ``field::<backend>::<key>`` (an edit) or
+    ``cleared::<backend>::<key>`` (Clear), and Clear on SwarmUI's token also
+    clears its legacy ``api_key`` spelling: one field each, not one per key.
+    Video Gen stages the same way; any other key is a field of its own.
+    """
+    names = {k.removeprefix("field::").removeprefix("cleared::") for k in dirty_keys}
+    return len(
+        {"swarmui::swarm_token" if n == "swarmui::api_key" else n for n in names}
+    )
+
+
 # Global scalar fields that render as a plain-text Input (task 5): label
 # used in an inline error, and whether the field is int- or float-typed,
 # plus the design spec's own minimum ("Ints/floats validated to the
@@ -640,7 +679,9 @@ def validate_draft(draft: ImageGenDraftValues) -> tuple[list[str], list[str]]:
                 try:
                     parsed = int(str(raw_value).strip())
                 except (TypeError, ValueError):
-                    errors.append(f"{backend_label} {spec.label} must be a whole number.")
+                    errors.append(
+                        f"{backend_label} {spec.label} must be a whole number."
+                    )
                     continue
                 if spec.min_value is not None and parsed < spec.min_value:
                     errors.append(
@@ -679,7 +720,9 @@ def validate_draft(draft: ImageGenDraftValues) -> tuple[list[str], list[str]]:
                 # returns a plain bool that slots straight into this
                 # inline error collection (never raises).
                 if not validate_url(str(raw_value).strip()):
-                    errors.append(f"{backend_label} {spec.label} must be a valid http(s) URL.")
+                    errors.append(
+                        f"{backend_label} {spec.label} must be a valid http(s) URL."
+                    )
 
     for key, label, minimum in _GLOBAL_INT_FIELD_SPECS:
         value = getattr(draft, key)
@@ -798,7 +841,9 @@ def _guarded_get(
     except EgressBlockedError:
         return None, "Unreachable: blocked by egress policy"
     try:
-        with httpx.Client(timeout=PROBE_TIMEOUT_SECONDS, follow_redirects=False) as client:
+        with httpx.Client(
+            timeout=PROBE_TIMEOUT_SECONDS, follow_redirects=False
+        ) as client:
             with client.stream(
                 "GET", url, headers=dict(headers) if headers else None
             ) as response:
@@ -832,9 +877,7 @@ def _probe_comfyui(base_url: str) -> ImageGenProbeResult:
         return ImageGenProbeResult(ok=False, badge=blocked_badge)
     if status_code is not None and 200 <= status_code < 300:
         return ImageGenProbeResult(ok=True, badge="Reachable")
-    return ImageGenProbeResult(
-        ok=False, badge=f"Unreachable: HTTP {status_code or 0}"
-    )
+    return ImageGenProbeResult(ok=False, badge=f"Unreachable: HTTP {status_code or 0}")
 
 
 def _probe_reachability_only(base_url: str) -> ImageGenProbeResult:

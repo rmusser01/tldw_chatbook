@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌───────────────────────────────────────────────────────┐  N  Title begins or ends with whitespace — remove it to     │
+│ │ Navigation       Collapse      │  a  │ Library notes · Ready                                 │  o  save. · Next: Keep editing; changes save automatically. │
+│ │     Import…                    │  v  │ Notes (122)                                           │  t      ‹ Notes      Index — start here                     │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │ These notes live in the Library's own database — for  │  e                                                          │
+│ │ ▊ Search Library…        ▎▊x▎  │     │ notes that live in a folder on disk, switch to Folder │  s                                                          │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │ files. To copy or keep a folder synced, choose Add    │      In the Library database only — no file on disk         │
+│ │                                │     │ from files.                                           │     T                                                       │
+│ │ ─────────────────────────────  │     │                                                       │     b        Edit           Preview            Info         │
+│ │ Browse                    ▾    │     │ Filter                                                │     o                                                       │
+│ │    Media (23) — your files     │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Title                                                   │
+│ │    Conversations (12)          │     │ ▊ Filter notes… (Enter)                             ▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│ │  ▸ Notes (122)                 │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊ Index — start here                                  ▎ │
+│ │    Prompts (10) — reuse        │     │                                                       │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ │    Skills (4) — AI add-ons     │<--- │    New     Sort: Newest     Select                    │                                                             │
+│ │    Collections (6)             │     │    Add from files…     Export                         │     Keywords                                                │
+│ │    Search / RAG — find all     │     │ Folders & placement                                   │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│ │ ─────────────────────────────  │     │    New folder     Add to folder     Move note         │     ▊ moc                                                 ▎ │
+│ │ Artifacts                 ▾    │     │    Remove placement                                   │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ │    All artifacts               │     │                                                       │<---                                                         │
+│ │    Chatbooks                   │     │                                                       │     Body                                                    │
+│ │    Reports                     │     │  ▸ Agent_Lessons                                      │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│ │ ─────────────────────────────  │     │  ▸ Journal                                            │     ▊ # Index                                             ▎ │
+│ │ Create                    ▾    │     │  ▸ Meetings                                           │     ▊                                                     ▎ │
+│ │    New note                    │<--- │  ▸ Projects                                           │     ▊ ## Thesis                                           ▎ │
+│ │    New prompt                  │     │  ▾ Recipes                                            │     ▊ - [[Thesis outline — retrieval-augmented            ▎ │
+│ │    New skill                   │     │    Recipe: cardamom buns · 1m                         │     ▊ tutoring]](note://758cf130-57f7-401a-8e1a-be5c52    ▎ │
+│ │ ─────────────────────────────  │     │    Index — start here · 1d                            │     ▊ 1b51e1)                                          ▁▁ ▎ │
+│ │ Study                     ▾    │     │  ▾ Research                                           │     ▊ - [[Literature review: RAG for                      ▎ │
+│ │    Study decks (0)             │     │    Recipe: cardamom buns · 1m                         │     ▊ education]](note://230ecd91-8bcc-4a78-97d4-13c1e    ▎ │
+│ │    Flashcards due: 0           │     │    Ideas inbox · 5h                                   │     ▊ 31c322e)                                            ▎ │
+│ │    Quizzes (0)                 │     │    Interview notes: user research #5 · 1w             │╭──────────────────────────────────────────────────────────╮ │
+│ │ ─────────────────────────────  │     │    Interview notes: user research #4 · 1w             ││                                                          │ │
+│ │ Import / Export           ▾    │     │    Competitive analysis — note-taking apps · 2w       ││ Can't leave yet — fix the title or press Discard new     │ │
+│ │    Import…                     │     │    Paper: Attention Is All You Need (summary) · 5w    ││ note.                                                    │ │
+│ │    Export                    ▇ │     │    Paper: Retrieval-Augmented Generation (Lewis 202…  ││                                                          │ │
+│ │  ▾ scroll for more             │     │  ▾ Study                                              │╰──────────────────────────────────────────────────────────╯ │
+│ └────────────────────────────────┘     └───────────────────────────────────────────────────────┘                                             45 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -53,9 +53,7 @@ def test_main_module_routes_serve_args(monkeypatch):
         subprocess_run.return_value.returncode = 0
         subprocess_run.return_value.stderr = ""
         try:
-            runpy.run_module(
-                "tldw_chatbook.app", run_name="__main__", alter_sys=True
-            )
+            runpy.run_module("tldw_chatbook.app", run_name="__main__", alter_sys=True)
         except SystemExit as exc:
             # The serve branch exits 0 after the (patched) server returns.
             assert exc.code in (0, None)

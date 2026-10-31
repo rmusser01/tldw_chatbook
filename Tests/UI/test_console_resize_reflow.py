@@ -14,6 +14,7 @@ from textual.css.query import NoMatches
 from textual.events import MouseScrollDown, MouseScrollUp
 from textual.widgets import Button, Static, Tooltip
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -143,7 +144,12 @@ def _resize_full_settings(
     focus_context: bool = False,
     transfer: ConsoleSettingsTransfer | None = None,
 ) -> ConsoleSettingsModal:
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    # A Temperature the saved chain lacks, so the footer offers every action:
+    # Save as model default shows only while a save would change the
+    # defaults (Phase 6 final review I5).
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", model="model-a", temperature=0.9
+    )
     return ConsoleSettingsModal(
         settings=settings,
         transfer=transfer,
@@ -334,18 +340,26 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
         await pilot.pause()
 
         panel = modal.query_one("#console-settings-modal")
-        actions = list(modal.query("#console-settings-actions Button"))
+        # Rewritten on purpose by TASK-33006.5: Cancel shows only with the
+        # recovery actions (TASK-33007 capture finding 20), and Use saved
+        # defaults leads (dimmed here: this harness passes no draft rebaser,
+        # which it needs).
+        actions = [
+            button
+            for button in modal.query("#console-settings-actions Button")
+            if button.display
+        ]
         assert [str(button.label) for button in actions] == [
-            "Cancel",
-            "Save as provider defaults",
-            "Default for new chats",
-            "Use for this conversation",
+            "Use saved defaults",
+            "Save as model default",
+            "Default for new chats (Ctrl+N)",
+            "Apply to this chat (Ctrl+Enter)",
         ]
         assert panel.region.x >= 0
         assert panel.region.right <= width
         assert panel.region.bottom <= 24
-        assert all(button.display for button in actions)
-        assert all(button.can_focus and not button.disabled for button in actions)
+        assert actions[0].disabled
+        assert all(button.can_focus and not button.disabled for button in actions[1:])
         assert all(
             panel.content_region.contains_region(button.region) for button in actions
         ), (
@@ -357,7 +371,7 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
         actions[1].focus()
         await pilot.pause()
         focus_order: list[str] = []
-        for _ in actions:
+        for _ in actions[1:]:
             focused = app.focused
             focus_order.append(getattr(focused, "id", "") or "")
             assert focused is not None
@@ -368,7 +382,6 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
             "console-settings-save-default",
             "console-settings-make-default",
             "console-settings-save",
-            "console-settings-cancel",
         ]
         apply_button = actions[-1]
         top_hit = modal.get_widget_at(
@@ -520,12 +533,14 @@ async def test_fold_hint_follows_the_body_scroll_position(recovery: bool) -> Non
 
 @pytest.mark.asyncio
 async def test_fold_hint_follows_content_that_grows_without_a_scroll() -> None:
-    """TASK-33003.4: at 211x44 the focused provider picker's results overflow.
+    """TASK-33003.4: content that grows without a scroll still moves the hint.
 
-    The results open on focus and close on blur, and nothing but the body's
-    own size tells the hint; the live open state used to hide it with 9 rows
-    below. If a later layout change moves the fold, pick the height where the
-    open results overflow and the closed ones fit.
+    Nothing but the body's own size tells the hint. Rewritten on purpose by
+    TASK-33006.1: the grower was the provider picker's open results, focused
+    on open; now focus opens on Temperature with the whole Model view
+    fitting at 211x44, and Enter on the Sampling title grows the body by six
+    rows in place (the title stays focused and nothing scrolls), then
+    collapses it again.
     """
 
     app = _ProductionResizeModalHarness()
@@ -534,7 +549,6 @@ async def test_fold_hint_follows_content_that_grows_without_a_scroll() -> None:
         await app.push_screen(modal)
         body = modal.query_one("#console-settings-body")
         fold = modal.query_one("#console-settings-fold-hint", Static)
-        results = modal.query_one("#console-settings-provider-picker-results")
 
         async def settle() -> None:
             for _ in range(4):
@@ -543,20 +557,24 @@ async def test_fold_hint_follows_content_that_grows_without_a_scroll() -> None:
 
         await settle()
         assert app.focused is not None
-        assert app.focused.id == "console-settings-provider-picker-input"
-        precondition = (results.display, body.scroll_y, body.max_scroll_y)
-        assert results.display and body.scroll_y < body.max_scroll_y, precondition
+        assert app.focused.id == "console-settings-temperature"
+        assert body.max_scroll_y == 0 and not fold.display
+
+        modal.query_one("#console-settings-sampling CollapsibleTitle").focus()
+        await pilot.press("enter")
+        await settle()
+        precondition = (body.scroll_y, body.max_scroll_y)
+        assert body.scroll_y < body.max_scroll_y, precondition
         assert fold.display
 
-        await pilot.press("tab")
+        await pilot.press("enter")
         await settle()
-        precondition = (results.display, body.max_scroll_y)
-        assert not results.display and body.max_scroll_y == 0, precondition
+        assert body.max_scroll_y == 0, body.max_scroll_y
         assert not fold.display
 
-        await pilot.press("shift+tab")
+        await pilot.press("enter")
         await settle()
-        assert results.display and body.scroll_y < body.max_scroll_y
+        assert body.scroll_y < body.max_scroll_y
         assert fold.display
 
 
@@ -649,7 +667,7 @@ async def test_full_settings_recovery_keyboard_scrolls_and_stays_in_phase_action
 @pytest.mark.parametrize(
     ("focus_model", "focus_context", "restored_focus_id"),
     (
-        (True, False, "model-search-picker-input"),
+        (True, False, "console-settings-model-change"),
         (False, True, "console-context-budget-mode"),
     ),
 )
@@ -828,7 +846,6 @@ async def test_full_settings_successful_recovery_clears_prior_error_banner(
 @pytest.mark.parametrize(
     "button_id",
     (
-        "console-settings-cancel",
         "console-settings-save-default",
         "console-settings-save",
     ),
@@ -858,7 +875,14 @@ async def test_blocked_full_settings_keeps_enabled_actions_mouse_reachable(
 
         panel = modal.query_one("#console-settings-modal")
         blocked = modal.query_one("#console-settings-new-chat-default-block")
-        actions = list(modal.query("#console-settings-actions Button"))
+        # Cancel shows only with the recovery actions (TASK-33007
+        # capture finding 20), so the Model view's shown actions are measured
+        # (its Cancel case is gone).
+        actions = [
+            button
+            for button in modal.query("#console-settings-actions Button")
+            if button.display
+        ]
         assert blocked.display
         assert "not configured" in str(blocked.renderable)
         assert modal.query_one("#console-settings-make-default", Button).disabled
@@ -909,7 +933,8 @@ async def test_blocked_quick_transfer_keeps_initial_model_focus_visible(
         fold = modal.query_one("#console-settings-fold-hint", Static)
         focused = app.focused
         assert focused is not None
-        assert focused.id == "model-search-picker-input"
+        # TASK-33006.4: Change (the MODEL row) is the model's control now.
+        assert focused.id == "console-settings-model-change"
         assert body.content_region.contains_region(focused.region)
         assert blocked.display
         assert "not configured" in str(blocked.renderable)
@@ -969,6 +994,7 @@ async def test_quick_defaults_reveals_intent_before_narrow_commit(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_resize_auto_open_does_not_evict_focused_context() -> None:
     """Crossing 117-to-118 keeps focused Context instead of auto-swapping rails."""
     host = _ready_console_host()
@@ -990,6 +1016,7 @@ async def test_resize_auto_open_does_not_evict_focused_context() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_consecutive_resize_preserves_focused_context_when_auto_open_is_suppressed() -> (
     None
 ):
@@ -1019,6 +1046,7 @@ async def test_consecutive_resize_preserves_focused_context_when_auto_open_is_su
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_resize_priority_hands_inspector_focus_to_reveal_button() -> None:
     """Crossing 128-to-129 hides focused Inspector and focuses its handle."""
     host = _ready_console_host()
@@ -1134,25 +1162,35 @@ async def test_console_resize_dismisses_stale_tooltip() -> None:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_model_summary_sync_invalidates_mounted_context_allocation(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, request
 ) -> None:
-    """The production Model mutation seam refreshes bounded demand afterward."""
+    """The production Model mutation seam refreshes bounded demand afterward.
+
+    TASK-33005.10 AC#4 (rewritten on purpose): it patched a ChatScreen
+    builder the summary sync no longer calls (the context-spend controller
+    owns it, so the patch raised), and since TASK-33005.3 its Ready -> blocked
+    mutation changes no line count, so its demand and allocation asserts held
+    with or without a reconcile. The mutation now shows the hidden readiness
+    line, so the section's demand and height must grow; the credential poll,
+    whose first ticks resync the summary on their own, is stopped first.
+    """
 
     host = _ready_console_host()
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         rail = console.query_one("#console-left-rail", ConsoleLeftRail)
         model = rail.query_one("#console-bounded-section-model", ConsoleBoundedSection)
+        recovery = rail.query_one("#console-model-section-recovery")
         await _wait_for_context_condition(
             pilot,
             lambda: _context_allocation_idle(rail),
         )
-        readiness = {
-            "value": ConsoleSettingsReadiness("Ready", "", True),
-        }
+        console._stop_console_credential_poll_timer()
+        readiness = {"value": ConsoleSettingsReadiness("Ready", "", True), "word": ""}
         monkeypatch.setattr(
-            console,
+            console._context_spend,
             "_build_console_settings_summary_state",
             lambda: ConsoleSettingsSummaryState(
                 provider_row="Provider: test",
@@ -1160,29 +1198,23 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
                 context_row="Context: 0",
                 sampling_row="T 0.7 · max_tokens 100",
                 identity_row="Identity: character",
-                readiness_label=readiness_words(readiness["value"]),
+                readiness_label=readiness["word"],
                 readiness=readiness["value"],
             ),
         )
         console._sync_console_settings_summary()
         rail.apply_section_open("model", True)
         rail.activate_section("model")
-        # TASK-33005.3 (rewritten on purpose): the line now always shows the
-        # readiness word, so the mutation is Ready -> blocked (and red), not
-        # hidden -> shown.
         await _wait_for_context_condition(
             pilot,
             lambda: (
                 rail._active_section_id == "model"
-                and not rail.query_one("#console-model-section-recovery").has_class(
-                    "conversation-attention-error"
-                )
+                and not recovery.display
                 and _context_allocation_idle(rail)
             ),
         )
         before_demand = model.desired_content_lines
-        before_allocation = model.allocation
-        recovery = rail.query_one("#console-model-section-recovery")
+        before_height = model.outer_size.height
         reconcile_runs = 0
         original_reconcile = rail._run_allocation_reconcile
 
@@ -1197,7 +1229,12 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
             "Provider configuration needs attention.",
             False,
         )
+        readiness["word"] = readiness_words(readiness["value"])
         console._sync_console_settings_summary()
+        # The seam's own request, before any await: the wait above ended
+        # idle, so no poll or timer has run since. The later asserts alone
+        # could pass on a reconcile the environment poll requested.
+        assert rail._allocation_reconcile_scheduled
         await _wait_for_context_condition(
             pilot,
             lambda: recovery.has_class("conversation-attention-error")
@@ -1206,8 +1243,12 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
 
         assert recovery.display is True
         assert recovery.content == "Not ready · check settings"
-        assert model.desired_content_lines >= before_demand
-        assert model.allocation == before_allocation
+        # The section re-measured the line it now shows. Without the seam's
+        # reconcile it kept its old demand and height, clipping the word.
+        assert model.desired_content_lines > before_demand
+        assert model.outer_size.height == before_height + (
+            model.desired_content_lines - before_demand
+        )
         assert reconcile_runs >= 1
         stable_runs = reconcile_runs
         await pilot.pause()

@@ -148,6 +148,7 @@ from ...Chat.console_message_actions import (
     ConsoleCanvasBlockReference,
     ConsoleMessageActionService,
     canvas_compile_repair_result,
+    is_refused_echo,
     resolve_canvas_html_block,
 )
 from ...Chat.console_save_targets import (
@@ -172,6 +173,8 @@ from ...Widgets.Console import (
 )
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Audio.speech_presentation import SpeechPresentation
+
     from ..Screens.chat_screen import ChatScreen
     from ...Chat.console_message_delete import ConsoleDeleteScope
     from ...Widgets.Console.console_transcript import ConsoleThinkingEditRequested
@@ -236,6 +239,7 @@ class ConsoleMessageController:
         current_chat_store_accessor: Callable[[], ConsoleChatStore | None],
         ensure_console_chat_controller: Callable[[], Any],
         current_chat_controller_accessor: Callable[[], Any | None],
+        generation_refusal_copy: Callable[[Any, str | None], str | None],
         sync_native_console_chat_ui: Callable[[], Any],
         active_session_is_ephemeral: Callable[[], bool],
         active_native_console_session: Callable[[], Any],
@@ -311,6 +315,8 @@ class ConsoleMessageController:
                 `ensure_console_chat_controller` for the same reason
                 `chat_store_accessor`/`current_chat_store_accessor` are
                 kept separate.
+            generation_refusal_copy: Existing controller activity and screen
+                provider-readiness refusal, checked before text replay workers.
             sync_native_console_chat_ui: `ChatScreen._sync_native_console_
                 chat_ui`, the big render/inspector re-sync bridge -- stays
                 screen-owned (DOM), reached here as an async callable.
@@ -382,6 +388,7 @@ class ConsoleMessageController:
         self._current_chat_store_accessor = current_chat_store_accessor
         self._ensure_console_chat_controller_fn = ensure_console_chat_controller
         self._current_chat_controller_accessor = current_chat_controller_accessor
+        self._generation_refusal_copy = generation_refusal_copy
         self._sync_native_console_chat_ui_fn = sync_native_console_chat_ui
         self._active_session_is_ephemeral_fn = active_session_is_ephemeral
         self._active_native_console_session_fn = active_native_console_session
@@ -442,6 +449,8 @@ class ConsoleMessageController:
         self._console_speech_request_generation = 0
         self._console_speech_lifetime_generation = 0
         self._console_speech_owner: Any | None = None
+        self._speech_presentation: SpeechPresentation | None = None
+        self._speech_presentation_validator: Callable[[], bool] | None = None
         self._console_speech_pending_stop: tuple[str, int] | None = None
         self._pending_console_swipe_selection: str | None = None
 
@@ -1020,7 +1029,10 @@ class ConsoleMessageController:
         that session's id explicitly instead -- re-resolving "active" at
         append time would let a session switch during the awaited work
         misattribute the row to whatever the user is looking at NOW rather
-        than the session that actually produced it. The resync below is
+        than the session that actually produced it. Slash commands run in a
+        worker (TASK-33622.16), so one that awaits before answering posts
+        through ``command_handoff.append_command_output``, which passes the
+        chat the command was sent from. The resync below is
         unconditional either way and stays harmless: it only ever renders
         the store's CURRENTLY active session, so a background session's
         just-appended row simply doesn't show until the user visits it
@@ -1068,6 +1080,31 @@ class ConsoleMessageController:
                 content=message,
             )
         await self._sync_native_console_chat_ui()
+
+    def bind_speech_presentation(
+        self, presentation: SpeechPresentation, validator: Callable[[], bool]
+    ) -> Callable[[], bool]:
+        """Retain one disposable visible owner, validated again on each read."""
+
+        def is_current() -> bool:
+            return self._speech_presentation is presentation and validator() is True
+
+        presentation.set_transport("preparing")
+        self._speech_presentation = presentation
+        self._speech_presentation_validator = is_current
+        return is_current
+
+    def current_speech_presentation(self) -> SpeechPresentation | None:
+        """Return only the exact presentation still belonging to this context."""
+        validator = getattr(self, "_speech_presentation_validator", None)
+        if validator is None:
+            return None
+        try:
+            if validator() is True:
+                return self._speech_presentation
+        except Exception:  # noqa: BLE001 - stale observation must fail closed.
+            logger.debug("Console speech presentation context unavailable")
+        return None
 
     async def request_console_message_speech(
         self,
@@ -1165,8 +1202,11 @@ class ConsoleMessageController:
         request_generation = self._begin_console_speech_presentation(message_id)
         lifetime_generation = self._console_speech_lifetime_generation
         active_session_epoch = store.active_session_epoch()
+        scope_token = getattr(self.app_instance, "chachanotes_db", None)
 
         def playback_is_current() -> bool:
+            if getattr(self.app_instance, "chachanotes_db", None) is not scope_token:
+                return False
             if self._console_speech_request_generation != request_generation:
                 return False
             if self._console_speech_lifetime_generation != lifetime_generation:
@@ -1213,11 +1253,39 @@ class ConsoleMessageController:
             elif state == "failed":
                 report_outcome(False)
 
+        ref = speech_snapshot.character_ref
+        character_id = (
+            int(ref.character_id)
+            if ref is not None
+            and ref.source == "local"
+            and ref.character_id.isdecimal()
+            else None
+        )
+        from tldw_chatbook.Audio.speech_presentation import (
+            SpeechPresentation,
+            SpeechPresentationOwner,
+        )
+
+        presentation = SpeechPresentation(
+            SpeechPresentationOwner(
+                buddy_owner,
+                scope_token,
+                speech_snapshot.session_id,
+                active_session_epoch,
+                character_id,
+                message_id,
+                None,
+            )
+        )
+        playback_is_current = self.bind_speech_presentation(
+            presentation, playback_is_current
+        )
         playback_lifecycle = TTSPlaybackLifecycle(
             message_id=message_id,
             request_id=request_generation,
             validator=playback_is_current,
             callback=report_playback,
+            presentation=presentation,
         )
         self._console_speech_owner = playback_lifecycle
 
@@ -1234,6 +1302,7 @@ class ConsoleMessageController:
             expected_destination_fingerprint=expected_destination_fingerprint,
             retry_failed_auto=retry_failed_auto,
             playback_lifecycle=playback_lifecycle,
+            presentation=presentation,
         )
         try:
             posted = self.app_instance.post_message(event)
@@ -1708,7 +1777,7 @@ class ConsoleMessageController:
             # in-flight run at creation time, before the controller's own
             # rejection can run -- the screen must refuse, like the submit path.
             target_session_id = controller.store.active_session_id
-            refusal = controller.send_refusal_copy(target_session_id)
+            refusal = self._generation_refusal_copy(controller, target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return True
@@ -1778,7 +1847,7 @@ class ConsoleMessageController:
                 return True
             controller = self._ensure_console_chat_controller()
             target_session_id = controller.store.active_session_id
-            refusal = controller.send_refusal_copy(target_session_id)
+            refusal = self._generation_refusal_copy(controller, target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return True
@@ -1851,7 +1920,7 @@ class ConsoleMessageController:
         if action_id == "continue" and result.status == "continue_requested":
             controller = self._ensure_console_chat_controller()
             target_session_id = controller.store.active_session_id
-            refusal = controller.send_refusal_copy(target_session_id)
+            refusal = self._generation_refusal_copy(controller, target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return True
@@ -2149,6 +2218,103 @@ class ConsoleMessageController:
                 f"Saved {len(written)} images to {escape_markup(str(save_location))}"
             )
 
+    async def save_console_selection_note(self, title: str, content: str) -> str | None:
+        """Save selected text through local Notes authority on a finite worker.
+
+        Args:
+            title: Derived note title.
+            content: Full selected text with captured source provenance.
+
+        Returns:
+            The exact created note ID, or None when Notes is unavailable.
+        """
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        if service is None or not callable(getattr(service, "save_note", None)):
+            return None
+        user_id = self._console_notes_owner_id()
+
+        def save_local():
+            from ...DB.base_db import operation_owned_connection
+
+            local = service.local_notes_service
+            # A first-use route opens its initial handle before the operation
+            # context can observe it. Only that newly created route's worker
+            # handle needs explicit retirement; borrowed handles stay borrowed.
+            previous = getattr(local, "_db_instances", {}).get(user_id)
+            database = local.notes_db(user_id)
+            try:
+                with operation_owned_connection(database), local.bound_notes_db(
+                    user_id, database
+                ):
+                    result = service.save_note(
+                        scope=ScopeType.LOCAL_NOTE.value,
+                        title=title,
+                        content=content,
+                        user_id=user_id,
+                        keywords=["console"],
+                    )
+                    return (
+                        asyncio.run(result) if inspect.isawaitable(result) else result
+                    )
+            finally:
+                if previous is not database and not database.is_memory_db:
+                    database.close()
+
+        result = await asyncio.to_thread(save_local)
+        note_id = result.get("id") if isinstance(result, Mapping) else result
+        return note_id if isinstance(note_id, str) and note_id else None
+
+    def open_console_selection_note(self, note_id: str) -> bool:
+        """Request Library navigation to an already-created note.
+
+        Args:
+            note_id: Exact identifier returned by Notes creation.
+
+        Returns:
+            Whether the navigation request was accepted for dispatch.
+        """
+        from ...Constants import LIBRARY_NAV_CONTEXT_NOTE_ID, TAB_LIBRARY
+        from ..Navigation.main_navigation import NavigateToScreen
+
+        store = self._ensure_console_chat_store()
+        source_session_id = store.active_session_id
+
+        def source_is_current() -> bool:
+            return (
+                store.active_session_id == source_session_id
+                and self._screen.is_mounted
+                and self._screen.app.screen is self._screen
+            )
+
+        async def offer_if_current() -> None:
+            if source_is_current():
+                await self._offer_captured_note_handoff(note_id)
+
+        def completed(succeeded: bool) -> None:
+            if succeeded:
+                return
+            self.app_instance.notify(
+                f"Note saved ({escape_markup(note_id)}), but it could not be opened.",
+                severity="warning",
+            )
+            if source_is_current():
+                self.run_worker(
+                    offer_if_current(),
+                    group="console-selection-note-open",
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+
+        return bool(
+            self.app_instance.post_message(
+                NavigateToScreen(
+                    TAB_LIBRARY,
+                    {LIBRARY_NAV_CONTEXT_NOTE_ID: note_id},
+                    on_completion=completed,
+                )
+            )
+        )
+
     def _console_notes_owner_id(self) -> str:
         """Return the identity every Console note write is saved under.
 
@@ -2231,10 +2397,7 @@ class ConsoleMessageController:
         await self.push_screen(
             ConfirmationDialog(
                 title="Saved to Notes",
-                message=(
-                    "The answer is now a note in Library ▸ Notes, tagged with "
-                    "this conversation."
-                ),
+                message="The note was saved in Library ▸ Notes.",
                 confirm_label="Open note",
                 cancel_label="Stay in Console",
             ),
@@ -2722,7 +2885,7 @@ class ConsoleMessageController:
             # in-flight run at creation time, before the controller's own
             # rejection can run -- the screen must refuse, like the submit path.
             target_session_id = controller.store.active_session_id
-            refusal = controller.send_refusal_copy(target_session_id)
+            refusal = self._generation_refusal_copy(controller, target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return
@@ -2923,18 +3086,15 @@ class ConsoleMessageController:
         stop the timer while the session still read blocked, so the resent
         turn ran unpolled and the transcript froze (live check, 2026-10-01).
         """
-        # Lazy: keeps console_turn_resend off the boot path (_ui_ready census).
-        from ...Chat import console_turn_resend
+        from ...Chat.console_turn_resend import resend_turn
 
         try:
-            refused_echo = console_turn_resend.is_refused_echo(
-                controller.store.get_message(message_id)
-            )
+            refused_echo = is_refused_echo(controller.store.get_message(message_id))
         except KeyError:
             refused_echo = False
         if not refused_echo:
             self._start_console_transcript_sync_timer()
-        result = await console_turn_resend.resend_turn(
+        result = await resend_turn(
             controller, message_id, resend_echo=self._resend_refused_echo_fn
         )
         if result.visible_copy and not result.accepted:

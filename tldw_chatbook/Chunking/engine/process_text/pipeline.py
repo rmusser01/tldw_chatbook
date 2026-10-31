@@ -122,9 +122,15 @@ class ProcessTextPipeline:
         )
 
         total_bytes = sum(len(chunk["text"]) for chunk in out)
-        self._telemetry.set_gauge("chunker_last_chunk_count", float(len(out)), labels=labels)
-        self._telemetry.observe_histogram("chunker_output_bytes", float(total_bytes), labels=labels)
-        self._telemetry.observe_histogram("chunker_input_bytes", float(len(text)), labels=labels)
+        self._telemetry.set_gauge(
+            "chunker_last_chunk_count", float(len(out)), labels=labels
+        )
+        self._telemetry.observe_histogram(
+            "chunker_output_bytes", float(total_bytes), labels=labels
+        )
+        self._telemetry.observe_histogram(
+            "chunker_input_bytes", float(len(text)), labels=labels
+        )
         self._telemetry.observe_histogram(
             "chunker_process_total_seconds",
             time.perf_counter() - overall_start,
@@ -138,7 +144,9 @@ class ProcessTextPipeline:
             with self._telemetry.start_span("chunker.process_text"):
                 self._telemetry.set_span_attribute("chunk.method", method)
                 self._telemetry.set_span_attribute("chunk.lang", language)
-                self._telemetry.set_span_attribute("chunk.hierarchical", bool(hierarchical or hier_template))
+                self._telemetry.set_span_attribute(
+                    "chunk.hierarchical", bool(hierarchical or hier_template)
+                )
                 self._telemetry.set_span_attribute("chunk.multi_level", multi_level)
                 self._telemetry.set_span_attribute("chunk.count", len(out))
                 self._telemetry.add_span_event("chunker.completed")

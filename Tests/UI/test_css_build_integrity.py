@@ -35,6 +35,7 @@ _GENERATED_SHEETS = (
     _CSS_ROOT / "screen_feature_evals.tcss",
     _CSS_ROOT / "screen_feature_scheduling.tcss",
     _CSS_ROOT / "screen_feature_watchlists.tcss",
+    _CSS_ROOT / "screen_feature_roleplay.tcss",
 )
 
 
@@ -996,7 +997,12 @@ def _split_spec(module: str) -> "css_builder.ScreenOwnedSplit":
 
 @pytest.mark.parametrize(
     "module",
-    ["features/_evals.tcss", "features/_scheduling.tcss", "features/_workflows.tcss"],
+    [
+        "features/_evals.tcss",
+        "features/_scheduling.tcss",
+        "features/_workflows.tcss",
+        "features/_roleplay.tcss",
+    ],
 )
 @private_profile_test
 def test_screen_owned_module_is_exactly_partitioned(request, module: str) -> None:
@@ -1212,13 +1218,17 @@ def test_screens_do_not_take_owned_sheets_onto_css_path(request) -> None:
             "tldw_chatbook.UI.Screens.watchlists_collections_screen",
             "WatchlistsCollectionsScreen",
         ),
+        ("tldw_chatbook.UI.Screens.personas_screen", "PersonasScreen"),
     ]:
         try:
             screen_cls = getattr(importlib.import_module(screen_module), screen_name)
         except ImportError as exc:  # optional-deps environments
             pytest.skip(f"{screen_module} unavailable here: {exc}")
         css_path = getattr(screen_cls, "CSS_PATH", None) or []
-        for entry in css_path:
+        # A bare str would be walked one character at a time and never match
+        # (Roleplay frame B1 review): normalise like the modal check above.
+        entries = [css_path] if isinstance(css_path, (str, Path)) else list(css_path)
+        for entry in entries:
             assert "screen_feature_" not in str(entry), (
                 f"{screen_name}.CSS_PATH loads {entry}: harnesses would "
                 "style themselves with the moved half of the module (the "

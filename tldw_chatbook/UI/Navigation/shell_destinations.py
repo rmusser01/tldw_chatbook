@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Mapping
 
+from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_MODE
+
 
 @dataclass(frozen=True)
 class ShellDestination:
@@ -112,14 +114,6 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "Build and launch repeatable agent workflows.",
     ),
     ShellDestination(
-        "mcp",
-        "MCP",
-        "mcp",
-        "MCP servers, tools, permissions, auth, and audit.",
-        "Configure tool and server capability plumbing.",
-        ("tools_settings",),
-    ),
-    ShellDestination(
         "acp",
         "ACP",
         "acp",
@@ -149,6 +143,7 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "Global app preferences, appearance, accounts, and storage.",
         "Configure application preferences.",
         ("stats",),
+        palette_aliases=("tools", "mcp", "tool settings"),
     ),
     ShellDestination(
         "research",
@@ -193,7 +188,8 @@ _BY_DESTINATION_ID: Mapping[str, ShellDestination] = {
 # f7..f11 tail scanned as "9, 0, 7, 8, 9, 10, 11" with F10/F11 stranded
 # mid-strip. Any change here must update the strip ORDER in lockstep so
 # position and shortcut stay aligned. ADR-172 retires the permanent Artifacts
-# entry while preserving its Ctrl+6 compatibility binding and every other slot.
+# entry while preserving its Ctrl+6 compatibility binding and every other slot;
+# ADR-240 does the same for the MCP destination and Ctrl+9.
 SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
     {
         "home": "ctrl+1",
@@ -203,7 +199,6 @@ SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
         "watchlists_collections": "ctrl+5",
         "schedules": "ctrl+7",
         "workflows": "ctrl+8",
-        "mcp": "ctrl+9",
         "acp": "ctrl+0",
         "lab": "f2",
         "logs": "f3",
@@ -215,6 +210,10 @@ SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
 
 # ADR-172: a retained hotkey for the retired route, outside permanent navigation.
 ARTIFACTS_COMPATIBILITY_SHORTCUT = "ctrl+6"
+
+# ADR-240: retained hotkey for the retired MCP destination, now a
+# Settings > Tools & MCP deep-link outside permanent navigation.
+MCP_COMPATIBILITY_SHORTCUT = "ctrl+9"
 
 _ROUTABLE_LEGACY_ROUTES = {
     "chunking_lab",
@@ -229,6 +228,10 @@ _ROUTABLE_LEGACY_ROUTES = {
     "chatbooks",
     "subscriptions",
     "tools_settings",
+    # ADR-240: the MCP destination retired into Settings > Tools & MCP;
+    # the legacy "mcp" route id stays routable as its own canonical route,
+    # mirroring "tools_settings".
+    "mcp",
     "stts",
     "evals",
     "stats",
@@ -283,6 +286,36 @@ for destination in SHELL_DESTINATION_ORDER:
 # ADR-172: preserve both public routes while Library owns browse navigation.
 _ROUTE_MAP["artifacts"] = ResolvedShellRoute("library", "library", "artifacts")
 _ROUTE_MAP["chatbooks"] = ResolvedShellRoute("library", "chatbooks", "chatbooks")
+
+# ADR-240: the MCP destination retired into Settings > Tools & MCP; both
+# public route ids resolve onto the Settings destination.
+_ROUTE_MAP["mcp"] = ResolvedShellRoute("settings", "settings", "mcp")
+_ROUTE_MAP["tools_settings"] = ResolvedShellRoute(
+    "settings", "settings", "tools_settings"
+)
+
+# Legacy alias routes that need a default navigation context applied
+# when navigated to directly (bare ``NavigateToScreen(route)``, no
+# explicit context supplied). Mirrors how ``open_notes_workspace`` builds
+# ``{LIBRARY_NAV_CONTEXT_MODE: "notes"}`` for the retired standalone
+# Notes tab -- except "prompts" (the retired Personas "prompts" mode
+# chip, Task 7), "skills" (the retired standalone Skills tab, Skills
+# sub-project Task 5), "search" (the retired standalone Search
+# screen, RAG UX v2 PR-1 Task 1), and "media" (the retired standalone
+# Media Library screen, task-2851) have no dedicated re-entry action to
+# carry that context, so the bare alias route itself must supply it here.
+# The retired Customize screen folds into Settings > Theme.
+LEGACY_ROUTE_NAV_CONTEXTS: dict[str, dict[str, str]] = {
+    "artifacts": {LIBRARY_NAV_CONTEXT_MODE: "artifacts-all"},
+    "prompts": {LIBRARY_NAV_CONTEXT_MODE: "prompts"},
+    "skills": {LIBRARY_NAV_CONTEXT_MODE: "skills"},
+    "search": {LIBRARY_NAV_CONTEXT_MODE: "search"},
+    "media": {LIBRARY_NAV_CONTEXT_MODE: "media"},
+    "customize": {"category": "theme"},
+    # ADR-240: the MCP destination folds into Settings > Tools & MCP.
+    "mcp": {"category": "tools"},
+    "tools_settings": {"category": "tools"},
+}
 
 
 def get_shell_destination(destination_id: str) -> ShellDestination:

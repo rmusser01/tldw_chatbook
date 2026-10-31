@@ -163,8 +163,15 @@ def _transport(auth_scheme: str, api_key: str) -> HostedHTTPTransportConfig:
 def _record_session(
     monkeypatch: pytest.MonkeyPatch, response: _TransportResponse
 ) -> _RecordingSession:
+    # ADR-222 (TASK-34418): every _transport() in this file shares one
+    # (provider, base_url) registry key, so a fresh recording session must
+    # also drop the previous cached one for this thread.
+    from tldw_chatbook.LLM_Calls.provider_sessions import close_all_for_current_thread
+
+    close_all_for_current_thread()
     session = _RecordingSession(response)
-    monkeypatch.setattr(hosted_chat, "create_default_session", lambda: session)
+    monkeypatch.setattr(hosted_chat, "create_default_session", lambda *a, **k: session, raising=False)
+    monkeypatch.setattr(hosted_chat, "create_pooled_default_session", lambda *a, **k: session, raising=False)
     return session
 
 

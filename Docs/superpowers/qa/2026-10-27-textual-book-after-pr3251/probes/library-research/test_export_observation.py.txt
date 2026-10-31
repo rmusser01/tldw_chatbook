@@ -1,0 +1,88 @@
+"""Read-only product observation: Library Prompt export file I/O scheduling."""
+import asyncio
+import hashlib
+import inspect
+import json
+from pathlib import Path
+import threading
+import pytest
+from textual import events
+from Tests.private_profile import private_profile_test
+from Tests.UI.test_library_export_replace_confirm import _prompt_host
+from Tests.UI.test_library_prompt_export_journeys import _open_export, _save_to, _assert_round_trip
+from Tests.UI.test_library_prompts_canvas import _open_prompt_editor
+from Tests.UI.test_library_shell import _active_library_screen, _wait_for_library_shell, _wait_for_condition
+from tldw_chatbook.UI.Library_Modules import library_file_export
+from tldw_chatbook.UI.Screens import library_screen
+from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
+
+ROOT=Path.cwd().resolve()
+AUDIT=ROOT/'.test-tmp/textual-after3251/audit-merged/library-research'
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('held', [False, True], ids=['ordinary', 'held-writer'])
+@private_profile_test
+async def test_prompt_export_allows_ui_dispatch_during_destination_write(tmp_path, monkeypatch, request, held):
+    assert Path(library_file_export.__file__).resolve() == ROOT/'tldw_chatbook/UI/Library_Modules/library_file_export.py'
+    assert Path(library_screen.__file__).resolve() == ROOT/'tldw_chatbook/UI/Screens/library_screen.py'
+    assert Path(library_file_export.write_export_text.__code__.co_filename).resolve() == Path(library_file_export.__file__).resolve()
+    assert resolve_screen_route('library').module_path == 'tldw_chatbook.UI.Screens.library_screen'
+    db, prompt_id, host = _prompt_host(tmp_path)
+    original = db.fetch_prompt_details(prompt_id)
+    destination = tmp_path/'exported.md'
+    writer_entered, writer_release, key_dispatched = threading.Event(), threading.Event(), threading.Event()
+    outcome={"held": held, "source": str(library_file_export.__file__), "source_sha256": hashlib.sha256(Path(library_file_export.__file__).read_bytes()).hexdigest(), "main_thread": threading.get_ident(), "writer_threads": [], "dispatched_before_release": None}
+    original_writer = library_file_export.write_export_text
+    original_on_key = host.on_event
+    async def observe_event(event):
+        if isinstance(event, events.Key) and event.key == 'f12':
+            key_dispatched.set()
+        return await original_on_key(event)
+    monkeypatch.setattr(host, 'on_event', observe_event)
+    def destination_writer(*args, **kwargs):
+        outcome['writer_threads'].append(threading.get_ident())
+        writer_entered.set()
+        if held:
+            assert writer_release.wait(3), 'bounded destination hold not released'
+        return original_writer(*args, **kwargs)
+    monkeypatch.setattr(library_file_export, 'write_export_text', destination_writer)
+    releaser=None
+    try:
+        async with host.run_test(size=(160,45)) as pilot:
+            screen=_active_library_screen(host)
+            await _wait_for_library_shell(screen,pilot)
+            await _open_prompt_editor(screen,pilot,prompt_id)
+            dialog, filename=await _open_export(host,screen,pilot)
+            loop=asyncio.get_running_loop()
+            if held:
+                def release_after_dispatch_window():
+                    try:
+                        assert writer_entered.wait(6), 'actual destination writer not entered'
+                        loop.call_soon_threadsafe(host.post_message, events.Key('f12', None))
+                        outcome['dispatched_before_release']=key_dispatched.wait(0.5)
+                    finally:
+                        writer_release.set()
+                releaser=threading.Thread(target=release_after_dispatch_window, name='book3251-library-destination-gate')
+                releaser.start()
+            await _save_to(host,dialog,filename,pilot,destination)
+            await _wait_for_condition(pilot,lambda: destination.exists() and host.screen is screen,message='real export did not complete')
+            await pilot.pause()
+            if held:
+                await _wait_for_condition(pilot,key_dispatched.is_set,message='queued F12 event never dispatched after destination released')
+            _assert_round_trip(destination.read_text(encoding='utf-8'), original)
+            assert 'Keep [bold] café.' in destination.read_text(encoding='utf-8')
+            assert db.fetch_prompt_details(prompt_id)==original
+            outcome['file_written']=True
+            outcome['database_unchanged']=True
+            outcome['eventually_dispatched']=key_dispatched.is_set()
+    finally:
+        writer_release.set()
+        if releaser is not None:
+            await asyncio.to_thread(releaser.join,4)
+            assert not releaser.is_alive()
+        db.close()
+        (AUDIT/f"book3251-library-{'held' if held else 'ordinary'}-observation.json").write_text(json.dumps(outcome,indent=2),encoding='utf-8')
+    if held:
+        assert outcome['dispatched_before_release'], 'Library Prompt export blocked UI key dispatch until destination writer was released'
+
+

@@ -1,0 +1,862 @@
+...............................................F.............            [100%]
+=================================== FAILURES ===================================
+_ test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[overlay] _
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+Tests/UI/test_console_character_activation_presentation.py:282: in test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit
+    await asyncio.wait_for(entered.wait(), 3)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-06 19:14:59.989 | INFO     | tldw_chatbook.app:__init__:1256 - Loaded app_config - strip_thinking_tags: True
+2026-10-06 19:14:59.999 | INFO     | tldw_chatbook.app:__init__:1364 - Parallel init task 'prompts_service' completed in 0.000s
+2026-10-06 19:14:59.999 | INFO     | tldw_chatbook.app:__init__:1364 - Parallel init task 'providers_models' completed in 0.000s
+2026-10-06 19:14:59.999 | INFO     | tldw_chatbook.app:__init__:1364 - Parallel init task 'notes_service' completed in 0.000s
+2026-10-06 19:14:59.999 | INFO     | tldw_chatbook.app:__init__:1364 - Parallel init task 'media_db' completed in 0.000s
+2026-10-06 19:15:00.078 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-68x1ruo7/library_collections.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-06 19:15:00.192 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-68x1ruo7/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-06 19:15:00.307 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-68x1ruo7/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-06 19:15:00.309 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-10-06 19:15:00.310 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-68x1ruo7/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-10-06 19:15:00.310 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-68x1ruo7/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-10-06 19:15:00.504 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+2026-10-06 19:15:00.571 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-10-06 19:15:00.653 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-10-06 19:15:00.780 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-10-06 19:15:00.873 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+2026-10-06 19:15:00.937 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-10-06 19:15:00.937 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-68x1ruo7/scheduled_tasks.sqlite [Client: default]
+2026-10-06 19:15:00.961 | DEBUG    | tldw_chatbook.app:__init__:1435 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-10-06 19:15:00.961 | DEBUG    | tldw_chatbook.app:__init__:1438 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-10-06 19:15:01.059 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:232 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_qvhz6q51/home/.local/share/tldw_cli/default_user/evals.db
+2026-10-06 19:15:01.060 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-10-06 19:15:01.085 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-10-06 19:15:01.085 | INFO     | tldw_chatbook.app:_init_worker_handlers:2176 - Worker handler registry initialized with all handlers
+2026-10-06 19:15:01.085 | INFO     | tldw_chatbook.app:__init__:1618 - === STARTUP TIMING SUMMARY ===
+2026-10-06 19:15:01.085 | INFO     | tldw_chatbook.app:__init__:1619 - Total initialization time: 1.115 seconds
+2026-10-06 19:15:01.085 | INFO     | tldw_chatbook.app:__init__:1625 -   basic_init: 0.026s (2.3%)
+2026-10-06 19:15:01.085 | INFO     | tldw_chatbook.app:__init__:1625 -   attribute_init: 0.000s (0.0%)
+2026-10-06 19:15:01.085 | INFO     | tldw_chatbook.app:__init__:1625 -   parallel_init: 0.001s (0.1%)
+2026-10-06 19:15:01.085 | INFO     | tldw_chatbook.app:__init__:1638 -     - prompts_service: 0.000s (2.4% of parallel_init)
+2026-10-06 19:15:01.085 | INFO     | tldw_chatbook.app:__init__:1638 -     - providers_models: 0.000s (0.5% of parallel_init)
+2026-10-06 19:15:01.086 | INFO     | tldw_chatbook.app:__init__:1638 -     - media_db: 0.000s (0.3% of parallel_init)
+2026-10-06 19:15:01.086 | INFO     | tldw_chatbook.app:__init__:1638 -     - notes_service: 0.000s (0.2% of parallel_init)
+2026-10-06 19:15:01.086 | INFO     | tldw_chatbook.app:__init__:1642 - ==============================
+2026-10-06 19:15:01.086 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2885 - Initializing CharactersRAGDB db_sha256=abc54ecf35b4 [Client ID: inspection]
+2026-10-06 19:15:01.149 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=8494865792
+2026-10-06 19:15:01.151 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:01.151 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8184 - Checking DB schema 'rag_char_chat_schema'. Current version: 0. Code supports: 78
+2026-10-06 19:15:01.151 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:3949 - Applying schema Version 4 for 'rag_char_chat_schema' to DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.152 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.163 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:3990 - [rag_char_chat_schema V4] Full schema script executed.
+2026-10-06 19:15:01.163 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:3997 - [rag_char_chat_schema V4] Schema 4 applied and version confirmed for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.164 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enrich_default_assistant_card_if_bare:4261 - [task-2451] Default Assistant enrichment UPDATE affected 1 row(s) in DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.164 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4282 - Migrating schema from V4 to V5 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.164 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.175 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4292 - [rag_char_chat_schema V4→V5] Migration script executed.
+2026-10-06 19:15:01.175 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4301 - [rag_char_chat_schema V4→V5] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.175 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4335 - Migrating schema from V5 to V6 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.175 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.177 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4343 - [rag_char_chat_schema V5→V6] Migration script executed.
+2026-10-06 19:15:01.177 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4352 - [rag_char_chat_schema V5→V6] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.177 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4386 - Migrating schema from V6 to V7 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.177 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.178 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4394 - [rag_char_chat_schema V6→V7] Migration script executed.
+2026-10-06 19:15:01.178 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4403 - [rag_char_chat_schema V6→V7] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.178 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8098 - Migrating schema from V7 to V8 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.179 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.180 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8106 - [rag_char_chat_schema V7→V8] Migration script executed.
+2026-10-06 19:15:01.180 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8115 - [rag_char_chat_schema V7→V8] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.180 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4437 - Migrating schema from V8 to V9 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.181 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.183 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4445 - [rag_char_chat_schema V8→V9] Migration script executed.
+2026-10-06 19:15:01.183 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4454 - [rag_char_chat_schema V8→V9] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.183 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4488 - Migrating schema from V9 to V10 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.184 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.184 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4496 - [rag_char_chat_schema V9→V10] Migration script executed.
+2026-10-06 19:15:01.184 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4505 - [rag_char_chat_schema V9→V10] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.184 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:4539 - Migrating schema from V10 to V11 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.184 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.187 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:4547 - [rag_char_chat_schema V10→V11] Migration script executed.
+2026-10-06 19:15:01.187 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:4556 - [rag_char_chat_schema V10→V11] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.187 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:4590 - Migrating schema from V11 to V12 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.187 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.195 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:4598 - [rag_char_chat_schema V11→V12] Migration script executed.
+2026-10-06 19:15:01.196 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:4607 - [rag_char_chat_schema V11→V12] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.196 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:4633 - Migrating schema from V12 to V13 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.196 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.223 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:4641 - [rag_char_chat_schema V12→V13] Migration script executed.
+2026-10-06 19:15:01.223 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:4649 - [rag_char_chat_schema V12→V13] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.223 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:4674 - Migrating schema from V13 to V14 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.223 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.231 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:4682 - [rag_char_chat_schema V13→V14] Migration script executed.
+2026-10-06 19:15:01.231 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:4690 - [rag_char_chat_schema V13→V14] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.231 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:4715 - Migrating schema from V14 to V15 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.232 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.233 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:4723 - [rag_char_chat_schema V14→V15] Migration script executed.
+2026-10-06 19:15:01.233 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:4731 - [rag_char_chat_schema V14→V15] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.233 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:4757 - Migrating schema from V15 to V16 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.233 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.234 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:4800 - [rag_char_chat_schema V15→V16] Migration script executed.
+2026-10-06 19:15:01.234 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:4810 - [rag_char_chat_schema V15→V16] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.234 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:4836 - Migrating schema from V16 to V17 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.234 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.235 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:4851 - [rag_char_chat_schema V16→V17] Migration script executed.
+2026-10-06 19:15:01.235 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:4859 - [rag_char_chat_schema V16→V17] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.235 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:4887 - Migrating schema from V17 to V18 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.235 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.241 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:4902 - [rag_char_chat_schema V17→V18] Migration script executed.
+2026-10-06 19:15:01.241 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:4910 - [rag_char_chat_schema V17→V18] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.241 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8041 - Migrating schema from V18 to V19 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.241 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.243 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8056 - [rag_char_chat_schema V18→V19] Migration script executed.
+2026-10-06 19:15:01.243 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8064 - [rag_char_chat_schema V18→V19] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.243 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:4938 - Migrating schema from V19 to V20 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.243 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.249 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:4958 - [rag_char_chat_schema V19→V20] Migration script executed.
+2026-10-06 19:15:01.249 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:4966 - [rag_char_chat_schema V19→V20] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.249 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:4994 - Migrating schema from V20 to V21 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.249 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.250 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_skip_already_applied_add_column:3824 - [rag_char_chat_schema V20→V21] world_book_entries.priority already present; skipping the ADD COLUMN (idempotent replay).
+2026-10-06 19:15:01.250 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5014 - [rag_char_chat_schema V20→V21] Migration script executed.
+2026-10-06 19:15:01.256 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5022 - [rag_char_chat_schema V20→V21] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.256 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5044 - Migrating schema from V21 to V22 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.257 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.257 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_skip_already_applied_add_column:3824 - [rag_char_chat_schema V21→V22] world_book_entries.regex already present; skipping the ADD COLUMN (idempotent replay).
+2026-10-06 19:15:01.258 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5059 - [rag_char_chat_schema V21→V22] Migration script executed.
+2026-10-06 19:15:01.258 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5065 - [rag_char_chat_schema V21→V22] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.258 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5087 - Migrating schema from V22 to V23 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.259 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.260 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5102 - [rag_char_chat_schema V22→V23] Migration script executed.
+2026-10-06 19:15:01.260 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5108 - [rag_char_chat_schema V22→V23] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.260 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5131 - Migrating schema from V23 to V24 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.260 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.263 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5146 - [rag_char_chat_schema V23→V24] Migration script executed.
+2026-10-06 19:15:01.263 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5152 - [rag_char_chat_schema V23→V24] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.263 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5175 - Migrating schema from V24 to V25 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.264 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.265 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5190 - [rag_char_chat_schema V24→V25] Migration script executed.
+2026-10-06 19:15:01.265 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5196 - [rag_char_chat_schema V24→V25] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.265 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5220 - Migrating schema from V25 to V26 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.265 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.272 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5235 - [rag_char_chat_schema V25→V26] Migration script executed.
+2026-10-06 19:15:01.272 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5241 - [rag_char_chat_schema V25→V26] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.272 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.280 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.300 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 3 on thread 8494865792.
+2026-10-06 19:15:01.305 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5428 - Migrating schema from V28 to V29 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.305 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.309 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5443 - [rag_char_chat_schema V28→V29] Migration script executed.
+2026-10-06 19:15:01.309 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5451 - [rag_char_chat_schema V28→V29] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.309 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5478 - Migrating schema from V29 to V30 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.309 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.313 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5498 - [rag_char_chat_schema V29→V30] Migration script executed.
+2026-10-06 19:15:01.314 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5522 - [rag_char_chat_schema V29→V30] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.314 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:5549 - Migrating schema from V30 to V31 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.314 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.319 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:5569 - [rag_char_chat_schema V30→V31] Migration script executed.
+2026-10-06 19:15:01.319 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:5593 - [rag_char_chat_schema V30→V31] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.319 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v31_to_v32:5626 - Migrating schema from V31 to V32 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.319 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enrich_default_assistant_card_if_bare:4261 - [task-2451] Default Assistant enrichment UPDATE affected 0 row(s) in DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.319 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v31_to_v32:5652 - [rag_char_chat_schema V31→V32] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.320 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.323 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.328 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.333 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.334 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.341 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.342 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.345 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.346 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.348 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:5972 - Migrating schema from V41 to V42 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.349 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:6036 - [rag_char_chat_schema V41→V42] conversations.console_project_context_json already present; applying the version bump only.
+2026-10-06 19:15:01.349 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6086 - Migrating schema from V42 to V43 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.350 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.353 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6225 - [rag_char_chat_schema V42→V43] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.353 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6255 - Migrating schema from V43 to V44 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.353 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.367 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6295 - [rag_char_chat_schema V43→V44] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.367 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6364 - Actor Pack schema migration started: chachanotes_v44_to_v45
+2026-10-06 19:15:01.368 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.369 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6397 - Actor Pack schema migration completed: chachanotes_v44_to_v45
+2026-10-06 19:15:01.369 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6441 - Migrating schema from V45 to V46 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.369 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.377 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6487 - [rag_char_chat_schema V45→V46] Migration completed successfully for DB: db_sha256=abc54ecf35b4. Purged 0 unreachable sync_log row(s) of 1.
+2026-10-06 19:15:01.377 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:6529 - Migrating schema from V46 to V47 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.378 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.379 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:6564 - [rag_char_chat_schema V46→V47] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.380 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.387 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:6720 - Migrating schema from V48 to V49 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.388 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.389 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:6755 - [rag_char_chat_schema V48→V49] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.389 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:6803 - Migrating schema from V49 to V50 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.389 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.390 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:6837 - [rag_char_chat_schema V49→V50] Migration completed successfully for DB: db_sha256=abc54ecf35b4.
+2026-10-06 19:15:01.390 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.397 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.409 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:6962 - Migrating schema from V52 to V53 for 'rag_char_chat_schema' in DB: db_sha256=abc54ecf35b4...
+2026-10-06 19:15:01.410 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.410 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:7027 - [rag_char_chat_schema V52→V53] Migration completed for DB: db_sha256=abc54ecf35b4 (examined 0, compacted 0, skipped 0 unreadable).
+2026-10-06 19:15:01.410 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.415 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.418 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.437 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.441 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.465 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.467 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.469 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.470 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.497 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.504 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.528 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.530 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.536 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 3 on thread 8494865792.
+2026-10-06 19:15:01.536 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 3 on thread 8494865792.
+2026-10-06 19:15:01.537 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.543 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.578 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.580 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.582 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.593 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.616 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.617 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.626 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.627 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.629 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.658 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.659 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8319 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 78.
+2026-10-06 19:15:01.666 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:01.666 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2908 - CharactersRAGDB initialization completed successfully db_sha256=abc54ecf35b4
+2026-10-06 19:15:01.667 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:01.670 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:01.670 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:add_conversation:10714 - Added conversation ID: exact.
+2026-10-06 19:15:01.671 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing LibraryScreen screen: library
+------------------------------ Captured log setup ------------------------------
+INFO     root:app.py:1390 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+----------------------------- Captured stderr call -----------------------------
+2026-10-06 19:15:01.684 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:01.686 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:add_character_card:8720 - Added character card 'Activation fixture' with ID: 2.
+2026-10-06 19:15:01.686 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:01.686 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False): SELECT * FROM conversations WHERE id = ? AND deleted = 0... Params: (exact)
+2026-10-06 19:15:01.687 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:01.687 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:01.687 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:update_conversation:12110 - Starting update_conversation for ID exact, expected_version 1
+2026-10-06 19:15:01.687 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:01.688 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24138 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-06 19:15:01.689 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:update_conversation:12411 - Updated conversation ID exact from version 1 to version 2.
+2026-10-06 19:15:01.689 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:01.690 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:01.693 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:01.693 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_add_message_with_semantic_sidecars:13317 - Added message ID: activation-message to conversation exact (Image: No).
+2026-10-06 19:15:01.700 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+2026-10-06 19:15:01.710 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:01.710 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:01.719 | DEBUG    | tldw_chatbook.Chat.chat_persistence_service:__init__:275 - Recovered-media message source is unavailable.
+2026-10-06 19:15:01.839 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - AgentRunsDB initialized with path: /private/tmp/pr3034-rebased-affected-Nu8kJH/pytest/test_installed_activation_reje3/agent_runs.db [Client: default]
+2026-10-06 19:15:01.892 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9441 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+2026-10-06 19:15:02.068 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6158479360
+2026-10-06 19:15:02.069 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:02.069 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:02.073 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:02.108 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:02.127 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:02.160 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8748 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+2026-10-06 19:15:02.348 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:13903 - No Console workspace context tray available for sync
+2026-10-06 19:15:02.351 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8803 - Successfully replaced settings file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_qvhz6q51/config/config.toml
+2026-10-06 19:15:02.385 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook
+2026-10-06 19:15:02.385 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook
+2026-10-06 19:15:02.389 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-06 19:15:02.390 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6158479360
+2026-10-06 19:15:02.390 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:02.390 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-10-06 19:15:02.393 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:02.394 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:02.394 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:02.395 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:02.443 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3803 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_qvhz6q51/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-10-06 19:15:02.443 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3834 - load_settings: Configuration cached for future use
+2026-10-06 19:15:02.445 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8831 - Global configuration caches invalidated and reloaded.
+2026-10-06 19:15:02.665 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6175305728
+2026-10-06 19:15:02.666 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6175305728.
+2026-10-06 19:15:02.666 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6175305728.
+2026-10-06 19:15:02.670 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:203 - Sidebar temperature input not found for sync
+2026-10-06 19:15:02.726 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6175305728.
+2026-10-06 19:15:02.727 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6175305728.
+2026-10-06 19:15:02.727 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:02.727 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:02.729 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:02.773 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:631 - Screen chat mounted
+2026-10-06 19:15:02.804 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:02.804 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:02.805 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23428 - Chat screen resuming
+2026-10-06 19:15:03.277 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6158479360
+2026-10-06 19:15:03.277 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:03.277 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:03.294 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:03.294 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:03.294 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:03.294 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:03.295 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:03.353 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6175305728
+2026-10-06 19:15:03.353 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6175305728.
+2026-10-06 19:15:03.353 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6175305728.
+2026-10-06 19:15:03.369 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6175305728.
+2026-10-06 19:15:03.369 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6175305728.
+2026-10-06 19:15:03.369 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:03.369 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:03.370 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:03.427 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6192132096
+2026-10-06 19:15:03.427 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:03.428 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:03.429 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:03.429 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:03.429 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:03.429 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:03.430 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:03.453 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6158479360
+2026-10-06 19:15:03.454 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:03.454 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:03.455 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:03.455 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:03.455 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:03.455 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:03.457 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:03.510 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6175305728
+2026-10-06 19:15:03.510 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6175305728.
+2026-10-06 19:15:03.511 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6175305728.
+2026-10-06 19:15:03.511 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6175305728.
+2026-10-06 19:15:03.511 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6175305728.
+2026-10-06 19:15:03.512 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:03.512 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:03.513 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:03.550 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6192132096
+2026-10-06 19:15:03.550 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:03.551 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:03.551 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:03.551 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:03.552 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:03.552 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:03.553 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:03.586 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6175305728
+2026-10-06 19:15:03.586 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6175305728.
+2026-10-06 19:15:03.586 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6175305728.
+2026-10-06 19:15:03.587 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6175305728.
+2026-10-06 19:15:03.587 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6175305728.
+2026-10-06 19:15:03.588 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6175305728.
+2026-10-06 19:15:03.590 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6175305728.
+2026-10-06 19:15:03.590 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:03.590 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:03.592 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:03.623 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6158479360
+2026-10-06 19:15:03.623 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:03.623 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:03.624 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:03.624 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:03.624 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:03.624 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:03.625 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:03.695 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6192132096
+2026-10-06 19:15:03.695 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:03.696 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:03.697 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:03.697 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:03.698 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:03.699 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:03.700 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:03.700 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:03.701 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:03.773 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6158479360
+2026-10-06 19:15:03.773 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:03.773 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:03.775 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:03.775 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:03.775 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:03.775 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:03.777 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:03.847 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6192132096
+2026-10-06 19:15:03.864 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:03.864 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:03.871 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:03.904 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:03.904 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:03.904 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:03.905 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:03.991 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:03.994 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:03.995 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23428 - Chat screen resuming
+2026-10-06 19:15:04.327 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10915 - Listing all active conversations: limit=1000, offset=0
+2026-10-06 19:15:04.437 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6158479360
+2026-10-06 19:15:04.437 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:04.437 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6192132096
+2026-10-06 19:15:04.437 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False):
+                SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Params: (inspection, 1000, 0)
+2026-10-06 19:15:04.438 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:04.441 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10948 - Found 1 active conversations (limit 1000, offset 0).
+2026-10-06 19:15:04.442 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:04.442 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:04.444 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:04.445 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:04.448 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:04.448 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:04.459 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:04.460 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:04.519 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6225784832
+2026-10-06 19:15:04.519 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:04.519 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:04.521 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:04.521 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:04.522 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:04.522 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:04.524 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:04.551 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6192132096
+2026-10-06 19:15:04.552 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:04.552 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:04.553 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:04.553 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:04.553 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:04.553 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:04.555 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:04.585 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:25081 - No collapsible states to restore
+2026-10-06 19:15:04.655 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6158479360
+2026-10-06 19:15:04.656 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:04.657 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:04.658 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:04.670 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:04.678 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:04.680 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6225784832
+2026-10-06 19:15:04.684 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:04.684 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:04.686 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:04.691 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:04.694 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:04.694 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:04.695 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:04.706 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:04.709 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:04.766 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6192132096
+2026-10-06 19:15:04.766 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:04.767 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:04.768 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:04.768 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:04.769 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:04.770 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:04.771 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:04.771 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:04.771 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:04.772 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:04.773 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:04.774 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:04.774 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:04.774 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:04.775 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:04.777 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:04.778 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:04.778 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:04.778 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:04.779 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:04.781 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:04.802 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6158479360
+2026-10-06 19:15:04.802 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:04.802 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:04.803 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:04.803 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:04.803 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:04.803 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:04.804 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:04.864 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6225784832
+2026-10-06 19:15:04.864 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:04.864 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:04.865 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:04.865 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:04.865 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:04.865 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:04.867 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:04.938 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6208958464
+2026-10-06 19:15:04.938 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6208958464.
+2026-10-06 19:15:04.938 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6208958464.
+2026-10-06 19:15:04.939 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6208958464.
+2026-10-06 19:15:04.939 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6208958464.
+2026-10-06 19:15:04.939 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6208958464.
+2026-10-06 19:15:04.939 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:04.940 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6208958464.
+2026-10-06 19:15:05.160 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6192132096
+2026-10-06 19:15:05.160 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:05.160 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:05.161 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:05.161 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:05.162 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:05.162 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:05.163 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:05.238 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6225784832
+2026-10-06 19:15:05.238 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:05.238 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:05.239 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:05.240 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:05.240 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:05.240 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:05.241 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:05.264 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6208958464
+2026-10-06 19:15:05.264 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6208958464.
+2026-10-06 19:15:05.265 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6208958464.
+2026-10-06 19:15:05.266 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6208958464.
+2026-10-06 19:15:05.267 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6208958464.
+2026-10-06 19:15:05.267 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6208958464.
+2026-10-06 19:15:05.267 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:05.268 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6208958464.
+2026-10-06 19:15:05.317 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6192132096
+2026-10-06 19:15:05.317 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:05.317 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:05.319 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:05.319 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:05.319 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:05.322 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:05.323 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:05.326 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:05.326 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:05.326 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:05.326 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:05.329 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:05.330 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:05.361 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6175305728
+2026-10-06 19:15:05.361 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6175305728.
+2026-10-06 19:15:05.361 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6175305728.
+2026-10-06 19:15:05.364 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6175305728.
+2026-10-06 19:15:05.364 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6175305728.
+2026-10-06 19:15:05.364 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:05.364 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:05.365 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:05.421 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6158479360
+2026-10-06 19:15:05.421 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:05.421 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:05.423 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:05.425 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:05.426 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:05.426 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:05.428 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:05.450 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6225784832
+2026-10-06 19:15:05.454 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:05.454 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:05.463 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:05.465 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:05.470 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:05.475 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:05.481 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:05.485 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:05.488 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:05.492 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:05.492 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:05.492 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:05.494 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:05.508 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6208958464
+2026-10-06 19:15:05.508 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6208958464.
+2026-10-06 19:15:05.508 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6208958464.
+2026-10-06 19:15:05.510 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6208958464.
+2026-10-06 19:15:05.510 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6208958464.
+2026-10-06 19:15:05.510 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6208958464.
+2026-10-06 19:15:05.510 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:05.511 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6208958464.
+2026-10-06 19:15:05.573 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6192132096
+2026-10-06 19:15:05.573 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:05.573 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:05.574 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:05.574 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:05.574 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:05.574 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:05.575 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:05.647 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6175305728
+2026-10-06 19:15:05.647 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6175305728.
+2026-10-06 19:15:05.648 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6175305728.
+2026-10-06 19:15:05.648 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6175305728.
+2026-10-06 19:15:05.649 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6175305728.
+2026-10-06 19:15:05.649 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:05.649 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:05.649 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:05.741 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6158479360
+2026-10-06 19:15:05.745 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:05.745 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:05.745 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:05.746 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:05.746 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:05.832 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6192132096
+2026-10-06 19:15:05.838 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False): SELECT * FROM conversations WHERE id = ? AND deleted = 0... Params: (exact)
+2026-10-06 19:15:05.838 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False):
+                SELECT k.*                 FROM keywords k                          JOIN conversation_keywords ck ON k.id = ck.keyword_id
+                WHERE ck.conversation_id = ?                   AND k.deleted = 0                 ORDER BY k.keyword COLLATE NOCASE
+                ... Params: (exact)
+2026-10-06 19:15:05.839 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False): SELECT COUNT(1) AS cnt FROM messages m JOIN conversations c ON m.conversation_id = c.id WHERE m.conversation_id = ? AND c.deleted = 0 AND m.deleted = 0... Params: (exact)
+2026-10-06 19:15:05.840 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False):
+            SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content,
+                   (m.image_data IS NOT NULL) AS has_image, m.image_mime_type,
+                   m.timestamp, m.ranking, m.last_modified,
+                   m.version, m.client_id, m.deleted, m.feedback, m.role,
+... Params: (exact)
+2026-10-06 19:15:05.840 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:05.841 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:05.841 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:05.852 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:05.853 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:05.853 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:05.853 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:05.853 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False): SELECT * FROM conversations WHERE id = ? AND deleted = 0... Params: (exact)
+2026-10-06 19:15:05.854 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False): SELECT * FROM conversations WHERE id = ? AND deleted = 0... Params: (exact)
+2026-10-06 19:15:05.858 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:05.858 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:05.858 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:05.859 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:05.859 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False): SELECT * FROM conversations WHERE id = ? AND deleted = 0... Params: (exact)
+2026-10-06 19:15:05.859 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:05.859 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:05.859 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False):
+            SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content,
+                   m.image_data, m.image_mime_type, m.timestamp, m.ranking,
+                   m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role,
+                   m.variant_of, m.variant_num... Params: (exact, 100000, 0)
+2026-10-06 19:15:05.860 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:05.866 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:05.867 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:05.867 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:06.039 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6175305728
+2026-10-06 19:15:06.039 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:06.041 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:06.042 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:06.116 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6158479360
+2026-10-06 19:15:06.117 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False): SELECT * FROM conversations WHERE id = ? AND deleted = 0... Params: (exact)
+2026-10-06 19:15:06.117 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:06.117 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:06.118 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:06.193 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6192132096
+2026-10-06 19:15:06.193 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False): SELECT * FROM character_cards WHERE id = ? AND deleted = 0... Params: (2)
+2026-10-06 19:15:06.194 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:06.194 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:06.194 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:06.268 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6175305728
+2026-10-06 19:15:06.273 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:06.274 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:06.275 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:06.369 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:06.369 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:06.417 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:06.417 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:06.485 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6242611200
+2026-10-06 19:15:06.485 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False): SELECT * FROM conversations WHERE id = ? AND deleted = 0... Params: (exact)
+2026-10-06 19:15:06.486 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6242611200.
+2026-10-06 19:15:06.486 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:06.487 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6242611200.
+2026-10-06 19:15:06.634 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6225784832
+2026-10-06 19:15:06.637 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:06.637 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:06.638 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:06.642 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:06.643 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:06.701 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6208958464
+2026-10-06 19:15:06.701 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6208958464.
+2026-10-06 19:15:06.701 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6208958464.
+2026-10-06 19:15:06.701 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6208958464.
+2026-10-06 19:15:06.711 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:06.729 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6208958464.
+2026-10-06 19:15:06.866 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6175305728
+2026-10-06 19:15:06.867 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6175305728.
+2026-10-06 19:15:06.867 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6175305728.
+2026-10-06 19:15:06.867 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:06.867 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:06.869 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:07.262 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6225784832
+2026-10-06 19:15:07.263 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False):
+        /* visual_identity_resolver */
+        WITH active_graph AS MATERIALIZED (
+            SELECT c.id AS actor_row_id,
+                   b.id AS binding_id,
+                   p.id AS pack_id,
+                   p.source_kind AS pack_source_kind,
+                   v.id AS pack_version_id,
+  ... Params: (2, None, neutral)
+2026-10-06 19:15:07.271 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False): SELECT version, length(image) AS image_bytes,
+                  CASE WHEN typeof(image) = 'blob'
+                             AND length(image) BETWEEN 1 AND ?
+                       THEN image END AS image
+             FROM character_cards WHERE id = ? AND deleted = 0... Params: (26214400, 2)
+2026-10-06 19:15:07.271 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:07.271 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:07.275 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:07.350 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6192132096
+2026-10-06 19:15:07.350 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:07.350 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:07.350 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:07.350 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:07.351 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:07.745 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6208958464
+2026-10-06 19:15:07.745 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6208958464.
+2026-10-06 19:15:07.745 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6208958464.
+2026-10-06 19:15:07.746 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6208958464.
+2026-10-06 19:15:07.746 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6208958464.
+2026-10-06 19:15:07.746 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6208958464.
+2026-10-06 19:15:07.746 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:07.747 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6208958464.
+2026-10-06 19:15:07.838 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6158479360
+2026-10-06 19:15:07.838 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:07.838 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:07.839 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:07.839 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:07.839 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:07.839 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:07.840 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:08.004 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6192132096
+2026-10-06 19:15:08.013 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:08.016 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:08.020 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:08.020 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:08.020 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:08.020 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:08.021 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:08.184 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6225784832
+2026-10-06 19:15:08.184 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:08.184 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:08.185 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:08.185 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:08.185 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:08.185 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:08.186 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:08.333 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6208958464
+2026-10-06 19:15:08.334 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6208958464.
+2026-10-06 19:15:08.334 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6208958464.
+2026-10-06 19:15:08.334 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6208958464.
+2026-10-06 19:15:08.334 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6208958464.
+2026-10-06 19:15:08.335 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6208958464.
+2026-10-06 19:15:08.336 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6208958464.
+2026-10-06 19:15:08.336 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6208958464.
+2026-10-06 19:15:08.336 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:08.340 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6208958464.
+2026-10-06 19:15:08.443 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6192132096
+2026-10-06 19:15:08.444 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:08.445 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:08.449 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6192132096.
+2026-10-06 19:15:08.450 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6192132096.
+2026-10-06 19:15:08.450 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:08.450 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:08.451 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6192132096.
+2026-10-06 19:15:08.541 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6225784832
+2026-10-06 19:15:08.542 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:08.542 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:08.543 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:08.544 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:08.544 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:08.544 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:08.545 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:08.558 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?) AND deleted = 0... Params: (activation-message)
+2026-10-06 19:15:08.559 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:08.559 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:09.003 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?) AND deleted = 0... Params: (activation-message)
+2026-10-06 19:15:09.003 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:09.003 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:09.165 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?) AND deleted = 0... Params: (activation-message)
+2026-10-06 19:15:09.171 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:09.174 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:09.321 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6208958464
+2026-10-06 19:15:09.321 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6208958464.
+2026-10-06 19:15:09.322 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6208958464.
+2026-10-06 19:15:09.322 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6208958464.
+2026-10-06 19:15:09.322 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:09.323 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6208958464.
+2026-10-06 19:15:09.338 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?) AND deleted = 0... Params: (activation-message)
+2026-10-06 19:15:09.339 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:09.339 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:09.347 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:09.347 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:09.348 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23428 - Chat screen resuming
+2026-10-06 19:15:09.440 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:09.440 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:09.440 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23428 - Chat screen resuming
+2026-10-06 19:15:09.491 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6175305728
+2026-10-06 19:15:09.491 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6175305728.
+2026-10-06 19:15:09.491 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6175305728.
+2026-10-06 19:15:09.492 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6175305728.
+2026-10-06 19:15:09.492 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6175305728.
+2026-10-06 19:15:09.493 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:09.493 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:09.496 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6175305728.
+2026-10-06 19:15:09.617 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6225784832
+2026-10-06 19:15:09.632 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:09.640 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6208958464
+2026-10-06 19:15:09.640 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6208958464.
+2026-10-06 19:15:09.640 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6208958464.
+2026-10-06 19:15:09.641 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6208958464.
+2026-10-06 19:15:09.641 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6208958464.
+2026-10-06 19:15:09.641 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6208958464.
+2026-10-06 19:15:09.641 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:09.642 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6208958464.
+2026-10-06 19:15:09.644 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:09.646 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6225784832.
+2026-10-06 19:15:09.647 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6225784832.
+2026-10-06 19:15:09.647 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:09.647 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:09.648 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6225784832.
+2026-10-06 19:15:09.701 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3558 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?) AND deleted = 0... Params: (activation-message)
+2026-10-06 19:15:09.702 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:09.702 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:09.773 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=abc54ecf35b4 thread=6158479360
+2026-10-06 19:15:09.773 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:09.773 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:09.774 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 6158479360.
+2026-10-06 19:15:09.774 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 6158479360.
+2026-10-06 19:15:09.774 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3385 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:09.774 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3391 - WAL checkpoint TRUNCATE executed db_sha256=abc54ecf35b4.
+2026-10-06 19:15:09.775 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - Closed SQLite connection db_sha256=abc54ecf35b4 thread=6158479360.
+2026-10-06 19:15:10.062 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_native_console_chat_ui:18529 - Console sync tick raced this screen's teardown; nothing to render.
+2026-10-06 19:15:10.081 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:10.081 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:10.081 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:662 - Screen chat unmounted
+--------------------------- Captured stderr teardown ---------------------------
+2026-10-06 19:15:12.091 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24169 - Started outermost transaction on thread 8494865792.
+2026-10-06 19:15:12.092 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24234 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-06 19:15:12.108 | INFO     | tldw_chatbook.Chat.console_runtime:dispose:5445 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+=============================== warnings summary ===============================
+Tests/UI/test_console_reduced_motion.py::test_splash_default_motion_starts_animation_timer
+  /Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/Utils/Splash_Screens/environmental/train_journey.py:31: SyntaxWarning: invalid escape sequence '\ '
+    "  /|___|\  ",
+
+Tests/UI/test_console_reduced_motion.py::test_splash_default_motion_starts_animation_timer
+  /Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/Utils/Splash_Screens/environmental/train_journey.py:32: SyntaxWarning: invalid escape sequence '\ '
+    " /_|_O_|_\ ",
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+13.83s call     Tests/UI/test_console_character_activation_presentation.py::test_ordinary_caller_cannot_claim_underlay_and_source_consumes_once
+10.42s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[generation]
+9.20s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[away-back]
+8.40s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[overlay]
+7.90s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_owner_opens_cold_reuses_warm_and_keeps_composer_focus
+7.03s call     Tests/UI/test_console_character_activation_presentation.py::test_queued_switcher_acknowledges_only_its_own_commit[False]
+6.08s call     Tests/UI/test_console_character_activation_presentation.py::test_queued_switcher_acknowledges_only_its_own_commit[True]
+5.52s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[transcript]
+5.16s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[open-failure]
+4.27s setup    Tests/UI/test_console_character_activation_presentation.py::test_ordinary_caller_cannot_claim_underlay_and_source_consumes_once
+4.04s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[cancel]
+3.91s setup    Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[generation]
+3.79s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[database]
+3.74s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_native_retry_uses_one_screen_owned_timer[timer-retry]
+3.64s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[closed_entry]
+3.34s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_refresh_retries_after_native_pause_without_stale_state[native-duplicates]
+3.29s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[active]
+3.28s call     Tests/UI/test_console_character_activation_presentation.py::test_token_preparation_is_off_loop_before_activation_and_fences_settings[none]
+3.21s call     Tests/UI/test_console_character_activation_presentation.py::test_token_preparation_is_off_loop_before_activation_and_fences_settings[target]
+3.21s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_refresh_retries_after_native_pause_without_stale_state[native-local-pause]
+3.16s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[control-rebuild]
+3.13s call     Tests/UI/test_console_character_activation_presentation.py::test_token_preparation_is_off_loop_before_activation_and_fences_settings[payload]
+3.11s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[rail-rebuild]
+3.02s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[rail-file]
+2.96s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_body_pause_error_is_not_mistaken_for_entry_deferral
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[overlay]
+1 failed, 60 passed, 2 warnings in 222.70s (0:03:42)

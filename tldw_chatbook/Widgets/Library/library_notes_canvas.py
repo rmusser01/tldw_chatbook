@@ -7,8 +7,9 @@ from collections import Counter, defaultdict
 from collections.abc import Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import Any, Callable, Literal
+from typing import Any, Callable, ClassVar, Literal
 
+from loguru import logger
 from rich.cells import cell_len
 from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
@@ -17,7 +18,8 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
-from textual.events import Focus, Resize
+from textual.events import Blur, Focus, Key, Resize
+from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.widgets import Button, Input, Markdown, Static, TextArea
 
@@ -69,6 +71,7 @@ from tldw_chatbook.Widgets.Library.library_notes_add_from_files_canvas import (
 from tldw_chatbook.Widgets.Library.library_notes_sync_roots_canvas import (
     LibraryNotesSyncRootsCanvas,
 )
+from tldw_chatbook.Widgets.detach_safe_text_area import DetachSafeTextArea
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
@@ -176,6 +179,98 @@ def _toolbar_shape(pane_width: int, compact: bool) -> tuple[bool, bool]:
     )
 
 
+#: The editor header's two action groups, in the order they are composed
+#: (``compose`` reads these tuples, so the derived width below cannot drift
+#: from the labels on screen). Discard new note is the WIDE wording; a
+#: one-line task row (compact or stacked) shortens it to "Discard".
+_HEADER_MODE_LABELS = ("Edit", "Preview", "Info")
+_HEADER_TASK_LABELS = ("Save", "Use in Console", "Discard new note")
+_HEADER_DISCARD_SHORT_LABEL = "Discard"
+
+#: Cells one wide-stage header Button costs beyond its label: its
+#: ``padding: 0 1`` (2), Textual's ``line-pad: 1`` on both sides (2) and the
+#: toolbar's 1-cell trailing margin. MEASURED at 235x52 with content-sized
+#: buttons: "Edit" resolved 8 cells, "Preview" 11, "Use in Console" 18 --
+#: label + 4 each -- a cell apart.
+_HEADER_ACTION_CHROME = 5
+
+#: Discard new note's ``.library-media-action-danger`` margin is ``0 0 0 4``:
+#: the 4-cell gap collapses the preceding button's 1-cell margin, so it
+#: costs 3 more cells than a plain action would (measured: the task row
+#: resolved 53 cells for 8 + 18 + 20 cells of buttons, 2 of gutter and 4 of
+#: gaps).
+_HEADER_DANGER_ACTION_GAP = 3
+
+#: ``padding: 0 1`` on each ``.ds-toolbar`` box the header nests -- three on
+#: the one-row strip: ``#library-note-primary-actions`` and its two rows.
+_HEADER_TOOLBAR_BOX_GUTTER = 2
+_HEADER_TOOLBAR_GUTTER = 3 * _HEADER_TOOLBAR_BOX_GUTTER
+
+#: Columns the editor pane needs for a STACKED task row to hold the full
+#: "Discard new note": the primary box's gutter and the row's own, Save and
+#: Use in Console with their chrome, Discard without a trailing margin, and
+#: its danger gap -- 4 + 9 + 19 + 20 + 3 = 55 for the labels above (the row
+#: measured 53 inside a 2-cell primary gutter). Below it the row takes the
+#: compact wording "Discard" (review M-2: wording follows the row's width,
+#: not the shape).
+_HEADER_STACKED_TASK_ROW_MIN_WIDTH = (
+    2 * _HEADER_TOOLBAR_BOX_GUTTER
+    + sum(len(label) + _HEADER_ACTION_CHROME for label in _HEADER_TASK_LABELS[:2])
+    + len(_HEADER_TASK_LABELS[2])
+    + (_HEADER_ACTION_CHROME - 1)
+    + _HEADER_DANGER_ACTION_GAP
+)
+
+#: The save state's floor on a shared row (TASK-34000.8 AC#4): "Saved" plus
+#: its separator is readable, a one-column "S" is not. TASK-32513/32514 own
+#: its home and wording; this is only its minimum width on this row.
+_HEADER_STATUS_MIN_WIDTH = 12
+
+#: Columns the editor pane needs for the header to be ONE row: the save
+#: state at its floor, then [Edit · Preview · Info] and [Save · Use in
+#: Console · Discard new note] content-sized, with Discard's space reserved
+#: whether or not it applies (TASK-32623: the mode controls never move).
+#: Derived from the labels, not a per-size threshold: 12 + 6 + 49 + 30 + 3
+#: = 100 for the labels above, one cell over the 99 measured (Discard has
+#: no trailing margin). Below it the header stacks -- the compact shape's
+#: machinery, three rows either way, so stacking costs the body nothing.
+_HEADER_ONE_ROW_MIN_WIDTH = (
+    _HEADER_STATUS_MIN_WIDTH
+    + _HEADER_TOOLBAR_GUTTER
+    + sum(
+        len(label) + _HEADER_ACTION_CHROME
+        for label in _HEADER_MODE_LABELS + _HEADER_TASK_LABELS
+    )
+    + _HEADER_DANGER_ACTION_GAP
+)
+
+
+def _header_shape(work_width: int, compact: bool) -> bool:
+    """Whether the editor header stacks its save state and two action rows.
+
+    TASK-34000.8 (review N-05): from the shell's 120-column breakpoint up
+    the header was one horizontal strip regardless of how wide the EDITOR
+    pane was -- 48 cells at 120x36, 82 at 160x45 with the rail open --
+    so Save and Use in Console were painted past the pane edge and the save
+    state was squeezed to one column. The shape is now decided from the
+    pane the header lives in, the way ``_toolbar_shape`` decides the list
+    toolbar's from the Items width.
+
+    Args:
+        work_width: Columns the editor pane has (the shell's
+            ``reader_width``), or 0 when unmeasured -- which takes the
+            one-row shape, exactly as ``_toolbar_shape`` treats 0.
+        compact: Whether the compact shell is in force; it has its own
+            stacked shape, so this answers False there.
+
+    Returns:
+        True when the header should be the stacked shape: the save state
+        on its own row, then [Edit · Preview · Info], then [Save · Use in
+        Console · Discard].
+    """
+    return 0 < work_width < _HEADER_ONE_ROW_MIN_WIDTH and not compact
+
+
 #: Cells a compact toolbar Button costs beyond its own label: the compact
 #: sheet's ``padding: 0 1`` (2) plus its ``margin: 0 1 0 0`` (1), plus the
 #: cell Textual's Button reserves for its own edge. MEASURED at 60x24, where
@@ -227,19 +322,50 @@ NOTE_LOCATION_DATABASE_ONLY = "In the Library database only — no file on disk"
 #: for the relationship (Keep a folder synced), not an internal name.
 NOTE_LOCATION_SYNCED_PREFIX = "In a synced folder"
 
+#: The inline delete prompt (task-32268: rendered inside Info, under Delete).
+DELETE_CONFIRM_COPY = "Delete this note? Undo will be available in the Notes list."
+#: TASK-32633 (review finding N-03, third sentence): deleting a note that
+#: lives in a sync folder never touches its file -- lasting sync holds the
+#: folder for review, and in this release only restoring the note resolves
+#: it (TASK-34000.15). Said in the prompt, in plain words, and kept short:
+#: the Info confirm clips at 120x36 (N-10) and every extra line makes it
+#: worse.
+DELETE_CONFIRM_COPY_SYNCED = (
+    "Delete this note? Its file stays on disk; the synced folder waits for "
+    "review until the note is restored. Undo will be available in the Notes list."
+)
+
+
+def delete_confirm_copy(*, synced: bool) -> str:
+    """The delete prompt's sentence for a note in, or not in, a sync folder."""
+
+    return DELETE_CONFIRM_COPY_SYNCED if synced else DELETE_CONFIRM_COPY
+
+#: TASK-34000.2: said right after the world when the note's sync folder is
+#: held for attention -- nothing typed here reaches the file until it is
+#: resolved, so it outranks the path and the write time for the row's cells.
+NOTE_LOCATION_ATTENTION = "⚠ Sync needs attention"
+#: TASK-34000.2: the Notes list's idle status while any sync folder is held,
+#: and the control that resolves it (the list toolbar's own button label).
+SYNC_ATTENTION_LIST_STATUS = "⚠ A sync folder needs attention"
+SYNC_ATTENTION_NEXT_ACTION = "Open Manage sync folders."
+
 #: Below this many cells for the path, the write time is dropped to buy the
 #: path room. Eight cells is "…/x.md" plus an ellipsis -- less than that and
 #: the path is noise either way.
 _NOTE_LOCATION_PATH_FLOOR = 8
 
 
-def library_note_location_line(path: str, written: str, width: int) -> str:
+def library_note_location_line(
+    path: str, written: str, width: int, *, attention: bool = False
+) -> str:
     """Answer "where does this note live?" in one row (task-32640).
 
     The rule, in the order a reader can predict it: the world is stated
-    first and is never shortened; the path follows, middle-elided so its
-    filename survives; the write time follows that, and is the first thing
-    dropped when the row runs out of cells.
+    first and is never shortened; a held sync folder is said next and is
+    never shortened either (TASK-34000.2); the path follows, middle-elided
+    so its filename survives; the write time follows that, and is the first
+    thing dropped when the row runs out of cells.
 
     Args:
         path: The bound file's absolute path, or ``""`` for a note that
@@ -249,27 +375,27 @@ def library_note_location_line(path: str, written: str, width: int) -> str:
         width: Cells the row has. ``0`` or less means "not measured yet",
             where nothing is elided -- the Static's own overflow handling
             is a better answer than a guessed width.
+        attention: Whether the file's sync folder is held for attention.
 
     Returns:
         The single line to render.
     """
     if not path:
         return NOTE_LOCATION_DATABASE_ONLY
+    world = NOTE_LOCATION_SYNCED_PREFIX
+    if attention:
+        world = f"{world} · {NOTE_LOCATION_ATTENTION}"
     written_clause = f"file written {written}" if written else ""
     if width <= 0:
-        return " · ".join(
-            part for part in (NOTE_LOCATION_SYNCED_PREFIX, path, written_clause) if part
-        )
-    fixed = len(NOTE_LOCATION_SYNCED_PREFIX) + 3
+        return " · ".join(part for part in (world, path, written_clause) if part)
+    fixed = len(world) + 3
     budget = width - fixed - (len(written_clause) + 3 if written_clause else 0)
     if budget < _NOTE_LOCATION_PATH_FLOOR and written_clause:
         written_clause = ""
         budget = width - fixed
     budget = max(budget, _NOTE_LOCATION_PATH_FLOOR)
     shown = elide_path_middle(path, budget=budget)
-    return " · ".join(
-        part for part in (NOTE_LOCATION_SYNCED_PREFIX, shown, written_clause) if part
-    )
+    return " · ".join(part for part in (world, shown, written_clause) if part)
 
 
 def library_note_property_block(
@@ -672,6 +798,42 @@ _NOTE_EDITOR_INPUT_IDS = frozenset(
 )
 
 
+#: TASK-34000.10 (N-07): the class a vetoed field carries (an error outline,
+#: ``features/_library_notes_panels.tcss``), and the hint Static under each
+#: field that shows the coordinator's reason while that field is vetoed.
+#: ``(field selector, hint selector, veto field name)``; both keyword boxes
+#: take the keywords mark -- only one of them is ever displayed.
+_NOTE_FIELD_INVALID_CLASS = "library-note-field-invalid"
+_NOTE_FIELD_HINT_CLASS = "library-note-field-hint"
+_NOTE_FIELD_MARKS: tuple[tuple[str, str, str], ...] = (
+    ("#library-note-title", "#library-note-title-hint", "title"),
+    ("#library-note-keywords", "#library-note-keywords-hint", "keywords"),
+    (
+        "#library-note-context-keywords",
+        "#library-note-context-keywords-hint",
+        "keywords",
+    ),
+    ("#library-note-body", "#library-note-body-hint", "body"),
+)
+
+
+def _library_note_field_hint(widget_id: str, shown: bool, reason: str) -> Static:
+    """A field's reason-under-it hint, composed hidden unless its veto stands.
+
+    An empty Static still takes its row, so the hint is ``display``-gated,
+    not just cleared (lessons-textual); ``markup=False`` because the reason
+    quotes what the user typed.
+    """
+    hint = Static(
+        reason if shown else "",
+        id=widget_id,
+        classes=_NOTE_FIELD_HINT_CLASS,
+        markup=False,
+    )
+    hint.display = shown
+    return hint
+
+
 #: task-32106 AC#1: shared by every field of the note editor -- see
 #: ``NoteEditorInput`` below for the mechanism and the measurement.
 _NOTE_FIELD_TAB_BINDINGS = [
@@ -740,7 +902,7 @@ class NoteEditorInput(Input):
             self.action_end()
 
 
-class NoteEditorTextArea(TextArea):
+class NoteEditorTextArea(DetachSafeTextArea):
     """The note body, with the same synchronous Tab as the fields around it.
 
     task-32247: it also carries the document-end and document-start keys.
@@ -764,9 +926,131 @@ class NoteEditorTextArea(TextArea):
     a reader leaves it. Under ``"indent"`` this binding would steal the key
     the ``TextArea`` needs, so the pin asserts that behaviour rather than
     trusting the default.
+
+    TASK-34789: a ``DetachSafeTextArea``. A rail switch away from an open
+    note removes this pane (``LibraryBrowseReaderShell.swap_work``) while the
+    screen's own handler is still running, so the screen cannot process the
+    reflow request yet and the next repaint still renders the removed body;
+    stock ``TextArea`` raises ``KeyError: text-area--gutter`` there. The
+    ``batch_update`` around that removal ends before the reflow can happen,
+    so it narrows the window without closing it.
     """
 
     BINDINGS = _NOTE_BODY_BINDINGS
+
+    #: TASK-34000.11: the keys the open ``[[`` picker owns. Up/Down move its
+    #: highlight, Enter/Tab accept, Escape dismisses -- routed to the owning
+    #: screen as ``LinkPickerKey`` (ADR-031: routed, not bound), and never
+    #: a printable key, so typing keeps narrowing.
+    LINK_PICKER_KEYS: ClassVar[frozenset[str]] = frozenset(
+        {"up", "down", "enter", "escape", "tab"}
+    )
+
+    #: TASK-34000.11: set by the Notes controller while the picker is open.
+    #: A plain attribute, not a reactive: it gates a key handler, nothing
+    #: paints from it.
+    link_picker_open: bool = False
+    #: Fix round 1 (M-11): whether the open picker shows a real row. With
+    #: only a hint row ("No note titled …", "Keep typing…") Enter and Tab
+    #: are NOT intercepted, so the editor inserts its newline / moves focus
+    #: and the context change closes the picker; Escape is still claimed.
+    link_picker_has_rows: bool = False
+    #: Fix round 5: the terminal size the open picker was armed at. A
+    #: resize closes the picker, through the screen's own ``Resize`` --
+    #: but the App batches that behind a 1/120 s timer, so a key pressed
+    #: right behind the terminal's resize reaches ``on_key`` first, while
+    #: ``app.size`` already says the new size. That key is handled as if
+    #: no picker were open (Enter is the editor's newline), never routed
+    #: to a box laid out for a terminal that no longer exists.
+    link_picker_terminal: tuple[int, int] | None = None
+
+    class LinkPickerKey(Message):
+        """One of ``LINK_PICKER_KEYS`` pressed while the picker is open."""
+
+        def __init__(self, text_area: "NoteEditorTextArea", key: str) -> None:
+            super().__init__()
+            self.text_area = text_area
+            self.key = key
+
+        @property
+        def control(self) -> "NoteEditorTextArea":
+            return self.text_area
+
+    def on_key(self, event: Key) -> None:
+        """Hand the picker its keys before ``TextArea._on_key`` sees them.
+
+        ``prevent_default()`` is what keeps Textual's MRO walk from reaching
+        the base ``_on_key`` (``message_pump._get_dispatch_methods`` breaks
+        on ``_no_default_action``), so Enter does not also insert a newline;
+        ``stop()`` keeps Up/Down/Escape from bubbling to the screen's
+        bindings. Tab reaches here only while the screen deactivates its
+        priority ``focus_next`` binding -- which it does for an open picker
+        that shows a REAL row; over a hint row Tab moves focus as usual
+        (fix round 2, R2-2).
+        """
+        if not self.link_picker_open or event.key not in self.LINK_PICKER_KEYS:
+            return
+        if self.link_picker_terminal_changed():
+            # Fix round 5: the terminal has already changed size; the
+            # screen's Resize (and the close it does) is still in the
+            # App's 1/120 s batch. The key is the editor's own, and the
+            # close is the controller's (routed, like every other close).
+            self.link_picker_open = False
+            self.link_picker_has_rows = False
+            self.post_message(self.LinkPickerKey(self, "resize"))
+            if event.key == "escape":
+                # Final fix round (P-2): the box is still painted, so the
+                # user's Escape means "close it" -- claimed here, or it
+                # fell through to the editor's Back and closed the editor.
+                event.stop()
+                event.prevent_default()
+            return
+        if event.key != "escape" and not self.link_picker_has_rows:
+            return
+        event.stop()
+        event.prevent_default()
+        self.post_message(self.LinkPickerKey(self, event.key))
+
+    def link_picker_terminal_changed(self) -> bool:
+        """Whether the terminal is a different size from the one the open
+        picker was armed at (fix round 5)."""
+        if not self.link_picker_open or self.link_picker_terminal is None:
+            return False
+        try:
+            return tuple(self.app.size) != self.link_picker_terminal
+        except Exception:  # noqa: BLE001 - no active app: nothing to compare
+            return False
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Fix round 3 (R3-3): a body scroll re-anchors the open picker, or
+        closes it when the caret row leaves the body -- routed as the
+        pseudo-key ``"scroll"`` so the controller owns the one re-anchor
+        path. ``Widget.watch_scroll_y`` still runs (the scrollbar, the
+        refresh); ``TextArea._watch_scroll_y`` is a separate private watcher."""
+        super().watch_scroll_y(old_value, new_value)
+        if self.link_picker_open and round(old_value) != round(new_value):
+            self.post_message(self.LinkPickerKey(self, "scroll"))
+
+    def on_resize(self, event: Resize) -> None:
+        """Fix round 5: a resize of the body closes the open picker (its
+        anchor geometry is gone), routed as the pseudo-key ``"resize"`` so
+        the controller owns the one close path. A terminal resize closes it
+        earlier, on the screen's own ``Resize``; this is the body-only case
+        (a pane toggle). ``TextArea._on_resize`` still runs after this (the
+        MRO walk)."""
+        if self.link_picker_open:
+            self.post_message(self.LinkPickerKey(self, "resize"))
+
+    def _on_blur(self, event: Blur) -> None:
+        """Fix round 1 (M-4): the picker goes with the focus.
+
+        A click on the Title or Shift+Tab out of the body used to leave the
+        picker open with this widget's key routing armed. Routed as the
+        pseudo-key ``"blur"`` so the controller owns the one close path;
+        the MRO walk still reaches ``TextArea._on_blur`` after this.
+        """
+        if self.link_picker_open:
+            self.post_message(self.LinkPickerKey(self, "blur"))
 
     def action_cursor_document_end(self) -> None:
         """Move the caret to the end of the note body."""
@@ -832,6 +1116,54 @@ def resolve_database_note_status_channels(
 
 
 @dataclass(frozen=True)
+class _EditorSurfaceFlags:
+    """Which editor surfaces one presentation state shows (TASK-34000.25).
+
+    The one derivation both ``_compose_editor`` and ``apply_session_state``
+    read -- see ``LibraryNotesCanvas._editor_surface_flags``.
+    """
+
+    conflict: bool
+    confirming_delete: bool
+    bulk_read_only: bool
+    show_context: bool
+    show_preview: bool
+    show_editor: bool
+    locked: bool
+
+
+def _pending_widget_lookup(roots: Sequence[Any]) -> Callable[[str], Any]:
+    """Resolve ``#id`` selectors over a composed-but-unmounted widget tree.
+
+    TASK-34000.25: inside ``compose`` a child yielded under ``with
+    Container():`` is attached to that container at yield time
+    (``compose_add_child`` -> ``_pending_children``) and nothing is mounted
+    until the generator ends, so the tree is complete -- and still
+    unmounted, hence unpainted -- when ``_compose_editor`` reaches its last
+    line. Gating the surfaces there is what makes the first frame right.
+    """
+    index: dict[str, Any] = {}
+
+    def walk(widget: Any) -> None:
+        widget_id = getattr(widget, "id", None)
+        if widget_id:
+            index[f"#{widget_id}"] = widget
+        for child in getattr(widget, "_pending_children", ()):
+            walk(child)
+
+    for root in roots:
+        walk(root)
+
+    def lookup(selector: str) -> Any:
+        try:
+            return index[selector]
+        except KeyError as exc:
+            raise NoMatches(f"No composed node matches {selector!r}") from exc
+
+    return lookup
+
+
+@dataclass(frozen=True)
 class LibraryNotePresentationState:
     """Immutable presentation input for one mounted Database Note canvas.
 
@@ -855,10 +1187,25 @@ class LibraryNotePresentationState:
     #: task-32640: when that file was last written, as the filesystem
     #: reports it, or ``""`` (no file, or it could not be read).
     location_written: str = ""
+    #: TASK-34000.2: whether that file's sync folder is held for attention
+    #: (an open entry, a conflict, a failed pass) -- the location row and the
+    #: status line then say so instead of a plain "Saved".
+    location_attention: bool = False
     region: Literal["editor", "context"] = "editor"
     presentation: Literal["edit", "preview"] = "edit"
     compact: bool = False
     validation: bool = False
+    #: TASK-34000.10 (N-07): the field the standing veto named ("title" /
+    #: "body" / "keywords") and the coordinator's own reason, or "" / "" when
+    #: no veto stands. The field is outlined and the reason shown directly
+    #: under it; both keyword boxes carry the keywords mark (one is displayed).
+    validation_field: str = ""
+    validation_message: str = ""
+    #: TASK-34000.9: whether an autosave is armed or running right now. The
+    #: status line promises "changes save automatically" for a dirty note
+    #: only while this holds; a modal stops the timer, and a dirty note with
+    #: nothing scheduled names Save instead.
+    autosave_scheduled: bool = False
     conflict: bool = False
     conflict_running: bool = False
     confirming_delete: bool = False
@@ -874,6 +1221,11 @@ class LibraryNotePresentationState:
     #: Whether the backlink query has answered yet -- see
     #: ``library_note_backlink_header``.
     backlinks_status: str = "loading"
+    #: TASK-34000.11: ``(label, note_id)`` for each stored note link the body
+    #: carries, computed only while Preview is shown (the same gate the
+    #: preview source uses). The Preview's Enter follows the one link or
+    #: lists several; the footer advertises ``enter follow link`` from it.
+    note_links: tuple[tuple[str, str], ...] = ()
     #: Words in the draft body, for the editor chrome strip (task-32143).
     #: The controller counts this for ``metadata_line`` anyway; carrying the
     #: number instead of the sentence keeps the strip off a second scan.
@@ -945,6 +1297,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         create_running: Whether a Create request is currently in flight.
         create_status: Visible Create completion or recovery status.
     """
+
+    #: PR #3055 review (Important 1): the compose-time surface gating has
+    #: fallen through to the post-refresh path at least once this process.
+    #: Class-level so the WARNING is logged once, not once per note opened.
+    _pending_lookup_warned: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -1025,6 +1382,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self._browse_row_needed = 0
         self._browse_overflow = False
         self._measured_width = 0
+        #: TASK-34000.8: the EDITOR pane's resolved width (the shell's
+        #: ``reader_width``), handed over by ``apply_work_width``; 0 until
+        #: the shell has resolved one. ``pane_width`` above is the ITEMS
+        #: width contract and must not be confused with it -- the location
+        #: row's use of the list width is TASK-32811.4's open defect.
+        self._work_width = 0
         self._tree_action_labels: tuple[str, ...] = ()
         self._rendered_tree_action_rows: tuple[tuple[int, ...], ...] = ()
         #: task-32356: create mode's template disclosure. Canvas-local on
@@ -1046,7 +1409,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         #: task-32640: the last (path, written) the controller resolved for
         #: the open note, so a resize can re-state the location row without
         #: another binding read.
-        self._note_location: tuple[str, str] = ("", "")
+        self._note_location: tuple[str, str, bool] = ("", "", False)
         self._tree_focus_intent_generation: Callable[[], int] | None = None
         self.add_class("w-fill")
         self.styles.min_width = 40
@@ -1273,15 +1636,45 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # have. Name the control that gets the reader back to the
                 # one that does.
                 next_action = "Press Edit to change this note."
+            elif state.validation:
+                # TASK-34000.10 (N-07): a veto stands, or a field is still
+                # marked -- and a marked field means the next save is refused
+                # by the same rule until that field changes (fix round 1,
+                # M-5) -- so neither promise below is true; name the way out:
+                # the marked field, or Save, which routes to it. Above the
+                # empty-body arm: a vetoed title on an empty note needs this,
+                # not "Start typing".
+                next_action = "Fix the marked field, or press Save to go to it."
             elif not state.snapshot.body:
                 # Review F4: "Keep editing" presumes editing has started.
                 # The brief's "Start typing" belongs here -- this is the
                 # surface with the empty box on it.
                 next_action = "Start typing."
-            else:
+            elif state.autosave_scheduled or not state.snapshot.dirty:
+                # TASK-34000.9 (N-06): true while a save is armed or running,
+                # and for a clean note (the next keystroke arms it).
                 next_action = "Keep editing; changes save automatically."
+            else:
+                # Dirty with nothing scheduled -- a modal stopped the timer,
+                # or an autosave was refused -- names the control that saves.
+                next_action = "Keep editing; press Save to save now."
+            # TASK-34000.2: a held sync folder outranks any healthy wording. A
+            # plain "Saved" over "In a synced folder" told a user typing into a
+            # wedged folder that the file had it; it has the Notes copy only.
+            attention = (
+                NOTE_LOCATION_ATTENTION
+                if state.location_attention
+                and state.location_path
+                and not state.conflict
+                else ""
+            )
+            if attention:
+                status = f"{status} in Notes" if status.startswith("Saved") else status
+                if next_action:
+                    next_action = SYNC_ATTENTION_NEXT_ACTION
             return line(
                 f"{status}{transfer}",
+                attention,
                 f"Next: {next_action}" if next_action else "",
             )
         if self.mode == "create":
@@ -1325,7 +1718,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         state = self.list_state
         status = state.operation_status if state is not None else ""
         running = state is not None and state.operation_running
-        status = status or ("Updating notes…" if running else "Ready")
+        # TASK-34000.2: "Ready" over a held sync folder was the finding's own
+        # lie; the held folder outranks the idle wording (never an operation's).
+        held = not status and not running and state is not None and state.sync_attention
+        status = status or (
+            "Updating notes…"
+            if running
+            else SYNC_ATTENTION_LIST_STATUS
+            if held
+            else "Ready"
+        )
         # task-32616 AC#3: measured at dev 3b26c66ce0, both panes carried a
         # "Next:" at once and they disagreed -- this pane's "Create a note or
         # add from files." beside the work pane's "Start typing." for the
@@ -1340,7 +1742,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # step, and it becomes "Keep editing" as soon as the body has words.
         note_open = state is not None and state.note_open
         next_action = (
-            "" if running or note_open else "Create a note or add from files."
+            ""
+            if running or note_open
+            else SYNC_ATTENTION_NEXT_ACTION
+            if held
+            else "Create a note or add from files."
         )
         return line(status, f"Next: {next_action}" if next_action else "")
 
@@ -1418,6 +1824,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             event: Textual's resize event, carrying this canvas's own size.
         """
         if self.mode != "list":
+            self._keep_delete_prompt_in_view()
+            self._measure_work_width(event.size.width)
             return
         width = event.size.width
         if width <= 0 or width == self._measured_width:
@@ -1429,6 +1837,30 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             or self._tree_actions_need_repack()
         ):
             self.refresh(recompose=True)
+
+    def _keep_delete_prompt_in_view(self) -> None:
+        """Keep an open delete prompt inside Info's viewport across a resize.
+
+        TASK-34000.13: the prompt is revealed once, when Delete is pressed
+        (the controller scrolls Info to it after the refresh). A terminal
+        resize while it is open re-lays Info out, and Textual does not
+        re-scroll a focused widget on resize: measured at 160x45 -> 120x36
+        the prompt dropped below Info's fold (``max_scroll_y`` 3,
+        ``scroll_y`` 0) with Tab still trapped inside it -- the blind-Enter
+        shape again. The widget owns its content (ADR-086), so it keeps the
+        block in view itself; focus is left alone (the user may be on
+        Delete). Scheduled after the refresh so the new geometry is real;
+        never a timer.
+        """
+        try:
+            prompt = self.query_one("#library-note-delete-confirmation")
+        except NoMatches:
+            return
+        if not prompt.display:
+            return
+        self.call_after_refresh(
+            prompt.scroll_visible, animate=False, immediate=True, force=True
+        )
 
     def apply_pane_width(self, pane_width: int) -> None:
         """Take a freshly resolved Items width; re-shape only if it shrank.
@@ -1473,6 +1905,52 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             or self._tree_actions_need_repack()
         ):
             self.refresh(recompose=True)
+
+    def _effective_work_width(self) -> int:
+        """The width the editor header shapes itself to.
+
+        ``_work_width`` is the screen's contract -- the shell's resolved
+        ``reader_width`` -- and wins whenever it has arrived; this widget's
+        own measured width is the fallback for a canvas no sync has reached
+        yet (the same priority ``_effective_pane_width`` gives the Items
+        contract, for the reason given there).
+        """
+        return self._work_width or self._measured_width
+
+    def _measure_work_width(self, width: int) -> None:
+        """Record this pane's own width in editor mode; re-shape in place on a flip."""
+        if width <= 0 or width == self._measured_width:
+            return
+        before = _header_shape(self._effective_work_width(), self.compact)
+        self._measured_width = width
+        if before != _header_shape(self._effective_work_width(), self.compact):
+            self.apply_compact_presentation(self.compact)
+
+    def apply_work_width(self, work_width: int) -> None:
+        """Take the editor pane's freshly resolved width; re-shape the header.
+
+        TASK-34000.8: the screen hands the shell's ``reader_width`` over
+        beside ``apply_pane_width`` (the Items width), so the header's shape
+        follows the pane it lives in rather than the shell's breakpoint. The
+        shape is applied IN PLACE by ``apply_compact_presentation`` -- the
+        same machinery the compact crossing uses, so growth and shrink both
+        re-shape without a recompose and widget identity survives
+        (``test_library_note_compact_labels_round_trip_without_recompose``).
+        Nothing happens unless the answer flips, which keeps a run of
+        mid-layout widths from doing any work.
+
+        Args:
+            work_width: The work (Reader) width the reader layout just
+                resolved; 0 means unmeasured and is ignored.
+        """
+        if work_width <= 0:
+            return
+        before = _header_shape(self._effective_work_width(), self.compact)
+        self._work_width = work_width
+        if self.is_mounted and before != _header_shape(
+            self._effective_work_width(), self.compact
+        ):
+            self.apply_compact_presentation(self.compact)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Refuse row/action presses while this canvas is resident but hidden.
@@ -2385,6 +2863,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     if row.status_text:
                         label = f"{label}  {row.status_text}"
                     classes = "library-notes-folder-row"
+                    if row.kind == "unfiled":
+                        # TASK-34000.14: lets the screen's "g" gate tell the
+                        # automatic group from a real folder row without a
+                        # second query.
+                        classes += " library-notes-unfiled-row"
                     if row.semantic_status == "connected":
                         classes += " library-notes-tree-connected"
                     elif row.semantic_status == "needs_attention":
@@ -2728,10 +3211,28 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         button.folder_version = row.version
 
     def _compose_editor(self) -> ComposeResult:
-        """Mount every editor-session presentation surface exactly once."""
+        """Mount every editor-session presentation surface exactly once.
+
+        TASK-34000.25 (review finding S-02's false "changed elsewhere" and
+        its siblings -- Edit, Preview and Info stacked, two Back buttons, the
+        bulk strip, the body unpainted): every display-gated surface is
+        gated from ``presentation_state`` HERE, through the same helper
+        ``apply_session_state`` runs, before any of it mounts. The mount-time
+        apply never ran (Textual sets ``is_mounted`` after the Mount
+        handler), and every later sync was a race the retained-note return
+        did not always win. ``roots`` holds the top-level nodes so the whole
+        pending tree can be gated on the last line, where it is complete and
+        still unmounted (``_pending_widget_lookup``).
+        """
         presentation_state = self.presentation_state
         if presentation_state is None:
             return
+        roots: list[Any] = []
+
+        def root(widget: Any) -> Any:
+            roots.append(widget)
+            return widget
+
         snapshot = presentation_state.snapshot
         title = snapshot.title
         content = snapshot.body
@@ -2760,7 +3261,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         heading_title = _library_note_heading_title(
             title, presentation_state.title_suffix, 72
         )
-        with Horizontal(id="library-note-heading"):
+        with root(Horizontal(id="library-note-heading")):
             yield Button(
                 back_label,
                 id="library-note-back",
@@ -2799,24 +3300,25 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # unconditionally so the answer is on screen in Edit, Preview and
         # Info alike; `_note_location_follows_width` re-states it against the
         # pane's measured width, like the chrome strip below the body.
-        yield Static(
+        yield root(Static(
             library_note_location_line(
                 presentation_state.location_path,
                 presentation_state.location_written,
                 self._effective_pane_width(),
+                attention=presentation_state.location_attention,
             ),
             id="library-note-location",
             markup=False,
-        )
-        yield Static(
+        ))
+        yield root(Static(
             "Included in bulk selection"
             if presentation_state.bulk_included
             else "Not included in bulk selection",
             id="library-note-bulk-status",
             classes="destination-purpose",
             markup=False,
-        )
-        with Horizontal(id="library-note-header-second-row"):
+        ))
+        with root(Horizontal(id="library-note-header-second-row")):
             yield Static(
                 channels.content_recovery,
                 id="library-note-status",
@@ -2826,56 +3328,83 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-note-primary-actions", classes="ds-toolbar"
             )
             primary_actions.add_class("h-auto")
+            edit_label, preview_label, info_label = _HEADER_MODE_LABELS
+            save_label, use_in_console_label, _discard_label = _HEADER_TASK_LABELS
             with primary_actions:
                 with Horizontal(id="library-note-mode-controls", classes="ds-toolbar"):
                     yield Button(
-                        "Edit",
+                        edit_label,
                         id="library-note-edit",
                         classes="library-canvas-action",
                         compact=True,
                     )
                     yield Button(
-                        "Preview",
+                        preview_label,
                         id="library-note-preview",
                         classes="library-canvas-action",
                         compact=True,
                     )
                     yield Button(
-                        "Info",
+                        info_label,
                         id="library-note-context",
                         classes="library-canvas-action",
                         compact=True,
                     )
                 with Horizontal(id="library-note-task-actions", classes="ds-toolbar"):
                     yield Button(
-                        "Save",
+                        save_label,
                         id="library-note-save",
                         classes="library-canvas-action",
                         compact=True,
                     )
                     yield Button(
-                        "Use in Console",
+                        use_in_console_label,
                         id="library-note-use-in-console",
                         classes="library-canvas-action",
                         compact=True,
                     )
+                    work_width = self._effective_work_width()
                     discard_new = Button(
-                        "Discard" if self.compact else "Discard new note",
+                        self._discard_new_label(
+                            self.compact,
+                            _header_shape(work_width, self.compact),
+                            work_width,
+                        ),
                         id="library-note-discard-new",
                         classes="library-canvas-action library-media-action-danger",
                         compact=True,
                     )
-                    discard_new.display = presentation_state.discard_new_note
-                    discard_new.disabled = presentation_state.destructive_running
+                    # TASK-34000.8: hidden by VISIBILITY, never by display.
+                    # An invisible Button keeps its cells, so the task row
+                    # is always its Discard-shown width and the mode
+                    # controls beside it never move when Discard comes and
+                    # goes (TASK-32623's guarantee, by construction, in
+                    # place of the 61-cell `min-width` that pushed Save off
+                    # a 48-cell pane). Textual 8.2.8 leaves an invisible
+                    # node out of `focus_chain` and `get_widget_at`, so it
+                    # is neither Tab-reachable nor clickable. Its visibility
+                    # and disabled state are gates, set by
+                    # ``_apply_editor_surface_gates`` on the last line of
+                    # this compose like every other (fix round 2).
                     yield discard_new
-        with Vertical(id="library-note-editor-region"):
+        # TASK-34000.10 (N-07): a veto standing when the editor composes is
+        # marked here, from the state, for the same reason every other
+        # display-gated surface is (the mount-time apply never runs).
+        vetoed_field = presentation_state.validation_field
+        veto_reason = presentation_state.validation_message
+        with root(Vertical(id="library-note-editor-region")):
             with Horizontal(id="library-note-title-row"):
                 yield Static("Title", id="library-note-title-label", markup=False)
-                yield NoteEditorInput(
+                title_input = NoteEditorInput(
                     value="" if self.title_placeholder_only else title,
                     placeholder="Untitled" if self.title_placeholder_only else "",
                     id="library-note-title",
                 )
+                title_input.set_class(vetoed_field == "title", _NOTE_FIELD_INVALID_CLASS)
+                yield title_input
+            yield _library_note_field_hint(
+                "library-note-title-hint", vetoed_field == "title", veto_reason
+            )
             # task-32642 AC#3: keywords used to be reachable only by opening
             # Info -- this Input is the twin that lived, permanently
             # undisplayed, inside `#library-note-wide-utilities`. It is the
@@ -2885,15 +3414,27 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # under the title, where the note's other two fields are.
             with Horizontal(id="library-note-keywords-row"):
                 yield Static("Keywords", id="library-note-keywords-label", markup=False)
-                yield NoteEditorInput(
+                keywords_input = NoteEditorInput(
                     value=keywords_text,
                     placeholder="Comma-separated keywords",
                     id="library-note-keywords",
                 )
+                keywords_input.set_class(
+                    vetoed_field == "keywords", _NOTE_FIELD_INVALID_CLASS
+                )
+                yield keywords_input
+            yield _library_note_field_hint(
+                "library-note-keywords-hint", vetoed_field == "keywords", veto_reason
+            )
             yield Static("Body", id="library-note-body-label", markup=False)
-            yield NoteEditorTextArea(content, id="library-note-body")
+            body_area = NoteEditorTextArea(content, id="library-note-body")
+            body_area.set_class(vetoed_field == "body", _NOTE_FIELD_INVALID_CLASS)
+            yield body_area
+            yield _library_note_field_hint(
+                "library-note-body-hint", vetoed_field == "body", veto_reason
+            )
 
-        with VerticalScroll(id="library-note-preview-region", can_focus=True):
+        with root(VerticalScroll(id="library-note-preview-region", can_focus=True)):
             # task-32142 AC#1: the shared heading row's title Static (above)
             # sits in a crowded strip with the mode buttons and Back --
             # easy to miss, and NOT part of the scrolling content, so it
@@ -2906,22 +3447,54 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 classes="destination-section",
                 markup=False,
             )
+            # TASK-34000.11 (AC#3): ``open_links=False`` -- Textual's default
+            # hands every clicked href to ``app.open_url``, which sent a
+            # ``note://<id>`` to the operating system. The screen handles
+            # ``Markdown.LinkClicked`` for this body instead (a note link
+            # opens the note; http(s) goes to the browser through the app's
+            # own worker; anything else is refused with a notice).
             yield Markdown(
                 render_preview_source(content, title=title),
                 id="library-note-preview-body",
                 parser_factory=front_matter_parser_factory(),
+                open_links=False,
             )
-        with VerticalScroll(id="library-note-context-region", can_focus=True):
+        # TASK-34000.11 (AC#1): the ``[[`` picker. Its own root, not a child
+        # of ``#library-note-editor-region``: that region is hidden while
+        # Preview shows, and the Preview's Enter lists several links through
+        # this same overlay (follow mode). Hidden in code until the
+        # controller shows it. Imported here, not at module level
+        # (ADR-097): the screen pre-import pass loads this canvas, and the
+        # picker is first needed when an editor composes.
+        from tldw_chatbook.Widgets.Library.library_note_link_picker import (
+            LibraryNoteLinkPicker,
+        )
+
+        yield root(
+            LibraryNoteLinkPicker(
+                id="library-note-link-picker", classes="library-note-link-picker"
+            )
+        )
+        with root(VerticalScroll(id="library-note-context-region", can_focus=True)):
             yield Static("Properties", classes="destination-section", markup=False)
             with Horizontal(id="library-note-context-keywords-row"):
                 yield Static(
                     "Keywords", id="library-note-context-keywords-label", markup=False
                 )
-                yield NoteEditorInput(
+                context_keywords_input = NoteEditorInput(
                     value=keywords_text,
                     placeholder="Comma-separated keywords",
                     id="library-note-context-keywords",
                 )
+                context_keywords_input.set_class(
+                    vetoed_field == "keywords", _NOTE_FIELD_INVALID_CLASS
+                )
+                yield context_keywords_input
+            yield _library_note_field_hint(
+                "library-note-context-keywords-hint",
+                vetoed_field == "keywords",
+                veto_reason,
+            )
             yield Static(
                 library_note_property_block(
                     presentation_state.properties,
@@ -3017,18 +3590,19 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # pinned to 3 there), so relocating it means rewriting that shared
         # compact block and re-pinning five deliberate tests -- see
         # task-32143's Implementation Notes.
-        yield Static(
+        yield root(Static(
             library_note_chrome_facts(0, 0, 0),
             id="library-note-chrome-facts",
             markup=False,
-        )
-        yield Static(
+        ))
+        yield root(Static(
             presentation_state.transfer_status,
             id="library-note-transfer-status",
             markup=False,
-        )
+        ))
 
-        with Vertical(id="library-note-wide-utilities"):
+        wide_utilities = root(Vertical(id="library-note-wide-utilities"))
+        with wide_utilities:
             # task-32642 AC#3: the Keywords label and field that used to sit
             # here are now in `#library-note-editor-region`, displayed. This
             # container stays `display = False` and keeps only the duplicate
@@ -3070,7 +3644,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     compact=True,
                 )
 
-        with Vertical(id="library-note-conflict-region"):
+        conflict_region = root(Vertical(id="library-note-conflict-region"))
+        with conflict_region:
             yield Static(
                 "This note changed elsewhere — Overwrite saves your text; "
                 "Reload discards it.",
@@ -3095,12 +3670,58 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes="library-canvas-action",
                     compact=True,
                 )
+        # Every root above is composed and still unmounted: gate the whole
+        # tree from the state now, before the first frame can paint it.
+        try:
+            self._apply_editor_surface_gates(
+                presentation_state, _pending_widget_lookup(roots)
+            )
+        except NoMatches as exc:
+            self._defer_editor_surface_gates(exc)
+
+    def _defer_editor_surface_gates(self, exc: NoMatches) -> None:
+        """Gate the editor one refresh late when the compose-time lookup misses.
+
+        PR #3055 review (Important 1): ``_pending_widget_lookup`` reads
+        Textual's private compose-time registry (``_pending_children``). If
+        a Textual change empties that index, the first gated selector raises
+        ``NoMatches`` INSIDE ``compose`` -- and a compose exception means the
+        Notes editor cannot mount at all (the nav-freeze shape). Ruling:
+        never raise out of compose and never skip the gates. Log once at
+        WARNING (the selector only, no note content) and run the same
+        ``_apply_editor_surface_gates`` over the mounted tree after the
+        first refresh -- one frame late, still correct. The fast-lane
+        contract test keeps the loud pin on the attribute's name.
+
+        Args:
+            exc: The miss, for the one-time log line.
+        """
+        if not LibraryNotesCanvas._pending_lookup_warned:
+            LibraryNotesCanvas._pending_lookup_warned = True
+            logger.warning(
+                "Library note editor: compose-time surface gating could not "
+                "resolve its nodes ({}); gating after the first refresh instead",
+                exc,
+            )
+        self.call_after_refresh(self._apply_editor_surface_gates_after_mount)
+
+    def _apply_editor_surface_gates_after_mount(self) -> None:
+        """The deferred half of :meth:`_defer_editor_surface_gates`."""
+        state = self.presentation_state
+        if state is None or self.mode != "editor":
+            return
+        try:
+            self._apply_editor_surface_gates(state, self.query_one)
+        except NoMatches:
+            # Recomposed away between the miss and the refresh; the next
+            # compose gates its own tree.
+            return
 
     def _compose_delete_confirmation(self) -> ComposeResult:
         """Mount the delete prompt where task-32268 requires it: in Danger."""
         with Vertical(id="library-note-delete-confirmation"):
             yield Static(
-                "Delete this note? Undo will be available in the Notes list.",
+                delete_confirm_copy(synced=False),
                 id="library-note-delete-confirm-copy",
                 markup=False,
             )
@@ -3161,11 +3782,51 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         self.apply_session_state(self.presentation_state)
 
+    @staticmethod
+    def _discard_new_label(compact: bool, stacked: bool, work_width: int) -> str:
+        """Discard new note's wording: the full label wherever its row holds it.
+
+        The compact sheet keeps its own short "Discard" (its 60-column
+        shapes are pinned). A STACKED task row has the pane's width less the
+        toolbar gutters, and takes the full wording when that holds
+        ``_HEADER_STACKED_TASK_ROW_MIN_WIDTH`` (55 for the labels above):
+        measured at 120x36 the row is the 48-cell pane and "Save · Use in
+        Console · Discard new note" needs 53 cells inside a 2-cell gutter
+        (8 + 18 + 20 of buttons, 2 of gutter, 4 of gaps), so there it takes
+        the compact wording the AC allows; at 160x45 the row has 82+ cells
+        and keeps "Discard new note" (review M-2). The three-row strip
+        always keeps the full wording -- its width is in the one-row rule.
+        """
+        if compact:
+            return _HEADER_DISCARD_SHORT_LABEL
+        if stacked and 0 < work_width < _HEADER_STACKED_TASK_ROW_MIN_WIDTH:
+            return _HEADER_DISCARD_SHORT_LABEL
+        return _HEADER_TASK_LABELS[2]
+
     def apply_compact_presentation(self, compact: bool) -> None:
         """Update responsive copy without remounting the canvas."""
         self.compact = compact
         self.styles.min_width = 0 if compact else 40
-        if not self.is_mounted:
+        if not self.is_mounted or not self._children_ready or self._pruning:
+            # TASK-34789: this canvas's own ``recompose()`` prunes its
+            # children leaf-first and remounts them root-first, so for its
+            # whole duration the header row can be in the DOM without the
+            # save state and toolbars the block below reads unguarded. A
+            # shell resize handled on the SCREEN's pump in that window
+            # (``apply_work_width``, on a work pane a notes-tree or trash
+            # reload was recomposing) raised ``NoMatches`` out of the
+            # screen's resize handler: the end of a headless run, and in the
+            # running app the keep-alive retiring the Library screen.
+            #
+            # Nothing is lost for a recompose: ``compact`` is stored above
+            # and the widths by the callers, and ``_after_recompose``
+            # re-applies them to the new children. A canvas that is itself
+            # being removed (``_pruning``) loses its children the same way
+            # while both flags still read True; it never paints again, so
+            # there is nothing to re-apply. The not-yet-mounted half is
+            # older than this guard and keeps the gap ``apply_session_state``
+            # documents (a width handed over before mount waits for the next
+            # sync).
             return
         if self.mode == "list" and self.list_state is not None:
             try:
@@ -3214,6 +3875,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             second_row = self.query_one("#library-note-header-second-row", Horizontal)
         except NoMatches:
             second_row = None
+        # TASK-34000.8: the second row has three shapes. Wide (one 3-row
+        # strip: save state, mode controls, task actions side by side),
+        # STACKED (the editor pane is narrower than the strip needs: the
+        # save state on its own full-width row, then the mode row, then the
+        # task row -- three rows, one each) and compact (the shell's own
+        # stacked sheet, where the save state may wrap to three lines).
+        # Stacked reuses the compact shape's machinery, in place, so the
+        # widgets keep their identity across every crossing.
+        stacked = _header_shape(self._effective_work_width(), compact)
+        rows = compact or stacked
         if second_row is not None:
             heading = self.query_one("#library-note-heading")
             status = self.query_one("#library-note-status", Static)
@@ -3226,32 +3897,37 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             heading.set_class(not compact, "h-3")
             heading.styles.min_height = 1 if compact else 3
             heading.styles.max_height = 1 if compact else 3
-            second_row.styles.layout = "vertical" if compact else "horizontal"
-            second_row.set_class(compact, "h-auto")
-            second_row.set_class(not compact, "h-3")
+            second_row.styles.layout = "vertical" if rows else "horizontal"
+            second_row.set_class(rows, "h-auto")
+            second_row.set_class(not rows, "h-3")
             second_row.styles.min_height = 3
             second_row.styles.max_height = 5 if compact else 3
             status.add_class("w-fill")
             status.set_class(compact, "h-auto")
-            status.set_class(not compact, "h-3")
-            status.styles.min_height = 1 if compact else 3
-            status.styles.max_height = 3
-            status.styles.text_wrap = "wrap"
-            status.styles.text_overflow = "clip"
-            primary.styles.layout = "vertical" if compact else "horizontal"
-            primary.set_class(compact, "w-full")
-            primary.set_class(not compact, "w-auto")
-            primary.set_class(compact, "h-2")
-            primary.set_class(not compact, "h-3")
-            primary.styles.min_height = 2 if compact else 3
-            primary.styles.max_height = 2 if compact else 3
+            status.set_class(stacked, "h-1")
+            status.set_class(not rows, "h-3")
+            status.styles.min_height = 1 if rows else 3
+            status.styles.max_height = 1 if stacked else 3
+            # AC#4: on the shared row the save state is never squeezed to
+            # one column -- the one-row shape is only chosen when the pane
+            # has room for this floor beside both action groups.
+            status.styles.min_width = 0 if rows else _HEADER_STATUS_MIN_WIDTH
+            status.styles.text_wrap = "nowrap" if stacked else "wrap"
+            status.styles.text_overflow = "ellipsis" if stacked else "clip"
+            primary.styles.layout = "vertical" if rows else "horizontal"
+            primary.set_class(rows, "w-full")
+            primary.set_class(not rows, "w-auto")
+            primary.set_class(rows, "h-2")
+            primary.set_class(not rows, "h-3")
+            primary.styles.min_height = 2 if rows else 3
+            primary.styles.max_height = 2 if rows else 3
             for actions in (mode_controls, task_actions):
-                actions.set_class(compact, "w-full")
-                actions.set_class(not compact, "w-auto")
-                actions.set_class(compact, "h-1")
-                actions.set_class(not compact, "h-3")
-                actions.styles.min_height = 1 if compact else 3
-                actions.styles.max_height = 1 if compact else 3
+                actions.set_class(rows, "w-full")
+                actions.set_class(not rows, "w-auto")
+                actions.set_class(rows, "h-1")
+                actions.set_class(not rows, "h-3")
+                actions.styles.min_height = 1 if rows else 3
+                actions.styles.max_height = 1 if rows else 3
             authority.set_class(compact, "w-18")
             authority.set_class(not compact, "w-auto")
             authority.styles.min_width = 12 if compact else 0
@@ -3262,13 +3938,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             authority.styles.text_overflow = "ellipsis" if compact else "clip"
             for button in primary.query(Button):
                 button.add_class("w-auto")
-                button.set_class(compact, "h-1")
-                button.set_class(not compact, "h-3")
-                button.styles.min_height = 1 if compact else 3
-                button.styles.max_height = 1 if compact else 3
+                button.set_class(rows, "h-1")
+                button.set_class(not rows, "h-3")
+                button.styles.min_height = 1 if rows else 3
+                button.styles.max_height = 1 if rows else 3
         try:
             self.query_one("#library-note-discard-new", Button).label = (
-                "Discard" if compact else "Discard new note"
+                self._discard_new_label(
+                    compact, stacked, self._effective_work_width()
+                )
             )
         except NoMatches:
             pass
@@ -3293,6 +3971,229 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         renderable = widget.renderable
         return getattr(renderable, "plain", str(renderable))
 
+    @staticmethod
+    def _editor_surface_flags(state: LibraryNotePresentationState) -> _EditorSurfaceFlags:
+        """Derive which editor surfaces ``state`` shows (TASK-34000.25: one owner).
+
+        task-32132: Delete is only reachable from the Info Danger section
+        (the Edit pane's own Delete lives in ``library-note-wide-utilities``,
+        permanently hidden). Confirming used to force ``show_context`` off
+        unconditionally, snapping the pane to Edit -- "delete this note?"
+        painted 14 rows away, under a body editor the user never opened.
+        Info stays put while confirming; only Preview (which never hosts a
+        Delete button) still yields to Edit. task-32268: the prompt is a
+        child of Info's Danger section, so Info has to be the surface
+        whenever it is up -- stating it as a condition makes the invariant
+        the prompt's placement depends on explicit rather than incidental.
+        """
+        conflict = state.conflict
+        confirming_delete = state.confirming_delete and not conflict
+        bulk_read_only = state.bulk_read_only
+        show_context = (
+            (state.region == "context" or confirming_delete)
+            and not conflict
+            and not bulk_read_only
+        )
+        show_preview = bulk_read_only or (
+            not show_context
+            and not conflict
+            and not confirming_delete
+            and state.presentation == "preview"
+        )
+        show_editor = not show_context and not show_preview
+        locked = confirming_delete or state.destructive_running or bulk_read_only
+        return _EditorSurfaceFlags(
+            conflict=conflict,
+            confirming_delete=confirming_delete,
+            bulk_read_only=bulk_read_only,
+            show_context=show_context,
+            show_preview=show_preview,
+            show_editor=show_editor,
+            locked=locked,
+        )
+
+    def _apply_editor_surface_gates(
+        self,
+        state: LibraryNotePresentationState,
+        node: Callable[[str], Any],
+    ) -> _EditorSurfaceFlags:
+        """Set every display / disabled / is-active / can_focus gate from ``state``.
+
+        TASK-34000.25: the ONE owner of the gating rules. ``_compose_editor``
+        calls it over the unmounted tree (``node`` resolves ``#id`` through
+        ``_pending_widget_lookup``) so the first frame is right, and
+        ``apply_session_state`` calls it with ``self.query_one`` on every
+        sync. Values (labels, copy, field text) stay in the sync -- they are
+        not gates and re-assigning them echoes ``Changed`` events.
+
+        Args:
+            state: The presentation state to gate from.
+            node: ``#id`` selector -> widget.
+
+        Returns:
+            The derived flags, for the caller's own value work.
+        """
+        flags = self._editor_surface_flags(state)
+        show_editor = flags.show_editor
+        show_preview = flags.show_preview
+        show_context = flags.show_context
+        confirming_delete = flags.confirming_delete
+        bulk_read_only = flags.bulk_read_only
+        locked = flags.locked
+        for selector in (
+            "#library-note-transfer-status",
+            "#library-note-context-transfer-status",
+        ):
+            node(selector).display = bool(state.transfer_status) and not state.compact
+        back_button = node("#library-note-back")
+        back_button.display = not show_context and not bulk_read_only
+        back_button.disabled = confirming_delete
+        context_back_button = node("#library-note-context-back")
+        context_back_button.display = show_context
+        # PR #2547 review (Qodo finding 4): Back was left out of the
+        # disabled-selector loops below, so it stayed live behind the
+        # confirmation prompt. A press ran the Back handler, which clears
+        # ``_library_note_context`` without cancelling the pending
+        # admission -- displacing the prompt instead of leaving Info in
+        # place like every other Danger/Reuse & Export action.
+        context_back_button.disabled = confirming_delete
+        node("#library-note-editor-title").display = show_editor
+        node("#library-note-preview-title").display = show_preview
+        node("#library-note-context-title").display = show_context
+        node("#library-note-bulk-status").display = bulk_read_only
+        node("#library-note-editor-region").display = show_editor
+        node("#library-note-preview-region").display = show_preview
+        node("#library-note-context-region").display = show_context
+        node("#library-note-edit").set_class(show_editor, "is-active")
+        node("#library-note-preview").set_class(
+            show_preview and not bulk_read_only, "is-active"
+        )
+        node("#library-note-context").set_class(show_context, "is-active")
+        node("#library-note-primary-actions").display = (
+            not flags.conflict and not confirming_delete
+        )
+        node("#library-note-wide-utilities").display = False
+        node("#library-note-conflict-region").display = flags.conflict
+        node("#library-note-delete-confirmation").display = confirming_delete
+        # task-32106 (PR #2571 re-review, NEW-2): DISABLED, not read-only,
+        # is load-bearing while ``confirming_delete``. These four fields
+        # carry a PRIORITY tab binding (``NoteEditorInput`` /
+        # ``NoteEditorTextArea``), which ``App._check_bindings`` resolves
+        # before ``LibraryScreen.on_key`` -- and ``on_key`` is where the
+        # delete prompt's Tab trap lives. Textual blurs a widget when it
+        # becomes disabled and drops it from ``focusable``, so no note field
+        # can be in the binding chain while the prompt is open and the trap
+        # holds. Keep one of these live behind the prompt and Tab would walk
+        # straight out of it; ``test_delete_confirmation_traps_tab_between_
+        # cancel_and_delete`` asserts the disabled state for that reason.
+        node("#library-note-title").disabled = not show_editor or locked
+        node("#library-note-body").disabled = not show_editor or locked
+        # task-32642 AC#3: the same rule as the title and body above. This
+        # field used to be disabled whenever the terminal was compact --
+        # harmless while it lived undisplayed inside
+        # `#library-note-wide-utilities`, and a silent Tab hole the moment it
+        # became the editor's own Keywords stop: `focusable` was False at
+        # 100x30 and 60x20 while `display` and `visible` were both True.
+        node("#library-note-keywords").disabled = not show_editor or locked
+        node("#library-note-context-keywords").disabled = not show_context or locked
+        node("#library-note-preview-body").can_focus = False
+        node("#library-note-preview-region").can_focus = show_preview
+        node("#library-note-context-region").can_focus = show_context
+        # TASK-34000.11: the link picker lives with the surface that opened
+        # it -- the editor in insert mode, Preview in follow mode. When that
+        # surface goes (Preview pressed over an open ``[[`` picker, Back,
+        # Info), the picker goes with it and the body's key routing is
+        # released; the controller owns every other show/hide.
+        picker = node("#library-note-link-picker")
+        if picker.is_open and (
+            (picker.mode == "insert" and not show_editor)
+            or (picker.mode == "follow" and not show_preview)
+        ):
+            picker.hide()
+            body = node("#library-note-body")
+            body.link_picker_open = False
+            body.link_picker_has_rows = False
+
+        for selector in (
+            "#library-note-edit",
+            "#library-note-save",
+            "#library-note-preview",
+            "#library-note-context",
+            "#library-note-use-in-console",
+            "#library-note-export-md",
+            "#library-note-export-txt",
+            "#library-note-copy",
+            "#library-note-delete",
+            "#library-note-context-use-in-console",
+            "#library-note-context-export-md",
+            "#library-note-context-export-txt",
+            "#library-note-context-copy",
+            "#library-note-context-delete",
+        ):
+            node(selector).disabled = (
+                state.destructive_running or bulk_read_only or confirming_delete
+            )
+        for selector in (
+            "#library-note-use-in-console",
+            "#library-note-export-md",
+            "#library-note-export-txt",
+            "#library-note-copy",
+            "#library-note-context-use-in-console",
+            "#library-note-context-export-md",
+            "#library-note-context-export-txt",
+            "#library-note-context-copy",
+        ):
+            node(selector).disabled = (
+                state.destructive_running
+                or state.transfer_running
+                or bulk_read_only
+                # task-32132 fix round 1 Important 5: Info stays visible
+                # while confirming (this fix's own AC#1), so its Danger/
+                # Reuse & Export buttons -- Delete, Copy, Export, Use in
+                # Console -- were still live behind the confirmation
+                # prompt; a press could navigate away (Use in Console) or
+                # mutate (Copy/Export) with the delete admission still
+                # pending.
+                or confirming_delete
+            )
+        # Visibility, not display: the cells stay reserved (see compose).
+        discard_new = node("#library-note-discard-new")
+        discard_new.visible = state.discard_new_note
+        discard_new.disabled = state.destructive_running or bulk_read_only
+        for selector in (
+            "#library-note-conflict-overwrite",
+            "#library-note-conflict-reload",
+        ):
+            node(selector).disabled = (
+                state.destructive_running or state.conflict_running
+            )
+        for selector in (
+            "#library-note-delete-confirm",
+            "#library-note-delete-cancel",
+        ):
+            node(selector).disabled = state.destructive_running
+        return flags
+
+    def _apply_field_validation_marks(self, state: LibraryNotePresentationState) -> None:
+        """Outline the vetoed field and show its reason under it; clear the rest.
+
+        TASK-34000.10 (N-07): the only veto styling used to be the compact
+        status-row rule on the whole canvas. The mark follows the state on
+        every sync: editing the marked field itself clears it (fix round 1,
+        M-5 -- a key typed into another field leaves it where it is), and a
+        veto on another field moves it. Difference-checked like the other
+        surfaces: ``display`` flips lay the pane out.
+        """
+        for field_selector, hint_selector, field in _NOTE_FIELD_MARKS:
+            vetoed = state.validation_field == field
+            self.query_one(field_selector).set_class(vetoed, _NOTE_FIELD_INVALID_CLASS)
+            hint = self.query_one(hint_selector, Static)
+            reason = state.validation_message if vetoed else ""
+            if self._static_text(hint) != reason:
+                hint.update(reason)
+            if hint.display != vetoed:
+                hint.display = vetoed
+
     def apply_session_state(self, state: LibraryNotePresentationState) -> None:
         """Synchronize stable editor surfaces from one immutable snapshot.
 
@@ -3302,6 +4203,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """
         # Shallow title/authority nodes can precede nested toolbar children.
         # Retain updates until the mount hook can apply them to the whole tree.
+        #
+        # Known (TASK-34000.25): Textual flips ``_is_mounted`` only AFTER the
+        # ``Mount`` handler returns, so the call ``on_mount`` makes through
+        # ``_apply_post_compose_state`` takes this early return and applies
+        # nothing -- a freshly composed editor shows its surfaces exactly as
+        # ``_compose_editor`` composed them until the next sync. Widening
+        # the guard to ``is_attached`` changed two pinned behaviours (the
+        # emptied-blank GC on Back, the compact Preview scroll memory), so
+        # the compose itself now reads the display-gated flags from the
+        # state (see ``_compose_editor``), and this guard is left as it was.
         if self.mode != "editor" or not self.is_mounted or not self._children_ready:
             self.presentation_state = state
             self.compact = state.compact
@@ -3333,35 +4244,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         if self._static_text(authority) != authority_copy:
             authority.update(authority_copy)
         snapshot = state.snapshot
-        conflict = state.conflict
-        confirming_delete = state.confirming_delete and not conflict
-        bulk_read_only = state.bulk_read_only
-        # task-32132: Delete is only reachable from the Info Danger section
-        # (the Edit pane's own Delete lives in ``library-note-wide-
-        # utilities``, permanently hidden below). Confirming used to force
-        # ``show_context`` off unconditionally, snapping the pane to Edit --
-        # "delete this note?" painted 14 rows away, under a body editor the
-        # user never opened. Info stays put while confirming; only Preview
-        # (which never hosts a Delete button) still yields to Edit.
-        # task-32268: the prompt is now a child of Info's Danger section, so
-        # Info has to be the surface whenever it is up -- otherwise a
-        # confirmation could be raised into a hidden pane. In production this
-        # is what already happened (Delete is Info-only), and task-32132's
-        # own rule was "Info stays put while confirming"; stating it as a
-        # condition makes the invariant the prompt's placement depends on
-        # explicit rather than incidental.
-        show_context = (
-            (state.region == "context" or confirming_delete)
-            and not conflict
-            and not bulk_read_only
-        )
-        show_preview = bulk_read_only or (
-            not show_context
-            and not conflict
-            and not confirming_delete
-            and state.presentation == "preview"
-        )
-        show_editor = not show_context and not show_preview
+        flags = self._editor_surface_flags(state)
+        confirming_delete = flags.confirming_delete
+        show_preview = flags.show_preview
 
         title_input = self.query_one("#library-note-title", Input)
         body_input = self.query_one("#library-note-body", TextArea)
@@ -3458,7 +4343,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # task-32143 AC#2: was a two-selector loop -- the second home,
         # `#library-note-meta`, was never displayed. One meta line now.
         # task-32640: kept current from the state, not from the note record.
-        self._note_location = (state.location_path, state.location_written)
+        self._note_location = (
+            state.location_path,
+            state.location_written,
+            state.location_attention,
+        )
         self._restate_note_location()
         context_meta = self.query_one("#library-note-context-meta", Static)
         meta_copy = library_note_property_block(
@@ -3495,34 +4384,20 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             transfer = self.query_one(selector, Static)
             if self._static_text(transfer) != state.transfer_status:
                 transfer.update(state.transfer_status)
-            transfer.display = bool(state.transfer_status) and not state.compact
 
         self.apply_compact_presentation(state.compact)
         self.set_class(state.validation, "library-note-validation")
+        self._apply_field_validation_marks(state)
         # task-32139: one Back label, sized by compact -- see the matching
         # compose-time comment above.
         back_label = _library_note_back_label(state.compact)
         back_button = self.query_one("#library-note-back", Button)
         if str(back_button.label) != back_label:
             back_button.label = back_label
-        back_button.display = not show_context and not bulk_read_only
-        back_button.disabled = confirming_delete
         context_back_button = self.query_one("#library-note-context-back", Button)
         if str(context_back_button.label) != back_label:
             context_back_button.label = back_label
-        context_back_button.display = show_context
-        # PR #2547 review (Qodo finding 4): Back was left out of the
-        # disabled-selector loops below, so it stayed live behind the
-        # confirmation prompt. A press ran the Back handler, which clears
-        # ``_library_note_context`` without cancelling the pending
-        # admission -- displacing the prompt instead of leaving Info in
-        # place like every other Danger/Reuse & Export action.
-        context_back_button.disabled = confirming_delete
-        self.query_one("#library-note-editor-title").display = show_editor
-        self.query_one("#library-note-preview-title").display = show_preview
-        self.query_one("#library-note-context-title").display = show_context
         bulk_status = self.query_one("#library-note-bulk-status", Static)
-        bulk_status.display = bulk_read_only
         bulk_copy = (
             "Read-only preview · Included in bulk selection"
             if state.bulk_included
@@ -3530,106 +4405,19 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         )
         if self._static_text(bulk_status) != bulk_copy:
             bulk_status.update(bulk_copy)
-        self.query_one("#library-note-editor-region").display = show_editor
-        self.query_one("#library-note-preview-region").display = show_preview
-        self.query_one("#library-note-context-region").display = show_context
-        self.query_one("#library-note-edit", Button).set_class(show_editor, "is-active")
-        self.query_one("#library-note-preview", Button).set_class(
-            show_preview and not bulk_read_only, "is-active"
-        )
-        self.query_one("#library-note-context", Button).set_class(
-            show_context, "is-active"
-        )
-        self.query_one("#library-note-primary-actions").display = (
-            not conflict and not confirming_delete
-        )
-        self.query_one("#library-note-wide-utilities").display = False
-        self.query_one("#library-note-conflict-region").display = conflict
-        self.query_one("#library-note-delete-confirmation").display = confirming_delete
+        if confirming_delete:
+            # TASK-32633 (N-03): a synced note's delete says what happens to
+            # its file, read from the same live location the row states.
+            confirm_copy = self.query_one("#library-note-delete-confirm-copy", Static)
+            wanted = delete_confirm_copy(synced=bool(state.location_path))
+            if self._static_text(confirm_copy) != wanted:
+                confirm_copy.update(wanted)
 
-        locked = confirming_delete or state.destructive_running or bulk_read_only
-        # task-32106 (PR #2571 re-review, NEW-2): DISABLED, not read-only,
-        # is load-bearing while ``confirming_delete``. These four fields
-        # carry a PRIORITY tab binding (``NoteEditorInput`` /
-        # ``NoteEditorTextArea``), which ``App._check_bindings`` resolves
-        # before ``LibraryScreen.on_key`` -- and ``on_key`` is where the
-        # delete prompt's Tab trap lives. Textual blurs a widget when it
-        # becomes disabled and drops it from ``focusable``, so no note field
-        # can be in the binding chain while the prompt is open and the trap
-        # holds. Keep one of these live behind the prompt and Tab would walk
-        # straight out of it; ``test_delete_confirmation_traps_tab_between_
-        # cancel_and_delete`` asserts the disabled state for that reason.
-        title_input.disabled = not show_editor or locked
-        body_input.disabled = not show_editor or locked
-        # task-32642 AC#3: the same rule as the title and body above. This
-        # field used to be disabled whenever the terminal was compact --
-        # harmless while it lived undisplayed inside
-        # `#library-note-wide-utilities`, and a silent Tab hole the moment it
-        # became the editor's own Keywords stop: `focusable` was False at
-        # 100x30 and 60x20 while `display` and `visible` were both True.
-        wide_keywords.disabled = not show_editor or locked
-        context_keywords.disabled = not show_context or locked
-        preview_body.can_focus = False
-        self.query_one("#library-note-preview-region").can_focus = show_preview
-        self.query_one("#library-note-context-region").can_focus = show_context
-
-        for selector in (
-            "#library-note-edit",
-            "#library-note-save",
-            "#library-note-preview",
-            "#library-note-context",
-            "#library-note-use-in-console",
-            "#library-note-export-md",
-            "#library-note-export-txt",
-            "#library-note-copy",
-            "#library-note-delete",
-            "#library-note-context-use-in-console",
-            "#library-note-context-export-md",
-            "#library-note-context-export-txt",
-            "#library-note-context-copy",
-            "#library-note-context-delete",
-        ):
-            self.query_one(selector, Button).disabled = (
-                state.destructive_running or bulk_read_only or confirming_delete
-            )
-        for selector in (
-            "#library-note-use-in-console",
-            "#library-note-export-md",
-            "#library-note-export-txt",
-            "#library-note-copy",
-            "#library-note-context-use-in-console",
-            "#library-note-context-export-md",
-            "#library-note-context-export-txt",
-            "#library-note-context-copy",
-        ):
-            self.query_one(selector, Button).disabled = (
-                state.destructive_running
-                or state.transfer_running
-                or bulk_read_only
-                # task-32132 fix round 1 Important 5: Info stays visible
-                # while confirming (this fix's own AC#1), so its Danger/
-                # Reuse & Export buttons -- Delete, Copy, Export, Use in
-                # Console -- were still live behind the confirmation
-                # prompt; a press could navigate away (Use in Console) or
-                # mutate (Copy/Export) with the delete admission still
-                # pending.
-                or confirming_delete
-            )
-        discard_new = self.query_one("#library-note-discard-new", Button)
-        discard_new.display = state.discard_new_note
-        discard_new.disabled = state.destructive_running or bulk_read_only
-        for selector in (
-            "#library-note-conflict-overwrite",
-            "#library-note-conflict-reload",
-        ):
-            self.query_one(selector, Button).disabled = (
-                state.destructive_running or state.conflict_running
-            )
-        for selector in (
-            "#library-note-delete-confirm",
-            "#library-note-delete-cancel",
-        ):
-            self.query_one(selector, Button).disabled = state.destructive_running
+        # TASK-34000.25: every display / disabled / is-active / can_focus gate
+        # lives in ``_apply_editor_surface_gates`` -- the same helper
+        # ``_compose_editor`` runs over the unmounted tree -- so compose and
+        # sync can never disagree about which surface a state shows.
+        self._apply_editor_surface_gates(state, self.query_one)
         self.update_note_chrome_facts(state.word_count)
 
     # --- editor chrome strip (task-32143) ---------------------------------
@@ -3699,6 +4487,27 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """Follow the caret: arrow keys never reach the presentation state."""
         self.update_note_chrome_facts(body=event.text_area)
 
+    @on(Resize)
+    def _note_link_picker_follows_resize(self, event: Resize) -> None:
+        """The FOLLOW-mode picker re-anchors to the pane's new geometry (fix
+        round 3, R3-4: it is anchored to the Preview region, which a resize
+        moves). Decorated, like ``_note_chrome_follows_width`` beside it: the
+        pane's own ``on_resize`` keeps running."""
+        from tldw_chatbook.Widgets.Library.library_note_link_picker import (
+            LibraryNoteLinkPicker,
+        )
+
+        try:
+            picker = self.query_one("#library-note-link-picker", LibraryNoteLinkPicker)
+        except NoMatches:
+            return
+        # The insert-mode picker does not re-anchor on a resize: fix round 5
+        # CLOSES it on the screen's own Resize (the controller's
+        # ``close_library_note_link_picker_on_resize``), and typing within
+        # the ``[[`` reopens it. This hook is the follow picker's alone.
+        if picker.is_open and picker.mode == "follow":
+            picker.reanchor()
+
     def _restate_note_location(self) -> None:
         """Re-state the location row against the width the pane actually has.
 
@@ -3727,8 +4536,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             row.display = True
         if not row.display:
             return
-        path, written = self._note_location
-        copy = library_note_location_line(path, written, self._effective_pane_width())
+        path, written, attention = self._note_location
+        copy = library_note_location_line(
+            path, written, self._effective_pane_width(), attention=attention
+        )
         if self._static_text(row) != copy:
             row.update(copy)
 

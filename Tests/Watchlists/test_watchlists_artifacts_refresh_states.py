@@ -58,18 +58,14 @@ class ArtifactsStateHarness(ConsolidatedCSSApp):
         pane.set_reactive(ArtifactsPane.briefing_cadence_seconds, 86_400)
         if self.populated:
             pane.set_reactive(ArtifactsPane.briefings, [dict(COMPLETE_BRIEFING)])
-            pane.set_reactive(
-                ArtifactsPane.selected_briefing, dict(COMPLETE_BRIEFING)
-            )
+            pane.set_reactive(ArtifactsPane.selected_briefing, dict(COMPLETE_BRIEFING))
             pane.set_reactive(
                 ArtifactsPane.citations,
                 [{"item_id": 7, "label": Text("[item 7] Source"), "available": True}],
             )
         yield pane
 
-    def on_refresh_briefings_requested(
-        self, _event: RefreshBriefingsRequested
-    ) -> None:
+    def on_refresh_briefings_requested(self, _event: RefreshBriefingsRequested) -> None:
         self.messages.append(("retry", None))
 
     def on_inspect_artifact_recovery_requested(
@@ -321,7 +317,9 @@ async def test_refresh_failure_preserves_screen_owned_last_good_content(monkeypa
         await pilot.pause()
         await host.workers.wait_for_complete()
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
-        selected = next(row for row in screen._loaded_briefings if row["id"] == briefing_id)
+        selected = next(
+            row for row in screen._loaded_briefings if row["id"] == briefing_id
+        )
         screen._selected_briefing = selected
         screen._loaded_citations = [
             {"item_id": 7, "label": Text("[item 7] Source"), "available": True}
@@ -388,9 +386,10 @@ async def test_generation_failure_preserves_last_good_content_and_has_own_state(
         assert pane.query_one("#artifacts-table", DataTable) is table
         assert pane.selected_briefing["id"] == briefing_id
         assert pane.view_state == "failed"
-        assert "generation failed" in str(
-            pane.query_one("#artifacts-state-message", Static).render()
-        ).lower()
+        assert (
+            "generation failed"
+            in str(pane.query_one("#artifacts-state-message", Static).render()).lower()
+        )
 
 
 @pytest.mark.asyncio
@@ -509,11 +508,12 @@ async def test_accepted_missing_receipt_retries_its_exact_id(
         await pilot.pause()
         screen._briefings_db = lambda: hidden_db
         notifications: list[str] = []
-        screen._notify_watchlists = (
-            lambda message, *_args, **_kwargs: notifications.append(message)
+        screen._notify_watchlists = lambda message, *_args, **_kwargs: (
+            notifications.append(message)
         )
 
         if coordinated:
+
             class Coordinator:
                 async def accept_briefing(self, _watchlist_id, _preset_id):
                     return {"id": accepted_id}
@@ -525,6 +525,7 @@ async def test_accepted_missing_receipt_retries_its_exact_id(
                 Coordinator(),
             )
         else:
+
             async def accepted_local_receipt(_db, _watchlist_id, **_kwargs):
                 return db.get_briefing(accepted_id)
 
@@ -541,7 +542,9 @@ async def test_accepted_missing_receipt_retries_its_exact_id(
         assert pane.selected_briefing["id"] == last_good_id
         assert pane.query_one("#artifacts-retry-button", Button).display is True
         assert pane.query_one("#artifacts-inspect-runs-button", Button).display is True
-        assert all("Nothing new was started" not in message for message in notifications)
+        assert all(
+            "Nothing new was started" not in message for message in notifications
+        )
 
         hidden_db.visible = True
         pane.query_one("#artifacts-retry-button", Button).press()
@@ -618,9 +621,9 @@ async def test_generation_completion_does_not_publish_into_a_new_watchlist_scope
     app_instance = _build_test_app()
     first_watchlist_id, _first_briefing_id = _seed_complete_briefing(app_instance)
     db = app_instance.watchlist_bundle_service.db
-    second_watchlist_id = app_instance.watchlist_bundle_service.create(
-        "Second scope"
-    )["id"]
+    second_watchlist_id = app_instance.watchlist_bundle_service.create("Second scope")[
+        "id"
+    ]
     second_briefing_id = db.insert_briefing(second_watchlist_id)
     db.update_briefing(
         second_briefing_id,
@@ -658,6 +661,7 @@ async def test_generation_completion_does_not_publish_into_a_new_watchlist_scope
                 )
             )
         else:
+
             async def delayed_generation(db_handle, watchlist_id, **_kwargs):
                 entered.set()
                 await release.wait()
@@ -767,9 +771,9 @@ async def test_citation_resolution_failure_retains_last_good_citations(monkeypat
             {"item_id": 7, "label": Text("[item 7] Last good"), "available": True}
         ]
         screen._citation_item_lookup = {7: {"id": "local:item:7"}}
-        screen.query_one("#watchlists-artifacts-pane", ArtifactsPane).citations = (
-            screen._loaded_citations
-        )
+        screen.query_one(
+            "#watchlists-artifacts-pane", ArtifactsPane
+        ).citations = screen._loaded_citations
         failed_projection_id = app_instance.watchlist_bundle_service.db.insert_briefing(
             watchlist_id
         )

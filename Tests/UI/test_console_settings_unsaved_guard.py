@@ -32,6 +32,7 @@ from Tests.UI.test_console_provider_apply_defaults_flow import (
     _persisted_console_app,
     _reset_default_intent_state,  # noqa: F401 - shared autouse fixture
 )
+from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
 from Tests.UI.test_destination_shells import _wait_for_selector
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
@@ -57,7 +58,7 @@ from tldw_chatbook.Widgets.Console.console_settings_unsaved import (
     unsaved_labels,
     unsaved_prompt_copy,
 )
-from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
+from Tests.UI.test_console_settings_model_change import real_rebase
 
 _PROMPT_KEYS = "Enter apply · d discard · Esc keep editing"
 
@@ -125,9 +126,9 @@ async def _edit(pilot, modal: ConsoleSettingsModal, selector: str, value: str):
 
 
 async def _gesture(pilot, source: str) -> None:
-    if source == "cancel":
-        await pilot.click("#console-settings-cancel")
-    elif source == "escape":
+    # Rewritten on purpose by TASK-33007 capture finding 20 (round 2): no
+    # view has a Cancel button, so the gestures are Esc and the backdrop.
+    if source == "escape":
         await pilot.press("escape")
     else:
         await pilot.click(offset=(0, 0))
@@ -221,16 +222,19 @@ async def test_prompt_labels_match_the_labels_the_modal_renders() -> None:
     async with app.run_test(size=(211, 44)) as pilot:
         modal = _modal()
         await _open(app, pilot, modal)
+        # TASK-33006.1: Model view rows label with .console-settings-field-label.
         rendered = {
             str(label.renderable)
-            for label in modal.query(".console-settings-modal-label")
+            for label in modal.query(
+                ".console-settings-modal-label, .console-settings-field-label"
+            )
         }
     assert _BASELINE_LABELS - {_CONTEXT_INVALID_LABEL} <= rendered, sorted(
         _BASELINE_LABELS - {_CONTEXT_INVALID_LABEL} - rendered
     )
 
 
-@pytest.mark.parametrize("source", ["escape", "backdrop", "cancel"])
+@pytest.mark.parametrize("source", ["escape", "backdrop"])
 @pytest.mark.asyncio
 async def test_edited_draft_asks_before_each_close_gesture(source: str) -> None:
     app = _GuardHarness()
@@ -288,7 +292,7 @@ async def test_prompt_without_an_available_apply_offers_discard_and_keep() -> No
         assert not modal.query_one("#console-settings-close-guard", Vertical).display
 
 
-@pytest.mark.parametrize("source", ["escape", "backdrop", "cancel"])
+@pytest.mark.parametrize("source", ["escape", "backdrop"])
 @pytest.mark.asyncio
 async def test_unedited_draft_closes_immediately(source: str) -> None:
     app = _GuardHarness()
@@ -318,12 +322,12 @@ async def _round_trip_edit(pilot, modal: ConsoleSettingsModal, edit: str) -> Non
     elif edit == "endpoint":
         await _edit(pilot, modal, "#console-settings-base-url", "http://127.0.0.1:9100")
     elif edit == "provider":
-        modal.query_one("#console-settings-provider", Select).value = "openai"
+        # TASK-33006.4: a pair changes only through pick mode's result.
+        modal._model_picked(("openai", "gpt-5"))
     elif edit == "model":
-        # The route a user takes: committing a catalog row.
-        modal.query_one(ModelSearchPicker)._commit_catalog_model("model-b")
+        modal._model_picked((modal._active_provider, "model-b"))
     elif edit == "streaming":
-        modal.query_one("#console-settings-streaming", Button).press()
+        _flip_streaming(modal)
     for _ in range(4):
         await pilot.pause()
 
@@ -333,7 +337,8 @@ async def _round_trip_edit(pilot, modal: ConsoleSettingsModal, edit: str) -> Non
     [
         (None, None),
         ("temperature", "Temperature"),
-        ("provider", "Provider"),
+        # TASK-33006.4: the pair is one field, the MODEL row's "Model".
+        ("provider", "Model"),
         ("model", "Model"),
         ("endpoint", "Endpoint"),
         ("streaming", "Streaming"),
@@ -352,7 +357,7 @@ async def test_suspended_draft_round_trip_keeps_its_edits_unsaved(
     configured default, which is not an edit either.
     """
     app = _GuardHarness()
-    first = _modal()
+    first = _modal(draft_rebaser=real_rebase)
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(app, pilot, first)
         if edit is not None:
@@ -367,7 +372,7 @@ async def test_suspended_draft_round_trip_keeps_its_edits_unsaved(
         await _open(app, pilot, modal)
         assert modal._unsaved_field_labels() == labels
         assert _text(modal, "#console-settings-esc-hint") == esc_hint_copy(len(labels))
-        await _gesture(pilot, "cancel")
+        await _gesture(pilot, "escape")
 
         if not labels:
             assert app.results == [None]
@@ -419,7 +424,7 @@ async def test_discard_closes_without_applying(how: str) -> None:
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(app, pilot, modal)
         await _edit(pilot, modal, "#console-settings-temperature", "0.9")
-        await _gesture(pilot, "cancel")
+        await _gesture(pilot, "escape")
         assert app.results == []
         assert modal.query_one("#console-settings-close-guard", Vertical).display
 
@@ -731,15 +736,16 @@ async def test_quick_surface_edit_carried_in_asks_then_applies_to_this_chat(
 
 @pytest.mark.parametrize("edit", ["temperature", "model"])
 @pytest.mark.asyncio
+@private_profile_test
 async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
-    monkeypatch, edit: str
+    request, monkeypatch, edit: str
 ):
     """Real router: Configure credential -> Settings -> Return keeps the ask.
 
     The returned modal is rebuilt from the suspended draft; the edits made
     before the handoff must still count, and nothing else may. The reopened
     modal composes Model from the draft, so only the first modal knows its
-    unedited value.
+    unedited value. A private profile: the production app builds its config.
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(
@@ -771,6 +777,9 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
         store.replace_session_settings(session.id, committed)
+        # Directly replacing settings can leave a mount read on the old revision.
+        # Publish this revision before opening the owner-checked settings modal.
+        await _sync_console_control_bar_now(console)
         assert await console._open_console_settings() is True
         for _ in range(80):
             if isinstance(app.screen, ConsoleSettingsModal):
@@ -781,14 +790,12 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         await _settle(pilot, first)
         await _round_trip_edit(pilot, first, edit)
         labels = first._unsaved_field_labels()
-        # Switching model re-bases Streaming's explicit On to Inherit, which
-        # counts: Inherit is a draft value of its own (Qodo #2937). The model
-        # case checks a subset: a fresh profile's switch also re-bases the
-        # other sampling fields, so the exact tuple depends on run order.
-        if edit == "temperature":
-            assert labels == ("Temperature",)
-        else:
-            assert {"Model", "Streaming"} <= set(labels)
+        # Rewritten on purpose by TASK-33006.16: what the pick's rebase
+        # changes (Streaming's explicit On re-based to Inherit, the sampling
+        # fields re-based to model-b's values) is not the user's edit, so the
+        # model case names Model alone. It used to check a subset under Qodo
+        # #2937's ruling that the Streaming re-base counted.
+        assert labels == (("Temperature",) if edit == "temperature" else ("Model",))
         await pilot.click("#console-settings-configure-credential")
 
         settings = None
@@ -824,7 +831,7 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         assert _text(returned, "#console-settings-esc-hint") == esc_hint_copy(
             len(labels)
         )
-        await _gesture(pilot, "cancel")
+        await _gesture(pilot, "escape")
 
         assert app.screen is returned
         assert _text(returned, "#console-settings-close-message").startswith(
@@ -833,18 +840,23 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         assert store.session_settings(session.id) == committed
 
 
-async def _cycle_streaming_to_inherit(pilot, modal: ConsoleSettingsModal) -> None:
-    """Press Streaming until the draft says Inherit (no per-chat override)."""
-    for _ in range(3):
-        if modal._streaming_draft is None:
-            break
-        modal.query_one("#console-settings-streaming", Button).press()
-        await pilot.pause()
-    assert modal._streaming_draft is None
+def _flip_streaming(modal: ConsoleSettingsModal) -> None:
+    """Pick the other Streaming choice (TASK-33006.1: an On/Off Select)."""
+    select = modal.query_one("#console-settings-streaming", Select)
+    select.value = "off" if select.value == "on" else "on"
 
 
 def _streaming_label(modal: ConsoleSettingsModal) -> str:
-    return str(modal.query_one("#console-settings-streaming", Button).label)
+    """The choice the Streaming Select shows: always On or Off (R15)."""
+    return {"on": "On", "off": "Off"}[
+        modal.query_one("#console-settings-streaming", Select).value
+    ]
+
+
+def _shows_effective_streaming(modal: ConsoleSettingsModal) -> bool:
+    return _streaming_label(modal) == (
+        "On" if modal._effective_streaming_value() else "Off"
+    )
 
 
 @pytest.mark.asyncio
@@ -855,10 +867,12 @@ async def test_inherit_streaming_survives_the_suspended_draft_round_trip() -> No
     it with ``ValueError``; the reopened modal also coerced it to Off.
     """
     app = _GuardHarness()
-    first = _modal()
+    # TASK-33006.1 rewrite: the On/Off Select cannot pick Inherit, so the
+    # draft arrives at Inherit the way it does in use (a transfer/rebase).
+    first = _inherit_streaming_modal()
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(app, pilot, first)
-        await _cycle_streaming_to_inherit(pilot, first)
+        assert first._streaming_draft is None
         snapshot = first.capture_suspended_draft()
         assert snapshot.raw_values["console-settings-streaming"] is None
         restored = ConsoleSettingsDraftSnapshot.from_mapping(snapshot.to_mapping())
@@ -870,7 +884,7 @@ async def test_inherit_streaming_survives_the_suspended_draft_round_trip() -> No
         modal = _modal(suspended_draft=restored)
         await _open(app, pilot, modal)
         assert modal._streaming_draft is None
-        assert _streaming_label(modal) == "Inherit"
+        assert _shows_effective_streaming(modal)
 
 
 
@@ -934,9 +948,12 @@ def test_snapshot_carries_each_streaming_state_and_refuses_a_malformed_one(
 async def test_configure_credential_with_inherit_streaming_keeps_the_app_up(
     request, monkeypatch
 ):
-    """TASK-33003.10 repro, real router: a llama.cpp chat switched to OpenAI
-    (no key) leaves Streaming at Inherit; Configure credential -> Settings ->
-    Return must not exit the app, and the reopened modal shows Inherit."""
+    """TASK-33003.10 repro, real router: an OpenAI chat (no key) re-picked to
+    another model leaves Streaming at Inherit; Configure credential ->
+    Settings -> Return must not exit the app, and the reopened modal shows
+    Inherit. Since TASK-33006.4 the chat starts on OpenAI and the pick stays
+    there (a typed model id; pick mode cannot pick another provider's pair
+    that needs setup)."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(
         settings_screen_module,
@@ -968,8 +985,11 @@ async def test_configure_credential_with_inherit_streaming_keeps_the_app_up(
         session = store.ensure_session()
         store.replace_session_settings(
             session.id,
-            ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+            ConsoleSessionSettings(provider="openai", model="gpt-5"),
         )
+        # Directly replacing settings can leave a mount read on the old revision.
+        # Publish this revision before opening the owner-checked settings modal.
+        await _sync_console_control_bar_now(console)
         assert await console._open_console_settings() is True
         for _ in range(80):
             if isinstance(app.screen, ConsoleSettingsModal):
@@ -978,15 +998,13 @@ async def test_configure_credential_with_inherit_streaming_keeps_the_app_up(
         first = app.screen
         assert isinstance(first, ConsoleSettingsModal)
         await _settle(pilot, first)
-        first.query_one("#console-settings-provider", Select).value = "openai"
-        for _ in range(20):
+        first._model_picked(("openai", "gpt-5-mini"))  # pick mode's result
+        for _ in range(4):
             await pilot.pause()
-            if first._active_provider == "openai":
-                break
-        await pilot.pause()
-        # The provider switch alone lands on Inherit (the task's repro).
+        assert first._active_provider == "openai"
+        # The model switch alone lands on Inherit (the task's repro).
         assert first._streaming_draft is None
-        assert _streaming_label(first) == "Inherit"
+        assert _shows_effective_streaming(first)
         await pilot.click("#console-settings-configure-credential")
 
         settings = None
@@ -1024,7 +1042,7 @@ async def test_configure_credential_with_inherit_streaming_keeps_the_app_up(
         assert app.is_running
         assert returned._active_provider == "openai"
         assert returned._streaming_draft is None
-        assert _streaming_label(returned) == "Inherit"
+        assert _shows_effective_streaming(returned)
 
 
 @pytest.mark.asyncio
@@ -1125,30 +1143,32 @@ def _inherit_streaming_modal() -> ConsoleSettingsModal:
 
 
 @pytest.mark.parametrize(
-    ("opened_at_inherit", "presses", "unsaved"),
+    ("opened_at_inherit", "picks", "unsaved"),
     [
-        (True, 1, True),  # Inherit -> On, the inherited default On
-        (False, 2, True),  # On -> Off -> Inherit, whose default is On
-        (True, 3, False),  # all the way round, back to Inherit
+        (True, 2, True),  # Inherit -> Off -> On: an explicit On over its default
+        (False, 2, False),  # On -> Off -> On: back to the committed explicit On
     ],
-    ids=["inherit-to-on", "on-to-inherit", "round-trip"],
+    ids=["inherit-to-explicit-on", "explicit-round-trip"],
 )
 @pytest.mark.asyncio
 async def test_streaming_inherit_changes_count_as_edits(
-    opened_at_inherit: bool, presses: int, unsaved: bool
+    opened_at_inherit: bool, picks: int, unsaved: bool
 ) -> None:
     """Qodo #2937: the guard compared the effective bool, so a change between
     Inherit and the value Inherit resolves to closed without asking and lost
-    the override. Inherit is a draft value of its own (TASK-33003.10)."""
+    the override. Inherit is a draft value of its own (TASK-33003.10).
+
+    Rewritten on purpose by TASK-33006.1: Streaming is an On/Off Select
+    (ADR-095:75-81), so Inherit is never picked; the draft keeps it until a
+    pick, and a pick that lands back on the inherited value still pins it."""
     app = _GuardHarness()
     modal = _inherit_streaming_modal() if opened_at_inherit else _modal()
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(app, pilot, modal)
         assert modal._streaming_draft is (None if opened_at_inherit else True)
-        toggle = modal.query_one("#console-settings-streaming", Button)
-        toggle.focus()
-        for _ in range(presses):
-            toggle.press()
+        assert _streaming_label(modal) == "On"
+        for _ in range(picks):
+            _flip_streaming(modal)
             await pilot.pause()
         await pilot.pause()
         # The effective value never moved; only the Inherit/On/Off draft did.

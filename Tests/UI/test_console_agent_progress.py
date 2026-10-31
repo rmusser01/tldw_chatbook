@@ -7,6 +7,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, SelectionList
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -319,7 +320,7 @@ async def test_console_progress_navigation_pruned_access_and_actual_paint(
         modal.query_one(SelectionList).select(inbox.snapshot()[0].message_id)
         await pilot.pause()
         paint = _compositor_text(host.export_screenshot())
-        assert "Queued progress (this session)" in paint
+        assert "Queued progress" in paint
         assert "Sample report:" in paint
         assert "Discard selected (1)" in paint
         host.save_screenshot(
@@ -382,8 +383,9 @@ async def test_console_progress_navigation_pruned_access_and_actual_paint(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_real_live_report_save_preserves_open_selection_and_navigation(
-    tmp_path, monkeypatch
+    tmp_path, request, monkeypatch
 ):
     import asyncio
     import threading
@@ -503,3 +505,74 @@ async def test_real_live_report_save_preserves_open_selection_and_navigation(
         finally:
             release.set()
             await asyncio.gather(task, return_exceptions=True)
+
+
+# --- TASK-35028: the poll-driven rows are equality-gated ----------------------
+
+
+@pytest.mark.asyncio
+async def test_poll_repaints_gated_rows_only_when_their_copy_changes():
+    """The 0.5 s poll rewrote the inbox-error status, the count line, and the
+    body report every tick with unchanged copy (TASK-34991 findings);
+    TASK-35028 gates each write on its own last-written text."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Agents.fleet_messages import MessageError
+
+    store, inbox, sender = _queue()
+    behavior = {"mode": "error"}
+
+    def load():
+        if behavior["mode"] == "error":
+            raise MessageError("queue_full")
+        return inbox.snapshot()
+
+    modal = _modal_type()(conversation_id="conv-A", load=load, discard=inbox.discard)
+    host = ProgressHarness(modal)
+    async with host.run_test(size=(100, 36)) as pilot:
+        await pilot.pause()
+        rows = {
+            "status": modal.query_one("#agent-progress-status", Static),
+            "count": modal.query_one("#agent-progress-count", Static),
+            "body": modal.query_one("#agent-progress-body", Static),
+        }
+        calls: dict[str, list] = {}
+        originals = {}
+
+        def spy(name, widget):
+            originals[name] = widget.update
+            calls[name] = []
+
+            def counting_update(*args, **kwargs):
+                calls[name].append(args)
+                return originals[name](*args, **kwargs)
+
+            widget.update = counting_update
+
+        for name, widget in rows.items():
+            spy(name, widget)
+        # Take the live 0.5 s poll out of the race; this test drives
+        # _refresh_snapshot by hand.
+        if modal._poll_timer is not None:
+            modal._poll_timer.stop()
+        # The mount already painted the error state; unchanged ticks must not
+        # repaint any of the three rows.
+        modal._refresh_snapshot()
+        modal._refresh_snapshot()
+        for name, entries in calls.items():
+            assert entries == [], f"unchanged {name} copy must not repaint"
+        # A real snapshot change repaints the count and the body (the status
+        # line's copy only moves through its own writers).
+        behavior["mode"] = "ok"
+        sender.send("a queued report")
+        modal._refresh_snapshot()
+        assert len(calls["count"]) == 1
+        assert "1 queued" in str(rows["count"].content)
+        assert len(calls["body"]) == 1
+        assert calls["status"] == []
+        # The status gate itself: a changed copy paints once, a repeat is a
+        # compare.
+        modal._set_status("Discarding selected reports…")
+        modal._set_status("Discarding selected reports…")
+        assert len(calls["status"]) == 1
+        assert str(rows["status"].content) == "Discarding selected reports…"

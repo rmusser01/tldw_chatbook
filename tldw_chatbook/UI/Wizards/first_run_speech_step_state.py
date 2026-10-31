@@ -445,6 +445,91 @@ def should_persist_speech_config(*, active: bool, acted_this_run: bool) -> bool:
     return active and acted_this_run
 
 
+def speech_install_status(
+    model_label: str,
+    progress: Any,
+    transfer_line: str,
+    *,
+    cancelling: bool = False,
+) -> str | None:
+    """The Speech step's status line while its managed install runs.
+
+    TASK-34100.14 ([voice-speech-09]): the line above the progress bar used
+    to keep saying "Not installed." for the whole download. It now says
+    what is happening, echoing the shared progress widget's own clause.
+
+    Args:
+        model_label: The selected model's display name.
+        progress: The latest ``AcquisitionProgress`` (``None`` before the
+            first event).
+        transfer_line: The progress widget's ``"X of Y MiB · speed · time
+            left"`` clause for the current byte phase.
+        cancelling: The user asked to cancel and the request is in flight.
+
+    Returns:
+        The status text, or ``None`` when nothing has been reported yet.
+    """
+    if cancelling:
+        return f"Cancelling the {model_label} download…"
+    if progress is None:
+        return None
+    phase = getattr(progress, "phase", None)
+    if phase == "queued":
+        # The progress widget right below already says which download this
+        # one waits for; repeating that sentence here read it twice (live
+        # run g14v3-both). This line says what is queued instead.
+        return f"{model_label} is queued and downloads next."
+    if phase == "fetch":
+        return f"Downloading {model_label} — {transfer_line}"
+    if phase == "pre-verify":
+        return f"Checking the {model_label} download — {transfer_line}"
+    if phase == "verify-install":
+        return f"Installing {model_label}…"
+    if phase == "activate":
+        return f"Activating {model_label}…"
+    return None
+
+
+#: Names the managed VAD download behind "Use model from disk…" for an
+#: install that has to wait for it (TASK-34100.14 review F3).
+EXTERNAL_VAD_DOWNLOAD_LABEL = "Silero VAD (voice-activity detector)"
+
+
+def external_vad_install_status(progress: Any) -> str:
+    """The external-Parakeet status line while the managed VAD installs.
+
+    TASK-34100.14 review F3: that install now waits in line behind another
+    model download (it used to fail fast as busy, saying only that it could
+    not be installed) and says which download it is waiting for.
+
+    Args:
+        progress: The latest ``AcquisitionProgress`` of the VAD install.
+
+    Returns:
+        The status text.
+    """
+    if getattr(progress, "phase", None) == "queued":
+        from tldw_chatbook.UI.Screens.model_browser_state import waiting_for_copy
+
+        return waiting_for_copy(getattr(progress, "waiting_for", None))
+    return (
+        "Installing managed VAD dependency · "
+        f"{progress.bytes_done:,} / {progress.bytes_total:,} bytes"
+    )
+
+
+def speech_not_installed_status(outcome: str | None) -> str:
+    """"Not installed." plus the last install's outcome, when there is one.
+
+    Args:
+        outcome: For example ``"Download cancelled — nothing was saved."``.
+
+    Returns:
+        The status line for a step with nothing installed.
+    """
+    return f"Not installed. {outcome}" if outcome else "Not installed."
+
+
 __all__ = [
     "LANGUAGE_DISPLAY_NAMES",
     "TRANSCRIPTION_SECTION",
@@ -456,6 +541,8 @@ __all__ = [
     "read_speech_prefill",
     "speech_config_patch",
     "should_persist_speech_config",
+    "speech_install_status",
+    "speech_not_installed_status",
     "speech_prefill_status",
     "recommended_speech_selection",
     "resolve_speech_selection",

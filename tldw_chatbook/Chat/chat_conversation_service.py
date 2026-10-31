@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,7 +14,7 @@ from tldw_chatbook.Chat.console_appearance import (
     merge_console_conversation_appearance,
     parse_console_conversation_appearance,
 )
-from tldw_chatbook.DB.ChaChaNotes_DB import CONVERSATION_SCOPE_ALL
+from tldw_chatbook.DB.ChaChaNotes_DB import CONVERSATION_SCOPE_ALL, InputError
 
 _ASSISTANT_AUTHORITY_UNSET = cast(str | None, object())
 _SQLITE_INTEGER_MAX = (1 << 63) - 1
@@ -32,9 +33,9 @@ def _clean_text(value: Any) -> str | None:
 
 
 def _normalize_state(value: Any) -> str | None:
-    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-    from tldw_chatbook.tldw_api.chat_conversation_schemas import (
-        ALLOWED_CONVERSATION_STATES,
+    # Keep local state validation independent of API request models.
+    from tldw_chatbook.Chat.console_conversation_actions import (
+        CONVERSATION_STATES as ALLOWED_CONVERSATION_STATES,
     )
 
     text = _clean_text(value)
@@ -198,9 +199,7 @@ def normalize_message_row(
         "usage_json": message_row.get("usage_json"),
         "metadata_json": message_row.get("metadata_json"),
         "provider_continuation_json": message_row.get("provider_continuation_json"),
-        "assistant_generation_state": message_row.get(
-            "assistant_generation_state"
-        ),
+        "assistant_generation_state": message_row.get("assistant_generation_state"),
         "topology": topology,
         "variant": variant,
     }
@@ -304,6 +303,11 @@ class ChatConversationService:
             Path(rag_context_store_path) if rag_context_store_path else None
         )
         self._rag_context_store: dict[str, Any] | None = None
+        # Recovery-mode batching: records staged by stage_rag_context_record()
+        # await one flush_rag_context_store() instead of rewriting the whole
+        # JSON store per message (import-path writes used to be O(N x
+        # store-bytes) serialize+write per N-message import).
+        self._staged_rag_context_records: dict[tuple[str, str], dict[str, Any]] = {}
         self.citation_legacy_migration = citation_legacy_migration
         self.organization_sync_service = organization_sync_service
 
@@ -332,9 +336,7 @@ class ChatConversationService:
             self._rag_context_store = {"version": 1, "conversations": {}}
             return self._rag_context_store
         try:
-            payload = json.loads(
-                _chat_sources.read_text(self)
-            )
+            payload = json.loads(_chat_sources.read_text(self))
         except (OSError, json.JSONDecodeError):
             payload = {}
         conversations = (
@@ -351,8 +353,62 @@ class ChatConversationService:
         if self.rag_context_store_path is None or self._rag_context_store is None:
             return
         _chat_sources.write_text(
-            self, json.dumps(self._rag_context_store, indent=2, sort_keys=True),
+            self,
+            json.dumps(self._rag_context_store, indent=2, sort_keys=True),
         )
+
+    @_chat_sources.guarded
+    def stage_rag_context_record(
+        self,
+        conversation_id: str,
+        message_id: str,
+        record: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Stage one legacy RAG-context record for a single batched flush.
+
+        Recovery-mode batching counterpart of the deprecated immediate
+        writer: the prepared ``record`` is held in memory (under the same
+        per-path operation guard as the store itself) and only reaches the
+        file when :meth:`flush_rag_context_store` runs. Staging the same
+        ``(conversation_id, message_id)`` twice overwrites, exactly as
+        consecutive immediate writes would. Callers staging records directly
+        are responsible for message-row validation; the validating entry
+        point is :meth:`record_message_rag_context`.
+
+        Raises:
+            RuntimeError: when the canonical citation migration has writes
+                enabled -- staging must not bypass the legacy-write
+                prohibition.
+        """
+        migration = self.citation_legacy_migration
+        if migration is not None and migration.writes_enabled:
+            raise RuntimeError("legacy_rag_context_writes_disabled")
+        stored = dict(record)
+        self._staged_rag_context_records[
+            (str(conversation_id), str(message_id))
+        ] = stored
+        return dict(stored)
+
+    @_chat_sources.guarded
+    def flush_rag_context_store(self) -> None:
+        """Persist every staged record with one whole-store serialize+write.
+
+        Merges the staged records into the memoized store exactly as the
+        per-message writer would (final content is identical) and clears the
+        staging area only after the write succeeds, so a failed flush leaves
+        the records staged for a retry. No-op when nothing is staged.
+        """
+        if not self._staged_rag_context_records:
+            return
+        store = self._load_rag_context_store()
+        conversations = store.setdefault("conversations", {})
+        for (
+            conversation_id,
+            message_id,
+        ), record in self._staged_rag_context_records.items():
+            conversations.setdefault(conversation_id, {})[message_id] = record
+        self._save_rag_context_store()
+        self._staged_rag_context_records.clear()
 
     def derive_conversation_title(
         self, conversation_row: Mapping[str, Any] | None
@@ -504,9 +560,7 @@ class ChatConversationService:
         include_deleted: bool,
     ) -> list[dict[str, Any]]:
         rows = list(rows)
-        conversation_ids = [
-            row.get("id") for row in rows if row.get("id") is not None
-        ]
+        conversation_ids = [row.get("id") for row in rows if row.get("id") is not None]
         message_counts = {}
         if conversation_ids:
             message_counts = self.db.count_messages_for_conversations(
@@ -644,9 +698,7 @@ class ChatConversationService:
         try:
             raw_map = get_metadata(conversation_ids)
         except Exception:
-            logger.debug(
-                "Unable to batch-read Console conversation appearances"
-            )
+            logger.debug("Unable to batch-read Console conversation appearances")
             return {}
         return {
             str(conversation_id): parse_console_conversation_appearance(metadata)
@@ -829,6 +881,7 @@ class ChatConversationService:
         topic_label: str | None = None,
         character_id: int | None = None,
         character_scope: str | None = None,
+        title_only: bool = False,
     ) -> dict[str, Any]:
         """Return one normalized, bounded page of local conversations.
 
@@ -861,6 +914,10 @@ class ChatConversationService:
                 Applied before counts and pagination, so lane owners can
                 exclude conversations they do not display without wasting
                 page slots on them.
+            title_only: Match ``query`` against titles only, as a literal
+                substring, in both the page and its total (TASK-33622.6: the
+                Console rail's 'Filter visible titles'). Not combinable with
+                ``query_terms``.
 
         Returns:
             A mapping containing normalized ``items`` and a ``pagination``
@@ -918,6 +975,7 @@ class ChatConversationService:
             topic_label=_clean_text(topic_label),
             character_id=character_id,
             character_scope=character_scope,
+            title_only=title_only,
             limit=limit,
             offset=offset,
         )
@@ -1186,14 +1244,23 @@ class ChatConversationService:
                 "depth_cap": depth_cap,
             }
 
-        # TASK-22206: ONE conversation-scoped query (no BLOB hydration),
-        # then a purely in-memory, iterative tree assembly. The old shape
-        # issued one get_messages_for_conversation_by_parent_ids call per
-        # node -- each a full-conversation scan under the production query
-        # plan (sqlite_stat1 absent) -- and recursed once per message.
-        rows = self.db.get_message_tree_rows_for_conversation(
+        # TASK-22206 kept ONE conversation-scoped query (no BLOB
+        # hydration) and an iterative in-memory assembly; task 7 (wave 4)
+        # bounds that read to the requested root window: the DB pushes the
+        # root LIMIT/OFFSET down (same ordering this assembly consumed,
+        # negative offset clamped and negative limit meaning "no limit" --
+        # native SQLite semantics) and returns the page's roots plus their
+        # descendants via one recursive CTE, with the live root count --
+        # the same predicate (conversation-scoped, live rows, live
+        # conversation, parent_id IS NULL) the old len(root_rows) computed
+        # from the full fetch.
+        if order_by_timestamp.upper() not in ("ASC", "DESC"):
+            raise InputError("order_by_timestamp must be 'ASC' or 'DESC'.")
+        rows, total_root_threads = self.db.get_message_tree_rows_for_conversation_page(
             conversation_id,
-            order_by_timestamp=order_by_timestamp,
+            root_offset=root_offset,
+            root_limit=root_limit,
+            order_desc=order_by_timestamp.upper() == "DESC",
             include_deleted_conversation=False,
         )
         children_by_parent: dict[Any, list[Mapping[str, Any]]] = {}
@@ -1204,18 +1271,9 @@ class ChatConversationService:
                 root_rows.append(row)
             else:
                 children_by_parent.setdefault(parent_id, []).append(row)
-        # Same predicate the old COUNT query used, computed from the same
-        # fetch (conversation-scoped, live rows, live conversation).
-        total_root_threads = len(root_rows)
-        # Replicate SQL LIMIT/OFFSET semantics for non-positive inputs:
-        # a negative OFFSET is 0, a negative LIMIT means "no limit".
-        effective_offset = max(0, root_offset)
-        if root_limit < 0:
-            paged_root_rows = root_rows[effective_offset:]
-        else:
-            paged_root_rows = root_rows[
-                effective_offset : effective_offset + root_limit
-            ]
+        # Every parentless row in the fetch is a page root (the fetch is
+        # the page's subtree), so the page needs no further slicing.
+        paged_root_rows = root_rows
 
         root_threads, image_pending = self._build_message_tree(
             paged_root_rows,
@@ -1236,7 +1294,12 @@ class ChatConversationService:
             "depth_cap": depth_cap,
         }
 
-    def effective_active_leaf(self, conversation_id: str) -> str | None:
+    def effective_active_leaf(
+        self,
+        conversation_id: str,
+        *,
+        rows: Sequence[Mapping[str, Any]] | None = None,
+    ) -> str | None:
         """Resolve the conversation's EFFECTIVE active-leaf message id.
 
         The durable pointer when it references a live row; otherwise the
@@ -1245,10 +1308,23 @@ class ChatConversationService:
         written at create time must reference a real row -- the column is
         FK-enforced) and ``copy_conversation_active_path`` so both resolve
         the same leaf.
+
+        Args:
+            conversation_id: Stable conversation identifier.
+            rows: Optional pre-fetched ``get_messages_for_conversation``
+                page (same FORK_READ shape this method would fetch). Callers
+                that already hold the rows -- the fork copy -- pass them to
+                avoid a duplicate full-conversation read; when omitted the
+                method fetches exactly as before (task 19a).
+
+        Returns:
+            The effective leaf message id, or None when the conversation has
+            no live messages.
         """
-        rows = self.db.get_messages_for_conversation(
-            conversation_id, limit=FORK_READ_MAX_MESSAGES
-        )
+        if rows is None:
+            rows = self.db.get_messages_for_conversation(
+                conversation_id, limit=FORK_READ_MAX_MESSAGES
+            )
         if not rows:
             return None
         live_ids = {str(row["id"]) for row in rows}
@@ -1287,7 +1363,10 @@ class ChatConversationService:
         if not rows:
             raise ValueError("empty_history")
         nodes = {str(row["id"]): row for row in rows}
-        leaf_id = self.effective_active_leaf(source_conversation_id)
+        # Task 19a: reuse the page already fetched above -- the leaf
+        # resolution runs the identical selection logic on these rows instead
+        # of re-issuing the same full-conversation query.
+        leaf_id = self.effective_active_leaf(source_conversation_id, rows=rows)
         if leaf_id is None or leaf_id not in nodes:
             raise ValueError("empty_history")
 
@@ -1303,7 +1382,16 @@ class ChatConversationService:
         id_map: dict[str, str] = {}
         copied = 0
         last_new_id: str | None = None
-        with self.db.transaction():
+        # IMMEDIATE (task-22501): this outer unit's first statement is
+        # add_message's conversation-existence SELECT, and the manager only
+        # honours `immediate` at depth 0 -- a DEFERRED begin here silently
+        # neutralizes every inner writer's IMMEDIATE and re-opens the exact
+        # snapshot-upgrade window task-21100 closed: one backfill chunk (or
+        # any concurrent committer) landing between the read and the first
+        # INSERT kills the whole user-facing fork with an instant,
+        # busy-handler-bypassing `database is locked`. See
+        # Tests/DB/test_chachanotes_conversation_writer_collision.py.
+        with self.db.transaction(immediate=True):
             for node in path:
                 content = node.get("content") or ""
                 image = node.get("image_data")
@@ -1325,7 +1413,9 @@ class ChatConversationService:
                         "sender": node.get("sender") or node.get("role") or "user",
                         "content": content,
                         "role": node.get("role"),
-                        "parent_message_id": id_map.get(str(node.get("parent_message_id"))),
+                        "parent_message_id": id_map.get(
+                            str(node.get("parent_message_id"))
+                        ),
                         "image_data": image,
                         "image_mime_type": node.get("image_mime_type"),
                         "timestamp": node.get("timestamp"),
@@ -1361,8 +1451,16 @@ class ChatConversationService:
         *,
         rag_context: Mapping[str, Any] | None = None,
         citations: Iterable[Mapping[str, Any]] | None = None,
+        stage: bool = False,
     ) -> dict[str, Any]:
-        """Deprecated compatibility writer available only in recovery mode."""
+        """Deprecated compatibility writer available only in recovery mode.
+
+        Flushes immediately (stage + one flush) by default so genuine one-off
+        recovery callers keep their exact pre-batching behavior; pass
+        ``stage=True`` to accumulate records for a single
+        :meth:`flush_rag_context_store` per batch (the chatbook importer's
+        recovery fallback does exactly that).
+        """
 
         migration = self.citation_legacy_migration
         if migration is not None and migration.writes_enabled:
@@ -1387,12 +1485,9 @@ class ChatConversationService:
             "citations": normalized_citations,
             "last_modified": self._now(),
         }
-        store = self._load_rag_context_store()
-        conversation_store = store.setdefault("conversations", {}).setdefault(
-            str(conversation_id), {}
-        )
-        conversation_store[str(message_id)] = record
-        self._save_rag_context_store()
+        self.stage_rag_context_record(conversation_id, message_id, record)
+        if not stage:
+            self.flush_rag_context_store()
         return dict(record)
 
     @_chat_sources.guarded
@@ -1403,8 +1498,15 @@ class ChatConversationService:
         *,
         rag_context: Mapping[str, Any] | None = None,
         citations: Iterable[Mapping[str, Any]] | None = None,
+        stage: bool = False,
     ) -> dict[str, Any]:
-        """Persist package-era citations without portable-import semantics."""
+        """Persist package-era citations without portable-import semantics.
+
+        ``stage`` only affects the recovery-mode fallback (the legacy JSON
+        store): with it, the record waits for one
+        :meth:`flush_rag_context_store` per import batch. The canonical
+        migration path ignores it entirely.
+        """
 
         normalized_citations = [dict(item) for item in citations or ()]
         migration = self.citation_legacy_migration
@@ -1414,6 +1516,7 @@ class ChatConversationService:
                 message_id,
                 rag_context=rag_context,
                 citations=normalized_citations,
+                stage=stage,
             )
         record = {
             "conversation_id": conversation_id,
@@ -1615,3 +1718,80 @@ class ChatConversationService:
                 # None, matching a snapshot taken a moment later.
                 continue
             node["image_data"] = image_row.get("image_data")
+
+
+# Definition-time consumed browser producers; no query/cache/authority state.
+_CONSOLE_BROWSER_SERVICE_SOURCE = (
+    globals(),
+    globals()["__file__"],
+    globals()["__spec__"],
+    getattr(globals()["__spec__"], "origin", None),
+    tuple(
+        (
+            ChatConversationService,
+            name,
+            inspect.getattr_static(ChatConversationService, name),
+        )
+        for name in (
+            "_fetch_keywords_for_conversations",
+            "_normalize_conversation_rows",
+            "get_conversation_keywords",
+            "list_conversations",
+            "__getattribute__",
+            "__dict__",
+        )
+    ),
+    tuple(
+        (name, globals()[name])
+        for name in (
+            "ChatConversationService",
+            "_clean_text",
+            "_normalize_state",
+            "_normalize_assistant_kind",
+            "_normalize_scope",
+            "_normalize_runtime_backend",
+            "_normalize_discovery_owner",
+            "_normalize_keywords",
+            "_row_assistant_name",
+            "derive_conversation_title",
+            "normalize_conversation_row",
+        )
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for function in tuple(
+            vars(ChatConversationService)[name]
+            for name in (
+                "_fetch_keywords_for_conversations",
+                "_normalize_conversation_rows",
+                "get_conversation_keywords",
+                "list_conversations",
+            )
+        )
+        + tuple(
+            globals()[name]
+            for name in (
+                "_clean_text",
+                "_normalize_state",
+                "_normalize_assistant_kind",
+                "_normalize_scope",
+                "_normalize_runtime_backend",
+                "_normalize_discovery_owner",
+                "_normalize_keywords",
+                "_row_assistant_name",
+                "derive_conversation_title",
+                "normalize_conversation_row",
+            )
+        )
+    ),
+)

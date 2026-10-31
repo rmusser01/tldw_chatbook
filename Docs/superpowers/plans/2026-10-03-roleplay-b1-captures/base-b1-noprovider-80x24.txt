@@ -1,0 +1,24 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                     │
+│  Blocked                                                                     │
+└──────────────────────────────────────────────────────────────────────────────┘
+Characters — who the AI plays · 28
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────┐
+│╭──────────────╮╭──────────────────────────────────────╮┌────────────────────┐│
+││  Library  <  ││      ▸ Try a test chat (nothing      ││  Inspector     >   ││
+││  Search...   ││ Character                            ││ Selected: Ada      ││
+││     New      ││  Name: Ada (Debugging Partner)       ││ (Debugging         ││
+││     New      ││                                      ││ Partner)         ▄ ││
+││    Import    ││  Description: A patient senior       ││ Type: character    ││
+││    Import    ││  engineer who helps you debug by  ▇  ││ Validation: OK     ││
+││    Duplic    ││  asking questions rather than        ││ Conversations (0)  ││
+││    Sort:     ││  giving answers.                   ▂ ││   Search this      ││
+││     Tag:     ││  Personality: Socratic, calm,        ││  No saved          ││
+││  Ada (Deb…   ││  precise.                            ││  conversations.    ││
+│╰──────────────╯╰──────────────────────────────────────╯└────────────────────┘│
+└──────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | F1 · F6 · Ctrl+P · Ctrl+Q

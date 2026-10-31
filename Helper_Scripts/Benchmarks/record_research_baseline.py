@@ -93,7 +93,9 @@ def _prime_local_llm_url(llm_endpoint: str, base_url: str) -> None:
     from tldw_chatbook.config import load_settings
 
     settings = load_settings()
-    provider_table = settings.setdefault("api_settings", {}).setdefault(llm_endpoint, {})
+    provider_table = settings.setdefault("api_settings", {}).setdefault(
+        llm_endpoint, {}
+    )
     provider_table["api_url"] = base_url
     # Local models are slow (big thinking models can take minutes for a full
     # report); the provider default timeout is tuned for quick chat turns.
@@ -202,7 +204,9 @@ async def _run_question(
     )
     final = await engine.execute_run(run["id"])
     if final.get("status") != "completed":
-        print(f"  [run failed: {final.get('status')} — {final.get('progress_message')}]")
+        print(
+            f"  [run failed: {final.get('status')} — {final.get('progress_message')}]"
+        )
         return None
     verification = service.get_artifact(run["id"], "verification_summary.json") or {}
     payload = verification.get("content") or {}
@@ -297,6 +301,7 @@ async def main_async(args: argparse.Namespace) -> int:
 
                 def paper_search_fn(query, _providers=providers):
                     return search_papers(query, providers=_providers)
+
                 print(f"academic lane: ON (providers: {', '.join(providers)})")
             else:
                 paper_search_fn = search_papers
@@ -309,7 +314,9 @@ async def main_async(args: argparse.Namespace) -> int:
 
         question_set_name = str(args.question_set)
         if not validate_text_input(question_set_name, max_length=100):
-            raise SystemExit(f"[args] invalid --question-set value: {question_set_name!r}")
+            raise SystemExit(
+                f"[args] invalid --question-set value: {question_set_name!r}"
+            )
         question_set = QUESTION_SETS[question_set_name]
         print(f"question set: {args.question_set}")
         payloads = []
@@ -328,7 +335,9 @@ async def main_async(args: argparse.Namespace) -> int:
                 cv = payload.get("citation_verification") or {}
                 gate = payload.get("gate") or {}
                 gate_note = (
-                    f" gate_pass={metrics['gate_pass_rate']:.2f}" if "gate_pass_rate" in metrics else ""
+                    f" gate_pass={metrics['gate_pass_rate']:.2f}"
+                    if "gate_pass_rate" in metrics
+                    else ""
                 )
                 fallback_note = " [GATE FALLBACK]" if gate.get("fallback") else ""
                 print(
@@ -360,7 +369,9 @@ async def main_async(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--questions", type=int, default=3, help="number of questions to run")
+    parser.add_argument(
+        "--questions", type=int, default=3, help="number of questions to run"
+    )
     parser.add_argument(
         "--question-set",
         default="default",
@@ -368,7 +379,10 @@ def main() -> int:
         help="named question set to run (default keeps the general-purpose set)",
     )
     parser.add_argument(
-        "--max-results", type=int, default=5, help="search results per query (spend bound)"
+        "--max-results",
+        type=int,
+        default=5,
+        help="search results per query (spend bound)",
     )
     parser.add_argument(
         "--max-queries",
@@ -409,7 +423,9 @@ def main() -> int:
             "models, which makes every summary fall back to source text)"
         ),
     )
-    parser.add_argument("--json-out", default=None, help="optional path for the aggregate JSON")
+    parser.add_argument(
+        "--json-out", default=None, help="optional path for the aggregate JSON"
+    )
     parser.add_argument(
         "--llm",
         default=None,

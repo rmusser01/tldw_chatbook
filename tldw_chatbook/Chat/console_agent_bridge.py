@@ -33,10 +33,15 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
     from tldw_chatbook.Agents.run_log_paging import RunLogPage, RunLogPageCursor
     from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, OwnedOperation, RuntimeCapacity
-    from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage
+    from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage, MessageIdentity
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
-    from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
+    from tldw_chatbook.Personal_Context.context_service import (
+        ProfileContextRequest,
+        ProfileContextSelectionExplanation,
+        ProfileContextService,
+        ProfileContextSnapshot,
+    )
     from tldw_chatbook.UI.Screens.change_review_screen import (
         AgentRunsChangeReviewProvider,
     )
@@ -238,7 +243,7 @@ from tldw_chatbook.config import (
 )
 
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB, _CHANGE_REVIEW_LIST_RUNS_SOURCE
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
 from tldw_chatbook.Workspaces.change_review_finalization import (
@@ -1539,8 +1544,10 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
         LOCAL_GATE_ERROR_REFUSAL,
         LOCAL_KILL_SWITCH_REFUSAL,
         LOCAL_ROOT_CHANGED_REFUSAL,
+        LOCAL_RUN_WORKTREE_RELEASED_REFUSAL,
         LOCAL_TIMEOUT_REFUSAL,
         LOCAL_USER_DENY_REFUSAL,
+        LOCAL_WORKER_FAILED_REFUSAL,
     )
     from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_DENY_REFUSAL
 
@@ -1568,6 +1575,8 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
         LOCAL_GATE_ERROR_REFUSAL: "blocked",
         LOCAL_ROOT_CHANGED_REFUSAL: "blocked",
         LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL: "blocked",
+        LOCAL_WORKER_FAILED_REFUSAL: "blocked",
+        LOCAL_RUN_WORKTREE_RELEASED_REFUSAL: "blocked",
         MCP_UNRESOLVED_REFUSAL: "blocked",
         MCP_TIMEOUT_REFUSAL: "blocked",
     })
@@ -1948,6 +1957,8 @@ class SubAgentSummary:
         created_at: Saved run start timestamp, absent on live summaries.
         updated_at: Saved last-update timestamp; only an approximate end.
         detail: Bounded saved result or last meaningful step for this child.
+        resolved_provider: Frozen provider selection, absent for legacy runs.
+        resolved_model: Frozen model selection, absent for legacy runs.
     """
 
     text: str
@@ -1958,6 +1969,8 @@ class SubAgentSummary:
     created_at: str | None = None
     updated_at: str | None = None
     detail: str = ""
+    resolved_provider: str | None = None
+    resolved_model: str | None = None
 
 
 def _subagent_summaries_from_fleet(
@@ -1975,7 +1988,8 @@ def _subagent_summaries_from_fleet(
     included), only its private ``_live_ids`` liveness set shrinks on
     ``finish``. So once non-empty for a run, it stays the source for the
     rest of that run, and every child's real status/run_id/handle_id is
-    always current.
+    always current. Inline fallback rows receive the frozen target when
+    their child enters its model scope.
 
     ``handles`` non-empty means AT LEAST ONE handle has been reserved for
     this run -- and once that is true, ``handles`` is used EXCLUSIVELY;
@@ -2042,6 +2056,8 @@ def _subagent_summaries_from_fleet(
                 status=h.status,
                 run_id=h.run_id or "",
                 handle_id=h.handle_id,
+                resolved_provider=h.resolved_provider,
+                resolved_model=h.resolved_model,
             )
             for h in handles
         )
@@ -2478,8 +2494,14 @@ class _ModelCallLifeline:
                     await asyncio.gather(*pending, return_exceptions=True)
                 await self.loop.shutdown_asyncgens()
             finally:
-                if self._close_current_loop is not None:
-                    await self._close_current_loop()
+                try:
+                    if self._close_current_loop is not None:
+                        await self._close_current_loop()
+                finally:
+                    # A cancelled to_thread leaves its worker running (the
+                    # generic transport's chat_api_call): the model operation
+                    # stays owned until it returns, as ADR-134 requires.
+                    await self.loop.shutdown_default_executor()
         except BaseException:  # noqa: BLE001 -- cleanup cannot replace the run result
             logger.warning("model-call loop cleanup failed")
         finally:
@@ -2961,7 +2983,18 @@ class ConsoleAgentTraceRequestFactory:
             descriptor: TraceProvenance | None = None
             for index in range(search_from, len(base_rows)):
                 candidate = base_descriptors[index]
-                if base_rows[index] == frozen_message and _agent_can_reuse_descriptor(
+                base_message = base_rows[index]
+                if (
+                    base_message.get("role") == "assistant"
+                    and "_tldw_thinking_owner" in base_message
+                    and "_tldw_call_thinking_owner" not in base_message
+                ):
+                    # Agent transport renames this marker; its owner stays exact.
+                    base_message = dict(base_message)
+                    base_message["_tldw_call_thinking_owner"] = base_message.pop(
+                        "_tldw_thinking_owner"
+                    )
+                if base_message == frozen_message and _agent_can_reuse_descriptor(
                     candidate,
                     message,
                 ):
@@ -3113,6 +3146,9 @@ class _StreamingModelAdapter:
     chunk is always accounted for, while still stopping the stream promptly
     (no more chunks are pulled once cancellation is observed) and letting the
     loop's own boundary check catch the cancellation on the next poll.
+    While NO chunk arrives it is also polled on a timer (TASK-33666; see
+    ``watch_content_stalls``), so a Stop ends the wait on a silent provider.
+    That poll runs only between chunks, so it never drops a received one.
 
     ``chat_call`` bridges into async gateway code via the single event
     ``loop`` passed in at construction — created once by
@@ -3423,6 +3459,7 @@ class _StreamingModelAdapter:
             if per_call_kwargs.get(kwarg) is not None
         }
         api_base_url = per_call_kwargs.pop("api_base_url", None)
+        execution_provider = str(per_call_kwargs.pop("execution_provider", "") or "")
         # Any keys still in per_call_kwargs stay ignored, exactly as before.
         # Same-target decision keys on the parent's RAW selection identity,
         # not the flattened execution key: a child explicitly routed to the
@@ -3467,7 +3504,10 @@ class _StreamingModelAdapter:
             and requested_endpoint
             not in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
         )
-        rerouted = bool(requested_endpoint) and not same_target
+        rerouted = bool(requested_endpoint) and (
+            not same_target
+            or bool(execution_provider and execution_provider != parent_execution_key)
+        )
 
         transport_messages = _serialize_project_instruction_rows_for_transport(
             messages_payload, native_tools=self._native_tools
@@ -3584,6 +3624,7 @@ class _StreamingModelAdapter:
             )
         gate = StreamGate()
         any_streamed = False
+        received_item = False
         native_calls: list[dict] = []
         terminal_metadata: ProviderTurnMetadata | None = None
         call_signals: ConsoleProviderCallSignals | None = None
@@ -3601,6 +3642,7 @@ class _StreamingModelAdapter:
         @agent_async_worker_guard(self)
         async def _consume() -> None:
             nonlocal any_streamed, terminal_metadata, effective_resolution, live_provider_usage_enabled
+            nonlocal received_item
             if rerouted:
                 # Task 6B: the child names a provider other than the
                 # parent's -- re-resolve through the gateway's send seam
@@ -3611,6 +3653,7 @@ class _StreamingModelAdapter:
                     model=model,
                     api_base_url=api_base_url,
                     sampling_overlays=sampling_overlays,
+                    execution_provider=execution_provider,
                 )
             # Forwarding `tools=` only when it is non-None (rather than
             # always passing the keyword, even as None) keeps every
@@ -3636,10 +3679,23 @@ class _StreamingModelAdapter:
                     owner_id = row.get(self._continuation_owner_key)
                     if type(owner_id) is str and owner_id in owner_ids:
                         row[CONTINUATION_OWNER_KEY] = owner_id
+                    # The pop drops the run's TEMPORARY owner key after its
+                    # value has been copied onto the canonical key. When the
+                    # run already uses the canonical key itself (the
+                    # default, e.g. an auto-derived native continuation),
+                    # popping would delete the marker the line above just
+                    # wrote, and every later continuation request would die
+                    # at build_console_request with "Every continuation
+                    # group must attach to one request owner" (TASK-19642.7,
+                    # red for the Kimi/Z.ai tool-error continuation since
+                    # 798d9c28bf).
                     if (
-                        is_subagent
-                        or not self._thinking_sidecar
-                        or self._thinking_owner_key != self._continuation_owner_key
+                        self._continuation_owner_key != CONTINUATION_OWNER_KEY
+                        and (
+                            is_subagent
+                            or not self._thinking_sidecar
+                            or self._thinking_owner_key != self._continuation_owner_key
+                        )
                     ):
                         row.pop(self._continuation_owner_key, None)
                     rewritten_messages.append(row)
@@ -3734,9 +3790,11 @@ class _StreamingModelAdapter:
                 ),
             )
             from tldw_chatbook.Chat.stream_stall_watchdog import (
+                first_token_timeout_seconds,
                 watch_content_stalls,
             )
 
+            stall_timeout = _stall_timeout_seconds()
             async for chunk in watch_content_stalls(
                 self._gateway.stream_chat(
                     effective_resolution,
@@ -3747,9 +3805,22 @@ class _StreamingModelAdapter:
                     capture_mode=self._capture_mode,
                     **stream_kwargs,
                 ),
-                _stall_timeout_seconds(),
+                stall_timeout,
                 provider=effective_resolution.provider,
+                # TASK-34100.5 AC#5: a cold local model's first token waits
+                # longer than the gap between tokens.
+                first_item_timeout_seconds=first_token_timeout_seconds(
+                    effective_resolution.provider, stall_timeout=stall_timeout
+                ),
+                # TASK-33666: the cuts below are only reached when a chunk
+                # arrives. A provider that accepted the request and sends
+                # nothing would hold this run's thread for the whole window
+                # after a Stop, and the app's exit joins that thread. The
+                # plain cancel, not stream_cut: a redirect is not a cancel
+                # and still waits for the next chunk (TASK-28227).
+                should_stop=self._should_cancel,
             ):
+                received_item = True
                 synthetic = emission_synthetic is True
                 emission_synthetic = None
                 if terminal_metadata is not None:
@@ -3914,8 +3985,11 @@ class _StreamingModelAdapter:
                 repeated,
             )
             raise
-        # A productive turn clears this session's stall streak (AC#4).
-        reset_session_stalls(_stall_session_id, self._resolution.provider)
+        # A productive turn clears this session's stall streak (AC#4). A
+        # stream the stop poll ended before anything arrived is not one
+        # (TASK-33666): the same Stop used to run out the window as a stall.
+        if received_item:
+            reset_session_stalls(_stall_session_id, self._resolution.provider)
         _visible, tool_call = gate.result()
         if tool_call is not None and not native_calls and not is_subagent:
             self._thinking_capture.observe_tool()
@@ -4018,6 +4092,7 @@ class _StreamingModelAdapter:
         model: str | None,
         api_base_url: str | None,
         sampling_overlays: Mapping[str, Any],
+        execution_provider: str = "",
     ) -> ConsoleProviderResolution:
         """Re-resolve a per-call provider target through the gateway's send seam.
 
@@ -4025,7 +4100,8 @@ class _StreamingModelAdapter:
         ``resolve_for_send`` is async (the direct-llama path probes
         reachability). The seam is custom-ep aware per ADR-146, so a
         ``custom-ep:<slug>`` id resolves through its registry entry's family
-        and credential. Re-resolving per call -- never caching -- matches
+        and credential. A routed run can pin its execution family separately.
+        Re-resolving per call -- never caching -- matches
         Console's per-send discipline: a credential or readiness change
         between turns takes effect on the very next call.
 
@@ -4034,6 +4110,7 @@ class _StreamingModelAdapter:
             model: Per-call model, or None to fall back to the provider's
                 configured default.
             api_base_url: Per-call endpoint override, or None.
+            execution_provider: Internal frozen execution family for routed runs.
             sampling_overlays: Provided sampling values keyed by
                 ``ConsoleProviderSelection`` field name.
 
@@ -4058,6 +4135,7 @@ class _StreamingModelAdapter:
                 provider=provider,
                 base_url=str(api_base_url) if api_base_url else None,
                 base_url_is_pinned=bool(api_base_url),
+                execution_provider=execution_provider,
                 explicit_model=str(model) if model else None,
                 **sampling_overlays,
             )
@@ -4462,6 +4540,7 @@ def _compose_run_registry_and_allowed(
     profile_provider: Any | None = None,
     canvas_provider: Any | None = None,
     canvas_authority: Any | None = None,
+    preview_canvas_profile_snapshot: Any | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -4588,6 +4667,10 @@ def _compose_run_registry_and_allowed(
         canvas_provider, canvas_authority
     ):
         canvas_names = tuple(entry.name for entry in canvas_provider.list_catalog())
+    elif canvas_provider is None and preview_canvas_profile_snapshot is not None:
+        from tldw_chatbook.Agents.canvas_tool_provider import build_canvas_tool_catalog
+
+        canvas_names = tuple(entry.name for entry in build_canvas_tool_catalog())
     local_names: tuple[str, ...] = ()
     if local_provider is not None:
         registry.register_provider(local_provider)
@@ -4751,9 +4834,11 @@ def _console_first_request_runtime_context(
     db: Any, budget: RunBudget
 ) -> tuple[tuple[AgentDefinition, ...], int]:
     """Return the exact named-agent roster and fleet gate for one turn."""
-    definitions = tuple(
-        definition_from_row(row) for row in db.list_agent_definitions(enabled_only=True)
-    )
+    with operation_owned_connection(db):
+        definitions = tuple(
+            definition_from_row(row)
+            for row in db.list_agent_definitions(enabled_only=True)
+        )
     max_live = agent_service_module._coerce_max_live_subagents(
         agent_service_module._setting(
             agent_service_module.MAX_LIVE_SUBAGENTS_KEY,
@@ -4761,6 +4846,65 @@ def _console_first_request_runtime_context(
         )
     )
     return definitions, max_live if budget.max_subagents > 0 else 1
+
+
+def _advertised_path_root_aliases(
+    allowed_tools: Sequence[str],
+    *,
+    local_provider: Any | None,
+    virtual_cli_provider: Any | None,
+) -> tuple[str, ...] | None:
+    """Return the root aliases the model's offered path tools accept.
+
+    TASK-33940.1: feeds ``workspace_context_note`` so it names folders by the
+    aliases the fs_*/git_*/virtual_cli schemas actually carry. A provider whose
+    tools were filtered out of the allow-list contributes nothing.
+
+    Returns:
+        The union of the advertised providers' aliases, ``()`` when no path
+        tool is offered, or ``None`` when only legacy alias-free providers are.
+    """
+    from tldw_chatbook.Agents.local_tool_provider import PATH_AUTHORITY_TOOL_NAMES
+    from tldw_chatbook.Agents.virtual_cli_provider import VIRTUAL_CLI_TOOL_NAME
+
+    offered = set(allowed_tools)
+    aliases: set[str] = set()
+    alias_free = False
+    for provider, names in (
+        (local_provider, PATH_AUTHORITY_TOOL_NAMES),
+        (virtual_cli_provider, frozenset({VIRTUAL_CLI_TOOL_NAME})),
+    ):
+        if provider is None or not offered & names:
+            continue
+        if provider is local_provider and "fs_search_index" in offered & names:
+            ordinary = (offered & names) - {"fs_search_index"}
+            if not ordinary:
+                aliases.update(provider.project_index_aliases())
+                continue
+        provider_aliases = provider.path_root_aliases()
+        if provider_aliases is None:
+            alias_free = True
+            continue
+        aliases.update(provider_aliases)
+    if alias_free and not aliases:
+        return None
+    return tuple(sorted(aliases))
+
+
+def _advertised_scratch_relative_tools(
+    allowed_tools: Sequence[str], builtin_names: Sequence[str]
+) -> tuple[str, ...]:
+    """Return offered built-ins whose relative paths resolve in scratch."""
+    from tldw_chatbook.Tools.file_operation_tools import SCRATCH_RELATIVE_PATH_TOOLS
+
+    builtins = set(builtin_names)
+    return tuple(
+        sorted(
+            name
+            for name in allowed_tools
+            if name in SCRATCH_RELATIVE_PATH_TOOLS and name in builtins
+        )
+    )
 
 
 def build_console_first_request_plan(
@@ -4807,6 +4951,7 @@ def build_console_first_request_plan(
     personal_context_snapshot: ProfileContextSnapshot | None = None,
     canvas_provider: Any | None = None,
     canvas_authority: Any | None = None,
+    preview_canvas_profile_snapshot: Any | None = None,
     progress_inbox_exists: bool = False,
 ) -> ConsoleFirstRequestPlan:
     """Build live/preview-identical first-request inputs without live effects.
@@ -4847,6 +4992,8 @@ def build_console_first_request_plan(
         persona_policy_rules: Optional persona rules applied to tool composition.
         profile_context_service: Optional profile snapshot builder for this turn.
         personal_context_snapshot: Optional prebuilt snapshot used verbatim.
+        preview_canvas_profile_snapshot: Immutable Canvas profile data for budgeting;
+            no Canvas provider is registered and no authority is issued.
 
     Returns:
         A frozen catalog, config, message, schema, and run-log plan shared by
@@ -4867,6 +5014,7 @@ def build_console_first_request_plan(
         or library_provider is not None
         or profile_provider is not None
         or canvas_provider is not None
+        or preview_canvas_profile_snapshot
         or scratch_root is not None
         or scratch_lease is not None
     )
@@ -4893,6 +5041,7 @@ def build_console_first_request_plan(
                 profile_provider=profile_provider,
                 canvas_provider=canvas_provider,
                 canvas_authority=canvas_authority,
+                preview_canvas_profile_snapshot=preview_canvas_profile_snapshot,
             )
         )
     else:
@@ -4944,11 +5093,6 @@ def build_console_first_request_plan(
         get_remote_binding_status_cache,
     )
 
-    workspace_note = workspace_context_note(
-        workspace_id,
-        binding_authority=workspace_binding_authority,
-        status_cache=get_remote_binding_status_cache(),
-    )
     response_reserve = (
         getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
     )
@@ -4958,13 +5102,10 @@ def build_console_first_request_plan(
     config = AgentConfig(
         model=resolved_model,
         system_prompt=direct_prompt,
-        # TASK-26002: so the loop can name the provider when it reports a
-        # provider-level fault (an empty-response run is otherwise
-        # indistinguishable from the agent deciding it was finished).
-        # Reuses `api_endpoint` above rather than re-deriving it -- that is the
-        # key the request is actually sent under, and it already carries the
-        # execution_key -> provider -> "agent" fallback.
-        provider=api_endpoint,
+        # Keep selection identity on model calls; api_endpoint remains the
+        # execution key used for capabilities and protocol preparation.
+        provider=selected_provider,
+        base_url=getattr(resolution, "base_url", None),
         fallback_providers=console_fallback_providers(),
         allowed_tools=allowed_tools,
         budget=(
@@ -4974,12 +5115,70 @@ def build_console_first_request_plan(
         ),
         native_tools=native_tools,
         reasoning_replay=getattr(resolution, "reasoning_replay", None),
-        workspace_context_note=workspace_note,
         response_reserve_tokens=response_reserve,
     )
+    catalog_entries = None
+    schema_loader = None
+    if preview_canvas_profile_snapshot is not None:
+        if canvas_provider is not None:
+            raise ValueError("Canvas preview cannot accompany a live provider")
+        from tldw_chatbook.Agents.canvas_tool_provider import (
+            build_canvas_tool_catalog,
+            load_canvas_tool_schema,
+        )
+
+        entries = registry.list_catalog()
+        canvas_entries = build_canvas_tool_catalog()
+        canvas_ids = frozenset(entry.id for entry in canvas_entries)
+        # Match live order, retaining metadata for discovery without eagerly
+        # loading denied, oversized or unreadable schemas.
+        catalog_entries = (
+            *(entry for entry in entries if entry.source == "builtin"),
+            *canvas_entries,
+            *(entry for entry in entries if entry.source != "builtin"),
+        )
+
+        def schema_loader(tool_id: str) -> ToolSchema:
+            if tool_id in canvas_ids:
+                return load_canvas_tool_schema(tool_id, preview_canvas_profile_snapshot)
+            return registry.load_schema(tool_id)
+    from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+
+    automatic = current_automatic_work()
+    if automatic is not None and automatic.goal is not None:
+        config = automatic.goal.narrow_config(
+            config, registry, catalog_entries=catalog_entries
+        )
+        allowed_tools = config.allowed_tools
+    # Describe only the final offered capabilities, including Goal scope
+    # narrowing, before schema/request construction consumes the note.
+    workspace_note = workspace_context_note(
+        workspace_id,
+        binding_authority=workspace_binding_authority,
+        status_cache=get_remote_binding_status_cache(),
+        path_tool_aliases=_advertised_path_root_aliases(
+            allowed_tools,
+            local_provider=local_provider,
+            virtual_cli_provider=virtual_cli_provider,
+        ),
+        workspace_read_tools=set(allowed_tools)
+        & {"fs_list", "fs_glob", "fs_grep", "fs_read", "fs_search_index"},
+        project_index_aliases=(
+            local_provider.project_index_aliases()
+            if local_provider is not None and "fs_search_index" in allowed_tools
+            else ()
+        ),
+        scratch_relative_tools=_advertised_scratch_relative_tools(
+            allowed_tools, builtin_names
+        ),
+    )
+    config = dataclass_replace(config, workspace_context_note=workspace_note)
     messages = agent_messages
     if turn_bundle_block:
         messages, _ = _append_to_last_user_message(agent_messages, turn_bundle_block)
+    # Lazy (ADR-097 UI-ready census): only a send plans its first request.
+    from tldw_chatbook.Agents.first_request_window import PLAIN_CHAT_SYSTEM_PROMPT
+
     schemas = build_first_request_schema_plan(
         registry,
         allowed_tools,
@@ -5004,6 +5203,14 @@ def build_console_first_request_plan(
         fleet_max_live=fleet_max_live,
         direct_system_prompt=direct_prompt,
         discovery_system_prompt=discovery_prompt,
+        # TASK-34100.5 AC#6: the same window the send preflight used, and a
+        # tool-less request carries only the session's own prompt (or a
+        # neutral one-liner, never the tool-protocol prompt: V2-F2).
+        context_window=getattr(resolution, "context_window", None),
+        plain_system_prompt=(session_system_prompt or "").strip()
+        or PLAIN_CHAT_SYSTEM_PROMPT,
+        catalog_entries=catalog_entries,
+        schema_loader=schema_loader,
     )
     config = dataclass_replace(config, system_prompt=schemas.system_prompt)
     profile_workspace_id = (
@@ -5290,7 +5497,15 @@ class ConsoleAgentBridge:
     ) -> None:
         self._message_store = message_store
         self._progress_closed = False
+        self._progress_shutdown_task: asyncio.Task[None] | None = None
+        self._progress_close_drains: dict[
+            str, tuple[MessageStore, str, MessageInbox | None]
+        ] = {}
         self._message_store_lock = threading.RLock()
+        self._progress_consumer_lock = threading.Lock()
+        self._progress_consumers: dict[str, Callable[[str, str, MessageIdentity], None]] = {}
+        if message_store is not None:
+            message_store.on_enqueue = self._on_progress_enqueue
         self._runtime_capacity = runtime_capacity
         self._runtime_capacity_factory = runtime_capacity_factory
         self._runtime_capacity_lock = threading.RLock()
@@ -5610,11 +5825,11 @@ class ConsoleAgentBridge:
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
         skills_context: Mapping[str, Any] | None = None,
+        fork_chat_enabled: bool = False,
+        new_chat_enabled: bool = False,
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
         worktree_merge_enabled: bool = False,
-        fork_chat_enabled: bool = False,
-        new_chat_enabled: bool = False,
         persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
         profile_context_service: Any | None = None,
         profile_provider: Any | None = None,
@@ -5714,6 +5929,7 @@ class ConsoleAgentBridge:
             runtime_schemas=list(plan.schemas.runtime_schemas),
             messages=list(plan.messages),
             active_schemas=plan.schemas.active_schemas,
+            input_budget_tokens=plan.schemas.schema_input_budget_tokens,
             log_active=False,
         )
         payload: dict[str, Any] = {
@@ -5742,18 +5958,42 @@ class ConsoleAgentBridge:
         library_provider: Any | None = None,
         library_authority: Any | None = None,
         profile_provider: Any | None = None,
+        canvas_profile_snapshot: Any | None = None,
         scratch_root: Path | None = None,
         scratch_lease: Callable[[], ContextManager[Path]] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
+        fork_chat_enabled: bool = False,
+        new_chat_enabled: bool = False,
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
         worktree_merge_enabled: bool = False,
-        fork_chat_enabled: bool = False,
-        new_chat_enabled: bool = False,
+        persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
         profile_context_service: Any | None = None,
+        selection_sink: Callable[
+            [ProfileContextService, ProfileContextRequest, ProfileContextSelectionExplanation],
+            None,
+        ] | None = None,
     ) -> ProfileContextSnapshot:
         """Build the exact reserved profile snapshot for disposable Next Send."""
+
+        if selection_sink is not None and profile_context_service is not None:
+            source = profile_context_service
+
+            class _PreviewSelectionBuilder:
+                def build_snapshot(self, request: ProfileContextRequest) -> ProfileContextSnapshot:
+                    explain = getattr(source, "build_explained_snapshot", None)
+                    if not callable(explain):
+                        return source.build_snapshot(request)
+                    result = explain(request)
+                    if result.explanation is not None:
+                        try:
+                            selection_sink(source, request, result.explanation)
+                        except Exception:  # noqa: BLE001, S110 - inspection cannot change the model block.
+                            pass
+                    return result.snapshot
+
+            profile_context_service = _PreviewSelectionBuilder()
 
         context: Mapping[str, Any] = {}
         if self._skills_service is not None:
@@ -5785,6 +6025,7 @@ class ConsoleAgentBridge:
             library_provider=library_provider,
             library_authority=library_authority,
             profile_provider=profile_provider,
+            preview_canvas_profile_snapshot=canvas_profile_snapshot,
             workspace_id=workspace_id,
             ephemeral=ephemeral,
             diff_sink=None,
@@ -5807,6 +6048,7 @@ class ConsoleAgentBridge:
             agent_definitions=runtime_definitions,
             fleet_max_live=fleet_max_live,
             run_budget=run_budget,
+            persona_policy_rules=persona_policy_rules,
             profile_context_service=profile_context_service,
             progress_inbox_exists=(
                 session_id is not None
@@ -5860,6 +6102,7 @@ class ConsoleAgentBridge:
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
         request_chat_create_confirm: Callable[[dict], dict] | None = None,
         execute_agent_chat_create: Callable[[dict], dict] | None = None,
+        prepare_agent_chat_create: Callable[[dict], dict] | None = None,
         # TASK-28238 phase 2 Task 6: forwarded straight to
         # `AgentService.run_turn(request_worktree_merge_confirm=...)` --
         # unlike `request_skill_script_confirm` above, this is never
@@ -5924,6 +6167,9 @@ class ConsoleAgentBridge:
         persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
         profile_context_service: Any | None = None,
         personal_context_snapshot: ProfileContextSnapshot | None = None,
+        accepted_turn_id: str | None = None,
+        parent_budget_deadline: float | None = None,
+        on_primary_budget_settled: Callable[[RunBudget | bool], None] | None = None,
     ) -> tuple[str, RunOutcome]:
         replay = getattr(resolution, "reasoning_replay", None)
         if replay is not None and thinking_policy in {"include", "exclude"}:
@@ -5955,6 +6201,8 @@ class ConsoleAgentBridge:
             generation_token = self._store.begin_generation_attempt(
                 assistant_message_id
             )
+        # SQLite preparation must finish outside the native identity scope.
+        self._store.prepare_progress_inbox(session_id, message_store=self.message_store)
         # Capture before setup can yield to native close/state replacement.
         # Reusing a native ID must not let this delayed run bind its successor.
         with self._store.progress_owner_scope(
@@ -6217,6 +6465,7 @@ class ConsoleAgentBridge:
             fork_chat_tool, new_chat_tool = build_chat_create_tool_closures(
                 confirm=request_chat_create_confirm,
                 execute=execute_agent_chat_create,
+                prepare=prepare_agent_chat_create,
                 session_id=session_id,
                 run_id=assistant_message_id,
             )
@@ -6296,6 +6545,11 @@ class ConsoleAgentBridge:
         registry = first_request_plan.registry
         allowed_tools = first_request_plan.allowed_tools
         config = first_request_plan.config
+        from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+
+        automatic = current_automatic_work()
+        if automatic is not None and automatic.goal is not None:
+            config = automatic.goal.narrow_config(config, registry)
         project_instruction_context = None
         service_confirm_project_instruction_dispatch = (
             confirm_project_instruction_dispatch
@@ -6461,6 +6715,40 @@ class ConsoleAgentBridge:
         # -> asyncio.run(install) -> broad-catch wrap. import_skill_file
         # raises a bare ValueError("local_skill_exists:...") on collision, so
         # the install catch is broad.
+        def goal_tool_refusal(name: str) -> ToolResult | None:
+            from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+            from tldw_chatbook.Agents.automatic_work_runtime import (
+                current_automatic_work,
+            )
+
+            context = current_automatic_work()
+            if context is None or context.goal is None:
+                return None
+            try:
+                context.check()
+                if not context.goal.permits_runtime(name):
+                    raise AutomaticWorkRefused("goal_tool_scope")
+            except AutomaticWorkRefused as exc:
+                return ToolResult(
+                    ok=False,
+                    error=exc.reason,
+                    termination_reason=exc.termination_reason,
+                )
+            return None
+
+        from tldw_chatbook.Agents.agent_models import RunTerminationReason
+
+        def goal_tool_failure(message: str, reason: RunTerminationReason) -> ToolResult:
+            return ToolResult(
+                ok=False,
+                error=message,
+                termination_reason=(
+                    reason
+                    if automatic is not None and automatic.goal is not None
+                    else None
+                ),
+            )
+
         install_skill_tool = None
         if (
             self._skills_service is not None
@@ -6469,6 +6757,13 @@ class ConsoleAgentBridge:
             scope = self._skills_service
 
             def install_skill_tool(url: str) -> ToolResult:
+                from tldw_chatbook.Agents.automatic_work_budget import (
+                    AutomaticWorkRefused,
+                )
+
+                refusal = goal_tool_refusal("install_skill")
+                if refusal is not None:
+                    return refusal
                 from tldw_chatbook.Skills_Interop.skill_remote_fetch import (
                     classify_skill_source_url,
                     install_skill_from_url,
@@ -6478,13 +6773,19 @@ class ConsoleAgentBridge:
                 try:
                     scope.enforce_install_remote()
                 except PolicyDeniedError as exc:
-                    return ToolResult(ok=False, error=exc.user_message)
+                    return goal_tool_failure(
+                        exc.user_message, RunTerminationReason.PERMISSION_REFUSED
+                    )
                 except Exception as exc:  # noqa: BLE001
-                    return ToolResult(ok=False, error=str(exc))
+                    return goal_tool_failure(
+                        str(exc), RunTerminationReason.AUTHORITY_CHANGED
+                    )
                 try:
                     classify_skill_source_url(url)
                 except Exception as exc:  # noqa: BLE001 (RemoteSkillError etc.)
-                    return ToolResult(ok=False, error=str(exc))
+                    return goal_tool_failure(
+                        str(exc), RunTerminationReason.AUTHORITY_CHANGED
+                    )
                 try:
                     allowed = bool(
                         request_skill_install_confirm(url)
@@ -6494,8 +6795,9 @@ class ConsoleAgentBridge:
                 except Exception:  # noqa: BLE001 — a UI error fails closed
                     allowed = False
                 if not allowed:
-                    return ToolResult(
-                        ok=False, error="The user declined to install this skill."
+                    return goal_tool_failure(
+                        "The user declined to install this skill.",
+                        RunTerminationReason.PERMISSION_REFUSED,
                     )
                 try:
                     from tldw_chatbook.Agents.automatic_work_runtime import (
@@ -6505,11 +6807,22 @@ class ConsoleAgentBridge:
                     automatic_work = current_automatic_work()
                     if automatic_work is not None:
                         automatic_work.check()
+                    refusal = goal_tool_refusal("install_skill")
+                    if refusal is not None:
+                        return refusal
                     result = asyncio.run(
                         install_skill_from_url(url, scope_service=scope)
                     )
+                except AutomaticWorkRefused as exc:
+                    return goal_tool_failure(exc.reason, exc.termination_reason)
+                except PolicyDeniedError as exc:
+                    return goal_tool_failure(
+                        exc.user_message, RunTerminationReason.PERMISSION_REFUSED
+                    )
                 except Exception as exc:  # noqa: BLE001
-                    return ToolResult(ok=False, error=str(exc))
+                    return goal_tool_failure(
+                        str(exc), RunTerminationReason.UNKNOWN_EFFECT
+                    )
                 name = result.get("name", "") if isinstance(result, dict) else ""
                 return ToolResult(
                     ok=True,
@@ -6546,20 +6859,37 @@ class ConsoleAgentBridge:
             def run_skill_script_tool(
                 skill_name: str, script_path: str, args: list[str]
             ) -> ToolResult:
+                from tldw_chatbook.Agents.automatic_work_budget import (
+                    AutomaticWorkRefused,
+                )
+
+                refusal = goal_tool_refusal("run_skill_script")
+                if refusal is not None:
+                    return refusal
                 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+                from tldw_chatbook.Skills_Interop.skill_trust_models import (
+                    SkillTrustBlockedError,
+                )
 
                 try:
                     scope.enforce_run_script()
                 except PolicyDeniedError as exc:
-                    return ToolResult(ok=False, error=exc.user_message)
+                    return goal_tool_failure(
+                        exc.user_message, RunTerminationReason.PERMISSION_REFUSED
+                    )
                 except Exception as exc:  # noqa: BLE001
-                    return ToolResult(ok=False, error=str(exc))
+                    return goal_tool_failure(
+                        str(exc), RunTerminationReason.AUTHORITY_CHANGED
+                    )
                 try:
                     plan = asyncio.run(
                         scope.describe_skill_script(skill_name, script_path)
                     )
                 except Exception as exc:  # noqa: BLE001 (trust/path/type)
-                    return ToolResult(ok=False, error=f"run_skill_script: {exc}")
+                    return goal_tool_failure(
+                        f"run_skill_script: {exc}",
+                        RunTerminationReason.AUTHORITY_CHANGED,
+                    )
 
                 granted = False
                 if trust_service is not None:
@@ -6592,8 +6922,9 @@ class ConsoleAgentBridge:
                     if not isinstance(decision, Mapping):
                         decision = {"allow": False, "remember": False}
                     if not decision.get("allow", False):
-                        return ToolResult(
-                            ok=False, error="The user declined to run this script."
+                        return goal_tool_failure(
+                            "The user declined to run this script.",
+                            RunTerminationReason.PERMISSION_REFUSED,
                         )
                     if decision.get("remember", False) and trust_service is not None:
                         # Deliberate ordering: this persists the standing
@@ -6618,6 +6949,9 @@ class ConsoleAgentBridge:
                     automatic_work = current_automatic_work()
                     if automatic_work is not None:
                         automatic_work.check()
+                    refusal = goal_tool_refusal("run_skill_script")
+                    if refusal is not None:
+                        return refusal
                     if scratch_root is not None and scratch_lease is not None:
                         with scratch_lease():
                             outcome = asyncio.run(
@@ -6636,10 +6970,24 @@ class ConsoleAgentBridge:
                                 list(args),
                             )
                         )
+                except AutomaticWorkRefused as exc:
+                    return goal_tool_failure(exc.reason, exc.termination_reason)
+                except PolicyDeniedError as exc:
+                    return goal_tool_failure(
+                        exc.user_message, RunTerminationReason.PERMISSION_REFUSED
+                    )
+                except SkillTrustBlockedError:
+                    return goal_tool_failure(
+                        "Skill trust changed.", RunTerminationReason.AUTHORITY_CHANGED
+                    )
                 except Exception as exc:  # noqa: BLE001
-                    return ToolResult(ok=False, error=f"run_skill_script: {exc}")
+                    return goal_tool_failure(
+                        f"run_skill_script: {exc}", RunTerminationReason.UNKNOWN_EFFECT
+                    )
 
                 lines = [f"exit_code: {outcome.exit_code}"]
+                if outcome.goal_evidence_id:
+                    lines.append(f"goal_evidence_id: {outcome.goal_evidence_id}")
                 if outcome.timed_out:
                     lines.append("timed out — the script was killed")
                 if outcome.output_capped:
@@ -6673,7 +7021,15 @@ class ConsoleAgentBridge:
                         except ValueError:
                             display_output_dir = "private scratch output"
                     lines.append(f"output directory: {display_output_dir}")
-                return ToolResult(ok=True, content="\n".join(lines))
+                return ToolResult(
+                    ok=True,
+                    content="\n".join(lines),
+                    termination_reason=RunTerminationReason.UNKNOWN_EFFECT
+                    if automatic_work is not None
+                    and automatic_work.goal is not None
+                    and outcome.exit_code is None
+                    else None,
+                )
 
         # One event loop for the whole run (PR #629 Fix 1(c)): every turn
         # this run makes -- primary tool-call turns, any sub-agent turns,
@@ -6811,6 +7167,23 @@ class ConsoleAgentBridge:
                         activity_round_ordinal=planning.activity_round_ordinal,
                     )
             tool_activity.observe(step, planning_deriver.active_round_ordinal)
+
+        def on_resolved_target(run_id: str, provider: str, model: str) -> None:
+            for index, summary in enumerate(subagents):
+                if summary.run_id != run_id:
+                    continue
+                subagents[index] = dataclass_replace(
+                    summary, resolved_provider=provider, resolved_model=model
+                )
+                snapshot = self._live.get(conversation_id, {}).get(primary_live_key)
+                if snapshot is not None:
+                    self._publish_live(
+                        conversation_id,
+                        primary_live_key,
+                        dataclass_replace(snapshot, subagents=tuple(subagents)),
+                        primary=False,
+                    )
+                break
 
         def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
             if agent_kind == AGENT_KIND_PRIMARY and run_id:
@@ -7396,22 +7769,32 @@ class ConsoleAgentBridge:
             if on_redirect_ready is not None:
                 on_redirect_ready(redirect_fn)
 
+        create_fleet = bool(
+            first_request_plan.schemas.runtime_schemas
+            or first_request_plan.schemas.active_schemas
+        )
+        progress_store = self.message_store
+        self._store.prepare_progress_inbox(
+            session_id, message_store=progress_store, create_temporary=create_fleet
+        )
         with self._store.progress_owner_scope(
-            session_id, message_store=self.message_store
+            session_id, message_store=progress_store
         ) as progress_owner_id:
             if progress_owner_id != initial_progress_owner_id:
                 from tldw_chatbook.Agents.fleet_messages import MessageError
 
                 raise MessageError("unavailable")
+            message_inbox = progress_store.get_inbox(progress_owner_id)
+            if create_fleet and message_inbox is None:
+                from tldw_chatbook.Agents.fleet_messages import MessageError
+
+                raise MessageError("unavailable")
             fleet_coordinator = self._conversation_fleet_coordinator(
                 conversation_id,
-                create=bool(
-                    first_request_plan.schemas.runtime_schemas
-                    or first_request_plan.schemas.active_schemas
-                ),
+                create=create_fleet,
                 progress_owner_id=progress_owner_id,
+                message_inbox=message_inbox,
             )
-            message_inbox = self.message_store.get_inbox(progress_owner_id)
         plugin_root_id = ""
         plugin_producer_pin = None
 
@@ -7584,6 +7967,7 @@ class ConsoleAgentBridge:
             clock=self._clock,
             app_config=self._app_config,
             on_step=on_step,
+            on_resolved_target=on_resolved_target,
             on_tool_activity=on_tool_activity,
             # TASK-25903: hands the controller a steer(text) bound to THIS
             # run once its mailbox registers -- run ids are minted inside
@@ -7596,19 +7980,22 @@ class ConsoleAgentBridge:
             guard_tool_calls=guard_tool_calls,
             hooks_v2_engine=hooks_v2_engine,
             hooks_v2_session_id=session_id,
-            hooks_v2_turn_id=assistant_message_id,
+            hooks_v2_turn_id=accepted_turn_id or assistant_message_id,
+            on_primary_budget_settled=on_primary_budget_settled,
             # Standalone work has no plugin dependency graph.
             hooks_v2_required_handler_ids=lambda _run_id: (),
             hooks_v2_definition_requirements=(
-                lambda definition, messages: (
-                    hooks_v2_engine.native_plugins.requirements_for(
-                        definition, registry, messages
+                (
+                    lambda definition, messages: (
+                        hooks_v2_engine.native_plugins.requirements_for(
+                            definition, registry, messages
+                        )
                     )
                 )
-            )
-            if hooks_v2_engine is not None
-            and getattr(hooks_v2_engine, "native_plugins", None) is not None
-            else None,
+                if hooks_v2_engine is not None
+                and getattr(hooks_v2_engine, "native_plugins", None) is not None
+                else None
+            ),
             before_tool_dispatch=before_tool_dispatch,
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
@@ -7634,6 +8021,7 @@ class ConsoleAgentBridge:
                 adapter,
                 conversation_id,
                 primary_live_key,
+                inline_subagents=subagents if fleet_coordinator is None else None,
             ),
             managed_child_required=bool(plugin_entries),
             managed_child_resume=(
@@ -7736,6 +8124,17 @@ class ConsoleAgentBridge:
             # is False for a never-started thread, so the close branch is
             # the one taken and no fd leaks.
             turn_lifeline.start(owner=execution_owner)
+            if parent_budget_deadline is not None:
+                wall = parent_budget_deadline - time.monotonic()
+                if wall <= 0:
+                    raise RuntimeError("native_parent_budget_exhausted")
+                config = dataclass_replace(
+                    config,
+                    budget=dataclass_replace(
+                        config.budget,
+                        max_wall_seconds=min(config.budget.max_wall_seconds, wall),
+                    ),
+                )
             run_id, outcome = service.run_turn(
                 execution_owner=execution_owner,
                 conversation_id=conversation_id,
@@ -8115,15 +8514,9 @@ class ConsoleAgentBridge:
                 capture_update.envelope,
                 generation_token=generation_token,
             )
-        for step in outcome.steps:
-            logger.info(
-                "agent run step",
-                agent_kind=AGENT_KIND_PRIMARY,
-                step_kind=step.kind,
-                tool_name=step.tool_name,
-                summary=step.summary,
-                step_index=step.index,
-            )
+        from tldw_chatbook.Agents.tool_disclosure_diagnostics import log_agent_steps
+
+        log_agent_steps(outcome.steps, run_id)
         logger.info(
             "console agent bridge run_reply end",
             conversation_id=conversation_id,
@@ -8958,19 +9351,60 @@ class ConsoleAgentBridge:
 
     @property
     def message_store(self):
-        """Create the shared progress store only when execution needs it."""
+        """Create the shared progress store; publish loaded hints after initialization."""
+        from tldw_chatbook.Agents.fleet_messages import MessageError, MessageStore
+
+        created = False
         with self._message_store_lock:
             if self._progress_closed:
-                from tldw_chatbook.Agents.fleet_messages import MessageError
-
                 raise MessageError("unavailable")
             if self._message_store is None:
-                from tldw_chatbook.Agents.fleet_messages import MessageStore
-
                 self._message_store = MessageStore()
+                self._message_store.on_enqueue = self._on_progress_enqueue
+                # Revocation may race construction; assignment precedes this
+                # check so close can always deny this exact newly created store.
+                if self._progress_closed:
+                    self._message_store.begin_close()
+                    raise MessageError("unavailable")
                 if self._store is not None:
-                    self._store.register_progress_message_store(self._message_store)
-            return self._message_store
+                    self._store.register_progress_message_store(
+                        self._message_store, publish_hints=False
+                    )
+                created = True
+            message_store = self._message_store
+            if self._progress_closed:
+                message_store.begin_close()
+                raise MessageError("unavailable")
+        if created and self._store is not None:
+            for session_id in self._store.progress_owner_ids():
+                if self._progress_closed or self._message_store is not message_store:
+                    break
+                self._store.publish_progress_inbox_hints(
+                    session_id, message_store=message_store
+                )
+        return message_store
+
+    def on_progress_enqueued(
+        self, name: str, consumer: Callable[[str, str, MessageIdentity], None]
+    ) -> None:
+        """Register body-free committed-report hints; callbacks grant no authority."""
+        with self._progress_consumer_lock:
+            self._progress_consumers[name] = consumer
+
+    def _on_progress_enqueue(
+        self, owner_key: str, message_id: str, identity: MessageIdentity
+    ) -> None:
+        """Publish only after queue admission/commit, outside queue and owner locks."""
+        with self._progress_consumer_lock:
+            consumers = tuple(self._progress_consumers.values())
+        for consumer in consumers:
+            try:
+                consumer(owner_key, message_id, identity)
+            except Exception as exc:  # noqa: BLE001 -- one hint cannot block another
+                logger.warning(
+                    "progress hint consumer raised (exception_type={})",
+                    type(exc).__name__,
+                )
 
     def _session_progress_inbox(self, session_id: str) -> MessageInbox | None:
         """Noncreating lookup of the native session's exact progress owner."""
@@ -8982,6 +9416,20 @@ class ConsoleAgentBridge:
             return (
                 self._message_store.get_inbox(owner_id) if owner_id is not None else None
             )
+
+    def progress_pending_metadata(
+        self, session_id: str
+    ) -> tuple[tuple[str, MessageIdentity], ...]:
+        """Read current IDs/source metadata for a native session; never consume."""
+        inbox = self._session_progress_inbox(session_id)
+        if inbox is None:
+            return ()
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        try:
+            return inbox.pending_metadata()
+        except MessageError:
+            return ()
 
     def progress_snapshot(self, owner_id: str) -> tuple[ProgressMessage, ...]:
         """Inspect an opaque owner key from store.progress_owner_id; never allocate."""
@@ -9023,28 +9471,99 @@ class ConsoleAgentBridge:
     def close_progress(
         self, session_id: str, *, conversation_id: str | None = None
     ) -> None:
-        """Release a native binding before cancellation; last close drops progress."""
+        """Revoke a native binding; last close retains saved pending reports."""
         if self._progress_closed or self._message_store is None:
-            return None
+            return
         with self._store.progress_owner_scope(
             session_id, release=True, message_store=self._message_store
         ) as owner_id:
             if owner_id is not None:
                 self._fleet_coordinators.pop(conversation_id or session_id, None)
 
-    def close_all_progress(self) -> None:
-        """Permanently invalidate progress before worker shutdown."""
+    def begin_close_progress(
+        self, session_id: str, *, conversation_id: str | None = None
+    ) -> None:
+        """Immediately revoke native authority; leave physical cleanup to runtime."""
+        if self._progress_closed or self._message_store is None:
+            return
+        message_store = self._message_store
+        with self._store.progress_owner_scope(
+            session_id, release=True, message_store=message_store, defer_close=True
+        ) as owner_id:
+            if owner_id is not None:
+                inbox = message_store.begin_close_inbox(owner_id)
+                self._progress_close_drains[session_id] = (
+                    message_store, owner_id, inbox
+                )
+                self._fleet_coordinators.pop(conversation_id or session_id, None)
+
+    async def await_progress_closed(self, session_id: str) -> None:
+        """Own exact queue cleanup until admitted SQL physically releases its lock."""
+        record = self._progress_close_drains.get(session_id)
+        if record is None:
+            return
+        message_store, owner_id, inbox = record
+        physical = asyncio.create_task(
+            asyncio.to_thread(message_store.finish_close_inbox, owner_id, inbox),
+            name=f"console-progress-close-{session_id[:8]}",
+        )
+        cancelled = False
+        try:
+            while True:
+                try:
+                    await asyncio.shield(physical)
+                    break
+                except asyncio.CancelledError:
+                    cancelled = True
+        finally:
+            if self._progress_close_drains.get(session_id) is record:
+                self._progress_close_drains.pop(session_id, None)
+        if cancelled:
+            raise asyncio.CancelledError
+
+    def begin_close_all_progress(self) -> None:
+        """Immediately revoke all live authority without waiting for durable SQL."""
+        # This deny-only latch must never wait for initialization's SQL drain.
+        self._progress_closed = True
+        message_store = self._message_store
+        if message_store is not None:
+            message_store.begin_close()
         with self._runtime_capacity_lock:
             self._runtime_capacity_closed = True
-        with self._message_store_lock:
-            self._progress_closed = True
-            if self._message_store is not None:
-                self._message_store.close()
-            self._fleet_coordinators.clear()
+        self._fleet_coordinators.clear()
         with self._live_usage_lock:
             self._live_usage_closed = True
             self._live_turn_usage.clear()
             self._live_usage_owners.clear()
+
+    async def await_all_progress_closed(self) -> None:
+        """Retain physical queue cleanup through close timeout or cancellation."""
+        if self._progress_shutdown_task is None:
+            self._progress_shutdown_task = asyncio.create_task(
+                asyncio.to_thread(self._finish_close_all_progress),
+                name="console-progress-dispose",
+            )
+        cancelled = False
+        while True:
+            try:
+                await asyncio.shield(self._progress_shutdown_task)
+                break
+            except asyncio.CancelledError:
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
+
+    def _finish_close_all_progress(self) -> None:
+        """Wait away from the UI for initialization, then release exact queue state."""
+        with self._message_store_lock:
+            message_store = self._message_store
+        if message_store is not None:
+            message_store.close()
+
+    def close_all_progress(self) -> None:
+        """Synchronous compatibility cleanup outside runtime's async disposal."""
+        self.begin_close_all_progress()
+        self._finish_close_all_progress()
 
     def _conversation_fleet_coordinator(
         self,
@@ -9052,6 +9571,7 @@ class ConsoleAgentBridge:
         *,
         create: bool = True,
         progress_owner_id: str | None = None,
+        message_inbox: MessageInbox | None = None,
     ) -> FleetCoordinator | None:
         """The coordinator for this conversation, built on first use.
 
@@ -9127,13 +9647,26 @@ class ConsoleAgentBridge:
                 )
             )
         )
+        progress_store = self.message_store
+        if message_inbox is None:
+            message_inbox = progress_store.get_inbox(progress_owner_id or conversation_id)
+            if message_inbox is None and create:
+                # Production passes the exact native-prepared inbox; legacy
+                # direct callers also wait before taking fleet admission.
+                message_inbox = progress_store.open_inbox(
+                    progress_owner_id or conversation_id
+                )
         with self._fleet_admission_lock:
+            if self._progress_closed:
+                from tldw_chatbook.Agents.fleet_messages import MessageError
+
+                raise MessageError("unavailable")
             coordinator = self._fleet_coordinators.get(conversation_id)
             if (
                 coordinator is not None
                 and progress_owner_id is not None
                 and coordinator.message_inbox
-                is not self.message_store.get_inbox(progress_owner_id)
+                is not message_inbox
             ):
                 # Native state replacement closed the previous inbox. A new binding
                 # must not reuse a coordinator carrying that revoked capability.
@@ -9145,7 +9678,7 @@ class ConsoleAgentBridge:
                 coordinator = FleetCoordinator(
                     max_live=max_live,
                     clock=self._clock,
-                    message_inbox=self.message_store.open_inbox(progress_owner_id or conversation_id),
+                    message_inbox=message_inbox,
                     retained_transcripts=retained_transcripts,
                     retained_transcript_max_chars=retained_transcript_max_chars,
                     on_reserve=functools.partial(
@@ -9411,7 +9944,35 @@ class ConsoleAgentBridge:
         primary_live_key: str,
         run_id: str,
         agent_kind: str,
+        *,
+        inline_subagents: list[SubAgentSummary] | None = None,
     ):
+        snapshot = self._live.get(conversation_id, {}).get(primary_live_key)
+        if (
+            agent_kind == AGENT_KIND_SUBAGENT
+            and inline_subagents
+            and snapshot is not None
+            and snapshot.steps
+            and snapshot.steps[-1].kind == STEP_SPAWN
+        ):
+            # An inline child's model scope starts after its row is saved,
+            # before its first provider call. The primary's pending SPAWN
+            # identifies the latest fallback row; skill calls/refusals cannot
+            # reuse it after their parent step has advanced.
+            target = self._db.get_run_resolved_target(run_id)
+            if target is not None:
+                inline_subagents[-1] = dataclass_replace(
+                    inline_subagents[-1],
+                    run_id=run_id,
+                    resolved_provider=target["provider"],
+                    resolved_model=target["model"],
+                )
+                self._publish_live(
+                    conversation_id,
+                    primary_live_key,
+                    dataclass_replace(snapshot, subagents=tuple(inline_subagents)),
+                    primary=False,
+                )
         owner = (conversation_id, agent_kind, primary_live_key)
         with self._live_usage_lock:
             registered = not self._live_usage_closed
@@ -9839,7 +10400,8 @@ class ConsoleAgentBridge:
         cached = self._historical_cache.get(conversation_id)
         if cached is not None:
             return cached
-        snapshot = self._derive_historical_snapshot(conversation_id)
+        with operation_owned_connection(self._db):
+            snapshot = self._derive_historical_snapshot(conversation_id)
         self._historical_cache[conversation_id] = snapshot
         return snapshot
 
@@ -9990,9 +10552,10 @@ class ConsoleAgentBridge:
             rather than a lookup error); its ``parent_run_id`` when it is
             a recorded sub-agent run.
         """
-        record = self._db.get_run_metadata(run_id)
-        parent_run_id = record.get("parent_run_id") if record else None
-        return parent_run_id or run_id
+        with operation_owned_connection(self._db):
+            record = self._db.get_run_metadata(run_id)
+            parent_run_id = record.get("parent_run_id") if record else None
+            return parent_run_id or run_id
 
     def run_log_available(
         self, run_id: str, *, cancelled: Callable[[], bool] | None = None
@@ -10281,27 +10844,10 @@ class ConsoleAgentBridge:
         self, conversation_id: str
     ) -> list[tuple[str | None, list[ConsoleChatMessage]]]:
         """Return anchored blocks containing only durable Change Review rows."""
-        records = [
-            record
-            for record in self._db.list_runs(conversation_id, include_superseded=False)
-            if record["agent_kind"] == AGENT_KIND_PRIMARY
-        ]
-        records.reverse()
-        snapshots: dict[str, list[dict]] = {}
-        try:
-            for row in self._db.change_snapshots_for_conversation(conversation_id):
-                snapshots.setdefault(str(row["run_id"]), []).append(row)
-        except Exception:  # noqa: BLE001 -- transcript refresh must degrade safely
-            snapshots = {}
-        return [
-            (
-                record.get("assistant_message_id"),
-                self._change_review_marker_block(
-                    record, snapshots.get(str(record.get("id")), ())
-                ),
+        with operation_owned_connection(self._db):
+            return _read_change_review_markers(
+                self._db, conversation_id, self._change_review_marker_block
             )
-            for record in records
-        ]
 
     def resume_marker_messages(
         self,
@@ -10360,162 +10906,163 @@ class ConsoleAgentBridge:
         Placement of the returned blocks into a transcript is the caller's
         job -- see ``inject_resume_agent_markers``.
         """
-        records = self._db.list_runs(
-            conversation_id,
-            include_superseded=False,
-            agent_kind=AGENT_KIND_PRIMARY,
-        )
-        records.reverse()  # list_runs is newest-first; markers must read chronologically
-        thinking_rounds_by_owner = thinking_round_ordinals_by_assistant_message_id or {}
-        # TASK-1972 review round: ONE conversation-level query, grouped in
-        # memory -- the per-run lookup was an N+1 over sqlite on every
-        # resume (finding 3).
-        snap_by_run: dict[str, list[dict]] = {}
-        try:
-            for _row in self._db.change_snapshots_for_conversation(conversation_id):
-                snap_by_run.setdefault(str(_row["run_id"]), []).append(_row)
-        except Exception:  # noqa: BLE001 -- resume must not die on this
-            snap_by_run = {}
-        # task-6 fix round (CRITICAL C1): ONE batched, GUARDED query for
-        # the whole conversation -- same no-N+1 precedent as the snapshot
-        # fetch immediately above, and the same "resume must not die on
-        # this" posture: a change_notes read failure must degrade to no
-        # disclosure rows, not break conversation resume entirely.
-        #
-        # Grouped by (target_run_id, delivered_at) where target_run_id is
-        # `delivered_by_run_id` -- the run whose COMPLETION actually
-        # stamped the note delivered, matching live emission's placement
-        # exactly, and immune to both failure modes an earlier version of
-        # this method had: (a) one live batch spanning notes anchored to
-        # TWO different runs no longer fragments into two resume rows --
-        # it stays one row, keyed on the single delivering run; (b) a note
-        # annotated against a run that later became superseded (and so is
-        # excluded from `records`, silently dropping any block keyed to
-        # it) still surfaces, because the delivering run -- typically
-        # still live/non-superseded -- is what the row is keyed to, not
-        # the (possibly off-branch) annotated run.
-        #
-        # `delivered_by_run_id` is NULL on rows stamped before that column
-        # existed (a pre-migration DB) or by any future caller that omits
-        # it -- there is no way to recover which run delivered those, so
-        # they fall back to the note's OWN `run_id` (the annotated run):
-        # the same position this method used before the fix round, kept
-        # here only as the legacy floor, not the common path.
-        disclosure_batches: dict[str, dict[str, list[dict]]] = {}
-        try:
-            for _note in self._db.delivered_notes_for_conversation(conversation_id):
-                _target = _note.get("delivered_by_run_id") or _note.get("run_id")
-                _delivered_at = str(_note.get("delivered_at"))
-                disclosure_batches.setdefault(str(_target), {}).setdefault(
-                    _delivered_at, []
-                ).append(_note)
-        except Exception:  # noqa: BLE001 -- resume must not die on this
-            disclosure_batches = {}
-        blocks: list[tuple[str | None, list[ConsoleChatMessage]]] = []
-        for record in records:
-            block: list[ConsoleChatMessage] = []
-            steps = record.get("steps") or []
-            planning_deriver = _PendingPrimaryPlanningDeriver()
-            actual_thinking_rounds = thinking_rounds_by_owner.get(
-                str(record.get("assistant_message_id") or ""),
-                frozenset(),
+        with operation_owned_connection(self._db):
+            records = self._db.list_runs(
+                conversation_id,
+                include_superseded=False,
+                agent_kind=AGENT_KIND_PRIMARY,
             )
-            for step in steps:
-                kind = str(step.get("kind") or "")
-                planning_marker = planning_deriver.observe(
-                    step,
-                    AGENT_KIND_PRIMARY,
-                    actual_thinking_round_ordinals=actual_thinking_rounds,
+            records.reverse()  # list_runs is newest-first; markers must read chronologically
+            thinking_rounds_by_owner = thinking_round_ordinals_by_assistant_message_id or {}
+            # TASK-1972 review round: ONE conversation-level query, grouped in
+            # memory -- the per-run lookup was an N+1 over sqlite on every
+            # resume (finding 3).
+            snap_by_run: dict[str, list[dict]] = {}
+            try:
+                for _row in self._db.change_snapshots_for_conversation(conversation_id):
+                    snap_by_run.setdefault(str(_row["run_id"]), []).append(_row)
+            except Exception:  # noqa: BLE001 -- resume must not die on this
+                snap_by_run = {}
+            # task-6 fix round (CRITICAL C1): ONE batched, GUARDED query for
+            # the whole conversation -- same no-N+1 precedent as the snapshot
+            # fetch immediately above, and the same "resume must not die on
+            # this" posture: a change_notes read failure must degrade to no
+            # disclosure rows, not break conversation resume entirely.
+            #
+            # Grouped by (target_run_id, delivered_at) where target_run_id is
+            # `delivered_by_run_id` -- the run whose COMPLETION actually
+            # stamped the note delivered, matching live emission's placement
+            # exactly, and immune to both failure modes an earlier version of
+            # this method had: (a) one live batch spanning notes anchored to
+            # TWO different runs no longer fragments into two resume rows --
+            # it stays one row, keyed on the single delivering run; (b) a note
+            # annotated against a run that later became superseded (and so is
+            # excluded from `records`, silently dropping any block keyed to
+            # it) still surfaces, because the delivering run -- typically
+            # still live/non-superseded -- is what the row is keyed to, not
+            # the (possibly off-branch) annotated run.
+            #
+            # `delivered_by_run_id` is NULL on rows stamped before that column
+            # existed (a pre-migration DB) or by any future caller that omits
+            # it -- there is no way to recover which run delivered those, so
+            # they fall back to the note's OWN `run_id` (the annotated run):
+            # the same position this method used before the fix round, kept
+            # here only as the legacy floor, not the common path.
+            disclosure_batches: dict[str, dict[str, list[dict]]] = {}
+            try:
+                for _note in self._db.delivered_notes_for_conversation(conversation_id):
+                    _target = _note.get("delivered_by_run_id") or _note.get("run_id")
+                    _delivered_at = str(_note.get("delivered_at"))
+                    disclosure_batches.setdefault(str(_target), {}).setdefault(
+                        _delivered_at, []
+                    ).append(_note)
+            except Exception:  # noqa: BLE001 -- resume must not die on this
+                disclosure_batches = {}
+            blocks: list[tuple[str | None, list[ConsoleChatMessage]]] = []
+            for record in records:
+                block: list[ConsoleChatMessage] = []
+                steps = record.get("steps") or []
+                planning_deriver = _PendingPrimaryPlanningDeriver()
+                actual_thinking_rounds = thinking_rounds_by_owner.get(
+                    str(record.get("assistant_message_id") or ""),
+                    frozenset(),
                 )
-                if planning_marker is not None:
-                    block.append(planning_marker)
-                text = format_agent_step_marker(
-                    kind,
-                    tool_name=step.get("tool_name"),
-                    result=step.get("result"),
-                    summary=step.get("summary"),
-                )
-                if text is not None:
+                for step in steps:
+                    kind = str(step.get("kind") or "")
+                    planning_marker = planning_deriver.observe(
+                        step,
+                        AGENT_KIND_PRIMARY,
+                        actual_thinking_round_ordinals=actual_thinking_rounds,
+                    )
+                    if planning_marker is not None:
+                        block.append(planning_marker)
+                    text = format_agent_step_marker(
+                        kind,
+                        tool_name=step.get("tool_name"),
+                        result=step.get("result"),
+                        summary=step.get("summary"),
+                    )
+                    if text is not None:
+                        block.append(
+                            ConsoleChatMessage(
+                                role=ConsoleMessageRole.TOOL,
+                                content=text,
+                                status="complete",
+                                activity_presentation=build_step_activity_presentation(
+                                    str(step.get("kind") or ""),
+                                    tool_name=step.get("tool_name"),
+                                    result=step.get("result"),
+                                    tool_outcome=step.get("tool_outcome"),
+                                ),
+                                activity_round_ordinal=(
+                                    planning_deriver.active_round_ordinal
+                                ),
+                                # AC#5: a resumed marker is as expandable as a
+                                # live one -- the step rows carry the full result.
+                                tool_output_full=full_step_output(
+                                    str(step.get("kind") or ""),
+                                    result=step.get("result"),
+                                    summary=step.get("summary"),
+                                    marker_text=text,
+                                ),
+                            )
+                        )
+                snap_rows = snap_by_run.get(str(record.get("id")), [])
+                block.extend(self._change_review_marker_block(record, snap_rows))
+                # task-6 (turn-file-annotate, spec §4) + fix round: append this
+                # run's own diff-feedback disclosure row(s) -- i.e. every
+                # delivery batch keyed to THIS run as the delivering run (see
+                # `disclosure_batches` construction above for the grouping and
+                # legacy-fallback rules). Placed after this run's own marker
+                # rows (steps, change-summary/failure rows), never gated on
+                # `snap_rows`, so a run with delivered notes but no snapshot
+                # rows at all (tracking failed or was never configured --
+                # delivery does not depend on tracking succeeding) still
+                # yields its disclosure row(s). This is the designed healer
+                # for Task 5's live seam, which stamps `delivered_at` then
+                # appends the disclosure row in one `try`: if the append fails
+                # after the stamp lands, the DB still records the delivery but
+                # the live transcript never got a row -- a fresh resume
+                # surfaces it regardless, byte-identical to what live emission
+                # would have produced (same shared `format_diff_feedback_disclosure`).
+                for _delivered_at in sorted(
+                    disclosure_batches.get(str(record.get("id")), {})
+                ):
                     block.append(
                         ConsoleChatMessage(
                             role=ConsoleMessageRole.TOOL,
-                            content=text,
+                            content=format_diff_feedback_disclosure(
+                                disclosure_batches[str(record.get("id"))][_delivered_at]
+                            ),
                             status="complete",
-                            activity_presentation=build_step_activity_presentation(
-                                str(step.get("kind") or ""),
-                                tool_name=step.get("tool_name"),
-                                result=step.get("result"),
-                                tool_outcome=step.get("tool_outcome"),
-                            ),
-                            activity_round_ordinal=(
-                                planning_deriver.active_round_ordinal
-                            ),
-                            # AC#5: a resumed marker is as expandable as a
-                            # live one -- the step rows carry the full result.
-                            tool_output_full=full_step_output(
-                                str(step.get("kind") or ""),
-                                result=step.get("result"),
-                                summary=step.get("summary"),
-                                marker_text=text,
+                            activity_presentation=ConsoleActivityPresentation(
+                                "feedback", "Feedback delivered", "done"
                             ),
                         )
                     )
-            snap_rows = snap_by_run.get(str(record.get("id")), [])
-            block.extend(self._change_review_marker_block(record, snap_rows))
-            # task-6 (turn-file-annotate, spec §4) + fix round: append this
-            # run's own diff-feedback disclosure row(s) -- i.e. every
-            # delivery batch keyed to THIS run as the delivering run (see
-            # `disclosure_batches` construction above for the grouping and
-            # legacy-fallback rules). Placed after this run's own marker
-            # rows (steps, change-summary/failure rows), never gated on
-            # `snap_rows`, so a run with delivered notes but no snapshot
-            # rows at all (tracking failed or was never configured --
-            # delivery does not depend on tracking succeeding) still
-            # yields its disclosure row(s). This is the designed healer
-            # for Task 5's live seam, which stamps `delivered_at` then
-            # appends the disclosure row in one `try`: if the append fails
-            # after the stamp lands, the DB still records the delivery but
-            # the live transcript never got a row -- a fresh resume
-            # surfaces it regardless, byte-identical to what live emission
-            # would have produced (same shared `format_diff_feedback_disclosure`).
-            for _delivered_at in sorted(
-                disclosure_batches.get(str(record.get("id")), {})
-            ):
-                block.append(
-                    ConsoleChatMessage(
-                        role=ConsoleMessageRole.TOOL,
-                        content=format_diff_feedback_disclosure(
-                            disclosure_batches[str(record.get("id"))][_delivered_at]
-                        ),
-                        status="complete",
-                        activity_presentation=ConsoleActivityPresentation(
-                            "feedback", "Feedback delivered", "done"
-                        ),
-                    )
-                )
-            blocks.append((record.get("assistant_message_id"), block))
+                blocks.append((record.get("assistant_message_id"), block))
 
-        try:
-            local_records = self._db.local_command_resume_records(conversation_id)
-        except Exception:  # noqa: BLE001 -- poison local rows must not break resume
-            local_records = []
-        for record in local_records:
-            if not isinstance(record, Mapping):
-                continue
-            anchor = record.get("assistant_message_id")
-            if anchor is not None and (type(anchor) is not str or not anchor.strip()):
-                continue
-            marker = local_command_resume_marker(record)
-            if marker is not None:
-                blocks.append(
-                    (
-                        anchor
-                        if anchor is not None
-                        else TRANSCRIPT_START_MARKER_ANCHOR,
-                        [marker],
+            try:
+                local_records = self._db.local_command_resume_records(conversation_id)
+            except Exception:  # noqa: BLE001 -- poison local rows must not break resume
+                local_records = []
+            for record in local_records:
+                if not isinstance(record, Mapping):
+                    continue
+                anchor = record.get("assistant_message_id")
+                if anchor is not None and (type(anchor) is not str or not anchor.strip()):
+                    continue
+                marker = local_command_resume_marker(record)
+                if marker is not None:
+                    blocks.append(
+                        (
+                            anchor
+                            if anchor is not None
+                            else TRANSCRIPT_START_MARKER_ANCHOR,
+                            [marker],
+                        )
                     )
-                )
-        return blocks
+            return blocks
 
     def append_todo_marker(
         self, session_id: str, tasks: list[dict[str, object]]
@@ -10999,8 +11546,12 @@ class ConsoleAgentBridge:
         )
         return records[0]["id"] if records else None
 
-    def _derive_historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
-        primary_records = self._db.list_runs(
+    def _derive_historical_snapshot(
+        self, conversation_id: str, *, database: AgentRunsDB | None = None
+    ) -> AgentLiveSnapshot:
+        # Keep the exact database captured before the worker was issued.
+        database = self._db if database is None else database
+        primary_records = database.list_runs(
             conversation_id,
             include_superseded=False,
             agent_kind=AGENT_KIND_PRIMARY,
@@ -11008,7 +11559,7 @@ class ConsoleAgentBridge:
         if not primary_records:
             return AgentLiveSnapshot()
         primary = primary_records[0]
-        subagent_records = self._db.list_runs(
+        subagent_records = database.list_runs(
             conversation_id,
             include_superseded=False,
             agent_kind=AGENT_KIND_SUBAGENT,
@@ -11044,6 +11595,29 @@ class ConsoleAgentBridge:
                 if any(step.get(key) for key in ("summary", "result", "tool_name")):
                     detail = ConsoleAgentBridge._summarize_persisted_step(step)
                     break
+        provider = record.get("resolved_provider")
+        model = record.get("resolved_model")
+        if record.get("fallback_targets_json") is not None:
+            provider = model = None
+            try:
+                targets = json.loads(record["fallback_targets_json"])
+                index = record.get("active_fallback_index", 0)
+                if (
+                    type(targets) is list
+                    and 1
+                    <= len(targets)
+                    <= agent_models_constants.MAX_PRESET_FALLBACK_MODELS + 1
+                    and type(index) is int
+                    and 0 <= index < len(targets)
+                ):
+                    target = targets[index]
+                    if isinstance(target, dict) and all(
+                        isinstance(target.get(key), str) and target[key]
+                        for key in ("provider", "model")
+                    ):
+                        provider, model = target["provider"], target["model"]
+            except (ValueError, TypeError):
+                pass
         return SubAgentSummary(
             text=str(record.get("task") or "sub-agent"),
             status=str(record.get("status") or "running"),
@@ -11052,6 +11626,8 @@ class ConsoleAgentBridge:
             created_at=record.get("created_at"),
             updated_at=record.get("updated_at"),
             detail=detail,
+            resolved_provider=provider,
+            resolved_model=model,
         )
 
     @staticmethod
@@ -11100,6 +11676,7 @@ def build_chat_create_tool_closures(
     *,
     confirm: Callable[[dict], dict],
     execute: Callable[[dict], dict],
+    prepare: Callable[[dict], dict] | None = None,
     session_id: str,
     run_id: str,
 ) -> tuple[Callable[[dict], ToolResult], Callable[[dict], ToolResult]]:
@@ -11128,6 +11705,7 @@ def build_chat_create_tool_closures(
         ``(fork_chat_tool, new_chat_tool)`` -- each ``args -> ToolResult``.
     """
     denials = {"fork_chat": 0, "new_chat": 0}
+    remembered: set[object] = set()
 
     def _run(tool: str, args: dict) -> ToolResult:
         if denials[tool] >= _CHAT_CREATE_DENIAL_LIMIT:
@@ -11161,6 +11739,13 @@ def build_chat_create_tool_closures(
                     error=f"invalid_args: {name} must be a string, got "
                     f"{type(value).__name__}",
                 )
+        if tool == "new_chat":
+            try:
+                public = validate_new_chat_arguments(args)
+            except ValueError as exc:
+                return ToolResult(ok=False, error=str(exc))
+        else:
+            public = {}
         title = raw_title.strip()[:CHAT_CREATE_TITLE_MAX]
         opening_prompt = raw_prompt
         instructions = raw_instructions
@@ -11189,23 +11774,49 @@ def build_chat_create_tool_closures(
             "model": model,
             "preset": preset,
         }
-        # Qodo 2761 round, finding 1: NO closure-local remember memo. The
-        # controller's session grants are the single remember authority,
-        # and they REFUSE to ride for sub-agent requesters -- caching a
-        # remember here would let a later child-run call on this turn skip
-        # consent entirely.
-        try:
-            decision = confirm(dict(payload))
-        except Exception:  # noqa: BLE001 — a UI error fails closed
-            decision = {"allow": False, "remember": False}
-        if not isinstance(decision, Mapping) or not decision.get(
-            "allow", False
-        ):
-            denials[tool] += 1
-            return ToolResult(
-                ok=False,
-                error="The user declined. Do not retry this turn.",
-            )
+        grant_scope: object = tool
+        if tool == "new_chat":
+            if prepare is None:
+                return ToolResult(ok=False, error="creation_preparation_unavailable")
+            from tldw_chatbook.Agents.run_context import current_run_id
+
+            payload.update(public)
+            payload["source_run_id"] = current_run_id()
+            payload["source_message_id"] = run_id
+            try:
+                payload = prepare(payload)
+                grant_scope = payload["_grant_scope"]
+                hash(grant_scope)
+                if payload.get("_creation_token") is None:
+                    raise ValueError("creation_authority_unavailable")
+            except Exception as exc:
+                from tldw_chatbook.Agents.agent_routing import RoutingError
+
+                if isinstance(exc, RoutingError):
+                    return ToolResult(ok=False, error=f"{exc.code}: {exc}")
+                return ToolResult(ok=False, error="creation_preparation_refused")
+        # Trusted preparation rechecks the captured primary or child actor.
+        # Child decisions never remember, so every child request confirms anew.
+        child_request = (
+            tool == "new_chat" and payload.get("source_agent_kind") == "subagent"
+        )
+        if tool != "new_chat" or child_request or grant_scope not in remembered:
+            try:
+                decision = confirm(dict(payload))
+            except Exception:
+                decision = {"allow": False, "remember": False}
+            if not isinstance(decision, Mapping) or not decision.get("allow", False):
+                denials[tool] += 1
+                _release_chat_creation_token(payload)
+                return ToolResult(
+                    ok=False, error="The user declined. Do not retry this turn."
+                )
+            if (
+                tool == "new_chat"
+                and not child_request
+                and decision.get("remember", False)
+            ):
+                remembered.add(grant_scope)
         # Broad-catch the EXECUTE phase exactly like the sibling
         # run_skill_script_tool does: a raising executor must surface as
         # the outcome contract (ok=False, execution_failed), never as an
@@ -11215,6 +11826,8 @@ def build_chat_create_tool_closures(
             outcome = execute(dict(payload))
         except Exception as exc:  # noqa: BLE001 — the outcome contract is the error boundary
             return ToolResult(ok=False, error=f"execution_failed: {exc}")
+        finally:
+            _release_chat_creation_token(payload)
         if not isinstance(outcome, dict) or not outcome.get("ok"):
             kind = (
                 str(outcome.get("kind", "execution_failed"))
@@ -11232,6 +11845,11 @@ def build_chat_create_tool_closures(
             "opening prompt as a draft in its input box; the user reviews and "
             "sends it themselves. Do not send messages into the new chat."
         )
+        if tool == "new_chat":
+            note = (
+                "Creation is saved. Do not repeat creation to recover a blocked "
+                "or uncertain start. Inspect this chat and use its normal controls."
+            )
         content = json.dumps(
             {
                 "title": outcome.get("title"),
@@ -11240,6 +11858,20 @@ def build_chat_create_tool_closures(
                 "copied_messages": outcome.get("copied_messages"),
                 "draft_set": bool(outcome.get("draft_set")),
                 "note": note,
+                **(
+                    {
+                        key: outcome.get(key)
+                        for key in (
+                            "destination",
+                            "scope_type",
+                            "mode",
+                            "launch_status",
+                            "reason",
+                        )
+                    }
+                    if tool == "new_chat"
+                    else {}
+                ),
             }
         )
         return ToolResult(ok=True, content=content)
@@ -11251,3 +11883,206 @@ def build_chat_create_tool_closures(
         return _run("new_chat", args)
 
     return fork_chat_tool, new_chat_tool
+
+
+def validate_new_chat_arguments(arguments: Mapping[str, Any]) -> dict[str, str]:
+    """Validate public creation fields without carrying model-supplied authority.
+
+    Args:
+        arguments: Public title, opening_prompt, instructions, destination,
+            mode, and optional provider/model/preset strings. Omitted fields
+            retain empty-string, same_workspace, and draft defaults. Unknown
+            authority fields are discarded by the shared validator.
+
+    Returns:
+        The eight validated fields, with title trimmed after its length check
+        and literal prompts, instructions, and routing strings preserved.
+
+    Raises:
+        ValueError: An input-free invalid_args or payload_too_large category for
+            non-string fields, unsupported choices, exceeded limits, or a
+            blank opening_prompt in start mode.
+    """
+    from tldw_chatbook.Utils.input_validation import validate_console_new_chat_arguments
+
+    return validate_console_new_chat_arguments(arguments)
+
+
+def _release_chat_creation_token(payload: dict) -> None:
+    """Drop private preparation custody on every terminal tool path."""
+    release = getattr(payload.get("_creation_token"), "close", None)
+    if callable(release):
+        release()
+
+
+# Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        (globals(), "ConsoleAgentBridge", ConsoleAgentBridge),
+        *(
+            (ConsoleAgentBridge, name, vars(ConsoleAgentBridge)[name])
+            for name in (
+                "resolve_run_log_target",
+                "latest_primary_run_id",
+                "_owning_run_id_for_log",
+                "run_log_available",
+                "_run_log_authority_for",
+                "_read_run_log_page",
+            )
+        ),
+        (globals(), "AgentRunsDB", AgentRunsDB),
+        (globals(), "operation_owned_connection", operation_owned_connection),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            (globals(), "ConsoleAgentBridge", ConsoleAgentBridge),
+            *(
+                (ConsoleAgentBridge, name, vars(ConsoleAgentBridge)[name])
+                for name in (
+                    "resolve_run_log_target",
+                    "latest_primary_run_id",
+                    "_owning_run_id_for_log",
+                    "run_log_available",
+                    "_run_log_authority_for",
+                    "_read_run_log_page",
+                )
+            ),
+            (globals(), "AgentRunsDB", AgentRunsDB),
+            (globals(), "operation_owned_connection", operation_owned_connection),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+
+
+# Exact current badge callbacks; custom callbacks retain their original path.
+from inspect import getattr_static as _badge_count_getattr_static
+
+_SUBAGENT_BADGE_LIVE_CALLBACKS = (
+    ConsoleAgentBridge.__getattribute__,
+    ConsoleAgentBridge.__dict__["__dict__"],
+    tuple(
+        (name, function, function.__code__, function.__globals__)
+        for name, function in (
+            ("live_snapshot", ConsoleAgentBridge.live_snapshot),
+            ("run_log_target_token", ConsoleAgentBridge.run_log_target_token),
+        )
+    ),
+)
+
+_SUBAGENT_BADGE_COUNT_CALLBACK = (
+    ConsoleAgentBridge,
+    "subagent_counts",
+    ConsoleAgentBridge.subagent_counts,
+    ConsoleAgentBridge.subagent_counts.__code__,
+    ConsoleAgentBridge.subagent_counts.__globals__,
+    ConsoleAgentBridge.__getattribute__,
+    _badge_count_getattr_static(ConsoleAgentBridge, "__dict__"),
+)
+del _badge_count_getattr_static
+
+
+def _read_change_review_markers(
+    database, conversation_id, render, *, require_current=None
+):
+    """Read one captured database, preserving public ordering and error handling."""
+    if require_current is not None:
+        require_current()
+    original, code, defaults = _CHANGE_REVIEW_LIST_RUNS_SOURCE
+    reader = database.list_runs
+    if (
+        type(database) is AgentRunsDB
+        and getattr(reader, "__func__", None) is original
+        and original.__code__ is code
+        and original.__defaults__ is defaults
+    ):
+        records = database.list_change_review_run_anchors(conversation_id)
+    else:
+        # Preserve the existing callback contract for custom DB adapters.
+        records = [
+            record
+            for record in reader(conversation_id, include_superseded=False)
+            if record["agent_kind"] == AGENT_KIND_PRIMARY
+        ]
+        records.reverse()
+    if require_current is not None:
+        require_current()
+    snapshots: dict[str, list[dict]] = {}
+    try:
+        for row in database.change_snapshots_for_conversation(conversation_id):
+            snapshots.setdefault(str(row["run_id"]), []).append(row)
+    except Exception:  # noqa: BLE001 -- transcript refresh must degrade safely
+        snapshots = {}
+    if require_current is not None:
+        require_current()
+    return [
+        (
+            record.get("assistant_message_id"),
+            render(record, snapshots.get(str(record.get("id")), ())),
+        )
+        for record in records
+    ]
+
+
+
+# Direct defining callbacks for finite marker presentation.
+_CHANGE_REVIEW_MARKER_SOURCES = tuple(
+    (
+        name,
+        vars(ConsoleAgentBridge)[name],
+        (
+            (
+                function,
+                function.__code__,
+                function.__defaults__,
+                function.__kwdefaults__,
+                tuple((function.__kwdefaults__ or {}).items()),
+            ),
+        ),
+    )
+    for name in ("change_review_marker_messages", "_change_review_marker_block")
+    for descriptor in (vars(ConsoleAgentBridge)[name],)
+    for function in (
+        descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
+    )
+)
+
+
+_CHANGE_REVIEW_MARKER_HELPER_SOURCE = (
+    _read_change_review_markers,
+    _read_change_review_markers.__code__,
+    _read_change_review_markers.__defaults__,
+    _read_change_review_markers.__kwdefaults__,
+    tuple(_read_change_review_markers.__kwdefaults__.items()),
+)

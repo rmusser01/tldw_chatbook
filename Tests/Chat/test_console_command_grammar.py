@@ -1,11 +1,11 @@
 from tldw_chatbook.Chat.console_command_grammar import (
-    CommandParse,
-    ConsoleCommand,
-    ConsoleCommandRegistry,
     REWIND_COMMAND_ARGUMENT_HINT,
     REWIND_COMMAND_HANDLER_ID,
     REWIND_COMMAND_NAME,
     SKILLS_COMMAND_NAME,
+    CommandParse,
+    ConsoleCommand,
+    ConsoleCommandRegistry,
     default_console_registry,
 )
 
@@ -69,7 +69,6 @@ def test_fallback_resolver_returning_none_falls_through_to_unknown():
 
     def resolver(word: str, rest: str):
         calls.append((word, rest))
-        return None
 
     registry.register_fallback_resolver(resolver)
 
@@ -102,6 +101,8 @@ def test_default_console_registry_registers_prompt_system_skills_prefill_and_gen
         "generate-video",
         "stream-video",
         "steer",
+        "omfg",
+        "rules",
         "redirect",
         "stop",
         "emergency-stop",
@@ -117,6 +118,7 @@ def test_default_console_registry_registers_prompt_system_skills_prefill_and_gen
         "settings",
         "context",
         "endpoint",
+        "goal",
     )
     assert registry.parse("/prompt") == CommandParse("command", "prompt", "")
     assert registry.parse("/system") == CommandParse("command", "system", "")

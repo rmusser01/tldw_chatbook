@@ -58,9 +58,7 @@ def pin_max_live_subagents(monkeypatch, value):
         value: the raw config value to serve. `1` (or anything coercing to
             <= 1) selects the inline path; `> 1` builds a fleet.
     """
-    pin_agent_settings(
-        monkeypatch, **{agent_service.MAX_LIVE_SUBAGENTS_KEY: value}
-    )
+    pin_agent_settings(monkeypatch, **{agent_service.MAX_LIVE_SUBAGENTS_KEY: value})
 
 
 def pin_turn_scoped_children(monkeypatch):
@@ -75,9 +73,7 @@ def pin_turn_scoped_children(monkeypatch):
     Args:
         monkeypatch: pytest's monkeypatch fixture.
     """
-    pin_agent_settings(
-        monkeypatch, **{agent_service.SUBAGENTS_OUTLIVE_TURN_KEY: False}
-    )
+    pin_agent_settings(monkeypatch, **{agent_service.SUBAGENTS_OUTLIVE_TURN_KEY: False})
 
 
 def join_fleet_children(service, timeout=10.0):

@@ -33,6 +33,7 @@ from Tests.Canvas.browser.canvas_live_harness import (
     egress_probe,
     exercise_adversarial_preview,
     start_live_served_stack,
+    terminal_observer,
 )
 from Tests.Canvas.browser.canvas_live_harness import (
     chromium_executable as live_chromium_executable,
@@ -277,14 +278,15 @@ async def _load_owned_shell(page) -> None:
         .replace("__CHATBOOK_TITLE__", "Chatbook test")
         .replace("__APP_WEBSOCKET_URL__", "ws://127.0.0.1:8000/ws")
         .replace("__FONT_SIZE__", "12")
+        .replace("__TERMINAL_PAGE_ID__", "a" * 32)
     )
     # The outer server owns the first two scripts. Browser-flow tests install
     # only Chatbook's served-shell asset so no test double replaces its logic.
     source = source.replace(
-        '<script src="/static/js/chatbook-auth.js"></script>', ""
-    ).replace('<script src="/static/js/textual.js"></script>', "")
+        '<script src="/static/js/chatbook-auth.js?v=__AUTH_JS_VERSION__"></script>', ""
+    ).replace('<script src="/static/js/textual.js?v=__TEXTUAL_JS_VERSION__"></script>', "")
     source = source.replace(
-        '<script src="/static/chatbook/served-shell.js" defer></script>', ""
+        '<script src="/static/chatbook/served-shell.js?v=__SHELL_JS_VERSION__" defer></script>', ""
     )
     source = source.replace(
         '<link rel="stylesheet" href="/static/css/xterm.css">', ""
@@ -320,6 +322,7 @@ async def _load_owned_shell(page) -> None:
 async def _login_live_page(page, *, origin: str, access_token: str) -> None:
     """Complete the real remote-login path without exposing the credential."""
 
+    await terminal_observer(page).install()
     await page.goto(origin)
     await page.get_by_label("Access token").fill(access_token)
     await page.get_by_role("button", name="Sign in").click()
@@ -350,15 +353,15 @@ async def _wait_for_initial_console_ready(page, *, timeout_ms=45_000) -> None:
 
     composer_timeout = remaining_ms("terminal Composer")
     try:
-        await expect(page.locator("#terminal")).to_contain_text(
-            "Composer", timeout=composer_timeout
+        await terminal_observer(page).wait_for_text(
+            "Composer", timeout_ms=composer_timeout
         )
     except AssertionError as error:
         error.add_note("initial Console readiness stage: terminal Composer")
         raise
 
 
-async def _live_browser_session_id(server, page, *, port: int) -> str:
+async def _live_terminal_scope_id(server, page, *, port: int) -> str:
     cookie = next(
         item["value"]
         for item in await page.context.cookies()
@@ -383,15 +386,17 @@ async def _live_browser_session_id(server, page, *, port: int) -> str:
             else None,
         )
     )
-    return session.session_id
+    page_id = await page.locator("#terminal").get_attribute("data-terminal-id")
+    return f"{session.session_id}:{page_id}"
 
 
 async def _live_child_for_page(server, page, *, port: int) -> str:
-    browser_session_id = await _live_browser_session_id(server, page, port=port)
+    browser_session_id = await _live_terminal_scope_id(server, page, port=port)
     return server._served_browser_children[browser_session_id]
 
 
 async def _send_terminal_command(page, command: str) -> None:
+    await terminal_observer(page).mark()
     await page.locator("#terminal .xterm-helper-textarea").press(
         {
             "update": "u",
@@ -437,8 +442,10 @@ async def _send_console_prompt(page, prompt: str, focus_ack: Path) -> None:
             break
     else:
         raise AssertionError("actual Console composer focus was not acknowledged")
+    await terminal_observer(page).mark()
     await keyboard_target.press_sequentially(prompt, delay=5)
-    await expect(page.locator("#terminal")).to_contain_text(prompt, timeout=5_000)
+    await terminal_observer(page).wait_for_text(prompt, timeout_ms=5_000)
+    await terminal_observer(page).mark()
     await keyboard_target.press("Enter")
 
 
@@ -630,6 +637,7 @@ def _release_lifecycle_diagnostics(stack, monkeypatch, name):
 
 
 @pytest.mark.loopback_network
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("failure", ["snapshot", "old-version", "absent-broker"])
 async def test_actual_child_control_refusal_keeps_terminal_usable(
     tmp_path, monkeypatch, failure
@@ -674,9 +682,7 @@ async def test_actual_child_control_refusal_keeps_terminal_usable(
             )
             page = await browser.new_page(ignore_https_errors=True)
             await _login_live_page(page, origin=stack.origin, access_token=access_token)
-            await expect(page.locator("#terminal")).to_contain_text(
-                "Composer", timeout=45_000
-            )
+            await terminal_observer(page).wait_for_text("Composer", timeout_ms=45_000)
             if failure != "absent-broker":
                 child_id = await _live_child_for_page(stack.server, page, port=stack.port)
                 with pytest.raises(
@@ -690,8 +696,8 @@ async def test_actual_child_control_refusal_keeps_terminal_usable(
                 "Create the requested Canvas",
                 tmp_path / "test_data" / "canvas-live-composer-focused",
             )
-            await expect(page.locator("#terminal")).to_contain_text(
-                "CHATBOOK_CANVAS_CREATED", timeout=45_000
+            await terminal_observer(page).wait_for_text(
+                "CHATBOOK_CANVAS_CREATED", timeout_ms=45_000
             )
             await expect(page.locator("#terminal.-connected")).to_be_visible()
             await expect(page.locator("#served-canvas-region")).to_be_hidden()
@@ -715,6 +721,7 @@ async def test_actual_child_control_refusal_keeps_terminal_usable(
 
 
 @pytest.mark.loopback_network
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("diagrams", [False, True])
 @pytest.mark.parametrize("interleaving", [False, True], ids=["normal", "read-publication"])
 async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
@@ -837,7 +844,15 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
                     "WHERE role = 'assistant' AND content = ? AND deleted = 0",
                     (marker,),
                 ).fetchall()
+                prompts = database.execute(
+                    "SELECT content FROM messages WHERE role = 'user' AND deleted = 0 "
+                    "ORDER BY rowid"
+                ).fetchall()
             if rows == [("complete",)]:
+                expected_prompts = [("Create the requested Canvas",)]
+                if marker == "CHATBOOK_CANVAS_UPDATED":
+                    expected_prompts.append(("Revise the active Canvas",))
+                assert prompts == expected_prompts
                 return
             await asyncio.sleep(0.05)
         raise AssertionError("exact persisted assistant row is not complete")
@@ -869,7 +884,7 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
             })();""")
             await _login_live_page(page, origin=stack.origin, access_token=access_token)
             await _wait_for_initial_console_ready(page)
-            await expect(page.locator("#terminal")).not_to_contain_text("Check online")
+            assert "Check online" not in terminal_observer(page).text
             child_id = await _live_child_for_page(stack.server, page, port=stack.port)
             await stack.server._canvas_control_broker.wait_connected(
                 child_id, timeout=10.0
@@ -880,8 +895,8 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
             await _wait_for_gateway_calls(
                 tmp_path / "test_data" / "canvas-live-gateway-calls", 2
             )
-            await expect(page.locator("#terminal")).to_contain_text(
-                "CHATBOOK_CANVAS_CREATED", timeout=45_000
+            await terminal_observer(page).wait_for_text(
+                "CHATBOOK_CANVAS_CREATED", timeout_ms=45_000
             )
             disclosure = (
                 tmp_path / "test_data" / "canvas-live-tool-disclosure"
@@ -924,8 +939,8 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
             await _wait_for_gateway_calls(
                 tmp_path / "test_data" / "canvas-live-gateway-calls", 4
             )
-            await expect(page.locator("#terminal")).to_contain_text(
-                "CHATBOOK_CANVAS_UPDATED", timeout=45_000
+            await terminal_observer(page).wait_for_text(
+                "CHATBOOK_CANVAS_UPDATED", timeout_ms=45_000
             )
             assert (tmp_path / "test_data" / "canvas-live-tool-status").read_text(
                 encoding="ascii"
@@ -1010,7 +1025,7 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
             original_control_generation = stack.server._canvas_control_broker._children[
                 child_id
             ].generation
-            browser_id = await _live_browser_session_id(
+            browser_id = await _live_terminal_scope_id(
                 stack.server, page, port=stack.port
             )
             old_url = await page.locator("#served-canvas-frame").get_attribute("src")
@@ -1036,9 +1051,7 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
                 stack.server._canvas_control_broker._children[replacement].generation
                 != original_control_generation
             )
-            await expect(page.locator("#terminal")).to_contain_text(
-                "Composer", timeout=45_000
-            )
+            await terminal_observer(page).wait_for_text("Composer", timeout_ms=45_000)
             await page.locator("#terminal .xterm-helper-textarea").focus()
             await page.locator("#terminal .xterm-helper-textarea").press("F10")
             loaded_ack = tmp_path / "test_data" / "canvas-live-saved-loaded"
@@ -1096,6 +1109,7 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
 
 
 @pytest.mark.loopback_network
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "trusted_proxy", [False, True], ids=["direct-tls", "trusted-proxy"]
 )
@@ -1162,7 +1176,7 @@ async def test_production_tls_two_child_tool_and_reconnect_flow(
                     )
                 except AssertionError:
                     page = pages[profile_index]
-                    browser_id = await _live_browser_session_id(
+                    browser_id = await _live_terminal_scope_id(
                         stack.server, page, port=stack.port
                     )
                     child_id = stack.server._served_browser_children.get(browser_id)
@@ -1280,8 +1294,11 @@ async def test_production_tls_two_child_tool_and_reconnect_flow(
                 "branch", timeout=15_000
             )
             await _send_terminal_command(pages[0], "reopen-root")
-            await expect(pages[0].locator("#terminal")).to_contain_text(
-                "CANVAS_LIVE_REOPENED"
+            await terminal_observer(pages[0]).wait_for_text("CANVAS_LIVE_REOPENED")
+            await (
+                pages[0]
+                .locator("#terminal")
+                .screenshot(path=tmp_path / "reopen-terminal.png")
             )
             snapshot = await stack.server._canvas_control_broker.request(
                 child_ids[0], "scope.snapshot.request", {}, timeout=1.0
@@ -1307,7 +1324,12 @@ async def test_production_tls_two_child_tool_and_reconnect_flow(
             )
 
             await _send_terminal_command(pages[0], "ping")
-            await pages[0].wait_for_timeout(250)
+            await terminal_observer(pages[0]).wait_for_text("CANVAS_LIVE_ACK")
+            await (
+                pages[0]
+                .locator("#terminal")
+                .screenshot(path=tmp_path / "ping-terminal.png")
+            )
             await expect(pages[0].locator("#terminal.-connected")).to_be_visible()
             assert any(
                 '"stdin","p"' in str(frame).replace(" ", "")
@@ -1316,7 +1338,7 @@ async def test_production_tls_two_child_tool_and_reconnect_flow(
 
             # Close the old terminal transport before reopening the authenticated
             # page. Temporary history is destroyed, never revived with old auth.
-            browser_session_id = await _live_browser_session_id(
+            browser_session_id = await _live_terminal_scope_id(
                 stack.server, pages[0], port=stack.port
             )
             await pages[0].goto("about:blank")
@@ -1328,6 +1350,9 @@ async def test_production_tls_two_child_tool_and_reconnect_flow(
             await pages[0].goto(stack.origin)
             await expect(pages[0].locator("#terminal.-connected")).to_be_visible(
                 timeout=15_000
+            )
+            browser_session_id = await _live_terminal_scope_id(
+                stack.server, pages[0], port=stack.port
             )
             for _ in range(300):
                 replacement_id = stack.server._served_browser_children.get(
@@ -1431,6 +1456,40 @@ async def test_live_stack_cleanup_failure_still_reaps_child_and_owned_files(tmp_
     assert not owned.exists()
 
 
+@pytest.mark.bootstrap_profile
+async def test_live_stack_child_data_root_preserves_parent_profile(
+    tmp_path, monkeypatch
+):
+    parent_data = os.environ["XDG_DATA_HOME"]
+    parent_config = os.environ["TLDW_CONFIG_PATH"]
+    stack = await start_live_served_stack(
+        tmp_path, monkeypatch, access_token="owned-test-token"
+    )
+    try:
+
+        async def ignore(*_args):
+            pass
+
+        service = stack.server._chatbook_app_service_class(
+            stack.server.command,
+            write_bytes=ignore,
+            write_str=ignore,
+            close=ignore,
+            download_manager=stack.server.download_manager,
+            canvas_control_broker=stack.server._canvas_control_broker,
+        )
+        environment = service._build_environment(width=100, height=40)
+        assert environment["XDG_DATA_HOME"] == str(tmp_path / "test_data")
+        assert environment["TLDW_CONFIG_PATH"] == parent_config
+        assert environment["CHATBOOK_SERVED_CHILD"] == "1"
+        assert environment["COLUMNS"] == "100"
+        assert environment["ROWS"] == "40"
+        assert os.environ["XDG_DATA_HOME"] == parent_data
+        assert os.environ["TLDW_CONFIG_PATH"] == parent_config
+    finally:
+        await stack.aclose()
+
+
 @pytest.mark.parametrize("fail_site", [1, 2], ids=["backend", "proxy"])
 async def test_live_stack_setup_failure_rolls_back_owned_resources(
     tmp_path, monkeypatch, fail_site
@@ -1476,6 +1535,7 @@ async def test_live_stack_setup_failure_rolls_back_owned_resources(
 
 
 @pytest.mark.loopback_network
+@pytest.mark.bootstrap_profile
 async def test_actual_child_abnormal_exit_cleans_owned_state(
     tmp_path, monkeypatch
 ) -> None:
@@ -1496,8 +1556,8 @@ async def test_actual_child_abnormal_exit_cleans_owned_state(
                 await _login_live_page(
                     page, origin=stack.origin, access_token="owned-test-token"
                 )
-                await expect(page.locator("#terminal")).to_contain_text(
-                    "Composer", timeout=45_000
+                await terminal_observer(page).wait_for_text(
+                    "Composer", timeout_ms=45_000
                 )
                 child_temp = tmp_path / "test_data" / "child-tmp"
                 assert list(child_temp.glob("tldw-chatbook-test-*"))
@@ -1550,7 +1610,7 @@ async def test_served_renderer_case_seven_keeps_exact_scope_and_execution_ack(
                     page, origin=stack.origin, access_token=access_token
                 )
                 await expect(page.locator("#terminal.-connected")).to_be_visible()
-                browser_session_id = await _live_browser_session_id(
+                browser_session_id = await _live_terminal_scope_id(
                     stack.server, page, port=stack.port
                 )
                 child_id = stack.server._served_browser_children[browser_session_id]
@@ -1581,7 +1641,7 @@ async def test_served_renderer_case_seven_keeps_exact_scope_and_execution_ack(
                     case_index = start_index + offset
                     recorder.begin_load()
                     await _send_terminal_command(page, "next-adversarial")
-                    await expect(page.locator("#terminal")).to_contain_text(
+                    await terminal_observer(page).wait_for_text(
                         f"CANVAS_LIVE_ADVERSARIAL_{case_index}"
                     )
                     expected = await stack.server.served_canvas_state(
@@ -1734,14 +1794,14 @@ async def test_canonical_adversarial_corpus_stays_in_served_product_route(
                     prior_prepares = len(bridge_prepare_responses)
                     recorder.begin_load()
                     await _send_terminal_command(page, "next-adversarial")
-                    await expect(page.locator("#terminal")).to_contain_text(
+                    await terminal_observer(page).wait_for_text(
                         re.compile(
                             rf"CANVAS_LIVE_(?:ADVERSARIAL|REJECTED)_{case_index}"
                         ),
-                        timeout=15_000,
+                        timeout_ms=15_000,
                     )
                     if f"CANVAS_LIVE_REJECTED_{case_index}" in (
-                        await page.locator("#terminal").inner_text()
+                        terminal_observer(page).text
                     ):
                         pytest.fail(
                             f"unexpected admission refusal: {case['name']}",
@@ -1887,6 +1947,7 @@ async def test_canonical_adversarial_corpus_stays_in_served_product_route(
             await stack.aclose()
 
 
+@pytest.mark.bootstrap_profile
 async def test_owned_shell_mounts_from_chatbook_origin_before_canvas(
     tmp_path: Path, unused_tcp_port: int
 ) -> None:
@@ -1951,8 +2012,9 @@ async def test_owned_shell_mounts_from_chatbook_origin_before_canvas(
                     cookie_value=outer_cookie,
                 )
             )
+            page_id = await page.locator("#terminal").get_attribute("data-terminal-id")
             server.bind_served_browser(
-                browser_session.session_id, "child-browser-mount"
+                f"{browser_session.session_id}:{page_id}", "child-browser-mount"
             )
             await expect(page.locator("#served-canvas-region")).to_be_visible(
                 timeout=5000
@@ -2338,7 +2400,8 @@ async def test_mounted_production_authority_renders_and_settles_submit(
                     cookie_value=outer_cookie,
                 )
             )
-            server.bind_served_browser(browser_session.session_id, child_id)
+            page_id = await page.locator("#terminal").get_attribute("data-terminal-id")
+            server.bind_served_browser(f"{browser_session.session_id}:{page_id}", child_id)
 
             canvas_shell = page.frame_locator("#served-canvas-frame")
             preview = canvas_shell.frame_locator("#canvas-preview")
@@ -2389,6 +2452,7 @@ async def test_mounted_production_authority_renders_and_settles_submit(
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 async def test_two_real_browser_profiles_stay_isolated_when_one_child_disconnects(
     tmp_path: Path, unused_tcp_port: int
 ) -> None:
@@ -2454,7 +2518,8 @@ async def test_two_real_browser_profiles_stay_isolated_when_one_child_disconnect
                         cookie_value=cookie,
                     )
                 )
-                server.bind_served_browser(session.session_id, child_id)
+                page_id = await page.locator("#terminal").get_attribute("data-terminal-id")
+                server.bind_served_browser(f"{session.session_id}:{page_id}", child_id)
 
             for page in pages:
                 await expect(page.locator("#served-canvas-region")).to_be_visible(
@@ -2500,6 +2565,7 @@ async def test_two_real_browser_profiles_stay_isolated_when_one_child_disconnect
         await server._served_canvas_gateway.aclose()
 
 
+@pytest.mark.bootstrap_profile
 async def test_terminal_websocket_echo_survives_private_control_channel_loss(
     tmp_path: Path,
 ) -> None:
@@ -2857,6 +2923,7 @@ async def test_event_scope_mismatch_reconciles_only_same_live_child(
         await server._served_canvas_gateway.aclose()
 
 
+@pytest.mark.bootstrap_profile
 async def test_two_browser_sessions_cannot_reuse_child_canvas_scope(
     tmp_path: Path,
 ) -> None:
@@ -3568,6 +3635,7 @@ async def test_control_frame_accepts_documented_multimegabyte_download_payload()
     assert decoded.payload["request"]["value"]["data"] == payload
 
 
+@pytest.mark.bootstrap_profile
 async def test_mounted_canvas_url_is_not_transferable_between_authenticated_browsers(
     tmp_path: Path,
 ) -> None:

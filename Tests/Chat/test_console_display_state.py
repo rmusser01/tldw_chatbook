@@ -46,7 +46,7 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
     assert state.provider_label == "Provider: OpenAI"
     assert state.model_label == "Model: gpt-5.5"
     assert state.assistant_label == "Assistant: General"
-    assert state.rag_label == "Library · Auto on · Agent blocked"
+    assert state.rag_label == "Library · Auto on · Agent access off"
     assert state.sources_label == "Sources: 3"
     assert state.tools_label == "Tools: 4 ready"
     assert state.approvals_label == "Approvals: 1 pending"
@@ -58,22 +58,22 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
         (
             ConsoleAutoRetrieve.NEVER,
             ConsoleAssistantLibraryAccess.BLOCKED,
-            "Library · Auto off · Agent blocked",
+            "Library · Auto off · Agent access off",
         ),
         (
             ConsoleAutoRetrieve.AUTOMATIC,
             ConsoleAssistantLibraryAccess.BLOCKED,
-            "Library · Auto on · Agent blocked",
+            "Library · Auto on · Agent access off",
         ),
         (
             ConsoleAutoRetrieve.NEVER,
             ConsoleAssistantLibraryAccess.ALLOWED,
-            "Library · Auto off · Agent allowed",
+            "Library · Auto off · Agent access on",
         ),
         (
             ConsoleAutoRetrieve.AUTOMATIC,
             ConsoleAssistantLibraryAccess.ALLOWED,
-            "Library · Auto on · Agent allowed",
+            "Library · Auto on · Agent access on",
         ),
     ),
 )

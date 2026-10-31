@@ -93,9 +93,7 @@ def _docsize_rowids(db: CharactersRAGDB) -> set[int]:
     answer for an external-content fts5 table)."""
     return {
         row[0]
-        for row in db.execute_query(
-            "SELECT rowid FROM messages_fts_docsize"
-        ).fetchall()
+        for row in db.execute_query("SELECT rowid FROM messages_fts_docsize").fetchall()
     }
 
 
@@ -137,7 +135,9 @@ def _assert_index_structurally_sound(db: CharactersRAGDB) -> None:
     if sqlite3.sqlite_version_info < (3, 42, 0):
         return
     with db.transaction() as conn:
-        conn.execute("INSERT INTO messages_fts(messages_fts, rank) VALUES ('integrity-check', 0)")
+        conn.execute(
+            "INSERT INTO messages_fts(messages_fts, rank) VALUES ('integrity-check', 0)"
+        )
 
 
 def _seed_v45(db_path: Path, bodies: list[str], tombstone: set[int] = frozenset()):
@@ -196,7 +196,9 @@ def test_fresh_schema_guards_the_messages_fts_delete_halves_on_membership(db):
     assert set(triggers) == {"messages_au", "messages_ad"}
     for name, sql in triggers.items():
         normalized = " ".join(sql.lower().split())
-        assert "messages_fts_docsize" in normalized, f"{name} lacks the membership guard"
+        assert "messages_fts_docsize" in normalized, (
+            f"{name} lacks the membership guard"
+        )
     # The v46 leak/corruption guards survive alongside the new condition.
     au = " ".join(triggers["messages_au"].lower().split())
     assert "old.deleted = 0" in au
@@ -224,7 +226,10 @@ def test_upgrade_from_v45_defers_the_messages_fts_reinsert(tmp_path: Path):
 
     migrated = CharactersRAGDB(db_path, client_id="v47-upgrade")
     try:
-        assert _version(migrated.get_connection()) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        assert (
+            _version(migrated.get_connection())
+            == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
         # The version bump landed WITHOUT the O(total chat text) reinsert.
         assert _docsize_rowids(migrated) == set()
         # Window semantics: search is empty-but-consistent, never an error.
@@ -261,7 +266,9 @@ def test_backfill_resumes_after_interruption_and_matches_the_one_shot_state(
     first = CharactersRAGDB(db_path, client_id="v47-first-run")
     try:
         indexed_a, cursor = first.backfill_messages_fts(chunk_size=4)
-        indexed_b, cursor = first.backfill_messages_fts(chunk_size=4, after_rowid=cursor)
+        indexed_b, cursor = first.backfill_messages_fts(
+            chunk_size=4, after_rowid=cursor
+        )
         assert (indexed_a, indexed_b) == (4, 4)
         partial = _docsize_rowids(first)
         assert len(partial) == 8
@@ -350,7 +357,10 @@ while True:
 
     resumed = CharactersRAGDB(db_path, client_id="v47-after-kill")
     try:
-        assert _version(resumed.get_connection()) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        assert (
+            _version(resumed.get_connection())
+            == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
         remaining = backfill_chachanotes_messages_fts(resumed, chunk_size=7)
         assert 0 < remaining <= 40 - 4
         assert _docsize_rowids(resumed) == _live_rowids(resumed)
@@ -508,7 +518,10 @@ def test_v47_leaves_a_complete_index_alone(tmp_path: Path):
 
     migrated = CharactersRAGDB(db_path, client_id="v47-complete")
     try:
-        assert _version(migrated.get_connection()) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        assert (
+            _version(migrated.get_connection())
+            == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
         assert _docsize_rowids(migrated) == complete
         assert len(_fts_rowids(migrated, "completeneedle002")) == 1
         # Nothing pending: the driver's first chunk finds nothing.
@@ -557,7 +570,10 @@ def test_a_failure_mid_v47_rewinds_the_whole_chain(
     monkeypatch.undo()
     migrated = CharactersRAGDB(db_path, client_id="poison-removed")
     try:
-        assert _version(migrated.get_connection()) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        assert (
+            _version(migrated.get_connection())
+            == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
         assert _docsize_rowids(migrated) == set()
         assert backfill_chachanotes_messages_fts(migrated) == 1
         assert _fts_rowids(migrated, "poisonneedle") == rowids
@@ -624,9 +640,7 @@ def test_hot_writer_survives_a_backfill_commit_inside_its_transaction(
     backfiller = CharactersRAGDB(db_path, client_id="v47-backfiller")
     try:
         assert _docsize_rowids(writer) == set()  # the window is open
-        conversation_id = writer.add_conversation(
-            {"title": "hot", "character_id": 1}
-        )
+        conversation_id = writer.add_conversation({"title": "hot", "character_id": 1})
 
         outcome: dict[str, str] = {}
         original_execute_query = CharactersRAGDB.execute_query
@@ -749,8 +763,7 @@ def test_hot_message_writers_reserve_the_write_lock_up_front():
     for name in HOT_MESSAGE_WRITERS:
         source = inspect.getsource(getattr(CharactersRAGDB, name))
         assert "self.transaction(immediate=True)" in source, (
-            f"{name} must reserve the write lock up front (see "
-            "HOT_MESSAGE_WRITERS)"
+            f"{name} must reserve the write lock up front (see HOT_MESSAGE_WRITERS)"
         )
         assert "self.transaction()" not in source, (
             f"{name} still opens a DEFERRED transaction"

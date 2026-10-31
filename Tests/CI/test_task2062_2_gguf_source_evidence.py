@@ -49,10 +49,8 @@ EXPECTED_PULL_REQUEST_PATHS = (
     "tldw_chatbook/UI/LLM_Management_Window.py",
     "tldw_chatbook/UI/Screens/llm_screen.py",
     "Tests/conftest.py",
-    "Tests/private_profile.py",
     "Tests/LLM_Management/**",
     "Tests/Model_Artifacts/**",
-    "Tests/UI/app_factory.py",
     "Tests/UI/conftest.py",
     "Tests/UI/test_llm_gguf_source_modes.py",
 )

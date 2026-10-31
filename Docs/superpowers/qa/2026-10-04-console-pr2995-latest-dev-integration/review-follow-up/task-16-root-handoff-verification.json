@@ -1,0 +1,51 @@
+{
+  "head": "81484b688a03c0f924a0ea6a6474b5e2d4b355e8",
+  "source_clean": true,
+  "manifest_pins": {
+    "task-14-safe-evidence-manifest.json": 69,
+    "task-15-safe-evidence-manifest.json": 119,
+    "task-15-fix1-safe-evidence-manifest.json": 46,
+    "task-16-safe-evidence-manifest.json": 309,
+    "task-16-fixture-fix-safe-evidence-manifest.json": 81,
+    "task-16-typed-adapter-safe-evidence-manifest.json": 81
+  },
+  "historical_manifest_report_remap": {
+    "task-16-fixture-fix-safe-evidence-manifest.json:task-16-report.md": "task-16-report-before-typed-adapter.md"
+  },
+  "initial_and_interim_report_prefixes_exact": true,
+  "tracked_union": 30003,
+  "unchanged_union_hashes_verified": 29999,
+  "explicit_source_and_metadata_overrides": {
+    "Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md": {
+      "bytes": 136768,
+      "sha256": "aa3c7112cd87a7349bd0eab0e2e3c26344ea3f6d224168dead198cfbfe0a6284"
+    },
+    "Tests/UI/test_console_ask_user_typed_answers.py": {
+      "bytes": 14089,
+      "sha256": "b9c3ea4b8b0c35bb4501d36285b03b7b374f7a02466939451fb30fc7d93497e9"
+    },
+    "Tests/UI/test_personas_workbench.py": {
+      "bytes": 632903,
+      "sha256": "a8378c3d429769052198a44c6f9615ac2aeeb9a414deea7ce1013402334975ce"
+    },
+    "backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md": {
+      "bytes": 41341,
+      "sha256": "8620f168f0fb1a95ec7c9b0e756a64180a511e948e8405dd6ab669cdb682060b"
+    }
+  },
+  "owned_source_overlay_paths": [
+    "Tests/UI/test_console_ask_user_typed_answers.py",
+    "Tests/UI/test_personas_workbench.py"
+  ],
+  "dev_ancestor": "a78a9a900b4901e33c031f830dd2d80224d5147d",
+  "qa_digest": "ad92f9666141271109dde626bd96522d969f0dd366da9a0db931e492b3940d04",
+  "qa_paths": 1983,
+  "original_zip": {
+    "bytes": 63166118,
+    "entries_carried": 2118,
+    "path": "Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/qualification-evidence.zip",
+    "sha256": "acecbdfb6ddbafe6df679c39f9f137f2bfb49a1f87b62556e1345021f8384c84"
+  },
+  "no_tests_replayed": true,
+  "current_head_external_gates_pending": true
+}

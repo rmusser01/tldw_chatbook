@@ -242,9 +242,7 @@ async def test_collapsing_hides_the_body_but_keeps_the_header_painted():
         # painted" the same way the precedent always hit-tests a Static.
         title = app.query_one("#console-inspector-section-agents-title")
         body = app.query_one("#console-inspector-section-agents-body")
-        row0_primary = app.query_one(
-            "#console-inspector-section-agents-row-0-primary"
-        )
+        row0_primary = app.query_one("#console-inspector-section-agents-row-0-primary")
 
         _assert_painted_at_own_region(app, title)
         _assert_painted_at_own_region(app, row0_primary)
@@ -322,10 +320,7 @@ async def test_row_past_the_fold_is_caught_by_the_compositor_hit_test():
         # Within the scroll box's 8-row fold: really painted.
         _assert_painted_at_own_region(app, first_row_primary)
         # Below the fold: `region` is still non-empty (unclipped)...
-        assert (
-            last_row_primary.region.width > 0
-            and last_row_primary.region.height > 0
-        )
+        assert last_row_primary.region.width > 0 and last_row_primary.region.height > 0
         # ...but nothing is actually painted there.
         hit_widget, _hit_region = app.get_widget_at(
             last_row_primary.region.x + 1, last_row_primary.region.y
@@ -384,9 +379,7 @@ async def test_clicking_a_row_after_an_in_place_patch_still_routes_to_the_right_
                 clickable=True,
             ),
         )
-        section.sync_state(
-            ConsoleInspectorSectionState(rows=updated_rows, summary="")
-        )
+        section.sync_state(ConsoleInspectorSectionState(rows=updated_rows, summary=""))
         await pilot.pause()
 
         assert section.recompose_count == 0
@@ -517,9 +510,7 @@ async def test_sync_state_updating_only_the_summary_does_not_wipe_the_rows():
         await pilot.pause()
 
         section.sync_state(
-            ConsoleInspectorSectionState(
-                rows=section.rows, summary="3 working, 1 done"
-            )
+            ConsoleInspectorSectionState(rows=section.rows, summary="3 working, 1 done")
         )
         await pilot.pause()
 
@@ -571,9 +562,7 @@ async def test_row_becoming_clickable_via_sync_state_does_not_recompose():
                 row_id="alpha", primary_text="Agent alpha - running", clickable=True
             ),
         )
-        section.sync_state(
-            ConsoleInspectorSectionState(rows=updated_rows, summary="")
-        )
+        section.sync_state(ConsoleInspectorSectionState(rows=updated_rows, summary=""))
         await pilot.pause()
 
         # Same row_id sequence -> in-place, even though clickability flipped.
@@ -708,9 +697,7 @@ async def test_cancellable_re_syncs_on_an_in_place_patch():
                 cancellable=False,
             ),
         )
-        section.sync_state(
-            ConsoleInspectorSectionState(rows=updated_rows, summary="")
-        )
+        section.sync_state(ConsoleInspectorSectionState(rows=updated_rows, summary=""))
         await pilot.pause()
 
         # Same row_id sequence -> in-place, even though cancellability
@@ -1085,7 +1072,7 @@ def test_row_fits_one_line_measures_wide_glyphs_in_terminal_cells():
     ellipsized by the primary's own `text-overflow` at paint time. Backlog
     titles (read straight out of frontmatter since AC#2) and changed-file
     paths are both user data."""
-    wide = "映画生成基盤の実装"          # 9 chars, 18 cells
+    wide = "映画生成基盤の実装"  # 9 chars, 18 cells
     assert len(wide) == 9
     assert row_fits_one_line(wide, "x", budget=12) is False
     # The ASCII control of the same codepoint count still fits.
@@ -1146,6 +1133,21 @@ def test_row_shape_measures_the_glyph_RESOLVED_text_in_ascii_mode():
         set_ascii_glyph_mode(False)
 
 
+def test_inspect_row_user_text_keeps_frame_characters_in_ascii_mode():
+    """Owner decision 2026-10-09 (TASK-33910.2): B1's frame characters are
+    not rewritten inside Inspect row text; dev paints them unchanged."""
+    from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
+
+    text = "a→b… · 2×3"
+    row = InspectorSectionRow(row_id="r", primary_text=text)
+    set_ascii_glyph_mode(True)
+    try:
+        widget = ConsoleInspectorSectionRow(row, section_id="fleet", index=0)
+        assert widget._primary_text == text
+    finally:
+        set_ascii_glyph_mode(False)
+
+
 def test_structural_key_tracks_the_ascii_mode_row_shape():
     """Q4, second half: the shape decision is also a RECOMPOSE key, so it has
     to be measured the same way in both places. A key computed from the
@@ -1186,11 +1188,13 @@ async def test_an_indented_row_paints_further_right_than_its_parent():
     async with app.run_test(size=(60, 20)) as pilot:
         await pilot.pause()
         parent = next(
-            row for row in section.query(ConsoleInspectorSectionRow)
+            row
+            for row in section.query(ConsoleInspectorSectionRow)
             if row.row_id == "parent"
         )
         child = next(
-            row for row in section.query(ConsoleInspectorSectionRow)
+            row
+            for row in section.query(ConsoleInspectorSectionRow)
             if row.row_id == "child"
         )
         assert child.content_region.x > parent.content_region.x, (
@@ -1219,7 +1223,9 @@ async def test_a_row_that_gains_an_indent_recomposes_rather_than_patching():
         ).content_region.x
         section.sync_state(
             ConsoleInspectorSectionState(
-                rows=(InspectorSectionRow(row_id="r", primary_text="M a.py", indent=1),),
+                rows=(
+                    InspectorSectionRow(row_id="r", primary_text="M a.py", indent=1),
+                ),
                 summary="",
             )
         )

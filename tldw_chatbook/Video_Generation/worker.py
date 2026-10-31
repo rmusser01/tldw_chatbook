@@ -2,6 +2,7 @@
 and later the demo screen) must call run_generation() from a thread worker —
 never on the UI loop, because the adapters are synchronous and blocking.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -15,7 +16,9 @@ from tldw_chatbook.Video_Generation.adapters.base import (
     VideoGenResult,
 )
 from tldw_chatbook.Video_Generation.exceptions import VideoGenerationError
-from tldw_chatbook.Video_Generation.request_validation import validate_video_generation_request
+from tldw_chatbook.Video_Generation.request_validation import (
+    validate_video_generation_request,
+)
 from tldw_chatbook.Video_Generation.video_formats import (
     canonical_video_extension,
     video_container_for_mime,
@@ -67,10 +70,20 @@ def build_request(
         A frozen :class:`VideoGenRequest`.
     """
     return VideoGenRequest(
-        backend=backend, prompt=prompt, negative_prompt=negative_prompt,
-        duration_seconds=duration_seconds, fps=fps, width=width, height=height,
-        ratio=ratio, steps=steps, cfg_scale=cfg_scale, seed=seed,
-        sampler=sampler, model=model, format=video_format,
+        backend=backend,
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        duration_seconds=duration_seconds,
+        fps=fps,
+        width=width,
+        height=height,
+        ratio=ratio,
+        steps=steps,
+        cfg_scale=cfg_scale,
+        seed=seed,
+        sampler=sampler,
+        model=model,
+        format=video_format,
         extra_params=dict(extra_params or {}),
         reference_assets=tuple(reference_assets),
     )

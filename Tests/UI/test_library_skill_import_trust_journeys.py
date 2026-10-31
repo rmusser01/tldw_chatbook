@@ -31,7 +31,7 @@ from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
 from tldw_chatbook.UI.Library_Modules.skill_import_choice_modal import (
     SkillImportChoiceModal,
 )
-from tldw_chatbook.UI.Screens.skills_screen import (
+from tldw_chatbook.UI.Library_Modules.skills_trust_modals import (
     SkillTrustBootstrapModal,
     SkillTrustPassphraseModal,
 )

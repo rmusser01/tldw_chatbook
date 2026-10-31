@@ -7,9 +7,11 @@ holding secrets, chmod'd to 0o600). Enabling then disabling config
 encryption measured 0600 -> 0644 -> (still) 0644 with plaintext keys.
 """
 
+import errno
 import os
 import platform
 import stat
+from pathlib import Path
 
 import pytest
 from loguru import logger
@@ -32,9 +34,7 @@ def test_preserve_existing_mode_keeps_restrictive_permissions(tmp_path):
     target.write_text("a = 1\n")
     target.chmod(0o600)
 
-    atomic_write_text(
-        target, "a = 2\n", mode=0o644, preserve_existing_mode=True
-    )
+    atomic_write_text(target, "a = 2\n", mode=0o644, preserve_existing_mode=True)
 
     assert _mode(target) == 0o600
     assert target.read_text() == "a = 2\n"
@@ -48,9 +48,7 @@ def test_preserve_existing_mode_keeps_permissive_permissions(tmp_path):
     target.write_text("a = 1\n")
     target.chmod(0o644)
 
-    atomic_write_text(
-        target, "a = 2\n", mode=0o600, preserve_existing_mode=True
-    )
+    atomic_write_text(target, "a = 2\n", mode=0o600, preserve_existing_mode=True)
 
     assert _mode(target) == 0o644
 
@@ -62,9 +60,7 @@ def test_preserve_existing_mode_uses_fallback_mode_for_new_file(tmp_path):
     target = tmp_path / "new_secrets.toml"
     assert not target.exists()
 
-    atomic_write_text(
-        target, "a = 1\n", mode=0o600, preserve_existing_mode=True
-    )
+    atomic_write_text(target, "a = 1\n", mode=0o600, preserve_existing_mode=True)
 
     assert _mode(target) == 0o600
 
@@ -126,6 +122,202 @@ def test_no_overwrite_refuses_an_existing_destination(tmp_path):
         atomic_write_text(target, "private export", overwrite=False)
 
     assert target.read_text(encoding="utf-8") == "other writer"
+
+
+# --- PR #3021 review: a no-clobber publish where hard links do not exist ---
+# The ``overwrite=False`` branch published by ``os.link`` and nothing else.
+# FAT32/exFAT sticks and many SMB/NFS mounts cannot hard-link: ``link()``
+# raises ``PermissionError`` or ``OSError(ENOTSUP/EOPNOTSUPP)`` there -- not
+# ``FileExistsError`` -- so every new-file write to such a folder failed,
+# where a plain write used to work. These fail on 502bd89efc.
+
+
+def _eperm() -> OSError:
+    return PermissionError(errno.EPERM, "Operation not permitted")
+
+
+def _bare_permission_error() -> OSError:
+    return PermissionError("hard links are not permitted here")
+
+
+def _enotsup() -> OSError:
+    return OSError(errno.ENOTSUP, "Operation not supported")
+
+
+def _eopnotsupp() -> OSError:
+    return OSError(errno.EOPNOTSUPP, "Operation not supported on socket")
+
+
+LINK_REFUSALS = [
+    pytest.param(_eperm, id="EPERM"),
+    pytest.param(_bare_permission_error, id="PermissionError-without-errno"),
+    pytest.param(_enotsup, id="ENOTSUP"),
+    pytest.param(_eopnotsupp, id="EOPNOTSUPP"),
+]
+
+
+def _refuse_hard_links(monkeypatch, refusal) -> list[tuple]:
+    """Make ``os.link`` fail the way a filesystem without hard links does."""
+    attempts: list[tuple] = []
+
+    def refuse(*args, **_kwargs):
+        attempts.append(args)
+        raise refusal()
+
+    monkeypatch.setattr(os, "link", refuse)
+    return attempts
+
+
+def _names(folder) -> list[str]:
+    return sorted(entry.name for entry in folder.iterdir())
+
+
+@pytest.fixture
+def volume(tmp_path):
+    """A folder of its own: the suite's profile redirect keeps ``test_data``
+    in ``tmp_path``, and these tests assert that nothing is left behind."""
+    folder = tmp_path / "volume"
+    folder.mkdir()
+    return folder
+
+
+@pytest.mark.parametrize("refusal", LINK_REFUSALS)
+def test_no_overwrite_writes_a_new_file_where_hard_links_are_unsupported(
+    volume, monkeypatch, refusal
+):
+    attempts = _refuse_hard_links(monkeypatch, refusal)
+    seen = _fsynced_inodes(monkeypatch)
+    target = volume / "export.md"
+
+    atomic_write_text(target, "exported\n", mode=0o640, overwrite=False)
+
+    assert attempts, "the link publish must still be tried first"
+    assert target.read_bytes() == b"exported\n"
+    assert _mode(target) == 0o640, "the placeholder's mode must not survive"
+    assert _names(volume) == ["export.md"], "temp file or placeholder left behind"
+    assert _fsynced_parent(seen, volume), "the fallback publish was not made durable"
+
+
+@pytest.mark.parametrize("refusal", LINK_REFUSALS)
+def test_no_overwrite_still_refuses_an_existing_file_where_hard_links_are_unsupported(
+    volume, monkeypatch, refusal
+):
+    _refuse_hard_links(monkeypatch, refusal)
+    target = volume / "appeared.json"
+    target.write_bytes(b"other writer")
+
+    with pytest.raises(FileExistsError):
+        atomic_write_text(target, "private export", overwrite=False)
+
+    assert target.read_bytes() == b"other writer"
+    assert _names(volume) == ["appeared.json"], "temp file left behind"
+
+
+def test_no_overwrite_fallback_refuses_a_dangling_symlink(volume, monkeypatch):
+    """The fallback reserves the name exclusively; it is not an
+    ``exists()`` check, which reads a dangling link as "nothing there"."""
+    _refuse_hard_links(monkeypatch, _enotsup)
+    target = volume / "link.md"
+    target.symlink_to(volume / "missing-target.md")
+
+    with pytest.raises(FileExistsError):
+        atomic_write_text(target, "must not land", overwrite=False)
+
+    assert target.is_symlink()
+    assert not (volume / "missing-target.md").exists(), "wrote through the link"
+    assert _names(volume) == ["link.md"]
+
+
+@pytest.mark.parametrize("refusal", LINK_REFUSALS)
+def test_a_failed_fallback_publish_leaves_no_placeholder_and_no_temp_file(
+    volume, monkeypatch, refusal
+):
+    _refuse_hard_links(monkeypatch, refusal)
+    reserved_when_it_failed: list[bool] = []
+
+    def fail_replace(_source, destination, *_args, **_kwargs):
+        reserved_when_it_failed.append(os.path.lexists(destination))
+        raise OSError(errno.EIO, "disk went away")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+    target = volume / "export.md"
+
+    with pytest.raises(OSError) as caught:
+        atomic_write_text(target, "never lands", overwrite=False)
+
+    assert caught.value.errno == errno.EIO, "the publish's own failure is reported"
+    assert reserved_when_it_failed == [True], (
+        "the failure must come after the placeholder is created"
+    )
+    assert not os.path.lexists(target), "an empty placeholder was left behind"
+    assert _names(volume) == []
+
+
+def test_a_failed_fallback_publish_never_removes_another_writers_bytes(
+    volume, monkeypatch
+):
+    """The clean-up removes OUR empty placeholder, never a file with bytes in
+    it: another program may have written into the name in the meantime."""
+    _refuse_hard_links(monkeypatch, _enotsup)
+
+    def racing_replace(_source, destination):
+        Path(destination).write_bytes(b"other writer")
+        raise OSError(errno.EIO, "disk went away")
+
+    monkeypatch.setattr(os, "replace", racing_replace)
+    target = volume / "export.md"
+
+    with pytest.raises(OSError):
+        atomic_write_text(target, "never lands", overwrite=False)
+
+    assert target.read_bytes() == b"other writer"
+    assert _names(volume) == ["export.md"], "temp file left behind"
+
+
+def test_a_real_link_failure_is_raised_not_retried(volume, monkeypatch):
+    """Only "this filesystem cannot hard-link" falls back. A failing disk is
+    reported as itself, with nothing reserved at the destination."""
+
+    def _eio() -> OSError:
+        return OSError(errno.EIO, "disk went away")
+
+    _refuse_hard_links(monkeypatch, _eio)
+    target = volume / "export.md"
+
+    with pytest.raises(OSError) as caught:
+        atomic_write_text(target, "never lands", overwrite=False)
+
+    assert caught.value.errno == errno.EIO
+    assert _names(volume) == []
+
+
+def test_no_overwrite_reserves_nothing_where_hard_links_work(volume, monkeypatch):
+    """Unchanged where links are supported: one link publish, no placeholder."""
+    target = volume / "linked.md"
+    opened: list[str] = []
+    real_open = os.open
+
+    def spy_open(path, flags, *args, **kwargs):
+        opened.append(os.fspath(path))
+        return real_open(path, flags, *args, **kwargs)
+
+    links: list[tuple] = []
+    real_link = os.link
+
+    def spy_link(source, destination, *args, **kwargs):
+        links.append((os.fspath(source), os.fspath(destination)))
+        return real_link(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", spy_open)
+    monkeypatch.setattr(os, "link", spy_link)
+
+    atomic_write_text(target, "payload\n", overwrite=False)
+
+    assert [destination for _, destination in links] == [str(target)]
+    assert str(target) not in opened, "a placeholder was created on a linking volume"
+    assert target.read_bytes() == b"payload\n"
+    assert target.stat().st_nlink == 1
+    assert _names(volume) == ["linked.md"]
 
 
 # --- task-32896: durability barriers -----------------------------------

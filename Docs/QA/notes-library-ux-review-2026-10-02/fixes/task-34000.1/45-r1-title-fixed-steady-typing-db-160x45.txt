@@ -1,0 +1,14 @@
+# After Keep editing: trailing space removed from the title, then one key every 1.2 s into the body (x y z 1..9)
+1 x | [Ideas inbox] v1 tion items]] for thesis TODOs | 
+2 y | [Ideas inbox] v1 tion items]] for thesis TODOs | 
+4 z | [Ideas inbox] v1 tion items]] for thesis TODOs | 
+5 1 | [Ideas inbox] v1 tion items]] for thesis TODOs | 
+6 2 | [Ideas inbox] v1 tion items]] for thesis TODOs | 
+7 3 | [Ideas inbox] v1 tion items]] for thesis TODOs | 
+9 4 | [Ideas inbox] v1 tion items]] for thesis TODOs | 
+10 5 | [Ideas inbox] v3  abcdefghijklmnopqrstuvwxyz12345
+11 6 | [Ideas inbox] v3  abcdefghijklmnopqrstuvwxyz12345
+12 7 | [Ideas inbox] v3  abcdefghijklmnopqrstuvwxyz12345
+14 8 | [Ideas inbox] v3  abcdefghijklmnopqrstuvwxyz12345
+15 9 | [Ideas inbox] v3  abcdefghijklmnopqrstuvwxyz12345
+hard kill-server (no Ctrl+Q) at 15s

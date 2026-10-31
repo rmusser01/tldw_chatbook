@@ -139,9 +139,7 @@ class PersonasConversationsController:
             logger.opt(exception=True).warning(
                 "Could not render the conversations loading state."
             )
-        if rendered and self._owns_conversation_page(
-            str(character_id), None, attempt
-        ):
+        if rendered and self._owns_conversation_page(str(character_id), None, attempt):
             self._schedule_conversation_page(initial=True, attempt=attempt)
         elif not rendered:
             await self._recover_owned_conversation_render_failure(
@@ -153,7 +151,10 @@ class PersonasConversationsController:
 
         # An explicit new query abandons the old exact-row seek, not its identity
         # in favor of a substitute row. Ordinary browsing owns the new results.
-        if getattr(self.screen, "_pending_character_conversation_link", None) is not None:
+        if (
+            getattr(self.screen, "_pending_character_conversation_link", None)
+            is not None
+        ):
             self.screen._pending_character_conversation_link = None
         self._requested_conversation_id = None
         self._conversation_query = str(query or "").strip()
@@ -208,7 +209,9 @@ class PersonasConversationsController:
                 or row["card_deleted"] is None
                 or row["card_deleted"]
             ):
-                return "The exact conversation no longer belongs to this saved character."
+                return (
+                    "The exact conversation no longer belongs to this saved character."
+                )
             if db.get_character_conversation_search_revision() != link.data_revision:
                 return "Results changed. Retry to refresh this exact conversation."
         return None
@@ -227,7 +230,9 @@ class PersonasConversationsController:
         ):
             return
         try:
-            self.screen.query_one(PersonasInspectorPane).focus_conversation(link.conversation_id)
+            self.screen.query_one(PersonasInspectorPane).focus_conversation(
+                link.conversation_id
+            )
         except (QueryError, ValueError):
             pass
 
@@ -263,9 +268,7 @@ class PersonasConversationsController:
             logger.opt(exception=True).warning(
                 "Could not render the conversations loading state."
             )
-        if rendered and self._owns_conversation_page(
-            character_id, cursor, attempt
-        ):
+        if rendered and self._owns_conversation_page(character_id, cursor, attempt):
             self._schedule_conversation_page(initial=initial, attempt=attempt)
         elif not rendered:
             await self._recover_owned_conversation_render_failure(
@@ -342,7 +345,9 @@ class PersonasConversationsController:
                     )
                 else:
                     typed_cursor = (
-                        cursor if isinstance(cursor, CharacterConversationCursor) else None
+                        cursor
+                        if isinstance(cursor, CharacterConversationCursor)
+                        else None
                     )
                     page = service.page_for_character(
                         key,
@@ -491,9 +496,7 @@ class PersonasConversationsController:
             ).opt(exception=True).warning(
                 "Could not render the conversations retry state."
             )
-        if rendered or not self._owns_conversation_retry(
-            character_id, cursor, initial
-        ):
+        if rendered or not self._owns_conversation_retry(character_id, cursor, initial):
             return
         try:
             rendered = await self.screen.query_one(
@@ -586,9 +589,11 @@ class PersonasConversationsController:
             target = record.get("target")
             revision = record.get("data_revision")
             activation_request = None
-            if isinstance(target, LocalCharacterConversationTarget) and isinstance(
-                revision, int
-            ) and not isinstance(revision, bool):
+            if (
+                isinstance(target, LocalCharacterConversationTarget)
+                and isinstance(revision, int)
+                and not isinstance(revision, bool)
+            ):
                 activation_request = CharacterConversationActivationRequest(
                     target=target,
                     data_authority_id=target.character.data_authority_id,
@@ -632,8 +637,7 @@ class PersonasConversationsController:
         raw_cursor = (
             (cursor if isinstance(cursor, int) else 0) + len(durable_page)
             if self._conversation_query and durable_page
-            else
-            page_cursor
+            else page_cursor
             if hasattr(self.screen._character_db(), "get_local_authority_id")
             and durable_page
             else (durable_page[-1][2], durable_page[-1][0])
@@ -656,9 +660,7 @@ class PersonasConversationsController:
             ):
                 continue
             page_ids.add(conversation_id)
-            accepted.append(
-                (conversation_id, title, last_modified, activation_request)
-            )
+            accepted.append((conversation_id, title, last_modified, activation_request))
 
         has_more = len(records) > PERSONAS_CONVERSATIONS_PAGE_SIZE
         if not accepted and has_more:
@@ -691,9 +693,7 @@ class PersonasConversationsController:
                 for conversation_id, _title, _modified, request in accepted
                 if request is not None
             }
-            proposed_ids = {
-                conversation_id for conversation_id, _ in rows
-            }
+            proposed_ids = {conversation_id for conversation_id, _ in rows}
             proposed_cursor = raw_cursor
         else:
             proposed_rows = dict(self._conversation_rows)
@@ -767,9 +767,9 @@ class PersonasConversationsController:
                 pass
         visible_total = total if total is not None else len(proposed_rows)
         try:
-            self.screen.query_one(
-                "#ccp-character-card-view"
-            ).set_conversation_total(visible_total)
+            self.screen.query_one("#ccp-character-card-view").set_conversation_total(
+                visible_total
+            )
         except (AttributeError, QueryError):
             pass
         if self._requested_conversation_id in self._conversation_rows:
@@ -783,7 +783,10 @@ class PersonasConversationsController:
                     )
             else:
                 self._requested_conversation_id = None
-                if link is not None and self.screen._pending_character_conversation_link is link:
+                if (
+                    link is not None
+                    and self.screen._pending_character_conversation_link is link
+                ):
                     self.screen._pending_character_conversation_link = None
         elif self._requested_conversation_id is not None and has_more:
             # A deep link may target any row in the character's complete
@@ -916,9 +919,12 @@ class PersonasConversationsController:
                     actual_char_sender_id_in_db=character_name,
                 )
             elif not hasattr(db, "get_local_authority_id"):
-                history = retrieve_conversation_messages_for_ui(
-                    db, conversation_id, character_name, None, limit=200
-                ) or []
+                history = (
+                    retrieve_conversation_messages_for_ui(
+                        db, conversation_id, character_name, None, limit=200
+                    )
+                    or []
+                )
             else:
                 self.screen.app.call_from_thread(
                     self.show_conversation_unavailable,

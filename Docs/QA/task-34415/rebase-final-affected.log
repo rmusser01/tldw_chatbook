@@ -1,0 +1,28 @@
+.............................................................            [100%]
+============================= slowest 25 durations =============================
+10.87s call     Tests/UI/test_console_character_activation_presentation.py::test_ordinary_caller_cannot_claim_underlay_and_source_consumes_once
+10.29s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_owner_opens_cold_reuses_warm_and_keeps_composer_focus
+7.84s call     Tests/UI/test_console_character_activation_presentation.py::test_queued_switcher_acknowledges_only_its_own_commit[False]
+7.69s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[away-back]
+7.48s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[transcript]
+7.46s call     Tests/UI/test_console_character_activation_presentation.py::test_queued_switcher_acknowledges_only_its_own_commit[True]
+7.45s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[generation]
+7.00s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[open-failure]
+6.92s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[overlay]
+4.70s call     Tests/UI/test_console_character_activation_presentation.py::test_token_preparation_is_off_loop_before_activation_and_fences_settings[none]
+4.61s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[cancel]
+4.37s call     Tests/UI/test_console_character_activation_presentation.py::test_token_preparation_is_off_loop_before_activation_and_fences_settings[settings]
+3.85s call     Tests/UI/test_console_character_activation_presentation.py::test_token_preparation_is_off_loop_before_activation_and_fences_settings[target]
+3.79s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[control-file]
+3.77s call     Tests/UI/test_console_character_activation_presentation.py::test_token_preparation_is_off_loop_before_activation_and_fences_settings[payload]
+3.54s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[database]
+3.50s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[closed_entry]
+3.42s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[config_error]
+3.15s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[resume]
+3.15s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_refresh_retries_after_native_pause_without_stale_state[native-canceled]
+3.12s setup    Tests/UI/test_console_character_activation_presentation.py::test_installed_owner_opens_cold_reuses_warm_and_keeps_composer_focus
+3.06s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[torn_down]
+3.04s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[control-rebuild]
+3.00s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[rail-file-drift]
+2.98s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[current]
+61 passed in 235.40s (0:03:55)

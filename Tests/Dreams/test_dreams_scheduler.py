@@ -21,21 +21,167 @@ from datetime import datetime, timedelta, timezone
 
 from tldw_chatbook.DB.Dreams_DB import DreamsDB
 from tldw_chatbook.Dreams.settings import DREAMS_DEFAULTS
-from tldw_chatbook.Scheduling.scheduler.handlers import dreams_handler
+from tldw_chatbook.Scheduling.scheduler.handlers import (
+    dream_track_handler,
+    dreams_handler,
+)
+from tldw_chatbook.Scheduling.scheduler.handlers.dream_track_handler import (
+    DreamTrackHandler,
+)
 from tldw_chatbook.Scheduling.scheduler.handlers.dreams_handler import (
     DreamsCycleHandler,
 )
 from tldw_chatbook.Scheduling.services.dreams_projection import (
     DREAMS_TASK_PREFIX,
+    DREAMS_TRACK_PREFIX,
     DreamsProjection,
+    parse_dream_track_task_id,
     parse_dreams_task_id,
 )
+
+_NOW = datetime(2026, 9, 22, 8, 0, tzinfo=timezone.utc)
+_CADENCE = timedelta(hours=12)
 
 
 def test_parse_roundtrip_and_rejects_foreign_ids():
     assert parse_dreams_task_id(f"{DREAMS_TASK_PREFIX}:cycle") == "cycle"
     assert parse_dreams_task_id("briefing:7") is None
     assert parse_dreams_task_id(None) is None
+
+
+# --- dream_track task ids + per-item projection (Phase 2 Task 4) ---------------
+
+
+def test_parse_dream_track_task_id_roundtrip_and_rejects_foreign_ids():
+    assert parse_dream_track_task_id(f"{DREAMS_TRACK_PREFIX}:7") == 7
+    assert parse_dream_track_task_id("dreams:cycle") is None
+    assert parse_dream_track_task_id("dream_track:abc") is None
+    assert parse_dream_track_task_id("dream_track:") is None
+    assert parse_dream_track_task_id("dream_track:0") is None
+    assert parse_dream_track_task_id(None) is None
+
+
+def _tracked_item(db, *, last_checked=None, cadence_seconds=12 * 3600,
+                  status=None, query_template="watch {region}",
+                  mechanism="question", subscription_id=None):
+    item_id = db.create_tracked_item(
+        mechanism=mechanism, intent="topic", cadence_seconds=cadence_seconds,
+        query_template=query_template, subscription_id=subscription_id)
+    if last_checked is not None:
+        db.touch_tracked_checked(item_id, last_checked.isoformat())
+    if status is not None:
+        db.set_tracked_status(item_id, status)
+    return item_id
+
+
+def test_projection_emits_track_checks_for_active_items_with_clamps(
+        tmp_path, monkeypatch):
+    proj, db = _projection(tmp_path, monkeypatch)
+    never = _tracked_item(db)  # never checked -> due immediately
+    recent = _tracked_item(db, last_checked=_NOW - timedelta(hours=6))
+    overdue = _tracked_item(db, last_checked=_NOW - timedelta(hours=96))
+    _tracked_item(db, last_checked=_NOW - timedelta(hours=6), status="paused")
+    _tracked_item(db, last_checked=_NOW - timedelta(hours=6),
+                  status="retired")
+
+    tasks = {task.id: task for task in proj.tasks(_NOW)}
+
+    assert set(tasks) == {
+        "dreams:cycle",
+        f"dream_track:{never}",
+        f"dream_track:{recent}",
+        f"dream_track:{overdue}",
+    }, "paused and retired items emit nothing"
+    assert tasks[f"dream_track:{never}"].next_run_at == _NOW
+    assert tasks[f"dream_track:{recent}"].next_run_at == _NOW + \
+        timedelta(hours=6)
+    # 96h since the last check + 12h cadence = 84h overdue > 48h clamp:
+    # skip the missed slots and land on the first cadence multiple of
+    # last_checked inside the 48h window -- Qodo #6: the slot derives
+    # from the ITEM (last_checked + k*cadence), never from projection
+    # time, so queue reloads recompute the same instant. k = ceil((96h -
+    # 48h)/12h) = 4 -> last_checked + 48h == _NOW - 48h: due NOW, once.
+    overdue_at = tasks[f"dream_track:{overdue}"].next_run_at
+    assert overdue_at == _NOW - timedelta(hours=96) + 4 * _CADENCE
+    assert overdue_at <= _NOW, "the overdue catch-up slot is due, not deferred"
+    for task in tasks.values():
+        if task.id.startswith(f"{DREAMS_TRACK_PREFIX}:"):
+            assert task.type == "dream_track_check"
+            assert task.title.startswith("Dreams tracked check")
+
+
+def test_projection_overdue_item_is_due_at_every_reload(
+        tmp_path, monkeypatch):
+    """Qodo #6 (PR #2890): the queue reloads (~30 min) and REPLACES its
+    tasks, so the old ``now + cadence`` due time slid forward on every
+    reload -- always one full cadence in the future, never popped, so an
+    overdue item never fired again. The k-slot projection keeps the item
+    DUE at every projection (a due task is popped by the very next tick,
+    long before the next reload can replace it)."""
+    proj, db = _projection(tmp_path, monkeypatch)
+    overdue = _tracked_item(db, last_checked=_NOW - timedelta(hours=96))
+
+    first = {t.id: t for t in proj.tasks(_NOW)}[f"dream_track:{overdue}"]
+    later_now = _NOW + timedelta(minutes=30)
+    second = {
+        t.id: t for t in proj.tasks(later_now)
+    }[f"dream_track:{overdue}"]
+
+    assert first.next_run_at <= _NOW, "due at the first projection"
+    assert second.next_run_at <= later_now, (
+        "still due 30 minutes later -- the reload cannot defer it"
+    )
+    assert second.next_run_at - first.next_run_at <= _CADENCE, (
+        "a reload moves the slot by at most one cadence (quantized), "
+        "never to now + cadence"
+    )
+
+
+def test_projection_overdue_future_slot_is_stable_across_reloads(
+        tmp_path, monkeypatch):
+    """Qodo #6, long-cadence case: when the clamp lands the slot in the
+    FUTURE (cadence > clamp), reloads recompute the exact same instant --
+    the slot derives from ``last_checked`` alone."""
+    proj, db = _projection(tmp_path, monkeypatch)
+    # 130h stale, 72h cadence: k = ceil((130-48)/72) = 2 ->
+    # last_checked + 144h == _NOW + 14h, a future due time.
+    overdue = _tracked_item(db, cadence_seconds=72 * 3600,
+                            last_checked=_NOW - timedelta(hours=130))
+
+    first = {t.id: t for t in proj.tasks(_NOW)}[f"dream_track:{overdue}"]
+    assert first.next_run_at == _NOW + timedelta(hours=14)
+    later_now = _NOW + timedelta(minutes=30)
+    second = {
+        t.id: t for t in proj.tasks(later_now)
+    }[f"dream_track:{overdue}"]
+
+    assert first.next_run_at == second.next_run_at, (
+        "a 30-minute reload must not move a future slot"
+    )
+
+
+def test_projection_emits_no_track_tasks_for_page_items(
+        tmp_path, monkeypatch):
+    """Qodo #7 (PR #2890): page-mechanism items are watched by their
+    subscription's own ``watchlist:<id>`` projection; a Dreams search
+    check on them would burn the shared budget for nothing."""
+    proj, db = _projection(tmp_path, monkeypatch)
+    question = _tracked_item(db)
+    _tracked_item(db, mechanism="page", query_template=None,
+                  subscription_id=42)
+
+    tasks = {task.id: task for task in proj.tasks(_NOW)}
+
+    assert set(tasks) == {"dreams:cycle", f"dream_track:{question}"}, (
+        "page items emit no dream_track task"
+    )
+
+
+def test_projection_no_track_tasks_when_disabled(tmp_path, monkeypatch):
+    """A disabled Dreams emits nothing even with tracked items waiting."""
+    proj, db = _projection(tmp_path, monkeypatch, enabled=False)
+    _tracked_item(db)
+    assert proj.tasks(_NOW) == []
 
 
 def _projection(tmp_path, monkeypatch, enabled=True):
@@ -121,3 +267,78 @@ async def test_handler_dispatches_scheduled_trigger(monkeypatch):
     await asyncio.gather(*dreams_handler._SPAWNED_CYCLES)
     assert calls == [(deps, "scheduled")]
     dreams_handler._SPAWNED_CYCLES.clear()
+
+
+# --- DreamTrackHandler (Phase 2 Task 4) -----------------------------------------
+
+
+async def test_track_handler_spawns_nothing_without_deps():
+    dream_track_handler._SPAWNED_TRACK_CHECKS.clear()
+    handler = DreamTrackHandler(deps_getter=lambda: None)
+    # Must neither raise nor spawn anything.
+    await handler.handle({"id": "dream_track:7"})
+    assert not dream_track_handler._SPAWNED_TRACK_CHECKS
+
+
+async def test_track_handler_ignores_foreign_task_ids(monkeypatch):
+    dream_track_handler._SPAWNED_TRACK_CHECKS.clear()
+
+    async def _boom(*args, **kwargs):  # pragma: no cover - must not run
+        raise AssertionError("run_track_check must not be reached")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.track_service.run_track_check", _boom
+    )
+    handler = DreamTrackHandler(deps_getter=lambda: object())
+    await handler.handle({"id": "dreams:cycle"})
+    await handler.handle({"id": "dream_track:abc"})
+    await handler.handle({"id": "not-a-dreams-id"})
+    assert not dream_track_handler._SPAWNED_TRACK_CHECKS
+
+
+async def test_track_handler_dispatches_run_track_check(monkeypatch):
+    dream_track_handler._SPAWNED_TRACK_CHECKS.clear()
+    calls: list[tuple[object, int]] = []
+
+    async def fake_run_track_check(deps, tracked_item_id):
+        calls.append((deps, tracked_item_id))
+        return {"status": "baseline", "notified": False}
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.track_service.run_track_check",
+        fake_run_track_check,
+    )
+    deps = object()
+    handler = DreamTrackHandler(deps_getter=lambda: deps)
+    await handler.handle({"id": "dream_track:9"})
+    # handle() returns before the spawned task runs; settle it.
+    await asyncio.gather(*dream_track_handler._SPAWNED_TRACK_CHECKS)
+    assert calls == [(deps, 9)]
+    dream_track_handler._SPAWNED_TRACK_CHECKS.clear()
+
+
+async def test_track_handler_shutdown_cancels_inflight_and_is_idempotent():
+    """Fix round 1, ruling P9: the seam ``app.on_unmount`` calls is real.
+
+    Cancels a parked in-flight check, settles it, returns the cancelled
+    count, and is a safe no-op (returning 0) with nothing in flight --
+    the contract the deferred-import call in ``on_unmount`` relies on.
+    """
+    dream_track_handler._SPAWNED_TRACK_CHECKS.clear()
+    assert await dream_track_handler.shutdown() == 0
+
+    async def _parked():
+        await asyncio.sleep(60)
+
+    task = asyncio.create_task(_parked(), name="dream_track_test")
+    dream_track_handler._SPAWNED_TRACK_CHECKS.add(task)
+    task.add_done_callback(
+        dream_track_handler._SPAWNED_TRACK_CHECKS.discard)
+
+    cancelled = await dream_track_handler.shutdown(timeout=1.0)
+
+    assert cancelled == 1
+    assert task.cancelled()
+    assert not dream_track_handler._SPAWNED_TRACK_CHECKS
+    # Idempotent after settling.
+    assert await dream_track_handler.shutdown() == 0

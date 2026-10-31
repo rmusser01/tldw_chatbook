@@ -51,15 +51,13 @@ RAW_SHELL_APPROVAL_WARNING = (
 #: the closed Select -- keep the two in step (`_RAW_SHELL_DECISION_OPTIONS`
 #: in `Widgets/Chat_Widgets/chat_approval_card.py`).
 RAW_SHELL_SESSION_SCOPE_NOTICE = (
-    "\"All shell · session\" covers future raw "
+    '"All shell · session" covers future raw '
     "shell commands, not only this displayed command. It clears on Disarm or "
     "when Chatbook exits."
 )
 RAW_SHELL_APPROVAL_OPTIONS = ("approve_once", "approve_session", "deny")
 _MAX_MODEL_RESULT_CHARS = 4000
-RawShellProgressSink = Callable[
-    [str, str, RawCliStreamEvent | RawCliResult], None
-]
+RawShellProgressSink = Callable[[str, str, RawCliStreamEvent | RawCliResult], None]
 
 _SHELLS = ("auto", "bash", "powershell", "cmd")
 
@@ -507,9 +505,7 @@ class RawShellToolProvider:
         approved = stamp in {"approve_once", "approve_session"}
         if not approved:
             try:
-                approved = self._runtime.model_session_granted(
-                    self.console_session_id
-                )
+                approved = self._runtime.model_session_granted(self.console_session_id)
             except Exception:
                 approved = False
         if not approved:

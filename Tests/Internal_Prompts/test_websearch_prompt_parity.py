@@ -38,9 +38,12 @@ def test_sub_question_generation_parity():
 
             Original query: {original_query}
             """
-    assert render_internal_prompt(
-        "websearch.sub_question_generation", original_query=original_query
-    ) == expected
+    assert (
+        render_internal_prompt(
+            "websearch.sub_question_generation", original_query=original_query
+        )
+        == expected
+    )
 
 
 def test_result_relevance_eval_parity():
@@ -64,12 +67,15 @@ def test_result_relevance_eval_parity():
                 Selected Answer: [True or False]
                 Reasoning: [Your reasoning for the selections]
                 """
-    assert render_internal_prompt(
-        "websearch.result_relevance_eval",
-        original_question=original_question,
-        sub_questions=sub_questions,
-        content=content,
-    ) == expected
+    assert (
+        render_internal_prompt(
+            "websearch.result_relevance_eval",
+            original_question=original_question,
+            sub_questions=sub_questions,
+            content=content,
+        )
+        == expected
+    )
 
 
 def test_result_summarization_parity():
@@ -88,9 +94,12 @@ def test_result_summarization_parity():
     4. Include key details and statistics if present
     """
     expected = original_template.format(question=question, content=content)
-    assert render_internal_prompt(
-        "websearch.result_summarization", question=question, content=content
-    ) == expected
+    assert (
+        render_internal_prompt(
+            "websearch.result_summarization", question=question, content=content
+        )
+        == expected
+    )
 
 
 def test_answer_synthesis_parity():
@@ -179,9 +188,12 @@ def test_answer_synthesis_parity():
 
         The user's query is: {question}
         """
-    assert render_internal_prompt(
-        "websearch.answer_synthesis",
-        concatenated_texts=concatenated_texts,
-        current_date=current_date,
-        question=question,
-    ) == expected
+    assert (
+        render_internal_prompt(
+            "websearch.answer_synthesis",
+            concatenated_texts=concatenated_texts,
+            current_date=current_date,
+            question=question,
+        )
+        == expected
+    )

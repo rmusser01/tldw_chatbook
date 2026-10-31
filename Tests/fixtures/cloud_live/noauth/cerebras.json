@@ -1,0 +1,30 @@
+{
+  "server": "cerebras",
+  "base_url": "https://api.cerebras.ai/v1",
+  "probe_model": "probe-model",
+  "listing": {
+    "status": 403,
+    "body": {
+      "detail": "Not authenticated"
+    }
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "message": "Wrong API Key",
+      "type": "invalid_request_error",
+      "param": "api_key",
+      "code": "wrong_api_key"
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "message": "Wrong API Key",
+      "type": "invalid_request_error",
+      "param": "api_key",
+      "code": "wrong_api_key"
+    }
+  },
+  "probed_at": "2026-09-30T04:19:39+00:00"
+}

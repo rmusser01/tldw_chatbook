@@ -19,8 +19,8 @@ not by scanning the draft text for marker substrings.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 COMMAND_PREFIX = "/"
 """Leading character that marks a Console draft as a candidate slash command."""
@@ -101,6 +101,9 @@ REWIND_COMMAND_HANDLER_ID = "rewind"
 RESEARCH_COMMAND_NAME = "research"
 RESEARCH_COMMAND_ARGUMENT_HINT = "<question>"
 RESEARCH_COMMAND_HANDLER_ID = "research"
+GOAL_COMMAND_NAME = "goal"
+GOAL_COMMAND_ARGUMENT_HINT = "[task description]"
+GOAL_COMMAND_HANDLER_ID = "goal"
 HELP_COMMAND_NAME = "help"
 HELP_COMMAND_ARGUMENT_HINT = "[command]"
 HELP_COMMAND_HANDLER_ID = "help"
@@ -321,6 +324,18 @@ def default_console_registry() -> ConsoleCommandRegistry:
     )
     registry.register(
         ConsoleCommand(
+            name="omfg", argument_hint="<problem>", handler_id="learn-response-rule"
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name="rules",
+            argument_hint="[chat|workspace|global]",
+            handler_id="manage-response-rules",
+        )
+    )
+    registry.register(
+        ConsoleCommand(
             name=REDIRECT_COMMAND_NAME,
             argument_hint=REDIRECT_COMMAND_ARGUMENT_HINT,
             handler_id=REDIRECT_COMMAND_HANDLER_ID,
@@ -376,4 +391,11 @@ def default_console_registry() -> ConsoleCommandRegistry:
                 handler_id=CONSOLE_ACTION_COMMAND_HANDLER_ID,
             )
         )
+    registry.register(
+        ConsoleCommand(
+            name=GOAL_COMMAND_NAME,
+            argument_hint=GOAL_COMMAND_ARGUMENT_HINT,
+            handler_id=GOAL_COMMAND_HANDLER_ID,
+        )
+    )
     return registry

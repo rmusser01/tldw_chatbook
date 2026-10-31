@@ -38,7 +38,7 @@ Where this page's controls live:
   panel](#the-environment-panel-environment-tasks-agents) below), the
   "Sources — next send" tray, the Library search controls, the
   retrieval-scope row, the "Prefill" rows when one is armed, the
-  run/readiness groups, the "Selected turn" block, "Session Settings", the
+  run/readiness groups, the "Selected turn" block, "Chat settings", the
   "Live work sources" card, and the "Chat Dictionaries" / "World Books"
   blocks at the bottom. Press **Alt+I**
   to open the rail and put the caret on the send summary; press it again to
@@ -71,6 +71,27 @@ Where this page's controls live:
 
 ## Features & controls
 
+### Questions about an attached project
+
+Bind the project folder in a named Workspace, then ask a normal question such
+as "Summarize this project". When file-reading tools are available, Console
+guides the model to inspect relevant README files, manifests and source. With
+multiple folders, name the project you mean. Folder bindings provide file access;
+they do not automatically read, ingest or index the folder, and need no embeddings.
+Tool permissions, read-only bindings and excluded paths still apply. A model may
+need a more specific question if it does not choose the relevant files.
+
+Your saved **Never/Automatic** retrieval and **Blocked/Allowed** assistant Library
+access choices stay as you set them. Automatic or manually staged Library
+excerpts can accompany file results; unrelated excerpts do not mean project files
+are unavailable. Answers should identify file evidence by path and use `[S#]`
+only for the supplied Library references. An answer based entirely on project
+files can have no Library citation. Switching to another chat while a send is
+preparing does not transfer that chat's folders or Library scope into the send.
+
+Optional folder indexing is a separate planned capability, with explicit opt-in;
+this guidance change does not enable it or retain project files as Library items.
+
 ### Model context capacity
 
 The model controls use the selected server's reported context size when it is
@@ -87,6 +108,44 @@ budget is retained and limited to the available capacity for each request.
 Applying settings preserves the values shown for the conversation, including
 previous edits. Making a new default also saves that profile for subsequent
 chats; changing only Streaming does not reset other fields.
+
+### When a chat reaches its context limit
+
+What happens depends on **When limit nears** in Chat settings ▸ Context
+and memory:
+
+- **Ask** (the default). When a message you send would take the chat past its
+  compaction threshold, the message is held before anything is sent or saved.
+  A card above the transcript shows how many tokens the chat uses out of its
+  budget, and offers three choices:
+  - **Compact and send** summarizes older turns, then sends your message. The
+    summary is one extra model call and may be billed. If it fails, the card
+    stays, says why, and your message is still held.
+  - **Send without compacting** sends this one message as it is. Older turns
+    that do not fit the model's context window are left out of the request.
+  - **Cancel send** sends nothing and compacts nothing; your message goes back
+    to the composer.
+- **Automatic** compacts and sends without asking.
+- **Off** never compacts.
+
+A send that cannot show the card (a queued prompt, Retry or Regenerate) stops
+with a note instead: use **Compact now** in Chat settings ▸ Context and
+memory (Ctrl+O), then send again.
+
+When compacting cannot make enough room, the message is not sent and the note
+says what fills the window and what to change:
+
+- **Max tokens** (Chat settings ▸ Model and generation, Ctrl+O) plus the
+  safety margin already use the whole window: lower Max tokens.
+- The system prompt, tools and attached context need more than the window
+  leaves: remove attached sources or tools, or lower Max tokens.
+- The message does not fit and there are no older complete turns to compact:
+  shorten it or its attachments, lower Max tokens, or start a new chat.
+
+If no catalog knows the model's context window, the app assumes a size (the
+**Model window** row in Chat settings ▸ Context and memory reads "unknown,
+32,000 assumed"), and the card and the note say so. Set the real value in
+**Settings ▸ Providers & Models (F4)**, under Advanced ▸ Context window.
 
 ### Per-turn micro-compaction
 
@@ -117,7 +176,7 @@ yet" instead.
 
 A note that held your message, or that reports a failed **Compact now**, also
 gives a next step. "Nothing to compact yet" is not a failure and gives none.
-In **Conversation settings > Context and memory** you can raise
+In **Chat settings > Context and memory** you can raise
 **Conversation max tokens**, set **If compaction fails** to **Omit older
 context** (the message is then sent without compacting), or set **When limit
 nears** to **Off**. You can also start a new chat. In a saved chat, the
@@ -205,7 +264,8 @@ that built the payload, never a separate estimate — so they always sum to
 the request total. Categories big enough to act on name their lever (e.g.
 Conversation → summarize older turns via `/rewind`; Attachments →
 `[agents] retire_stale_images`). Viewing the breakdown never triggers a
-model call, and an unverified model window keeps its "estimated" label.
+model call, and a model window no catalog knows still reads "unknown" with
+the size it assumes.
 
 
 ### Reading long Context and Inspector sections
@@ -508,6 +568,16 @@ Click the cost chip for **Usage & cost**, or press **Ctrl+Shift+P** / choose
 being inspected. The modal stays bound to that chat and profile. **Close** and
 `Escape` return to your previous control.
 
+Hovering the cost chip shows a summary: context fullness, conversation budget,
+compaction, current spend and the next-send estimate. When no catalog knows
+the model's window, the fullness line ends "(assumed; window unknown)". When
+the session's provider sends rate-limit headers (OpenAI and Anthropic do, as
+do many compatible APIs), the last line shows how much its most recent reply
+said was left. For example: `Rate limit at 14:32:05: 4,999/5,000 requests left (resets
+14:32:53) · 39,200/40,000 tokens left (resets 14:32:06)`. The times are clock
+times from that reply. A provider that sends no rate-limit headers adds no
+line.
+
 The section list and reader sit side by side in a wide terminal. At narrower
 widths, select an item and press `Enter` to open its reader; **Back to sections**
 returns to the same selection. Resizing preserves the selected item and reader
@@ -570,7 +640,7 @@ cannot return through a delayed load or export.
 
 ### Thinking history replay
 
-Open the current conversation's Console settings and find **Thinking history
+Open the current conversation's Chat settings and find **Thinking history
 replay**. Its saved policy belongs to the conversation and affects future
 provider requests, not whether Thinking rows are visible:
 
@@ -898,19 +968,80 @@ Escape does not silently commit a dirty choice. If your resolved RAG scope comes
 back **empty**, auto-retrieve short-circuits with the same shared notice
 the manual path shows, rather than searching everything.
 
-While a send is retrieving, the staged-evidence strip briefly shows a
-"Retrieving…" state and the search is capped at a **5-second timeout**.
+While a send is retrieving, the run chip reads **Run: Searching Library…** and
+**Stop** is offered. The search itself is capped at a **5-second timeout**.
+The first automatic send after launch also has to start the Library's search
+service (it loads the embedding model: a few seconds, or about 20 seconds the
+very first time, while the model downloads). That start-up has its own,
+longer 60-second limit and does not count against the 5 seconds, so the first
+send after launch no longer times out just because the service was cold.
 Successful evidence is staged and then consumed by that send. **Zero results**
-is a completed retrieval, so the send continues without evidence and keeps a
-visible zero-results disclosure on the turn.
+is a completed retrieval, so the send continues without evidence.
 
-Failure, timeout, or a RAG service that is still starting pauses the prepared
-send before provider dispatch. The recovery card keeps the exact draft and
-frozen conversation authority visible and offers **Retry**, **Send once**, and
-**Cancel**. Retry makes one fresh retrieval attempt; Send once bypasses
-automatic retrieval for only this prepared send; Cancel restores the draft and
-does not contact the model provider. Nothing is silently downgraded to an
-ungrounded send.
+Each turn sent this way says what its search did, in one quiet line under
+your message:
+
+- **Library: 3 sources sent**: the search found evidence and the send
+  carried it. The count is the number of references it sent.
+- **Library: 0 matches · sent without Library evidence**: the search
+  finished and found nothing.
+- **Library: sent once without Library · search timed out** (or *search
+  stopped* / *search failed*): you chose **Send once without Library** on the
+  recovery card described below.
+
+The line is read from a small record saved with your message, so it is still
+there after you reopen the chat, switch branches or restart the app.
+
+A turn has no line when no automatic search ran for it, or when nothing
+recorded one:
+
+- Auto was set to **Never**.
+- Evidence was already staged (a manual **Search Library** run or a Library
+  **Use in Console** handoff), so the send used that instead of searching.
+- The message was an **Edit & resend**, or started with `/` or `@`.
+- The chat was temporary when you sent it, or the turn was sent before this
+  record existed.
+
+A timeout, a failed search, or **Stop** pauses the prepared send before
+provider dispatch. The model provider is not contacted. A recovery card in
+the transcript says why ("Library search timed out; your message was not
+sent"), the run chip reads **Run: Blocked — Library timeout** (or *error* /
+*stopped*), and the card offers three actions:
+
+- **Retry Library search** makes one fresh retrieval attempt and, if it
+  finishes, sends the message with what it found.
+- **Send once without Library** skips automatic retrieval for only this
+  message and sends it; the Auto setting is unchanged.
+- **Cancel send** sends nothing and puts the message back in the composer,
+  attachments included (when the composer is empty or still shows that
+  message), and takes it off the unsent-turn list.
+
+If Retry or Send once without Library then finds the provider not ready (a
+local server that is down, or a model you switched to meanwhile), the send
+pauses again and the card says so ("Provider not ready or changed; your
+message was not sent", chip **Blocked — check provider**). It then offers
+**Retry send** and **Cancel send**.
+
+The paused message is also listed as an **unsent turn** above the composer.
+Its **Restore** and **Discard** release the paused send too, so the next
+message you send in that conversation goes through. Once you act on the card,
+the message leaves that list while the card handles it, so it is never sent
+twice. On a busy machine the list can take a moment to catch up; Restore or
+Discard pressed meanwhile only says the unsent turn is no longer available.
+If Cancel finds other text in the composer, that text stays and the message
+goes back on the list for **Restore** later. If you switch to another
+conversation while Cancel runs, the message goes back to its own
+conversation's draft, not to the one on screen; if you had typed something
+new in that draft, your text stays and the message is listed for **Restore**
+instead. If the card is closed while
+**Retry Library search** is still searching (for example you open the
+Console terminal), the search stops, the send pauses as **Library search
+stopped**, and the message is listed again with Restore and Discard; the
+card shows it again when you return. Once a Retry or **Send once without
+Library** has sent the message and its reply is arriving, closing the card
+ends that reply as failed: your message stays in the conversation, it is not
+listed again, and your next send goes through. Nothing is silently
+downgraded to an ungrounded send.
 
 The Inspector tray is not the only place staged evidence shows up: a
 **staged-evidence strip** sits on the main surface itself, at the top of
@@ -935,7 +1066,7 @@ visit. Whatever is currently staged, the strip's count, the tray's
 "Sources N" count, and the Inspector's Source Readiness line ("Evidence:
 N/N available") always agree on the same number.
 
-Staged evidence also counts toward the Console Settings context estimate
+Staged evidence also counts toward the Chat settings context estimate
 and the running-session cost chip — it used to report zero for anything
 staged but not yet sent. The estimate counts the staged snippets as
 they'll actually be sent (each capped at 4,000 characters, the same cap

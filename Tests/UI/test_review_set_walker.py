@@ -1166,6 +1166,9 @@ def _auto_resume_fake(service, *, live_ids=None):
     fake._library_selected_row_id = "browse-media"
     fake._media_state.view = "list"
     fake.is_current = True
+    # TASK-34000.22 fix round 2 (R2-1): the ambient resume is gated on the
+    # Media authoring forms' dirty predicate; "" = no form holds text.
+    fake._library_media_editor_dirty = lambda: ""
     for name in (
         "_auto_resume_review_set_worker",
         "_resolve_active_review_set_landing",
@@ -1586,6 +1589,12 @@ class _ReviewSelectedControllerFake:
     @property
     def _review_selected_worker(self):
         return self._screen._review_selected_worker
+
+    # TASK-34000.22 fix round 1 (C-1 audit): the handler refuses while a
+    # Media authoring form holds unsaved text; "" = clean, so the real body
+    # runs on to the id coercion these tests pin.
+    def _library_media_editor_dirty(self):
+        return ""
 
     @property
     def run_worker(self):

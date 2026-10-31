@@ -36,8 +36,7 @@ def _straddles_viewport(region: Region, viewport: Region) -> bool:
     if region.width <= 0 or viewport.width <= 0:
         return False
     return (
-        region.x < viewport.x < region.right
-        or region.x < viewport.right < region.right
+        region.x < viewport.x < region.right or region.x < viewport.right < region.right
     )
 
 
@@ -168,7 +167,9 @@ class NavigateToScreen(Message):
         self.screen_name = screen_name
         self.screen_context = dict(screen_context or {})
         self._on_completion = on_completion
-        self.require_character_inspection_admission = require_character_inspection_admission
+        self.require_character_inspection_admission = (
+            require_character_inspection_admission
+        )
         self.is_current = is_current
         self.on_commit_started = on_commit_started
         self._completion_reported = False
@@ -230,14 +231,21 @@ class MainNavigationBar(Container):
     Replaces the tab-based navigation with screen-based navigation.
     """
 
+    # TASK-33641.1: the bar paints the surface its tabs rest on, so its
+    # separator can be the 3:1 grid line ($surface-lighten-2 on $background
+    # was 1.75:1, and no line colour is pinned against $background). The
+    # clip-ghost rules below, and their app-tier copy in
+    # css/components/_navigation.tcss, paint the same fill. The active tab's
+    # outline is $tldw-active-edge here as in that app-tier rule, which is the
+    # one that paints in the app; $primary on this fill was 1.29:1.
     BUNDLED_CSS = """
     MainNavigationBar {
         height: 3;
         min-height: 3;
         width: 100%;
         dock: top;
-        background: $background;
-        border-bottom: solid $surface-lighten-2;
+        background: $surface;
+        border-bottom: solid $ds-grid-line;
         layout: horizontal;
         overflow: hidden;
     }
@@ -280,14 +288,14 @@ class MainNavigationBar(Container):
 
     .nav-button.is-active {
         background: $primary-darken-1;
-        border: solid $primary;
+        border: round $tldw-active-edge;
         text-style: bold;
         color: $text;
     }
 
     .nav-button.is-active:focus {
         background: $primary-darken-1;
-        border: solid $primary;
+        border: round $tldw-active-edge;
         text-style: bold underline;
         color: $text;
         outline: none;
@@ -318,7 +326,7 @@ class MainNavigationBar(Container):
        `*:disabled:can-focus { opacity: 0.7; }` and, every `Button`'s own
        default variant class, `Button.-style-default:disabled {
        text-opacity: 0.6; }`) -- without this the ghosted color blends
-       toward transparent instead of staying pixel-exact on `$background`.
+       toward transparent instead of staying pixel-exact on the bar's `$surface`.
        `!important` is required, not decorative: `Button.-style-default:
        disabled` carries an extra TYPE-selector component (`Button`) that
        `.nav-button.nav-button-clip-ghost:disabled` (two classes, no type)
@@ -389,8 +397,8 @@ class MainNavigationBar(Container):
     .nav-button.nav-button-clip-ghost.is-active,
     .nav-button.nav-button-clip-ghost.is-active:focus,
     .nav-button.nav-button-clip-ghost:disabled {
-        background: $background !important;
-        color: $background !important;
+        background: $surface !important;
+        color: $surface !important;
         text-style: none;
         opacity: 100% !important;
         text-opacity: 100% !important;
@@ -463,7 +471,9 @@ class MainNavigationBar(Container):
         )
         # Left overflow indicator: visible only when the strip is scrolled
         # right, so off-screen destinations on the left stay discoverable.
-        left_hint = Static("‹", id="nav-overflow-hint-left", classes="nav-overflow-hint")
+        left_hint = Static(
+            "‹", id="nav-overflow-hint-left", classes="nav-overflow-hint"
+        )
         left_hint.tooltip = "More destinations to the left — scroll back"
         left_hint.display = False
         yield left_hint
@@ -506,7 +516,9 @@ class MainNavigationBar(Container):
 
     def apply_console_attention(self) -> None:
         """task-31385: badge the Console button while interrupt rounds are pending."""
-        self.sync_console_attention(bool(getattr(self.app, "console_needs_attention", False)))
+        self.sync_console_attention(
+            bool(getattr(self.app, "console_needs_attention", False))
+        )
 
     def on_mount(self) -> None:
         """Scroll the initially active destination's button into view."""
@@ -551,7 +563,9 @@ class MainNavigationBar(Container):
 
     def sync_console_attention(self, needs_attention: bool) -> None:
         """Project the content-free Console attention state into this bar."""
-        needs_attention = bool(needs_attention or getattr(self.app, CONSOLE_ATTENTION_ATTR, 0))
+        needs_attention = bool(
+            needs_attention or getattr(self.app, CONSOLE_ATTENTION_ATTR, 0)
+        )
         try:
             button = self.query_one("#nav-console", NavigationButton)
         except Exception:
@@ -824,7 +838,6 @@ class MainNavigationBar(Container):
         # reachable directly rather than by paging a scroll viewport, so
         # the defect class this fix closed (paging strands a focused
         # button mid-straddle) cannot recur.
-
 
     def _focused_strip_button(self) -> "NavigationButton | None":
         """The nav button currently holding keyboard focus, or ``None``.
@@ -1105,7 +1118,9 @@ class MainNavigationBar(Container):
                     strip.scroll_to_widget(button, animate=False, immediate=True)
                 except Exception:
                     pass
-            should_ghost = straddles and button.id != active_id and button.id != focused_id
+            should_ghost = (
+                straddles and button.id != active_id and button.id != focused_id
+            )
             button.set_class(should_ghost, "nav-button-clip-ghost")
             button.disabled = should_ghost
 

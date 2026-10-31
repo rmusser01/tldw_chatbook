@@ -1,0 +1,6 @@
+[
+  "Tests/Chat/test_console_chat_start.py",
+  "Tests/DB/test_automatic_chat_starts.py",
+  "tldw_chatbook/Chat/console_chat_start.py",
+  "Tests/DB/test_chachanotes_v76_agent_chat_starts_migration.py"
+]

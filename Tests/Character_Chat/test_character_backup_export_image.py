@@ -21,14 +21,14 @@ import json
 
 import pytest
 
+from tldw_chatbook.Backup_Recovery.settings_backup_helpers import (
+    serialize_character_cards_for_backup,
+)
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     import_and_save_character_from_file,
     import_character_card_from_json_string,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.UI.Tools_Settings_Window import (
-    _serialize_character_cards_for_backup,
-)
 
 pytestmark = pytest.mark.integration
 
@@ -67,7 +67,7 @@ def backup_rows(db_instance):
 
 
 def _exported_by_name(rows):
-    exported = json.loads(_serialize_character_cards_for_backup(rows))
+    exported = json.loads(serialize_character_cards_for_backup(rows))
     return {card["name"]: card for card in exported}
 
 
@@ -77,7 +77,7 @@ def test_backup_export_of_image_bearing_cards_is_valid_json(backup_rows):
         "fixture must actually contain an image BLOB row"
     )
 
-    json_str = _serialize_character_cards_for_backup(backup_rows)
+    json_str = serialize_character_cards_for_backup(backup_rows)
 
     by_name = {card["name"]: card for card in json.loads(json_str)}
     card = by_name["Image Bearer"]
@@ -132,3 +132,38 @@ def test_parse_path_accepts_image_base64_key_directly():
     assert parsed is not None
     assert parsed["image_base64"] == payload
     assert "image_base64" not in parsed["extensions"]
+
+
+def test_local_performance_does_not_change_character_json_backup(db_instance):
+    from Tests.Character_Chat.test_portrait_compositing import core, scene
+    from tldw_chatbook.Character_Chat.portrait_performance import (
+        capture_performance_source,
+    )
+
+    base, recipe, components = scene()
+    character_id = db_instance.add_character_card(
+        {"name": "Local radio", "image": base}
+    )
+    before = serialize_character_cards_for_backup(
+        db_instance.list_character_cards(include_image=True)
+    )
+    source, _ = capture_performance_source(
+        db_instance, character_id=character_id, requested_state="idle"
+    )
+    regions_revision = db_instance.save_character_portrait_regions(
+        source, recipe, expected_revision=0
+    )
+    db_instance.apply_character_portrait_performance(
+        source,
+        core().assemble_components(base, recipe, components),
+        expected_revision=0,
+        composition_recipe=recipe,
+        expected_regions_revision=regions_revision,
+    )
+
+    assert (
+        serialize_character_cards_for_backup(
+            db_instance.list_character_cards(include_image=True)
+        )
+        == before
+    )

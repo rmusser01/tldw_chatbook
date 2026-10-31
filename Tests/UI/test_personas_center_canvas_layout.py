@@ -146,8 +146,8 @@ async def test_scrolling_the_center_reveals_the_attachment_sections(
             "scrolling must reveal the sections"
         )
         toggle = screen.query_one("#personas-char-dicts-toggle", Button)
-        assert stack.region.y <= toggle.region.y < (
-            stack.region.y + stack.region.height
+        assert (
+            stack.region.y <= toggle.region.y < (stack.region.y + stack.region.height)
         ), "the section header must be on screen after scrolling"
 
 
@@ -212,6 +212,4 @@ async def test_card_content_rows_render_inside_the_card_at_100x30(
         name_row = screen.query_one("#personas-character-card-name", Static)
         assert "Detective Sam" in str(name_row.renderable)
         assert name_row.region.height > 0
-        assert card.region.y <= name_row.region.y < (
-            card.region.y + card.region.height
-        )
+        assert card.region.y <= name_row.region.y < (card.region.y + card.region.height)

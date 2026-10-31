@@ -180,6 +180,7 @@ from ..Watchlists_Modules.opml_dialogs import (
     WatchlistNameDialog,
     WatchlistPickerDialog,
     WatchlistSourcePickerDialog,
+    _opml_import_summary_text,
 )
 from ..Watchlists_Modules.overview_pane import OverviewPane
 from ..Watchlists_Modules.region_layout import (
@@ -359,50 +360,6 @@ def _normalize_items_status_filter(value: Any) -> str:
     """
     text = str(value or "").strip().lower()
     return "unread" if text in {"unread", "new"} else "all"
-
-
-def _opml_import_summary_text(result: Mapping[str, Any]) -> str:
-    """The post-import toast, saying the WHOLE of what happened (TASK-3604).
-
-    The pre-round-trip toast counted only created sources, so importing a
-    structured document read identically whether it filed twelve feeds into
-    three watchlists or did nothing at all on a re-import. The summary now
-    names new vs already-present sources, the watchlists created or
-    reused, and the Unassigned remainder.
-
-    Args:
-        result: The scope service's import summary dict.
-
-    Returns:
-        One sentence for the toast.
-    """
-    created = int(result.get("created", 0) or 0)
-    existing = int(result.get("existing", 0) or 0)
-    created_wl = list(result.get("watchlists_created") or [])
-    reused_wl = list(result.get("watchlists_reused") or [])
-    assignments = int(result.get("assignments", 0) or 0)
-    explicit_unassigned = result.get("unassigned")
-    unassigned = (
-        max(created + existing - assignments, 0)
-        if explicit_unassigned is None
-        else int(explicit_unassigned or 0)
-    )
-
-    sources_bit = (
-        f"{created} new"
-        if existing == 0
-        else f"{created} new + {existing} already present"
-    )
-    text = f"Imported {sources_bit} source(s) from OPML"
-    if assignments:
-        total_wl = len(created_wl) + len(reused_wl)
-        wl_word = "watchlist" if total_wl == 1 else "watchlists"
-        new_bit = f", {len(created_wl)} new" if created_wl else ""
-        text += f": {assignments} into {total_wl} {wl_word}{new_bit}"
-        if unassigned:
-            text += f", {unassigned} unassigned"
-    text += "."
-    return text
 
 
 @dataclass(frozen=True)
@@ -848,6 +805,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_retry_message: str | None = None
         self._items_retry_inflight = False
         self._items_snapshot_generation = 0
+        self._item_detail_generation = 0
         self._items_page_presentation_lock = asyncio.Lock()
         self._items_inflight_replacement: (
             tuple[tuple[Any, ...], asyncio.Future[bool]] | None
@@ -1127,13 +1085,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # (`_scope_default_destination`), not from a stale mirror.
         self._source_create_draft_type: str | None = None
         self._source_create_draft_destination: Any = None
-        # Mirrors RulesPane's edit-form state (Finding 4, fix round 2): the
-        # same rebuild-destroys-pane-local-state failure mode as the Sources
-        # create form above, but for an in-progress rule EDIT rather than a
-        # create. `_rule_form_editing` holds the rule being edited, or `None`
-        # when the open form is for a brand new rule.
+        # Ephemeral Rule editor state survives section/region reconstruction.
         self._rule_form_open = False
         self._rule_form_editing: dict[str, Any] | None = None
+        self._rule_form_draft: dict[str, Any] | None = None
         # Mirrors ItemsPane's filter/search state, for exactly the reason
         # above (whole-branch review, Important). Any workbench rebuild
         # constructs a brand new `ItemsPane` via `_build_detail_pane`, and
@@ -1337,6 +1292,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_apply_layout` performs for anything that genuinely did change.
         self._rendered_section = self.active_section
         self._recompute_effective_layout(cause="initial")
+        # TASK-34967 (review revert): the revisit-TTL gate shipped here
+        # stranded fresh screen instances in a permanent loading state --
+        # this route is NOT reusable, so every visit constructs a screen
+        # with empty data state, and skipping the loaders on a rapid
+        # revisit left nothing to render from. Reload every visit until a
+        # data-carrying snapshot cache exists (see the task file).
         server_read = self.active_section == "items" and self.runtime_backend != "local"
         if server_read:
             self._enter_server_read_recovery()
@@ -1375,8 +1336,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 section != "artifacts"
                 or str(context.get(WATCHLISTS_NAV_CONTEXT_BACKEND) or "").strip()
                 != "local"
-                or _LOCAL_BRIEFING_RECEIPT_RE.fullmatch(canonical_briefing_id)
-                is None
+                or _LOCAL_BRIEFING_RECEIPT_RE.fullmatch(canonical_briefing_id) is None
             ):
                 return
 
@@ -1493,28 +1453,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             pass
         else:
             overview.data = self.overview_data
-        try:
-            inspector = self.query_one("#watchlists-entity-inspector", InspectorPane)
-        except NoMatches:
-            pass
-        else:
-            inspector.profile_state = self._watchlists_profile_state()
-        # Built exactly as `_build_inspector_pane` builds them, so a rebuild
-        # and a patch cannot render differently.
-        for widget_id, text in (
-            (
-                "#watchlists-alerts-summary",
-                f"Alert rules active: {self.overview_data.get('active_alert_rules', 0)}",
-            ),
-            (
-                "#watchlists-latest-run-summary",
-                self._latest_run_status_text(),
-            ),
-        ):
-            try:
-                self.query_one(widget_id, Static).update(text)
-            except NoMatches:
-                continue
+        self._reseed_inspector_rail()
         # An overview refresh follows every write verb on this screen, so this
         # is one of the points where the recompose this reactive no longer
         # triggers used to re-enter the Console-follow adapter. What that
@@ -1714,9 +1653,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         dismissal + schedules.
         """
         if bool(
-            get_cli_setting(
-                "scheduling", "daily_report_demo_banner_dismissed", False
-            )
+            get_cli_setting("scheduling", "daily_report_demo_banner_dismissed", False)
         ):
             return
         db = self._briefings_db()
@@ -1751,16 +1688,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             classes="destination-filter-strip",
         )
         await self.mount(banner, before="#watchlists-header-bar")
-
-    def _rail_unread_suffix(self) -> str:
-        """The collapsed left rail's "N unread" suffix (task-2513 Task 9).
-
-        Empty when there is nothing unread — a permanent "0 unread" is
-        chrome, not information, and an expanded rail already shows the
-        per-node numbers.
-        """
-        unread = self._tree_counts.get(ALL_SOURCES_BUCKET, {}).get("unread", 0)
-        return f"{unread} unread" if unread else ""
 
     def _apply_tree_data_to_live_surfaces(self) -> None:
         """Publish freshly loaded tree data without recomposing the screen.
@@ -2187,8 +2114,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         this the selection highlight would reset to nothing every time,
         even though the scope itself survived on the screen.
         """
-        recovering = self.active_section == "items" and self._read_recovery_active
-        return WatchlistTree(
+        inputs = self._rail_inputs()
+        recovering = inputs[0]
+        view = dict(zip(self._RAIL_VIEW, self._rail_view(recovering), strict=True))
+        tree = WatchlistTree(
             watchlists=[] if recovering else self._tree_watchlists,
             counts={} if recovering else self._tree_counts,
             source_rows_loader=(
@@ -2196,14 +2125,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 if recovering
                 else self._load_source_rows_for_tree
             ),
-            expanded=(frozenset() if recovering else self._tree_expanded_watchlist_ids),
-            expanded_root_kinds=(
-                frozenset() if recovering else self._tree_expanded_root_kinds
-            ),
-            active_tag=None if recovering else self._tree_active_tag,
-            active_scope=self.tree_scope,
-            write_disabled_reason=self._tree_write_disabled_reason(),
-            selection_disabled_reason=self._tree_selection_disabled_reason(),
+            **view,
             source_counts={} if recovering else self._tree_source_counts,
             all_source_rows=[] if recovering else self._tree_all_source_rows,
             unassigned_source_rows=(
@@ -2211,6 +2133,41 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             ),
             unread_pin_source_id=self._unread_pin_source_id(),
             id="wl-tree",
+        )
+        tree.built_from = inputs
+        return tree
+
+    def _rail_inputs(self) -> tuple[Any, ...]:
+        """The data `_build_tree_pane` renders; each tree carries its own copy.
+
+        The rail has no in-place data pushes, so a reopened rail is rebuilt
+        only when these moved between its build and its mount, or when its
+        view (`_RAIL_VIEW`, which the tree itself changes and reports) differs
+        from the screen's (review of #3107, Q2 and R1); a full rebuild costs
+        200-500 ms on a 30-watchlist rail.
+        """
+        recovering = self.active_section == "items" and self._read_recovery_active
+        return (recovering, self._tree_snapshot, self._unread_pin_source_id())
+
+    #: The tree's view reactives, in `_rail_view`'s order.
+    _RAIL_VIEW = (
+        "active_scope",
+        "active_tag",
+        "expanded",
+        "expanded_root_kinds",
+        "write_disabled_reason",
+        "selection_disabled_reason",
+    )
+
+    def _rail_view(self, recovering: bool) -> tuple[Any, ...]:
+        """The rail's view as the screen holds it; a tree reports `_RAIL_VIEW`."""
+        return (
+            self.tree_scope,
+            None if recovering else self._tree_active_tag,
+            frozenset() if recovering else frozenset(self._tree_expanded_watchlist_ids),
+            frozenset() if recovering else frozenset(self._tree_expanded_root_kinds),
+            self._tree_write_disabled_reason(),
+            self._tree_selection_disabled_reason(),
         )
 
     @staticmethod
@@ -2721,13 +2678,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ]
         if section == "overview":
             overview = OverviewPane(id="watchlists-overview-pane")
-            overview.set_reactive(OverviewPane.data, self.overview_data)
-            # TASK-998: lets the first-run panel distinguish "no watchlists at
-            # all" from "a watchlist with no sources in it" -- `overview_data`
-            # counts sources, items and runs, never watchlists.
-            overview.set_reactive(
-                OverviewPane.watchlist_count, len(self._tree_watchlists)
-            )
+            self._seed_overview_pane(overview, mounted=False)
             children.append(overview)
         elif section == "sources":
             sources_pane = SourcesPane(id="watchlists-sources-pane")
@@ -2736,35 +2687,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self.runtime_backend,
                 source_types,
             )
-            # Seed the last-loaded rows and selection (Finding 2, fix round
-            # 2) the same way RunsPane/NotificationsPane already do below —
-            # without this the table renders empty until the next unrelated
-            # navigation happens to trigger `_load_sources` again.
-            # Scoped (TASK-2304 AC#2): a rebuild must not quietly re-widen
-            # the table back to every source while the header still names one
-            # watchlist.
-            sources_pane.set_reactive(
-                SourcesPane.sources, self.scoped_loaded_sources()
-            )
-            sources_pane.set_authoritative_source_ids(
-                self._loaded_source_canonical_ids()
-            )
+            # Rows, ids, busy checks, destination choices (BEFORE
+            # `show_create_form`), then what the pane owns once mounted.
+            self._seed_sources_pane(sources_pane, mounted=False)
             sources_pane.set_selected_source_ids(self._selected_source_ids)
             sources_pane.selected_source = self.selected_source
-            # TASK-2309: re-seed from screen state for the identical
-            # rebuild-survival reason as `selected_source` on the line
-            # above -- a region rebuild (collapse/expand, a tab
-            # switch) constructs a brand new `SourcesPane`, and without this
-            # a check still running would render its Check-now button back
-            # to enabled/"Check now" until the run's own completion repaint
-            # reached this new instance.
-            sources_pane.busy_source_ids = frozenset(self._checks_in_flight)
-            # TASK-2302: the destination Select's options and its default,
-            # seeded BEFORE `show_create_form` so a form that opens as part
-            # of this very rebuild has them. The pane holds no service of its
-            # own, the same as every other pane here.
-            sources_pane.watchlist_choices = self._create_form_watchlist_choices()
-            sources_pane.default_destination = self._scope_default_destination()
             sources_pane.create_draft_destination = (
                 self._source_create_draft_destination
                 if self._source_create_draft_destination is not None
@@ -2850,15 +2777,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             items_pane.search_query = self._items_search_query
             items_pane.selected_item = self._selected_content_item
-            items_pane.page_number = self._items_page_index + 1
-            items_pane.has_previous = self._items_page_index > 0
-            items_pane.has_next = self._items_has_next
-            items_pane.page_loading = self._items_page_loading
-            items_pane.snapshot_count = self._items_snapshot_count
-            items_pane.new_items_note = self._items_arrival_note()
-            items_pane.search_results_authoritative = (
-                self._items_search_results_authoritative
-            )
+            self._seed_items_pager(items_pane)
             if self._items_retry_message is not None:
                 # Keep the Reader chrome mounted and visible on a transient
                 # load failure. Hiding the entire pane also hid its filter,
@@ -2885,18 +2804,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # note on `sources_pane.sources` above; same rebuild, same gap.
             rules_pane = RulesPane(id="watchlists-rules-pane")
             rules_pane.set_reactive(RulesPane.rules, self._loaded_rules)
-            # Seed the edit-form state so an in-progress rule edit survives
-            # this pane being reconstructed (Finding 4, fix round 2) — the
-            # same treatment the Sources create-form draft already gets
-            # above; see `_rule_form_open`/`_rule_form_editing` in __init__
-            # and RuleFormVisibilityChanged in rules_pane.py. `edit_rule`
-            # itself takes the `set_reactive` route on an unmounted pane
-            # (task-15778) — see its own comment.
+            # Preserve original identity and raw fields without a pre-mount
+            # recompose (TASK-15778); draft changes use the existing message seam.
             if self._rule_form_open:
                 if self._rule_form_editing is not None:
                     rules_pane.edit_rule(self._rule_form_editing)
                 else:
                     rules_pane.set_reactive(RulesPane.show_rule_form, True)
+            rules_pane.form_draft = self._rule_form_draft
             children.append(rules_pane)
         elif section == "notifications":
             notifications_pane = NotificationsPane(id="watchlists-notifications-pane")
@@ -2975,10 +2890,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     def _push_items_pager_state(self) -> None:
         """Push screen-owned snapshot presentation into the mounted Read pane."""
-        try:
-            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
-        except NoMatches:
-            return
+        for pane in self.query("#watchlists-items-pane").results(ArticleListPane):
+            self._seed_items_pager(pane)
+
+    def _seed_items_pager(self, pane: ArticleListPane) -> None:
+        """The Read pane's snapshot presentation: its factory and pushes."""
         pane.page_number = self._items_page_index + 1
         pane.has_previous = self._items_page_index > 0
         pane.has_next = self._items_has_next
@@ -3147,20 +3063,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # selection pushes the real value).
         pane.position = self._reader_position_text()
         return pane
-
-    def _watchlists_are_empty(self) -> bool:
-        """Whether this profile has nothing in Watchlists yet (TASK-998).
-
-        Delegates to `OverviewPane.profile_is_empty`, which is the one
-        definition of this question (Qodo #3 on PR #1017). It used to be
-        copied here, and two copies deciding what the Overview region and the
-        Inspector each say is a drift waiting to happen -- the two disagreeing
-        is precisely the confusing first-run state TASK-998 removed.
-
-        Returns:
-            True only once `overview_data` has loaded and reports nothing.
-        """
-        return OverviewPane.profile_is_empty(self.overview_data)
 
     def _watchlists_profile_state(self) -> str:
         """Loading, empty or populated (TASK-1020).
@@ -3332,60 +3234,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         cross-cutting action unrelated to whatever is currently selected --
         moves to the bottom.
         """
-        # Seed from screen state (Finding 3, fix round 2): collapsing or
-        # expanding the right rail constructs a brand new InspectorPane, and
-        # so does the drain's conditional rail rebuild
-        # (`_rebuild_inspector_if_console_follow_drifted`). Without this,
-        # the screen keeps
-        # `selected_entity` but the freshly-built Inspector starts at its
-        # class default (`None`) until the NEXT explicit selection change —
-        # `watch_selected_entity` only pushes on change, so a rebuild alone
-        # never re-syncs it. That left `d`/`c`/`p` silently operating on a
-        # selection the user could no longer see.
-        #
-        # `scope`/`breadcrumb_labels` get the identical treatment (Task 5 fix
-        # round 1) and for the identical reason: a `[`/`]`/`z`/`Z` toggle
-        # rebuilds this factory from scratch, and `watch_selected_scope`
-        # alone would leave a freshly-built Inspector's breadcrumb blank
-        # until the next tree click.
         inspector = InspectorPane(id="watchlists-entity-inspector")
-        inspector.selected_entity = self.selected_entity
-        inspector.scope = self.selected_scope
-        inspector.breadcrumb_labels = self._breadcrumb_labels
-        # TASK-998, widened by TASK-1020: same seeding rationale as the three
-        # lines above -- and the Inspector cannot work this out for itself,
-        # since it is handed a selection rather than the data behind it. The
-        # value is the same one the Overview region keys off, so the rail's
-        # first-run text and the region's can never disagree.
-        inspector.profile_state = self._watchlists_profile_state()
-        # Review wave, I1: the same seeding rationale again, for the same
-        # value the rail is handed in `_build_tree_pane`. The Inspector's
-        # `Add existing` is the watchlist-side twin of the rail's, so the two
-        # must be enabled and disabled by one condition, not two.
-        inspector.write_disabled_reason = self._tree_write_disabled_reason()
-        # TASK-2309: same rebuild-survival seeding as `SourcesPane.busy_
-        # source_ids` in `_build_detail_pane`, and for the identical reason
-        # -- this factory builds a brand new `InspectorPane` on every region
-        # rebuild.
-        inspector.busy_source_ids = frozenset(self._checks_in_flight)
+        self._seed_inspector(inspector)
 
         children: list[Widget] = [
             Static(
                 "Inspector",
                 classes="destination-section watchlists-column-title",
             ),
-            Static(
-                self._watchlists_state_summary_text(),
-                id="watchlists-state-summary",
-            ),
-            Static(
-                f"Alert rules active: {self.overview_data.get('active_alert_rules', 0)}",
-                id="watchlists-alerts-summary",
-            ),
-            Static(
-                self._latest_run_status_text(),
-                id="watchlists-latest-run-summary",
-            ),
+            *(Static(text, id=key) for key, text in self._inspector_summaries()),
             inspector,
             Static("Console actions", classes="destination-section"),
             Button(
@@ -4100,7 +3957,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     @on(RegionLayoutApplied)
     def _on_region_layout_applied(self, event: RegionLayoutApplied) -> None:
-        """Restore pane-local view state after a successful remount."""
+        """Re-apply what loads pushed while a re-created region was being built."""
         event.stop()
         if event.token != self._current_layout_request_token:
             return
@@ -4109,10 +3966,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             and event.token == self._manual_layout_rollback.token
         ):
             self._manual_layout_rollback = None
-        if event.previous.is_collapsed(Region.ITEMS) and not event.layout.is_collapsed(
-            Region.ITEMS
-        ):
+        reopened = {r for r in COLLAPSIBLE_REGIONS if event.previous.is_collapsed(r)}
+        reopened -= {r for r in COLLAPSIBLE_REGIONS if event.layout.is_collapsed(r)}
+        if Region.ITEMS in reopened:
+            self._reseed_active_section_pane()
             self._restore_items_view_state()
+        if Region.RIGHT_RAIL in reopened:
+            self._reseed_inspector_rail()
+        if Region.LEFT_RAIL in reopened:
+            inputs = self._rail_inputs()
+            view = self._rail_view(inputs[0])
+            for tree in self.query("#wl-tree").results(WatchlistTree):
+                shown = tuple(getattr(tree, name) for name in self._RAIL_VIEW)
+                if getattr(tree, "built_from", None) != inputs or shown != view:
+                    self._request_surface_refresh(self._SURFACE_RAIL)
 
     def _apply_tree_scope(self, scope: TreeScope) -> None:
         """The single reconciliation point for "the tree scope is now `scope`".
@@ -5217,44 +5084,90 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # is still wrong, but there is nothing better to reach for here.
             logger.debug("No section tab to restore focus to after the swap.")
 
+    @staticmethod
+    def _seed_reactive(pane: Widget, name: str, value: Any, mounted: bool) -> None:
+        """Plain on a mounted pane; `set_reactive` on a built one (task-15778)."""
+        if mounted:
+            setattr(pane, name, value)
+        else:
+            pane.set_reactive(getattr(type(pane), name), value)
+
+    def _seed_overview_pane(self, pane: OverviewPane, *, mounted: bool) -> None:
+        """The Overview's screen state (TASK-998: it counts no watchlists itself)."""
+        self._seed_reactive(pane, "data", self.overview_data, mounted)
+        count = len(self._tree_watchlists)
+        self._seed_reactive(pane, "watchlist_count", count, mounted)
+
+    def _seed_sources_pane(self, pane: SourcesPane, *, mounted: bool) -> None:
+        """Screen-owned Sources state, for its factory, the reseed and the pushes.
+
+        Scoped rows (TASK-2304), ids that prune the pane's own selection
+        without moving its range anchor, busy checks (TASK-2309) and the
+        destination choices (TASK-2302). The pane owns its selection, row
+        highlight and drafts once mounted, so only the factory seeds those.
+        """
+        self._seed_reactive(pane, "sources", self.scoped_loaded_sources(), mounted)
+        pane.set_authoritative_source_ids(self._loaded_source_canonical_ids())
+        pane.busy_source_ids = frozenset(self._checks_in_flight)
+        pane.watchlist_choices = self._create_form_watchlist_choices()
+        pane.default_destination = self._scope_default_destination()
+
+    def _seed_inspector(self, inspector: InspectorPane) -> None:
+        """The screen state the Inspector shows, for its factory and a reopen.
+
+        A rebuild constructs a brand new InspectorPane at class defaults, and
+        each value's watcher pushes only on change, so without this a rebuilt
+        Inspector lost the selection `d`/`c`/`p` act on (Finding 3), its
+        breadcrumb (Task 5), its first-run state (TASK-1020), the `Add
+        existing` gate shared with the rail (I1) and running checks (TASK-2309).
+        """
+        inspector.selected_entity = self.selected_entity
+        inspector.scope = self.selected_scope
+        inspector.breadcrumb_labels = self._breadcrumb_labels
+        inspector.profile_state = self._watchlists_profile_state()
+        inspector.write_disabled_reason = self._tree_write_disabled_reason()
+        inspector.busy_source_ids = frozenset(self._checks_in_flight)
+
+    def _inspector_summaries(self) -> tuple[tuple[str, str], ...]:
+        """The Inspector rail's summary lines, as built and as re-pushed."""
+        alerts = self.overview_data.get("active_alert_rules", 0)
+        return (
+            ("watchlists-state-summary", self._watchlists_state_summary_text()),
+            ("watchlists-alerts-summary", f"Alert rules active: {alerts}"),
+            ("watchlists-latest-run-summary", self._latest_run_status_text()),
+        )
+
+    def _reseed_inspector_rail(self) -> None:
+        """Re-apply the Inspector rail's seeds to whatever of it is mounted."""
+        for inspector in self.query(InspectorPane):
+            self._seed_inspector(inspector)
+        for key, text in self._inspector_summaries():
+            for summary in self.query(f"#{key}").results(Static):
+                summary.update(text)
+
     def _reseed_active_section_pane(self) -> None:
-        """Re-apply the section's loaded rows to the pane the swap mounted.
+        """Re-apply loaded state to the section pane a rebuild just mounted.
 
-        `watch_active_section` dispatches this section's loader and the swap
-        in the same breath, and `WatchlistsWorkbench.refresh_region_content`
-        deliberately calls the region factory BEFORE detaching the old pane
-        (so a factory that raises leaves what is on screen standing). Those
-        two facts open a window: the factory reads screen state, then the
-        remove/mount pair awaits, and a loader that lands in that gap writes
-        its rows to `self._loaded_*` and then fails to find its pane, because
-        the replacement is built but not yet mounted. The pane then renders
-        the state as it was one instant before the data arrived, with nothing
-        left to correct it -- measured as an Alert-rules table that stayed
-        empty over a `self._loaded_rules` holding the row.
-
-        (The whole-screen `refresh(recompose=True)` this replaced did not have
-        the gap: Textual's `Widget.recompose` removes its children first and
-        calls `compose()` only afterwards, so it always read screen state on
-        the late side of the yield.)
-
-        Re-applying after the mount closes it from the other end, and costs
-        nothing when no loader landed: these are reactive assignments, and an
-        unchanged value fires no watcher and no recompose. It is also what
-        keeps a section switch to ONE pane build -- the loader's own push,
-        arriving later, finds the values already in place.
+        A rebuild calls the pane factory (it reads screen state) BEFORE its
+        mount awaits; a loader landing in that gap finds no pane to push into
+        (measured: an Alert-rules table empty over `self._loaded_rules`;
+        TASK-34951: a Sources form offering no watchlist). These reactive
+        assignments are no-ops when unchanged, so a section switch stays ONE
+        pane build.
         """
         if not self._dom_is_live:
             return
         section = self.active_section
         try:
             if section == "items":
-                self.query_one(
-                    "#watchlists-items-pane", ArticleListPane
-                ).items = self._loaded_items
+                pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+                pane.items = self._loaded_items
+                self._seed_items_pager(pane)
             elif section == "sources":
-                self.query_one(
-                    "#watchlists-sources-pane", SourcesPane
-                ).sources = self.scoped_loaded_sources()
+                self._push_scoped_sources_to_pane()
+            elif section == "overview":
+                pane = self.query_one("#watchlists-overview-pane", OverviewPane)
+                self._seed_overview_pane(pane, mounted=True)
             elif section == "runs":
                 self._reseed_live_detail_pane()
             elif section == "rules":
@@ -5406,6 +5319,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._focus_in_centre_header = False
 
     def watch_active_section(self) -> None:
+        self._item_detail_generation += 1
         # A tab switch always rebuilds the centre header and the section's own
         # pane (below): whatever `_focus_in_centre_header` was tracking about
         # the OLD DOM is moot the instant that DOM is torn down. Reset
@@ -5533,6 +5447,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.app.push_screen(OpmlImportDialog(), callback=self._on_opml_import_complete)
 
     def watch_runtime_backend(self) -> None:
+        self._item_detail_generation += 1
         # Backend identity is part of every Runs/detail publication. Advance
         # the monotonic owners even for an A -> B -> A transition, where a
         # plain backend-equality check would otherwise admit pre-B work.
@@ -5954,6 +5869,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
         watchlist = created["watchlist"]
         self._selected_source_ids = ()
+        for pane in self.query("#watchlists-sources-pane").results(SourcesPane):
+            pane.set_selected_source_ids(())  # was left to the next reload
         self._request_tree_scope(
             TreeScope(kind="watchlist", watchlist_id=int(watchlist["id"]))
         )
@@ -6809,8 +6726,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             event.modal.show_write_failure(WC_SERVICE_UNAVAILABLE_COPY)
             return
         try:
+            from tldw_chatbook.Utils.egress import UrlProvenance
+
             results = await service.create_sources_exact_batch(
-                [row.payload for row in event.rows]
+                [{**row.payload, "url_provenance": UrlProvenance.USER_ENTERED}
+                 for row in event.rows]
             )
         except Exception:
             logger.warning("Bulk source creation failed.")
@@ -6877,6 +6797,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # reaches a backend that has no column for it.
         payload = dict(payload)
         watchlist_id = payload.pop("watchlist_id", None)
+        if runtime_backend == "local":
+            from tldw_chatbook.Utils.egress import UrlProvenance
+
+            payload["url_provenance"] = UrlProvenance.USER_ENTERED
         try:
             created = await self._controller.create_source(
                 runtime_backend=runtime_backend,
@@ -6908,9 +6832,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     message = f"Existing source is available in {destination}."
             else:
                 message = f"Source created in {destination}." + (
-                    " The watchlist you chose could not be used."
-                    if degraded
-                    else ""
+                    " The watchlist you chose could not be used." if degraded else ""
                 )
             # markup=False: the destination is a user-typed watchlist name.
             self._notify_watchlists(
@@ -7875,21 +7797,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         if not self._dom_is_live:
             return
-        try:
-            sources_pane = self.query_one("#watchlists-sources-pane", SourcesPane)
-        except NoMatches:
-            return
-        sources_pane.sources = self.scoped_loaded_sources()
-        # TASK-2302, and pushed from exactly here for the same reason the
-        # rows are: this method is called from `_apply_tree_data_to_live_
-        # surfaces` (a watchlist was created, renamed or deleted) and from
-        # `watch_tree_scope` (the user moved), which are the only two events
-        # that can change either the destination CHOICES or the default. Both
-        # are plain reactive assignments -- an open create form is not
-        # rebuilt, so a half-typed draft is untouched; its Select re-reads
-        # these on the next compose, which the next open supplies.
-        sources_pane.watchlist_choices = self._create_form_watchlist_choices()
-        sources_pane.default_destination = self._scope_default_destination()
+        # Called after a tree load (choices) and a scope move (rows, default).
+        for pane in self.query("#watchlists-sources-pane").results(SourcesPane):
+            self._seed_sources_pane(pane, mounted=True)
 
     async def _load_sources(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
@@ -7916,9 +7826,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     sources_pane = self.query_one(
                         "#watchlists-sources-pane", SourcesPane
                     )
-                    sources_pane.sources = self.scoped_loaded_sources()
-                    sources_pane.set_authoritative_source_ids(authoritative_ids)
-                    sources_pane.set_selected_source_ids(self._selected_source_ids)
+                    # The pane prunes its own selection in place (anchor kept).
+                    self._seed_sources_pane(sources_pane, mounted=True)
+                    if not authoritative_ids:  # nothing to prune against
+                        sources_pane.set_selected_source_ids(())
                     if self.selected_source is not None:
                         source_id = self.selected_source.get("id")
                         if source_id is not None:
@@ -8114,10 +8025,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self, event: MarkNotificationReadRequested
     ) -> None:
         event.stop()
+        # TASK-21238: `exit_on_error=False` -- a corrupt/unopenable
+        # notifications DB raising out of `mark_read` must degrade to a
+        # skipped mark, not take the whole application down (the default
+        # `exit_on_error=True` does exactly that).
         self.run_worker(
             self._mark_notification_read(event.notification_id),
-            exclusive=True,
+            exclusive=False,  # Each native commit must reach its refresh.
             group="wc_mark_notification_read",
+            exit_on_error=False,
         )
 
     async def _mark_notification_read(self, notification_id: int) -> None:
@@ -8132,10 +8048,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self, event: DismissNotificationRequested
     ) -> None:
         event.stop()
+        # TASK-21238: same guard as the mark-read worker above.
         self.run_worker(
             self._dismiss_notification(event.notification_id),
-            exclusive=True,
+            exclusive=False,  # Each native commit must reach its refresh.
             group="wc_dismiss_notification",
+            exit_on_error=False,
         )
 
     async def _dismiss_notification(self, notification_id: int) -> None:
@@ -8504,9 +8422,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if (
                 expect_durable_receipt
                 and select_briefing_id is not None
-                and not any(
-                    row.get("id") == select_briefing_id for row in loaded_rows
-                )
+                and not any(row.get("id") == select_briefing_id for row in loaded_rows)
             ):
                 self._durable_briefing_reload_target = (
                     watchlist_id,
@@ -8840,7 +8756,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             if (
                 generation_failed
-                and (watchlist_id is None or self._briefing_watchlist_id() == watchlist_id)
+                and (
+                    watchlist_id is None
+                    or self._briefing_watchlist_id() == watchlist_id
+                )
                 and self._artifacts_view_state != "storage_mismatch"
             ):
                 self._set_artifacts_view_state(
@@ -9182,9 +9101,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         watchlist_id = self._briefing_watchlist_id()
         target = self._durable_briefing_reload_target
         select_briefing_id = (
-            target[1]
-            if target is not None and target[0] == watchlist_id
-            else None
+            target[1] if target is not None and target[0] == watchlist_id else None
         )
         self._request_briefings_refresh(
             select_briefing_id=select_briefing_id,
@@ -10015,6 +9932,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         never served anything, exactly like `ArtifactsScreen.on_unmount`'s
         own guard around its worker cancellation.
         """
+        self._item_detail_generation += 1
         if self._feed_server.is_running:
             self._feed_server.stop()
         # No super().on_unmount(): the dispatcher already invokes
@@ -10181,9 +10099,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     async def _write_briefing_cadence(
         self, watchlist_id: int, seconds: int | None
     ) -> None:
-        command_service = getattr(
-            self.app_instance, "watchlists_command_service", None
-        )
+        command_service = getattr(self.app_instance, "watchlists_command_service", None)
         try:
             if command_service is None:
                 raise RuntimeError("schedule command service is unavailable")
@@ -10346,7 +10262,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if value is None:
             return "Never"
         try:
-            parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+            parsed = (
+                value
+                if isinstance(value, datetime)
+                else datetime.fromisoformat(str(value))
+            )
         except (TypeError, ValueError):
             return "Unknown"
         if parsed.tzinfo is None:
@@ -10627,7 +10547,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         recorded, still inside `_start_generation`'s own `to_thread` hop.
         Passed as `exclude_watchlists`, never in place of `exclude`.
         """
-        if getattr(self.app_instance, "watchlists_operation_coordinator", None) is not None:
+        if (
+            getattr(self.app_instance, "watchlists_operation_coordinator", None)
+            is not None
+        ):
             # App startup owns process-loss reconciliation. A screen-local
             # sweep cannot distinguish navigation from process loss and must
             # never race the coordinator's accepted generation.
@@ -10848,9 +10771,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 # Repaint on every same-scope path: a refusal has just changed
                 # a row's status, and a failure may leave a generating row.
                 self._request_briefings_refresh(
-                    select_briefing_id=(
-                        None if generation_failed else generated_id
-                    ),
+                    select_briefing_id=(None if generation_failed else generated_id),
                     expect_durable_receipt=durable_receipt,
                     generation_failed=generation_failed,
                     watchlist_id=watchlist_id,
@@ -11892,6 +11813,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_page_loading = True
         self._push_items_pager_state()
 
+    @staticmethod
+    def _published_page_rows(
+        page: tuple[Mapping[str, Any], ...]
+    ) -> list[dict[str, Any]]:
+        """Detach one cached page into the mutable dicts the reader shares.
+
+        Snapshot rows are frozen mappings shared structurally across page
+        turns (task 13), but the reader surfaces -- `ItemsPane.items`,
+        `_loaded_items`, `_selected_content_item`, `ContentPane.item` --
+        all deliberately share ONE mutable dict per row so the in-place
+        patches (TASK-15464 content backfill, `_mark_item_read_on_open`,
+        `_patch_item_queued_flag`) reach every surface at once. This is the
+        single boundary where a cached page enters that world: O(page)
+        shallow copies per page VIEW, never per page TURN.
+        """
+        return [dict(row) for row in page]
+
     async def _publish_items_rows(
         self,
         rows: list[dict[str, Any]],
@@ -12010,7 +11948,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             candidate = ReaderItemSnapshot.start(query, page)
             if displaced_rows:
                 candidate = candidate.with_pending_items(tuple(displaced_rows))
-            rows = list(candidate.page(0))
+            rows = self._published_page_rows(candidate.page(0))
 
             def commit() -> None:
                 had_retry_state = self._items_retry_message is not None
@@ -12106,8 +12044,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         snapshot = self._items_snapshot
         if snapshot is None or index < 0 or index >= snapshot.page_count:
             return False
+        self._item_detail_generation += 1
         generation = self._items_snapshot_generation
-        rows = list(snapshot.page(index))
+        rows = self._published_page_rows(snapshot.page(index))
 
         def current() -> bool:
             return (
@@ -12144,6 +12083,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if inflight is not None:
             return await asyncio.shield(inflight)
 
+        self._item_detail_generation += 1
         completion = asyncio.get_running_loop().create_future()
         self._items_inflight_continuation = completion
         generation = self._items_snapshot_generation
@@ -12192,7 +12132,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         self._push_items_pager_state()
                     result = True
                     return True
-                rows = list(candidate.page(candidate.page_count - 1))
+                rows = self._published_page_rows(
+                    candidate.page(candidate.page_count - 1)
+                )
 
                 def commit() -> None:
                     self._items_snapshot = candidate
@@ -12240,118 +12182,97 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     @on(ItemSelected)
     async def handle_item_selected(self, event: ItemSelected) -> None:
+        """Admit detail work without occupying the screen's message queue."""
         event.stop()
         if self.runtime_backend != "local":
             return
-        async with self._items_page_presentation_lock:
-            snapshot = self._items_snapshot
-            selection_generation = self._items_snapshot_generation
-            selection_page_key = (
-                snapshot.query.context_key if snapshot is not None else None
+        self._item_detail_generation += 1
+        selection_generation = self._item_detail_generation
+        snapshot_generation = self._items_snapshot_generation
+        snapshot = self._items_snapshot
+        page_index = self._items_page_index
+        backend = self.runtime_backend
+        selection_page_key = (
+            snapshot.query.context_key if snapshot is not None else None
+        )
+
+        def current() -> bool:
+            # Cancellation cannot stop an already-running DB thread. Authority
+            # also retires on away/back transitions, even if identities match.
+            return (
+                self._dom_is_live
+                and self.active_section == "items"
+                and self.runtime_backend == backend
+                and self._item_detail_generation == selection_generation
+                and self._items_snapshot_generation == snapshot_generation
+                and self._items_snapshot is snapshot
+                and self._items_page_index == page_index
             )
-        # TASK-15464: fetch the DETAIL body BEFORE any of the selection
-        # writes below, not after. `ContentPane.item` is a `recompose=True`
-        # reactive, so merging `content` into `event.item` first means one
-        # recompose per selection with the body already in it, instead of
-        # an empty-bodied recompose immediately followed by a second one
-        # once a background fetch lands -- exactly the recompose-storm
-        # shape this whole audit exists to remove from this screen.
-        await self._load_item_content(event.item)
+
+        self.run_worker(
+            self._load_item_content(
+                event.item,
+                runtime_backend=backend,
+                selection_page_key=selection_page_key,
+                is_current=current,
+            ),
+            name="watchlists-item-detail",
+            exclusive=True,
+            group="wc_item_detail",
+        )
+
+    async def _load_item_content(
+        self,
+        item: dict[str, Any] | None,
+        *,
+        runtime_backend: str,
+        selection_page_key: tuple[Any, ...] | None,
+        is_current: Callable[[], bool],
+    ) -> None:
+        """Hydrate and publish one shared row while its selection still owns it.
+
+        TASK-15464 keeps bodies out of list projections and hydrates before
+        ONE ContentPane.item publication. Do not mutate that shared row or
+        report a failed read until the same authority check admits publication.
+        The presentation lock preserves TASK-22450's atomic page commits.
+        """
         async with self._items_page_presentation_lock:
-            current_snapshot = self._items_snapshot
-            current_page_key = (
-                current_snapshot.query.context_key
-                if current_snapshot is not None
-                else None
-            )
-            if (
-                selection_generation != self._items_snapshot_generation
-                or selection_page_key != current_page_key
-            ):
+            if not is_current():
                 return
-            self._select_entity(event.item)
-            # Route to the reader (Task 4), independent of `_select_entity`'s
-            # generic Inspector reconciliation above: Sources/Runs/Rules also
-            # flow through `_select_entity`, and none of those dicts carry
-            # `content_kind`/`content` -- pushing them into `ContentPane` would
-            # render `render_for`'s article-fallback over the WRONG entity's
-            # fields instead of leaving the reader showing the last real item.
-            # Held on the screen (`_selected_content_item`), not just pushed to
-            # the mounted pane, so `_build_content_pane` can re-seed a rebuilt
-            # `ContentPane` the same way `_build_inspector_pane` re-seeds
-            # `selected_entity` — see that seeding note above.
-            self._selected_content_item = event.item
+        fetched = None
+        failed = False
+        if item is not None and item.get("id") is not None:
+            try:
+                fetched = await self._controller.get_item_content(
+                    runtime_backend=runtime_backend,
+                    item_id=item["id"],
+                )
+            except Exception:
+                failed = True
+        async with self._items_page_presentation_lock:
+            if not is_current():
+                return
+            if failed:
+                logger.debug("Failed to load watchlist item content for the reader.")
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify(
+                        "Failed to load this item's full content.",
+                        severity="error",
+                    )
+            elif item is not None and fetched is not None:
+                # Preserve row identity and any existing body on a detail miss.
+                item["content"] = fetched
+            self._select_entity(item)
+            self._selected_content_item = item
             self._selected_content_page_key = selection_page_key
             try:
                 content = self.query_one("#watchlists-content-pane", ContentPane)
-                content.item = event.item
+                content.item = item
                 content.position = self._reader_position_text()
             except NoMatches:
                 pass
-            self._mark_item_read_on_open(event.item)
-
-    async def _load_item_content(self, item: dict[str, Any] | None) -> None:
-        """Backfill `item["content"]` from the DETAIL fetch (TASK-15464).
-
-        `get_new_items`'s list-page projection no longer selects `content`
-        (up to 50 rows' worth of full scraped article/diff text, on every
-        Items-pane refresh, for a column no list row ever rendered -- the
-        audit's named cost), so a freshly loaded list row carries no
-        `content` key at all. This fetches it for exactly the item about to
-        be opened, mutating `item` IN PLACE so the one dict object already
-        shared by `ItemsPane.items`, `_selected_content_item`, and (about to
-        be) `ContentPane.item` all see the same body once this returns --
-        never a second, separate copy for the reader to drift from the list.
-
-        A miss (`get_item_content` returning `None`) leaves `item` untouched
-        rather than clearing an existing `content` key -- a caller that
-        built its own item dict directly, bypassing this screen's own query
-        entirely (every test that seeds `ItemsPane.items` with a synthetic
-        dict already carrying `content`, e.g.
-        `test_selecting_an_item_renders_it_in_the_content_region`), keeps
-        working unchanged.
-
-        `item is None` (nothing selected) is a silent no-op -- there is
-        nothing to report. An actual FETCH failure (the active backend does
-        not support single-item reads, the row no longer exists, a transient
-        DB error) never raises into the caller -- content is the reader's
-        body, not a status `handle_item_selected` is relying on this to
-        report, matching `content_pane.render_for`'s own "never take the app
-        down over a reader nicety" rule -- but it is not silent either: this
-        is a background `_load*` read (`test_watchlists_check_now_failure.
-        py`'s structural contract), and that exemption from the
-        user-initiated-action "log at warning" rule is paid for with a
-        toast, exactly like the sibling `_load_items`/`_load_run_detail`
-        immediately around it. Without one, a denied `items.detail` policy
-        or a database locked by a concurrent write would render
-        byte-identically to "this item just has no body" -- an empty reader
-        with nothing said.
-
-        Args:
-            item: The item about to be opened, or `None`. Mutated in place
-                when a fetch returns a real value.
-        """
-        if item is None:
-            return
-        item_id = item.get("id")
-        if item_id is None:
-            return
-        notify = getattr(self.app_instance, "notify", None)
-        try:
-            fetched = await self._controller.get_item_content(
-                runtime_backend=self.runtime_backend,
-                item_id=item_id,
-            )
-        except Exception:
-            logger.debug("Failed to load watchlist item content for the reader.")
-            if callable(notify):
-                notify(
-                    "Failed to load this item's full content.",
-                    severity="error",
-                )
-            return
-        if fetched is not None:
-            item["content"] = fetched
+            self._mark_item_read_on_open(item)
 
     def _reader_position_text(self) -> str:
         """The reader footer's "N of M" (TASK-3072 plan task 9).
@@ -12963,13 +12884,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> None:
         event.stop()
         self._rule_form_open = event.is_open
-        # Always clear on close, regardless of what `event.editing_rule`
-        # carries: RulesPane's Cancel/Submit handlers clear `show_rule_form`
-        # before clearing `_editing_rule_id`, so the message posted at that
-        # instant can still report the rule that WAS being edited. Ignoring
-        # it here (rather than trusting it) keeps a closed form from being
-        # re-seeded as still-editing on the next rebuild.
+        # Closed events may still carry the previous editing identity.
         self._rule_form_editing = event.editing_rule if event.is_open else None
+        self._rule_form_draft = event.draft if event.is_open else None
 
     @on(RefreshRulesRequested)
     def handle_refresh_rules_requested(self, event: RefreshRulesRequested) -> None:
@@ -12991,6 +12908,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # chain that can recompose.
         self._rule_form_open = False
         self._rule_form_editing = None
+        self._rule_form_draft = None
         self.run_worker(
             self._save_rule(event.payload),
             exclusive=True,
@@ -13263,7 +13181,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `update_item_queued_cell` use -- resolved below from whichever
         matching dict is found first, exactly as `_repaint_item_status_cell`
         already has to for the status column.
+
+        Task 13: cached snapshot rows are frozen mappings now, so the
+        flag also has to be mirrored into the reader cache via
+        `patch_cached_rows` (on the same snapshot object) or a later page
+        revisit would repaint the queued glyph from the stale cached row.
         """
+        snapshot = self._items_snapshot
+        if snapshot is not None:
+            snapshot.patch_cached_rows(
+                lambda row: row.get("item_id") == raw_item_id,
+                {"queued_for_briefing": queued},
+            )
         row_key: Any = None
         for item in self._loaded_items:
             if item.get("item_id") == raw_item_id:
@@ -13299,17 +13228,26 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _patch_committed_items_after_mutation(
         self, item_id: Any, **changes: Any
     ) -> None:
-        """Patch one item across every committed Reader projection in place."""
-        visited: set[int] = set()
+        """Patch one item across every committed Reader projection in place.
+
+        Cached snapshot rows are frozen mappings (task 13), so they are
+        rebuilt through `ReaderItemSnapshot.patch_cached_rows` — which swaps
+        the pages tuple on the SAME snapshot object — while the mutable
+        published projections (`_loaded_items`, `_selected_content_item`,
+        `selected_entity`) keep their in-place `update`, preserving the
+        shared-dict design every repaint path relies on.
+        """
         snapshot = self._items_snapshot
-        candidates: list[dict[str, Any]] = []
+        row_key: Any = None
         if snapshot is not None:
-            candidates.extend(row for page in snapshot.pages for row in page)
-        candidates.extend(self._loaded_items)
+            row_key = snapshot.patch_cached_rows(
+                lambda row: self._item_identity_matches(row, item_id), changes
+            )
+        visited: set[int] = set()
+        candidates: list[dict[str, Any]] = list(self._loaded_items)
         for entity in (self._selected_content_item, self.selected_entity):
             if isinstance(entity, dict):
                 candidates.append(entity)
-        row_key: Any = None
         for item in candidates:
             identity = id(item)
             if identity in visited or not self._item_identity_matches(item, item_id):
@@ -13333,7 +13271,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 pass
 
     @staticmethod
-    def _item_identity_matches(item: dict[str, Any], item_id: Any) -> bool:
+    def _item_identity_matches(item: Mapping[str, Any], item_id: Any) -> bool:
         """Return whether a normalized or raw item identity matches a row."""
         target = str(item_id)
         return target in {str(item.get("id")), str(item.get("item_id"))}
@@ -13896,7 +13834,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         items = pane.displayed_items()
         if not items:
             return
-        current = self._selected_content_item
+        # Navigation follows the latest intent while its body is still loading.
+        current = pane.selected_item or self._selected_content_item
         current_id = current.get("id") if current else None
         index: int | None = None
         if current_id is not None:
@@ -14201,7 +14140,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         items = pane.displayed_items()
         if not items:
             return
-        current = self._selected_content_item
+        # Navigation follows the latest intent while its body is still loading.
+        current = pane.selected_item or self._selected_content_item
         current_id = current.get("id") if current else None
         start = -1
         if current_id is not None:

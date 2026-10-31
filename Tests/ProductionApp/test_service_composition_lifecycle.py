@@ -417,6 +417,8 @@ def test_production_app_scheduler_worker_settles_without_contract_error(
     tmp_path: Path,
 ) -> None:
     _run_lifecycle_case(tmp_path, "scheduler")
+
+
 @pytest.mark.asyncio
 async def test_runtime_backend_transition_detaches_and_rebinds_notes_organization(
     monkeypatch: pytest.MonkeyPatch,
@@ -425,9 +427,7 @@ async def test_runtime_backend_transition_detaches_and_rebinds_notes_organizatio
     app = TldwCli()
     app.app_config["_first_run"] = False
     app.app_config.setdefault("first_run", {})["setup_completed"] = True
-    app.app_config["tldw_api"] = {
-        "base_url": "https://notes-sync.example.test/api"
-    }
+    app.app_config["tldw_api"] = {"base_url": "https://notes-sync.example.test/api"}
 
     try:
         async with app.run_test(size=(120, 40)) as pilot:
@@ -437,7 +437,9 @@ async def test_runtime_backend_transition_detaches_and_rebinds_notes_organizatio
             first_service = app.notes_organization_sync_service
             assert server_profile_id == "https://notes-sync.example.test/api"
             assert first_service is not None
-            assert app.notes_organization_repository.server_profile_id == server_profile_id
+            assert (
+                app.notes_organization_repository.server_profile_id == server_profile_id
+            )
 
             assert await app.handle_runtime_backend_changed("local") is True
             assert app.runtime_policy.state.active_source == "local"

@@ -457,7 +457,9 @@ async def test_message_header_tracks_speech_lifecycle_without_recreating_row():
 
         assert transcript.set_speech_state("speech-a", "playing") is False
         await pilot.pause()
-        assert app.query_one("#console-message-speech-action-speech-a", Button) is action
+        assert (
+            app.query_one("#console-message-speech-action-speech-a", Button) is action
+        )
         assert _speech_status(transcript, "speech-a") == "Stopped"
 
 

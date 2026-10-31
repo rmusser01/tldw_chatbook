@@ -520,6 +520,8 @@ class LibraryNotesListState:
             task-32616 AC#3: the list's own "Next:" is advice for a reader
             with nothing open, so it stands down while the work pane has an
             instruction of its own.
+        sync_attention: Whether any lasting-sync folder is held for attention
+            (TASK-34000.2). The list's idle status says so instead of "Ready".
     """
 
     rows: tuple[LibraryNotesListRow, ...]
@@ -536,6 +538,7 @@ class LibraryNotesListState:
     operation_running: bool = False
     delete_receipt: LibraryNoteDeleteReceipt | None = None
     note_open: bool = False
+    sync_attention: bool = False
 
 
 @dataclass(frozen=True)
@@ -654,7 +657,12 @@ def build_library_notes_list_state(
             empty_kind = "source-empty"
         elif filter_note:
             filter_copy = ellipsize_note_title_cells(filter_note, 32)
-            empty_copy = f"No notes match “{filter_copy}”. Clear the filter."
+            # TASK-34000.12: name what was searched (titles, bodies and
+            # keywords) and offer a next step; the Clear filter button stays.
+            empty_copy = (
+                f"No notes match “{filter_copy}” in titles, bodies or keywords. "
+                "Try fewer words, or clear the filter."
+            )
             empty_kind = "filter-empty"
     return LibraryNotesListState(
         rows=rows,

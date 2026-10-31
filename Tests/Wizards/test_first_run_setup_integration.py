@@ -663,6 +663,7 @@ class TestWizardAtomicProviderHandoff:
         self, monkeypatch
     ):
         container = SetupWizardContainer(SimpleNamespace(app_config={}))
+
         def writer(
             section_values, *, delete_keys=None, locked_snapshot_precondition=None
         ):
@@ -836,9 +837,7 @@ class TestWizardAtomicProviderHandoff:
                 }
             }
         )
-        replacement = SetupWizardContainer(
-            SimpleNamespace(app_config=_reload())
-        )
+        replacement = SetupWizardContainer(SimpleNamespace(app_config=_reload()))
         replacement.stage_provider_setup(
             _typed_provider_draft(
                 source="draft",
@@ -905,9 +904,7 @@ def _console_on_template_defaults(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "exit_route", ["chat", "home", "library", "library_notes"]
-)
+@pytest.mark.parametrize("exit_route", ["chat", "home", "library", "library_notes"])
 @private_profile_test
 async def test_saving_setup_exit_moves_an_untouched_console_chat_to_setup_choice(
     exit_route, monkeypatch, request
@@ -974,9 +971,10 @@ async def test_start_chatting_lands_setup_choice_when_a_config_write_beats_the_h
     Start chatting stages the first-chat handoff at the config generation its
     commit published. Console's first mount then writes the missing rail
     scope to the config file (``_ensure_console_rail_scope_seed``) before
-    ``on_mount`` consumes the handoff, so the generation fence releases it
-    and the handoff's own target is never created (tmux capture, 2026-09-26,
-    on BASE and HEAD alike). The untouched chat must still show setup's pair.
+    ``on_mount`` consumes the handoff (tmux capture, 2026-09-26). That write
+    leaves the saved provider and model alone, and the handoff is fenced on
+    those values (TASK-34100.5), so it applies: its own target is created
+    and shows setup's pair, with nothing left pending.
     """
     from unittest.mock import MagicMock
 
@@ -1009,11 +1007,14 @@ async def test_start_chatting_lands_setup_choice_when_a_config_write_beats_the_h
         {"left_open": True},
     )
 
-    assert not console._session.consume_pending_console_first_chat_intent(
+    assert console._session.consume_pending_console_first_chat_intent(
         defer_presentation=True
     )
     store = console._session._ensure_console_chat_store()
-    assert all(session.id != intent.session_id for session in store.sessions())
+    assert store.active_session_id == intent.session_id
+    assert not app_instance.pending_handoffs.has_pending(
+        HandoffChannel.CONSOLE_FIRST_CHAT
+    )
     shown = console._session._ensure_active_console_session_settings()
     assert (provider_config_key(shown.provider), shown.model) == (
         "llama_cpp",
@@ -1062,3 +1063,40 @@ async def test_skip_leaves_an_untouched_console_chat_on_the_saved_defaults(
     shown = console._session._ensure_active_console_session_settings()
     assert shown == blank_console_session_settings(config)
     assert (shown.provider, shown.model) == ("llama_cpp", "settings-model.gguf")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_listed_model_setup_saves_leaves_the_saved_model_list_alone(request):
+    """TASK-35578 AC#3: the Model step's commit of a model a server listed
+    (provenance "discovered", as ``ModelStep.commit`` sends a radio pick)
+    writes chat_defaults through the real writer and leaves the config file's
+    [providers] table as it was."""
+    import os
+    from pathlib import Path
+
+    from tldw_chatbook.config import (
+        load_cli_config_and_ensure_existence,
+        save_settings_to_cli_config,
+    )
+
+    load_cli_config_and_ensure_existence(force_reload=True)
+    assert save_settings_to_cli_config({"providers": {"Llama_cpp": ["model-a"]}})
+    path = Path(os.environ["TLDW_CONFIG_PATH"])
+    saved = tomllib.loads(path.read_text(encoding="utf-8"))["providers"]
+    assert saved["Llama_cpp"] == ["model-a"]
+    draft = _typed_provider_draft(
+        provider="llama_cpp", endpoint="http://127.0.0.1:8080", source="none", value=""
+    )
+    container = SetupWizardContainer(SimpleNamespace(app_config={}))
+    assert container.stage_provider_setup(draft)
+
+    assert await container.commit_staged_provider_setup(
+        "served-y",
+        discovery_key=wizard_state.build_first_run_model_discovery_key(draft),
+        model_provenance="discovered",
+    )
+
+    on_disk = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["chat_defaults"]["model"] == "served-y"
+    assert on_disk["providers"] == saved

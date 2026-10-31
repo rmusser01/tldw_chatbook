@@ -263,7 +263,13 @@ def resolve_console_message_presentation(
 
     if message.role is ConsoleMessageRole.USER:
         speaker_label = sanitize_character_display_label(
-            context.user_name,
+            (
+                "Agent handoff"
+                if getattr(message.metadata, "origin", None) == "agent_chat_start"
+                else "Unverified handoff"
+                if getattr(message.metadata, "origin", None) == "untrusted"
+                else context.user_name
+            ),
             max_characters=CHAT_DISPLAY_NAME_MAX_CELLS,
         )
         speaker_tone = "user"

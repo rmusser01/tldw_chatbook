@@ -1,0 +1,94 @@
+[
+  {
+    "argv": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "exit": 0,
+    "stdout": "13d1668d4eedbdfcab50fff28a47a8a68346f033\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "status",
+      "--porcelain"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "ls-tree",
+      "-r",
+      "--full-tree",
+      "13d1668d4eedbdfcab50fff28a47a8a68346f033"
+    ],
+    "exit": 0,
+    "stderr": "",
+    "stdout_path": "root-base-path-blobs.txt",
+    "stdout_sha256": "b735c625f3bdefafa8bd8165b529b4e36326ce89194f88ffbd82ee00bfbf9d14"
+  },
+  {
+    "argv": [
+      "git",
+      "rev-list",
+      "--reverse",
+      "a78a9a900b4901e33c031f830dd2d80224d5147d..13d1668d4eedbdfcab50fff28a47a8a68346f033"
+    ],
+    "exit": 0,
+    "stdout": "4cde6d970421cec4a29beecb7a7659bc4b98d7e6\n2734ae74e98941a871caf2fead1ae9381fbd15fb\n912092f7e2d734940273afeae8c87d9f323a6131\n1f9b8e1411d127b3ec12b2c60c6ae6c0f0006f57\n94fed24a20a53bdfb8faaceb6959acb429b01586\nc6d41eb201bccd6a2d5afae08c47b6255264f2b9\n96462d2b2de78c9076bff01f30bd8c41f2f53a3c\n7b66e52b7669bb7958d5c0abe03dc16c0316ed22\nf6bdd93f9701d4ac5db9a9314a1a84724782c722\n26d47e74da9157ca88736613d6d410d6b0a66856\n312a04033ee5c7f6c81d4d3f00cc516b4a618e99\nffe3f8c7952a6e387276e6a49f15e81cb8bafc44\n467614776b6679345766d28c78ddc51132a5670d\n758f90d64f3aeb2ac4f76636e3dfd64044a71200\n4c83d6eb11d33840d021857436fbc2caf06ca91e\n9b27182797c8f8b46331534f89f9018087821a57\ne5253a4b07980cb902a8e54d479903c00c4caea8\n71eae78d832d78f919c3b4e5e96dccc1a873dcd7\n0cbc017683b80b10fdcdbf4249c4d2ecc3c81060\n1e52b8c7c261648588532fb0f0e1ee5cd6fc42ef\nfccb0061521bd9a42988336d922191dc3475de8a\n602d83dcf616b819fd1b883bfd24aef60a91fc21\n909c4dae79763bb9016940d38573f5baf85053cf\nb2ac31558b951a53781399350ccbc7343be6b601\n382b0a8ff6d1d67d98363bae26015dd4b78dba5a\nc62cdc8c59a1442985ccddc1e383b2fe1981f6c7\ne8dc6b0eaafb41cf1e17db8c13d227cec42a6c3f\ne5ca738538b54cf27b491b5d003081b063e628b2\n2c03bf3946b074fb33987cd6f13338492aa5d0fe\n5794d6d5ded6fd9f52442e67922bb14e96a4343b\nd2fc11e3a74924dcd3faa33dd68bed3e372d3fda\n814fbd79053c3c9d99c4c8830c759cdd8412d454\nf9b3e249c729566cab3fcf8c6c382043926754a1\n9bc19f737bc32d5d6a3ec8eb19d7e73b7fb2529a\n1b27e10bc0e3897768903b0314008e27203340f8\n1b621dec372cd41a18003ad95bdad54ea6b448ce\nac8a0ed069dd54596ffc7acf0847a0754dc96d21\n84db666854234a463a7d36ef2f58415dca952ccf\ne2b264ead010e2573bd26fc91263d349704c66cb\n0a4ee5c6144813e18667aec351b30dcf2f482534\n3d730beb79ec82dc395b9ae643dd2b03cb69bbe8\nf99c488b4b7960f9dc14e0ca07dad68c47fe1be3\n649867cd74fe71c5bdd491a58f53afead72f3b9f\n97d9e2afca1568a3df7c644240b885a36be9a49e\n1117c1475da208ef64b423810cce1dbbd69998b8\ne8ffa056064953b24e055187d907a24c2e52c017\n1279a01bbd3a278477ea6c3cd12393028de559a9\nefe59d71b56cb6627af42bcb3ff1bc23fa6519fc\n36e11822ba9e436937fd2d23ec055e3ddcd77c40\nb0f00d7ccf4d7947c64fd9fa8804750b11ced772\nff358cac2fe79b13d08ad32e68c39513c1f345d6\nd192ba400ae87aca9ff80741956fe8abc8ca4726\n1cacebcbf267c4cd3d9f84b0cd0000f8e5fac9d8\n5448aa955dbc040464ebea681b49b83b291f2469\nb2435667082986fb1f25d55e0fdadb22a6c20529\nb21d3b63aa5e876bf30fbf99c6cb53fbd0f80f8a\n75b229ce6e28609a4d9e67e54744ba2d9da5a9c8\n9fc2d5ca52149f0774ffe5c5d0fb6350c1352435\na807bf684fad1785a6b7bfd9110d5783b70c4a7b\n9d52fd1c26eadb9de9e59a4f28977f1ab4b9ed9f\ne349aa8b77b4bc454c7ed30e38733706e53c1fe5\n2a25e71345031038f84fc912bd81d804c7c138f6\nb16ba647f0204c1c492eb2a16cdc9a8a3b756c1c\nc55e6c5c748b76ecc8266d43f519ecd796116a56\n71445f8850f0338a473040598a1b892eb18a2572\n81bd2f02b8ff43702e98059c5bd8accf7fc67a7e\nb4cee0dc7ad882aa4fe3f90214e6c7afc6a4003a\nfd6120bfc2b1d92e8292e8cf279d986c4b1ed705\n985fd603c388e477455ee2b363e5631aaa231a2e\nd9f951eeb9e94f6a7a66cab8db24535f931f333c\nf5bf0e3a997c147ae4b29479f6e15b77bdc55c1a\n82e4df9f5376c268b5a770e5c0c98209b099b275\n77bd4aee3e0792be82003f22d931a6af3e982975\n4ff320bbb704d930fa9cddb056e7d5ff062cdc29\nb72bf396ad13b7b6ca41a56c438986ee2a938e30\n7f3b06a732f4999b273b40dfb434f623dcd141f7\n021a5aba2f87dc1dde11c03c79ef3c0c41bb462f\nc611b2b9cf0725f59d9f1291b48080e31f1696a9\n1dde1d65259d1d0bcda716f583f73e6e7448e2c1\ne3d431c571f4f05a52f039b1485f5fc4a7bcaf76\ne4a97394e7cc9cefaab6dd5e4abc05304a586e65\n01bbb3ac3d77c0886b35c4220bf781f00a5826f9\nc67427a6cff5d9c6f28227797557a0d1e1e6bdba\nebb276ae0982327f5d088205f1d7101740385e3f\nb15cb1860fa9ca92c0be8c0dcc309a20dc090263\n126dacc1e6600b070b430f5cefe714c704822da2\n749e7540affab2b543f472fcf6fae6bff34d8122\nb084d720e98e4c2a7aaaf17ab5c8386c84495aa9\nf817cbefabdb57896b40371bcdc9346f5bb0659b\n81484b688a03c0f924a0ea6a6474b5e2d4b355e8\n06cfe2f6a30236dcd8f81893ebf49bc3d0b78036\n13d1668d4eedbdfcab50fff28a47a8a68346f033\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "update-ref",
+      "refs/heads/recovery/pr2995-task17-before-command-integration",
+      "13d1668d4eedbdfcab50fff28a47a8a68346f033",
+      "0000000000000000000000000000000000000000"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "bundle",
+      "create",
+      "/private/tmp/pr2995-task17-before-command-integration.bundle",
+      "refs/heads/recovery/pr2995-task17-before-command-integration",
+      "^a78a9a900b4901e33c031f830dd2d80224d5147d"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "bundle",
+      "verify",
+      "/private/tmp/pr2995-task17-before-command-integration.bundle"
+    ],
+    "exit": 0,
+    "stdout": "The bundle contains this ref:\n13d1668d4eedbdfcab50fff28a47a8a68346f033 refs/heads/recovery/pr2995-task17-before-command-integration\nThe bundle requires this ref:\na78a9a900b4901e33c031f830dd2d80224d5147d \nThe bundle uses this hash algorithm: sha1\n",
+    "stderr": "/private/tmp/pr2995-task17-before-command-integration.bundle is okay\n"
+  },
+  {
+    "argv": [
+      "git",
+      "rebase",
+      "--onto",
+      "8c4dfe59a243ce0cec8e131aff3935646c64b298",
+      "a78a9a900b4901e33c031f830dd2d80224d5147d"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "Rebasing (1/92)\nRebasing (2/92)\nRebasing (3/92)\nRebasing (4/92)\nRebasing (5/92)\nRebasing (6/92)\nRebasing (7/92)\nRebasing (8/92)\nRebasing (9/92)\nRebasing (10/92)\nRebasing (11/92)\nRebasing (12/92)\nRebasing (13/92)\nRebasing (14/92)\nRebasing (15/92)\nRebasing (16/92)\nRebasing (17/92)\nRebasing (18/92)\nRebasing (19/92)\nRebasing (20/92)\nRebasing (21/92)\nRebasing (22/92)\nRebasing (23/92)\nRebasing (24/92)\nRebasing (25/92)\nRebasing (26/92)\nRebasing (27/92)\nRebasing (28/92)\nRebasing (29/92)\nRebasing (30/92)\nRebasing (31/92)\nRebasing (32/92)\nRebasing (33/92)\nRebasing (34/92)\nRebasing (35/92)\nRebasing (36/92)\nRebasing (37/92)\nRebasing (38/92)\nRebasing (39/92)\nRebasing (40/92)\nRebasing (41/92)\nRebasing (42/92)\nRebasing (43/92)\nRebasing (44/92)\nRebasing (45/92)\nRebasing (46/92)\nRebasing (47/92)\nRebasing (48/92)\nRebasing (49/92)\nRebasing (50/92)\nRebasing (51/92)\nRebasing (52/92)\nRebasing (53/92)\nRebasing (54/92)\nRebasing (55/92)\nRebasing (56/92)\nRebasing (57/92)\nRebasing (58/92)\nRebasing (59/92)\nRebasing (60/92)\nRebasing (61/92)\nRebasing (62/92)\nRebasing (63/92)\nRebasing (64/92)\nRebasing (65/92)\nRebasing (66/92)\nRebasing (67/92)\nRebasing (68/92)\nRebasing (69/92)\nRebasing (70/92)\nRebasing (71/92)\nRebasing (72/92)\nRebasing (73/92)\nRebasing (74/92)\nRebasing (75/92)\nRebasing (76/92)\nRebasing (77/92)\nRebasing (78/92)\nRebasing (79/92)\nRebasing (80/92)\nRebasing (81/92)\nRebasing (82/92)\nRebasing (83/92)\nRebasing (84/92)\nRebasing (85/92)\nRebasing (86/92)\nRebasing (87/92)\nRebasing (88/92)\nRebasing (89/92)\nRebasing (90/92)\nRebasing (91/92)\nRebasing (92/92)\n\n                                                                                \nSuccessfully rebased and updated refs/heads/codex/console-chat-starts-dev.\n"
+  }
+]

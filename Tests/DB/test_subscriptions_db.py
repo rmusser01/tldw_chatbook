@@ -182,12 +182,16 @@ def test_record_check_error_never_unpauses_an_already_paused_subscription(db):
         auto_pause_threshold=100,
     )
     with db.transaction() as conn:
-        conn.execute("UPDATE subscriptions SET is_paused = 1 WHERE id = ?", (source_id,))
+        conn.execute(
+            "UPDATE subscriptions SET is_paused = 1 WHERE id = ?", (source_id,)
+        )
 
     db.record_check_error(source_id, "connection refused")
 
     row = db.get_subscription(source_id)
-    assert row["is_paused"] == 1, "a recorded failure must never clear an existing pause"
+    assert row["is_paused"] == 1, (
+        "a recorded failure must never clear an existing pause"
+    )
     # Ordinary failure bookkeeping must still happen.
     assert row["consecutive_failures"] == 1
     assert row["error_count"] == 1
@@ -276,14 +280,18 @@ def test_record_check_result_success_resumes_an_auto_paused_subscription(db):
     db.record_check_result(subscription_id=source_id, items=None, error=None)
 
     row = db.get_subscription(source_id)
-    assert row["is_paused"] == 0, "a successful check must resume an auto-paused subscription"
+    assert row["is_paused"] == 0, (
+        "a successful check must resume an auto-paused subscription"
+    )
     assert row["consecutive_failures"] == 0
     assert row["error_count"] == 0
     assert row["last_error"] is None
 
 
 @pytest.mark.parametrize("bad_threshold", [None, 0, -1])
-def test_advance_failure_and_maybe_pause_never_pauses_on_a_bad_threshold(db, bad_threshold):
+def test_advance_failure_and_maybe_pause_never_pauses_on_a_bad_threshold(
+    db, bad_threshold
+):
     """Fix wave for the task-1410 review, Finding #3.
 
     ``_advance_failure_and_maybe_pause``'s threshold comparison
@@ -321,7 +329,9 @@ def test_advance_failure_and_maybe_pause_never_pauses_on_a_bad_threshold(db, bad
     assert row["is_paused"] == 0, f"threshold={bad_threshold!r} must never auto-pause"
 
 
-def test_add_subscription_seeds_auto_pause_threshold_from_config_default(db, monkeypatch):
+def test_add_subscription_seeds_auto_pause_threshold_from_config_default(
+    db, monkeypatch
+):
     """task-1410 AC#3. ``[subscriptions].auto_pause_after_failures`` (config,
     previously read by nothing) now seeds the ``auto_pause_threshold`` column
     default for a subscription created WITHOUT an explicit value.
@@ -618,12 +628,16 @@ def test_rebuild_recovers_from_stray_subscription_filters_new_table(request, tmp
     # The stray table is consumed by the rebuild, not left behind again.
     tables = {
         r[0]
-        for r in migrated.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        for r in migrated.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
     }
     assert "subscription_filters_new" not in tables
 
 
-def test_in_memory_db_has_usable_schema(request, ):
+def test_in_memory_db_has_usable_schema(
+    request,
+):
     """Regression for task-689. Before the fix, ``_initialize_schema`` built
     the schema on a connection from ``with closing(self._get_connection())``
     that was closed immediately after, while the ``.conn`` property used by
@@ -642,11 +656,15 @@ def test_in_memory_db_has_usable_schema(request, ):
     assert "watchlists" in tables
 
     # A basic write must succeed against the connection callers actually use.
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     assert db.get_subscription(source_id)["name"] == "ArXiv"
 
 
-def test_in_memory_db_instances_stay_isolated(request, ):
+def test_in_memory_db_instances_stay_isolated(
+    request,
+):
     """Two separate ``:memory:`` instances must not see each other's data --
     each opens its own private SQLite database, and nothing here shares a
     cache or file between them."""
@@ -661,7 +679,9 @@ def test_in_memory_db_instances_stay_isolated(request, ):
     assert db_b.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 0
 
 
-def test_ensure_watchlists_schema_idempotent_on_in_memory_db(request, ):
+def test_ensure_watchlists_schema_idempotent_on_in_memory_db(
+    request,
+):
     """The ``conn=None`` standalone-call path (used directly by
     test_schema_migration_is_idempotent's file-backed counterpart) must also
     stay correct against an in-memory instance rather than silently
@@ -687,7 +707,9 @@ def test_ensure_watchlists_schema_idempotent_on_in_memory_db(request, ):
 # uses for a sibling table.
 
 
-def _insert_snapshot(db, *, subscription_id, url, content_hash, extracted_content, created_at):
+def _insert_snapshot(
+    db, *, subscription_id, url, content_hash, extracted_content, created_at
+):
     """Insert one `url_snapshots` row with an explicit `created_at`.
 
     `created_at` must be given explicitly (not left to the column's
@@ -892,7 +914,9 @@ def _seed_schema_version(path, versions) -> None:
     check passes, so nothing else needs seeding.
     """
     with closing(sqlite3.connect(path)) as conn:
-        conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL)")
+        conn.execute(
+            "CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL)"
+        )
         for version in versions:
             conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
         conn.commit()
@@ -904,17 +928,17 @@ def test_schema_version_current_plus_stale_row_normalizes_to_current(tmp_path):
 
     db = SubscriptionsDB(path)
     try:
-        assert [row[0] for row in db.conn.execute("SELECT version FROM schema_version")] == [
-            _CURRENT_SCHEMA_VERSION
-        ]
+        assert [
+            row[0] for row in db.conn.execute("SELECT version FROM schema_version")
+        ] == [_CURRENT_SCHEMA_VERSION]
     finally:
         db.close()
 
     # Normalization is durable, not just an in-memory view.
     with closing(sqlite3.connect(path)) as conn:
-        assert [row[0] for row in conn.execute("SELECT version FROM schema_version")] == [
-            _CURRENT_SCHEMA_VERSION
-        ]
+        assert [
+            row[0] for row in conn.execute("SELECT version FROM schema_version")
+        ] == [_CURRENT_SCHEMA_VERSION]
 
 
 def test_schema_version_unknown_future_version_raises_actionable_error(tmp_path):
@@ -988,7 +1012,9 @@ def test_schema_version_current_plus_newer_unknown_row_is_refused_untouched(tmp_
 
     # The refusal touched nothing: both rows are still on disk.
     with closing(sqlite3.connect(path)) as conn:
-        assert [row[0] for row in conn.execute("SELECT version FROM schema_version")] == [
+        assert [
+            row[0] for row in conn.execute("SELECT version FROM schema_version")
+        ] == [
             _CURRENT_SCHEMA_VERSION,
             3,
         ]
@@ -1013,9 +1039,9 @@ def test_reopening_a_freshly_migrated_v1_db_does_not_produce_two_rows(tmp_path):
 
     second = SubscriptionsDB(path)
     try:
-        assert [row[0] for row in second.conn.execute("SELECT version FROM schema_version")] == [
-            _CURRENT_SCHEMA_VERSION
-        ]
+        assert [
+            row[0] for row in second.conn.execute("SELECT version FROM schema_version")
+        ] == [_CURRENT_SCHEMA_VERSION]
     finally:
         second.close()
 
@@ -1033,7 +1059,9 @@ def test_interrupting_the_migration_version_swap_rolls_back_not_duplicates(tmp_p
     older build's unconditional insert, per the live evidence).
     """
     with closing(sqlite3.connect(tmp_path / "interrupted.db")) as conn:
-        conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL)")
+        conn.execute(
+            "CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL)"
+        )
         conn.execute("INSERT INTO schema_version (version) VALUES (1)")
         conn.commit()
 
@@ -1045,4 +1073,6 @@ def test_interrupting_the_migration_version_swap_rolls_back_not_duplicates(tmp_p
             pass
         conn.rollback()
 
-        assert [row[0] for row in conn.execute("SELECT version FROM schema_version")] == [1]
+        assert [
+            row[0] for row in conn.execute("SELECT version FROM schema_version")
+        ] == [1]

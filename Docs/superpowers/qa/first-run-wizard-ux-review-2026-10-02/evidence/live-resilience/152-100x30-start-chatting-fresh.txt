@@ -1,0 +1,30 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay╭───────────────────────────────────────────────╮
+─────────────────────────────────────────────────│                                               │──
+ Console — Chat, source handoffs, live … Speak re│ Provider settings changed before Console      │
+   New tab     Settings     ⚓      Context rail │ opened. Review setup and try again.           │
+─────────────────────────────────────────────────│                                               │──
+                             │ Conversation | Cha╰───────────────────────────────────────────────╯
+                  Context ◂  │         Chat 1         ✕    New tab     Temporary         │
+   Terminal                  │                                                           │
+ ──────────────────────────  │                                                           │
+ Workspaces             ▸    │                                                           │
+ ──────────────────────────  │                                                           │
+ Conversations          ▾    │                                                           │
+     Archive this chat       │                                                           │
+      Archived chats         │                                                           │
+     Search all chats…       │                                                           │◂ Inspect
+   Chat 1                    │             Ready — type a message to begin.              │
+                             │                                                           │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                           │
+  ▊  Filter      ▎         ▂ │                                                           │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                           │
+                             │                                                           │
+  Chats                 ▾    │                                                           │
+   Chat 1              💬    │                                                           │
+                             │                                                           │
+                             │                                                           │
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model: gpt-5.2-codex     Sy
+│  Composer ▾  Menu  Ask, command, or paste task...   Send disa…       Send         Dictate
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+P · Ctrl+Q

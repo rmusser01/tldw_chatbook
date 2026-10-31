@@ -21,6 +21,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     PermissionProfileContext,
     PermRow,
     ToolPolicyProfileOption,
+    _GATE_VS_PERMISSION_EXPLAINER,
     format_tool_state_label,
     state_text,
     tool_state_kind,
@@ -385,6 +386,25 @@ async def test_kill_switch_scope_hint_states_built_in_blast_radius(request):
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_gate_vs_permission_explainer_renders_at_top_of_mode(request):
+    """task-35154 (spec amendment A7 item 2): users flip a tool gate in
+    Servers, watch this matrix not change, and conclude it is broken --
+    because the two layers do different jobs. The mode must open with ONE
+    plain-language sentence stating the split: a tool whose Servers gate is
+    off does not exist for Console agents, so its Allow/Ask/Off here
+    governs nothing. Pinned verbatim (same discipline as the kill-switch
+    hint above); it renders as the canvas's FIRST child, above the
+    profile selector, so it is read before the matrix."""
+    app = PermissionsModeApp()
+    async with app.run_test():
+        canvas = app.query_one(MCPPermissionsMode)
+        explainer = app.query_one("#mcp-perm-explainer", Static)
+        assert str(explainer.renderable) == _GATE_VS_PERMISSION_EXPLAINER
+        assert canvas.children[0] is explainer
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_user_press_posts_kill_switch_toggled_exactly_once(request):
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
@@ -685,7 +705,10 @@ async def test_update_matrix_with_echo_prefixes_preview(request):
         canvas = app.query_one(MCPPermissionsMode)
         preview = "global default: ask"
         await canvas.update_matrix(
-            [_global_row()], kill_switch=False, preview=preview, echo="search → Allow · "
+            [_global_row()],
+            kill_switch=False,
+            preview=preview,
+            echo="search → Allow · ",
         )
         await pilot.pause()
         assert (
@@ -705,15 +728,23 @@ async def test_update_matrix_echo_none_clears_a_previously_shown_echo(request):
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
         await canvas.update_matrix(
-            [_global_row()], kill_switch=False, preview="global default: ask",
+            [_global_row()],
+            kill_switch=False,
+            preview="global default: ask",
             echo="search → Allow · ",
         )
         await pilot.pause()
         await canvas.update_matrix(
-            [_global_row()], kill_switch=False, preview="global default: ask", echo=None,
+            [_global_row()],
+            kill_switch=False,
+            preview="global default: ask",
+            echo=None,
         )
         await pilot.pause()
-        assert str(app.query_one("#mcp-perm-preview", Static).renderable) == "global default: ask"
+        assert (
+            str(app.query_one("#mcp-perm-preview", Static).renderable)
+            == "global default: ask"
+        )
 
 
 # -- UX batch item 4: marker legend ------------------------------------------
@@ -807,7 +838,8 @@ async def test_legend_and_breadcrumb_are_fully_readable_at_100_columns(request):
         breadcrumb = (
             "3 tool gate(s) are off. Configure the workspace, web, and "
             "Watchlists master switch in Tools mode; other registration "
-            "gates are under MCP ▸ Servers ▸ built-in row ▸ Tool gates."
+            "gates are under Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ "
+            "Tool gates."
         )
         await canvas.update_matrix(
             [_global_row()],
@@ -818,7 +850,7 @@ async def test_legend_and_breadcrumb_are_fully_readable_at_100_columns(request):
         await pilot.pause()
 
         legend = app.query_one("#mcp-perm-legend", Static)
-        # At 100 columns each line (161 and 175 chars) needs its own wrap,
+        # At 100 columns each line (161 and 194 chars) needs its own wrap,
         # so a correctly-sized Static is at least 2 lines tall -- a
         # height-1 cap would silently truncate mid-sentence instead.
         assert legend.size.height >= 2, (
@@ -826,8 +858,9 @@ async def test_legend_and_breadcrumb_are_fully_readable_at_100_columns(request):
             "-- text is being clipped, not wrapped"
         )
         rendered = str(legend.renderable)
+        # TASK-36387, rewritten on purpose: MCP is a Settings category.
         assert rendered.endswith(
-            "are under MCP ▸ Servers ▸ built-in row ▸ Tool gates."
+            "are under Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates."
         )
 
 
@@ -934,7 +967,9 @@ def test_format_tool_state_label_gate_error_reads_unknown_not_off(request):
     assert tool_state_kind(gate_error) == "error"
     # A genuine deny keeps its honest "Off" on the same surface.
     assert (
-        format_tool_state_label(EffectiveToolState(state="deny", origin="tool_override"))
+        format_tool_state_label(
+            EffectiveToolState(state="deny", origin="tool_override")
+        )
         == "Off •"
     )
 
@@ -1235,8 +1270,12 @@ async def test_filter_text_input_has_nonzero_geometry_with_bundled_css(request):
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         filter_input = app.query_one("#mcp-perm-filter-text", Input)
-        assert filter_input.size.width > 0, "filter Input collapsed to zero width under bundled CSS"
-        assert filter_input.size.height > 0, "filter Input collapsed to zero height under bundled CSS"
+        assert filter_input.size.width > 0, (
+            "filter Input collapsed to zero width under bundled CSS"
+        )
+        assert filter_input.size.height > 0, (
+            "filter Input collapsed to zero height under bundled CSS"
+        )
         # The single-line bordered box Input's own DEFAULT_CSS/comment
         # promises (region includes the border, hence 3 not 1).
         assert filter_input.region.height == 3, (
@@ -1274,9 +1313,18 @@ def test_tool_state_kind_maps_allow_ask_deny_to_ready_warning_error(request):
     themselves (see `permission_store.resolve_effective_state()`), so a
     downgraded verdict still lands on `warning`, matching its `ui_label`
     ("Ask ⚠"/"Ask ⚑")."""
-    assert tool_state_kind(EffectiveToolState(state="allow", origin="tool_override")) == "ready"
-    assert tool_state_kind(EffectiveToolState(state="ask", origin="global_default")) == "warning"
-    assert tool_state_kind(EffectiveToolState(state="deny", origin="tool_override")) == "error"
+    assert (
+        tool_state_kind(EffectiveToolState(state="allow", origin="tool_override"))
+        == "ready"
+    )
+    assert (
+        tool_state_kind(EffectiveToolState(state="ask", origin="global_default"))
+        == "warning"
+    )
+    assert (
+        tool_state_kind(EffectiveToolState(state="deny", origin="tool_override"))
+        == "error"
+    )
     assert (
         tool_state_kind(
             EffectiveToolState(state="ask", origin="tool_override", config_changed=True)
@@ -1305,13 +1353,19 @@ async def test_state_column_cells_carry_semantic_color_by_resolved_word(request)
         canvas = app.query_one(MCPPermissionsMode)
         rows = [
             _global_row(state_label="Allow", cycle_current="allow"),
-            _server_row(server_key="local:docs", server_label="docs", state_label="Ask"),
+            _server_row(
+                server_key="local:docs", server_label="docs", state_label="Ask"
+            ),
             _tool_row(
-                server_key="local:docs", server_label="docs", tool_name="search",
+                server_key="local:docs",
+                server_label="docs",
+                tool_name="search",
                 state_label="Off •",
             ),
             _tool_row(
-                server_key="local:docs", server_label="docs", tool_name="rug_pulled",
+                server_key="local:docs",
+                server_label="docs",
+                tool_name="rug_pulled",
                 state_label="Ask ⚠",
             ),
         ]
@@ -1340,20 +1394,30 @@ def _two_server_rows() -> list[PermRow]:
         _global_row(state_label="Ask", cycle_current="ask"),
         _server_row(server_key="local:docs", server_label="docs", state_label="Ask"),
         _tool_row(
-            server_key="local:docs", server_label="docs", tool_name="alpha_tool",
+            server_key="local:docs",
+            server_label="docs",
+            tool_name="alpha_tool",
             state_label="Ask",
         ),
         _tool_row(
-            server_key="local:docs", server_label="docs", tool_name="beta_tool",
+            server_key="local:docs",
+            server_label="docs",
+            tool_name="beta_tool",
             state_label="Allow •",
         ),
-        _server_row(server_key="local:notes", server_label="notes", state_label="Off •"),
+        _server_row(
+            server_key="local:notes", server_label="notes", state_label="Off •"
+        ),
         _tool_row(
-            server_key="local:notes", server_label="notes", tool_name="beta_other",
+            server_key="local:notes",
+            server_label="notes",
+            tool_name="beta_other",
             state_label="Off •",
         ),
         _tool_row(
-            server_key="local:notes", server_label="notes", tool_name="gamma_tool",
+            server_key="local:notes",
+            server_label="notes",
+            tool_name="gamma_tool",
             state_label="Off •",
         ),
     ]
@@ -1412,7 +1476,8 @@ async def test_filter_narrows_to_matching_tool_rows_and_hides_unrelated_pinned_r
         assert _row_texts(table, 2) == ["  alpha_tool", "Ask"]
 
         rendered_keys = {
-            table.coordinate_to_cell_key((i, 0))[0].value for i in range(table.row_count)
+            table.coordinate_to_cell_key((i, 0))[0].value
+            for i in range(table.row_count)
         }
         assert "__server__::local:notes" not in rendered_keys
         assert "local:notes::beta_other" not in rendered_keys
@@ -1440,7 +1505,8 @@ async def test_filter_matches_server_label_reveals_every_tool_under_that_server(
         # global + docs server-default + alpha_tool + beta_tool
         assert table.row_count == 4
         rendered_keys = [
-            table.coordinate_to_cell_key((i, 0))[0].value for i in range(table.row_count)
+            table.coordinate_to_cell_key((i, 0))[0].value
+            for i in range(table.row_count)
         ]
         assert rendered_keys == [
             "__global__",
@@ -1480,7 +1546,8 @@ async def test_filter_matching_across_two_servers_keeps_both_pinned_server_rows(
 
         table = app.query_one("#mcp-perm-table", DataTable)
         rendered_keys = [
-            table.coordinate_to_cell_key((i, 0))[0].value for i in range(table.row_count)
+            table.coordinate_to_cell_key((i, 0))[0].value
+            for i in range(table.row_count)
         ]
         assert rendered_keys == [
             "__global__",
@@ -1595,7 +1662,9 @@ async def test_echo_prefixed_preview_survives_a_refilter(request):
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
         await canvas.update_matrix(
-            _two_server_rows(), kill_switch=False, preview="global default: ask",
+            _two_server_rows(),
+            kill_switch=False,
+            preview="global default: ask",
             echo="beta_tool → Allow · ",
         )
         await pilot.pause()

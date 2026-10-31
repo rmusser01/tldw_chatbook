@@ -51,7 +51,9 @@ class _LatentTranscriptionService:
     assumptions.
     """
 
-    def __init__(self, latency_seconds: float, texts: Optional[List[str]] = None) -> None:
+    def __init__(
+        self, latency_seconds: float, texts: Optional[List[str]] = None
+    ) -> None:
         self._latency = latency_seconds
         self._texts = list(texts or [])
         self.buffer_calls: List[Dict[str, Any]] = []
@@ -252,7 +254,9 @@ def _wait_until(predicate: Callable[[], bool], timeout: float) -> bool:
     return predicate()
 
 
-def _stub_settings(monkeypatch, buffer_duration_ms: int, silence_threshold: float) -> None:
+def _stub_settings(
+    monkeypatch, buffer_duration_ms: int, silence_threshold: float
+) -> None:
     """Make config lookups hermetic for the full `start_dictation()` API tests."""
     from tldw_chatbook.Audio import dictation_service_lazy
 
@@ -275,7 +279,11 @@ def _stub_settings(monkeypatch, buffer_duration_ms: int, silence_threshold: floa
 
 
 def _build_stop_path_service(
-    monkeypatch, transcription, recorder, *, buffer_duration_ms: int = 500,
+    monkeypatch,
+    transcription,
+    recorder,
+    *,
+    buffer_duration_ms: int = 500,
     silence_threshold: float = 2.0,
 ):
     _stub_settings(monkeypatch, buffer_duration_ms, silence_threshold)
@@ -443,7 +451,9 @@ def test_streaming_regime_never_invokes_the_non_streaming_segment_callback():
         def process_audio(self, audio_data: bytes):
             return {"final": "streamed text"}
 
-    service = _mid_capture_service(_LatentTranscriptionService(0.0), silence_threshold=threshold)
+    service = _mid_capture_service(
+        _LatentTranscriptionService(0.0), silence_threshold=threshold
+    )
     service.streaming_transcriber = _StubStreamer()
 
     sink = _Sink()
@@ -512,7 +522,9 @@ def test_a_blank_segment_still_fires_the_unconditional_completion_signal():
         # which the hands-free resume latch depends on.
         assert _wait_until(
             lambda: sink.snapshot_no_final_calls() == 1, timeout=threshold + 1.0
-        ), f"expected on_segment_no_final to fire once, got {sink.snapshot_no_final_calls()!r}"
+        ), (
+            f"expected on_segment_no_final to fire once, got {sink.snapshot_no_final_calls()!r}"
+        )
     finally:
         _stop_loop(service)
 

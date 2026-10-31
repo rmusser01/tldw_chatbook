@@ -1,0 +1,11 @@
+# vn4 independent direct probes 2026-10-03T07:50:49.394380Z -- bogus key = random hex generated locally, never a real credential
+openrouter /models           200 models=466
+openrouter /key              401 {"error": {"message": "User not found.", "code": 401}}
+huggingface /models          200 models=134
+hf whoami-v2                 401 {"error": "Invalid username or password."}
+nvidia /models               200 models=81
+novita /models               200 models=121
+groq /models (control)       401 {"error": {"message": "Invalid API Key", "type": "invalid_request_error", "code": "invalid_api_key"}}
+moonshot /models (control)   401 {"error": {"message": "Invalid Authentication", "type": "invalid_authentication_error"}}
+project OpenRouter key file  /api/v1/key      401 {"message": "API key expired.", "code": 401, "metadata": {"headers": {"WWW-Authenticate": "Bearer error=\"invalid_token\
+project OpenRouter key file  /api/v1/models   200 models=466

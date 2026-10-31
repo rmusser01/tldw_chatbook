@@ -2,7 +2,8 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Input, ListView, Select, Static, TextArea
+from textual.css.query import NoMatches
+from textual.widgets import Button, Input, Label, ListView, Select, Static, TextArea
 
 from Tests.app_module_patches import set_app_global
 from Tests.UI.app_factory import _build_test_app
@@ -110,29 +111,15 @@ class FakeStudyScopeService:
         self.decks.append(created)
         return created
 
+    # TASK-34000.6 (S-05): these two mirror the REAL ``StudyScopeService``
+    # signatures, which take no ``scope_type``/``workspace_id`` (a card is
+    # scoped by its deck). The old fakes accepted them and hid a TypeError
+    # that exited the app; ``Tests/Architecture/test_study_handler_service_
+    # keywords.py`` now pins the contract against the real class.
     async def list_flashcards(
-        self,
-        *,
-        mode=None,
-        scope_type=None,
-        workspace_id=None,
-        deck_id=None,
-        q=None,
-        limit=100,
-        offset=0,
+        self, *, mode=None, deck_id=None, q=None, limit=100, offset=0
     ):
-        self.calls.append(
-            (
-                "list_flashcards",
-                mode,
-                scope_type,
-                workspace_id,
-                deck_id,
-                q,
-                limit,
-                offset,
-            )
-        )
+        self.calls.append(("list_flashcards", mode, deck_id, q, limit, offset))
         return [
             card
             for card in self.cards
@@ -143,8 +130,6 @@ class FakeStudyScopeService:
         self,
         *,
         mode=None,
-        scope_type=None,
-        workspace_id=None,
         deck_id=None,
         front,
         back,
@@ -153,18 +138,7 @@ class FakeStudyScopeService:
         extra=None,
     ):
         self.calls.append(
-            (
-                "create_flashcard",
-                mode,
-                scope_type,
-                workspace_id,
-                deck_id,
-                front,
-                back,
-                tags,
-                notes,
-                extra,
-            )
+            ("create_flashcard", mode, deck_id, front, back, tags, notes, extra)
         )
         created = {
             "record_id": f"{mode}:study_flashcard:new-card",
@@ -373,28 +347,9 @@ class WorkspaceFilteredStudyScopeService(FakeStudyScopeService):
         return created
 
     async def list_flashcards(
-        self,
-        *,
-        mode=None,
-        scope_type=None,
-        workspace_id=None,
-        deck_id=None,
-        q=None,
-        limit=100,
-        offset=0,
+        self, *, mode=None, deck_id=None, q=None, limit=100, offset=0
     ):
-        self.calls.append(
-            (
-                "list_flashcards",
-                mode,
-                scope_type,
-                workspace_id,
-                deck_id,
-                q,
-                limit,
-                offset,
-            )
-        )
+        self.calls.append(("list_flashcards", mode, deck_id, q, limit, offset))
         cards = self.workspace_cards if deck_id == "deck-workspace-1" else self.cards
         return [
             card
@@ -570,8 +525,6 @@ async def test_flashcards_view_creates_deck_and_card_through_scope_service():
         assert (
             "create_flashcard",
             "local",
-            "global",
-            None,
             "new-deck",
             "What is H2O?",
             "Water",
@@ -1370,7 +1323,6 @@ async def test_start_review_blocks_when_pending_session_teardown_keeps_failing()
         assert controller._pending_review_session_teardown is not None
 
 
-
 def _review_candidates(count: int = 6) -> list[dict]:
     """`count` distinct due cards, so a review queue can actually advance."""
     return [
@@ -1471,6 +1423,70 @@ def _study_app_for(scope):
         notify=lambda *args, **kwargs: None,
     )
     return _build_full_study_app(app_instance)
+
+
+async def _until(pilot, condition, what: str) -> None:
+    for _ in range(250):
+        if condition():
+            return
+        await pilot.pause(0.02)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+async def _open_flashcards_deck(pilot, app, scope):
+    """Open Flashcards on deck-local-1 and wait for its cards, with no sleep.
+
+    Args:
+        pilot: The running test pilot.
+        app: The full Study app under test.
+        scope: Its `GatedCardListStudyScopeService`; the gate is left open.
+
+    Returns:
+        The Study window, the deck Select and the card ListView.
+    """
+    await _until(
+        pilot,
+        lambda: bool(app.screen.query("#view-flashcards-btn")),
+        "the Study screen",
+    )
+    await pilot.click("#view-flashcards-btn")
+    await _until(pilot, lambda: bool(app.screen.query("#deck-select")), "Flashcards")
+    window = app.screen.query_one(StudyWindow)
+    deck_select = app.screen.query_one("#deck-select", Select)
+    card_list = window.query_one("#card-list", ListView)
+    scope.gate.set()
+    await _until(
+        pilot,
+        lambda: "deck-local-1" in _non_blank_option_values(deck_select._options),
+        "the deck list",
+    )
+    deck_select.value = "deck-local-1"
+    # The deck change's own rebuild: one listing, then its rows.
+    await _until(
+        pilot,
+        lambda: scope.list_calls >= 1 and len(card_list.children) > 0,
+        "the deck's cards",
+    )
+    await pilot.pause()
+    return window, deck_select, card_list
+
+
+def _hold(scope, name: str) -> tuple[asyncio.Event, asyncio.Event]:
+    """Make ``scope.<name>`` wait until released.
+
+    Returns:
+        The event set when the call starts, and the one that releases it.
+    """
+    entered, release = asyncio.Event(), asyncio.Event()
+    call = getattr(scope, name)
+
+    async def held(**kwargs):
+        entered.set()
+        await release.wait()
+        return await call(**kwargs)
+
+    setattr(scope, name, held)
+    return entered, release
 
 
 async def _enter_review(pilot, app):
@@ -1640,6 +1656,373 @@ async def test_deck_change_and_refresh_do_not_interleave_the_card_list():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_held_card_list_rebuild_ends_quietly_when_the_sub_view_is_swapped():
+    """A rebuild that resumes after Flashcards was swapped out raises nothing.
+
+    The window stays mounted while its sub-view goes, so every lookup after
+    the rebuild's awaits (`#review-status`, the lifecycle buttons) can miss.
+    Only the two lookups before the first await were guarded (#3057 review
+    R3 #8): the rest raised `NoMatches` into the six controller paths that
+    await `refresh_cards()`, and out of the `study-refresh-cards` worker.
+    """
+    scope = GatedCardListStudyScopeService()
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, _deck_select, _card_list = await _open_flashcards_deck(
+            pilot, app, scope
+        )
+        controller = window.flashcards_controller
+
+        # Hold one rebuild inside `list_flashcards`, then leave Flashcards.
+        scope.gate.clear()
+        held = scope.list_calls
+        rebuild = asyncio.ensure_future(controller.refresh_cards())
+        await _until(
+            pilot, lambda: scope.list_calls > held, "the rebuild to reach the service"
+        )
+        window.current_view = "structured_learning"  # Quizzes can raise on entry (dev)
+        await _until(
+            pilot,
+            lambda: not window.query("#review-status"),
+            "Flashcards to be swapped out",
+        )
+
+        scope.gate.set()
+        await rebuild  # NoMatches before the fix
+        await pilot.pause()
+        assert window.current_view == "structured_learning"
+
+
+#: The five controller actions that await the card-list rebuild, with the
+#: service call each makes first.
+_ACTION_SERVICE_CALLS = {
+    "create_card": "create_flashcard",
+    "create_deck": "create_deck",
+    "delete_selected_card": "delete_flashcard",
+    "move_selected_card": "move_flashcard",
+    "delete_selected_deck": "delete_deck",
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    ("action", "held"),
+    [
+        *_ACTION_SERVICE_CALLS.items(),
+        # Deleting the deck leaves none selected, so its rebuild lists nothing.
+        *(
+            (action, "list_flashcards")
+            for action in _ACTION_SERVICE_CALLS
+            if action != "delete_selected_deck"
+        ),
+        # Opening Flashcards awaits the deck list (fix round 2, finding 1).
+        ("initialize_view", "list_decks"),
+        # Start review and a rating await the next card (fix round 3, finding 2).
+        ("start_review", "get_next_review_candidate"),
+    ],
+)
+async def test_an_action_held_across_the_sub_view_swap_ends_quietly(action, held):
+    """Create, delete, move, opening Flashcards and Start review end quietly
+    when Flashcards is swapped out while they await the service or the
+    card-list rebuild.
+
+    Fix round 1 of the #3057 review, finding 19: the rebuild itself ended
+    quietly (R3 #8), but each of these five actions touched the review panel
+    or the deck list on its next statement and raised `NoMatches` out of its
+    worker (`study-create-card`, `study-create-deck`) or its button handler.
+    """
+    scope = GatedCardListStudyScopeService()
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, _deck_select, _card_list = await _open_flashcards_deck(
+            pilot, app, scope
+        )
+        controller = window.flashcards_controller
+        window.query_one("#new-deck-name-input", Input).value = "Physics"
+        window.query_one("#card-front", TextArea).text = "Front"
+        window.query_one("#card-back", TextArea).text = "Back"
+        controller.selected_card_record = controller.current_cards[0]
+        # The deck the Move target Select would name.
+        controller._selected_target_deck_record = lambda: controller.current_decks[1]
+        await pilot.pause()
+
+        entered, release = _hold(scope, held)
+        running = asyncio.ensure_future(getattr(controller, action)())
+        await _until(pilot, entered.is_set, f"{action} to reach {held}")
+        # Any other sub-view removes Flashcards; this one loads nothing.
+        window.current_view = "structured_learning"
+        await _until(
+            pilot,
+            lambda: not window.query("#review-status"),
+            "Flashcards to be swapped out",
+        )
+
+        release.set()
+        await running  # NoMatches before the fix
+        await pilot.pause()
+        assert not window.query("#review-status")
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_lookup_that_misses_while_flashcards_is_shown_still_raises():
+    """Only a swap ends an action quietly (fix round 2, finding 6).
+
+    The guard swallowed every `NoMatches`, also one from a lookup that
+    misses while Flashcards is on screen (an id renamed in Study_Window.py),
+    and such a miss then failed no test.
+    """
+    scope = GatedCardListStudyScopeService()
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, _deck_select, _card_list = await _open_flashcards_deck(
+            pilot, app, scope
+        )
+        await window.query_one("#new-deck-name-input", Input).remove()
+
+        with pytest.raises(NoMatches):
+            await window.flashcards_controller.create_deck()
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_an_action_held_while_the_study_window_goes_ends_quietly():
+    """Leaving the Study tab ends an action quietly (fix round 3, finding 1).
+
+    A tab switch removes the whole window and leaves `current_view` at
+    "flashcards", so round 2's guard took the miss for a renamed id and
+    re-raised it out of the worker.
+    """
+    scope = GatedCardListStudyScopeService()
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, _deck_select, _card_list = await _open_flashcards_deck(
+            pilot, app, scope
+        )
+        entered, release = _hold(scope, "list_decks")
+        running = asyncio.ensure_future(window.flashcards_controller.initialize_view())
+        await _until(pilot, entered.is_set, "initialize_view to reach list_decks")
+
+        await window.remove()
+        assert window.current_view == "flashcards"
+        release.set()
+        await running  # NoMatches before the fix
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_an_action_held_across_a_swap_away_and_back_ends_quietly():
+    """A swap away and back ends an action quietly (fix round 4, finding 2).
+
+    The new Flashcards panel has no `#review-status` until its compose has
+    run, a few loop turns after the swap back. The guard saw "flashcards"
+    shown and the window displayed, took the miss for a renamed id and
+    re-raised it out of the `study-start-review` worker.
+    """
+    scope = GatedCardListStudyScopeService()
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, _deck_select, _card_list = await _open_flashcards_deck(
+            pilot, app, scope
+        )
+        entered, release = _hold(scope, "get_next_review_candidate")
+        running = asyncio.ensure_future(window.flashcards_controller.start_review())
+        await _until(pilot, entered.is_set, "start_review to reach the service")
+        window.current_view = "structured_learning"
+        await _until(
+            pilot,
+            lambda: not window.query("#review-status"),
+            "Flashcards to be swapped out",
+        )
+
+        window.current_view = "flashcards"  # mounts a panel not yet composed
+        assert not window.query("#review-status")
+        release.set()
+        await running  # NoMatches before the fix
+        await _until(
+            pilot, lambda: bool(window.query("#review-status")), "the new panel"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_card_front_with_brackets_is_listed_as_typed():
+    """A card's text is literal in the card list (fix round 1, finding 21).
+
+    The row was built as markup: "[new]", the queue state every row ends
+    with, was read as a style tag and never painted, and a front holding
+    "[/]" raised `MarkupError` inside the rebuild.
+    """
+    scope = GatedCardListStudyScopeService()
+    scope.cards[0]["front"] = "arr[0] vs arr[/]"
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        _window, _deck_select, card_list = await _open_flashcards_deck(
+            pilot, app, scope
+        )
+
+        rows = [str(item.query_one(Label).render()) for item in card_list.children]
+        assert rows == ["arr[0] vs arr[/] [new]", "Second Question [new]"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_card_with_brackets_is_reviewed_as_typed():
+    """The review panel is literal too (fix round 2, finding 2).
+
+    Round 1 made the card list literal, so a front holding "[/]" could be
+    listed and then raised `MarkupError` from Start review; "[new]" in a
+    back or a deck name was dropped as a style tag.
+    """
+    scope = GatedCardListStudyScopeService()
+    scope.candidates[0]["card"].update(front="arr[0] vs arr[/]", back="Paris [new]")
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, _deck_select, _card_list = await _open_flashcards_deck(
+            pilot, app, scope
+        )
+        controller = window.flashcards_controller
+
+        await controller.start_review()  # MarkupError before the fix
+        controller.show_answer()
+        await pilot.pause()
+        shown = [
+            str(window.query_one(f"#review-{part}", Static).render())
+            for part in ("front", "back")
+        ]
+        assert shown == ["arr[0] vs arr[/]", "Paris [new]"]
+
+        window.query_one("#new-deck-name-input", Input).value = "Week [new]"
+        await controller.create_deck()
+        status = window.query_one("#review-status", Static)
+        assert str(status.render()) == "Deck 'Week [new]' created."
+        # The deck change's own rebuild ends the test, not the app's teardown.
+        await _until(
+            pilot,
+            lambda: str(status.render()) == "No cards due for review.",
+            "the new deck's rebuild",
+        )
+
+
+def _select_label(select: Select) -> str:
+    return str(select.query_one("SelectCurrent #label", Static).render())
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_deck_name_with_brackets_is_shown_as_typed():
+    """Both deck Selects show a deck's name as typed (fix round 3, finding 3).
+
+    A deck name was a Select prompt, which Textual reads as markup: "Week
+    [new]" showed "Week ", and creating "Arr [/] x" raised `MarkupError`
+    out of `create_deck`.
+    """
+    scope = GatedCardListStudyScopeService()
+    scope.decks[1]["name"] = "Week [new]"
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, deck_select, _card_list = await _open_flashcards_deck(pilot, app, scope)
+        move_select = window.query_one("#move-card-target-select", Select)
+        move_select.value = "deck-local-2"
+        await pilot.pause()
+        assert _select_label(move_select) == "Week [new]"
+
+        window.query_one("#new-deck-name-input", Input).value = "Arr [/] x"
+        await window.flashcards_controller.create_deck()  # MarkupError before
+        assert _select_label(deck_select) == "Arr [/] x"
+        status = window.query_one("#review-status", Static)
+        # The deck change's own rebuild ends the test, not the app's teardown.
+        await _until(
+            pilot,
+            lambda: str(status.render()) == "No cards due for review.",
+            "the new deck's rebuild",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_picked_move_target_stays_picked_and_enables_move():
+    """Picking a Move target keeps it (fix round 4, finding 1).
+
+    The target Select's Changed handler rebuilt its options, and
+    `Select.set_options` resets the selection: the pick fell back to the
+    prompt and Move stayed disabled, so no card could be moved (dev).
+    """
+    scope = GatedCardListStudyScopeService()
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, _deck_select, card_list = await _open_flashcards_deck(pilot, app, scope)
+        card_list.index = 0
+        card_list.action_select_cursor()
+        await _until(
+            pilot,
+            lambda: window.flashcards_controller.selected_card_record is not None,
+            "the card to be selected",
+        )
+        move_select = window.query_one("#move-card-target-select", Select)
+        move_select.value = "deck-local-2"
+        await pilot.pause()
+
+        assert move_select.value == "deck-local-2"
+        assert _select_label(move_select) == "Chemistry"
+        assert window.query_one("#move-selected-card-button", Button).disabled is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_two_awaited_card_list_rebuilds_do_not_interleave():
+    """The awaited rebuilds share one lock with the worker rebuilds.
+
+    `create_deck`, `create_card` and four other controller paths await
+    `refresh_cards()` directly, outside the exclusive `study-refresh-cards`
+    worker group. `create_deck` also changes `#deck-select`, whose worker
+    rebuilds the list again, so two rebuilds ran together: the list showed
+    empty between one rebuild's clear and the other's append (#3057's UI
+    lane), or held both rebuilds' rows.
+    """
+    scope = GatedCardListStudyScopeService()
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, _deck_select, card_list = await _open_flashcards_deck(pilot, app, scope)
+        controller = window.flashcards_controller
+
+        # Hold both awaited rebuilds open together. The gate stops the one
+        # that reaches the listing; the pauses then let the other run as far
+        # as it can -- to the lock, or without one through its own clear to
+        # the gated listing.
+        listed = scope.list_calls
+        scope.gate.clear()
+        first = asyncio.ensure_future(controller.refresh_cards())
+        second = asyncio.ensure_future(controller.refresh_cards())
+        await _until(
+            pilot, lambda: scope.list_calls > listed, "a rebuild to reach the listing"
+        )
+        await pilot.pause()
+        await pilot.pause()
+        scope.gate.set()
+        await asyncio.gather(first, second)
+        await pilot.pause()
+
+        rows = len(card_list.children)
+        assert rows == len(controller.current_cards) > 0, (
+            f"#card-list holds {rows} rows against "
+            f"{len(controller.current_cards)} cards -- two rebuilds interleaved"
+        )
+
+
+@pytest.mark.asyncio
 async def test_double_press_on_one_card_applies_sm2_once(tmp_path):
     """TASK-19559 review R3: SM-2 is compounding, so a double-submit doubles it.
 
@@ -1657,9 +2040,7 @@ async def test_double_press_on_one_card_applies_sm2_once(tmp_path):
 
     db = CharactersRAGDB(str(tmp_path / "study.db"), "study-review-probe")
     deck_id = db.create_deck("Doubling deck")
-    card_id = db.create_flashcard(
-        {"deck_id": deck_id, "front": "Q", "back": "A"}
-    )
+    card_id = db.create_flashcard({"deck_id": deck_id, "front": "Q", "back": "A"})
     local = LocalStudyService(db)
 
     class RealDbStudyScopeService(FakeStudyScopeService):

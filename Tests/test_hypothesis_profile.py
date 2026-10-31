@@ -72,8 +72,7 @@ def test_collected_test_modules_do_not_mutate_the_global_profile() -> None:
                 and node.func.attr in {"register_profile", "load_profile"}
             ):
                 offenders.append(
-                    f"{path.relative_to(tests_root)}:{node.lineno} "
-                    f"{node.func.attr}"
+                    f"{path.relative_to(tests_root)}:{node.lineno} {node.func.attr}"
                 )
 
     assert offenders == [], (

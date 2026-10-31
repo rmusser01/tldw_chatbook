@@ -44,8 +44,9 @@ class AppFooterStatus(Widget):
       the screen doesn't mention still gets its generic global hint; a key
       the screen DOES mention shows only the screen's own (more specific)
       copy, never both -- so a screen's context routinely supersedes a
-      global key's generic label, it just can never make the key vanish
-      from the footer entirely.
+      global key's generic label, it cannot make the key vanish from the
+      footer -- unless it lists the key as unavailable (the key does nothing
+      there, e.g. F6 under Console's Get started card), which leaves it out.
     * When width runs out, the screen-context hints drop first (leaving an
       ellipsis marker), then the right cluster (token/word/DB sizes) hides
       progressively; nothing ever clips mid-word.
@@ -358,22 +359,19 @@ class AppFooterStatus(Widget):
 
         Returns:
             The tier's hints, minus any whose key the active context
-            already advertises under its own (available) label -- task-2860.
+            already advertises under its own (available) label -- task-2860
+            -- and, at every tier, any key the screen lists as unavailable.
         """
         visible_actions = self._context_actions if actions is None else actions
-        covered = {
-            action.key.lower()
-            for action in visible_actions
-            if action.available
-        }
+        covered = {action.key.lower() for action in visible_actions if action.available}
+        # A key the screen lists as unavailable does nothing there: no hint.
+        covered |= {a.key.lower() for a in self._context_actions if not a.available}
         return " · ".join(label for key, label in items if key not in covered)
 
     @staticmethod
     def _render_actions(actions: tuple[ShortcutAction, ...]) -> str:
         """Render an ordered subset of available workflow hints."""
-        return " | ".join(
-            action.render() for action in actions if action.available
-        )
+        return " | ".join(action.render() for action in actions if action.available)
 
     @staticmethod
     def _combine(context_text: str, globals_text: str) -> str:
@@ -422,12 +420,16 @@ class AppFooterStatus(Widget):
         self,
         *,
         source: str,
-        shortcuts: tuple[tuple[str, str], ...],
+        shortcuts: tuple[tuple[str, str] | tuple[str, str, bool], ...],
     ) -> None:
-        """Render Workbench shortcut hints through the footer context model."""
+        """Render Workbench shortcut hints through the footer context model.
+
+        A ``(key, label, False)`` triple lists a key that does nothing here.
+        """
         context = ShortcutContext(
             source=source,
-            actions=tuple(ShortcutAction(key, label) for key, label in shortcuts),
+            # A third False marks a key that does nothing here (no hint at all).
+            actions=tuple(ShortcutAction(*pair) for pair in shortcuts),
         )
         self.set_shortcut_context(context)
 
@@ -530,8 +532,10 @@ class AppFooterStatus(Widget):
             # Once the context is dropped entirely (ellipsis/compact below),
             # there is nothing left to dedupe against -- fall back to the
             # plain, undeduped global constants.
-            ellipsis = f"… {self.GLOBAL_HINTS}"
-            compact = f"… {self.GLOBAL_HINTS_COMPACT}"
+            ellipsis = f"… {self._remaining_global_text(self._GLOBAL_HINT_ITEMS_FULL, ())}"
+            compact = (
+                f"… {self._remaining_global_text(self._GLOBAL_HINT_ITEMS_COMPACT, ())}"
+            )
         else:
             full = self.GLOBAL_HINTS
             context_compact_globals = full

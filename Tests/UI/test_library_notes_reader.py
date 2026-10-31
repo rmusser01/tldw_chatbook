@@ -95,6 +95,7 @@ def test_folder_files_reader_authority_scaffold_is_distinct() -> None:
         is not screen._notes_state.file_notes_reader_persistence_locks["items"]
     )
 
+
 @pytest.mark.asyncio
 async def test_database_notes_capability_inventory_and_modes(
     monkeypatch: pytest.MonkeyPatch,
@@ -236,11 +237,14 @@ async def test_database_notes_capability_inventory_and_modes(
             return permitted
 
         refresh_roots = Mock()
+        return_to_roots = Mock()
         revisit_receipt = Mock()
         task_screen = SimpleNamespace(
             _library_notes_mutation_fenced=lambda: False,
             _flush_library_note_save=flush,
-            _library_notes_sync_controller=SimpleNamespace(refresh_roots=refresh_roots),
+            _library_notes_sync_controller=SimpleNamespace(
+                refresh_roots=refresh_roots, return_to_roots=return_to_roots
+            ),
             _library_note_import_controller=SimpleNamespace(
                 revisit_receipt=revisit_receipt
             ),
@@ -250,8 +254,15 @@ async def test_database_notes_capability_inventory_and_modes(
             ),
             _apply_library_notes_footer_context=Mock(),
         )
+        # TASK-34000.17 extracted the body behind both roots doors into
+        # ``_open_library_notes_sync_roots`` (named through ``self`` by the
+        # handler) and made it name its step through ``return_to_roots``.
+        task_screen._open_library_notes_sync_roots = lambda: (
+            LibraryScreen._open_library_notes_sync_roots(task_screen)
+        )
         await LibraryScreen.handle_library_notes_manage_sync_folders(task_screen, event)
-        refresh_roots.assert_called_once_with()
+        return_to_roots.assert_called_once_with()
+        refresh_roots.assert_not_called()
         assert task_screen._notes_state.view == "lasting_roots"
         assert len(sync_calls) == 1
         await LibraryScreen.handle_library_notes_import_receipt(task_screen, event)
@@ -521,6 +532,16 @@ async def test_discard_new_note_appearing_never_shifts_the_mode_row() -> None:
     the row's own excess space happens to be exhausted before Discard's
     width matters, so the shift this pins does not reproduce there --
     checked by hand against a reverted copy of the CSS fix before landing.
+
+    TASK-34000.8: the reservation is now made by construction -- Discard
+    new note stays IN LAYOUT (``visible``, not ``display``), so the task
+    row is always its Discard-shown width -- and the hand-measured
+    ``min-width: 61`` is gone (it applied from the shell's 120-column
+    breakpoint up, where it pushed Save off a 48-cell pane). The review
+    round 1 F9 pin on that constant asserted the implementation (a CSS
+    number), not the promise; its behavioural half is kept here: the mode
+    row's x AND the task row's width are the same with and without Discard,
+    and the hidden Discard is not Tab-reachable.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -540,30 +561,40 @@ async def test_discard_new_note_appearing_never_shifts_the_mode_row() -> None:
         discard = screen.query_one("#library-note-discard-new", Button)
         mode_controls = screen.query_one("#library-note-mode-controls")
         task_actions = screen.query_one("#library-note-task-actions")
-        # task-32623 review round 1, F9: pin the hand-measured CSS constant
-        # itself, not just the no-shift behaviour it produces -- a drift in
-        # the number could still happen to not shift anything today and
-        # silently stop reserving the row's real widest width.
-        assert task_actions.styles.min_width is not None
-        assert task_actions.styles.min_width.value == 61
-        assert discard.display is True, "untouched new note should offer Discard"
+        assert discard.display is True and discard.visible is True, (
+            "untouched new note should offer Discard"
+        )
+        assert discard in screen.focus_chain
         x_with_discard = mode_controls.region.x
+        width_with_discard = task_actions.region.width
+        assert width_with_discard >= discard.region.right - task_actions.region.x, (
+            "sanity: the task row does not even hold Discard"
+        )
 
         body = screen.query_one("#library-note-body", TextArea)
         body.text = "typed content"
         await pilot.pause()
         await _wait_for_condition(
             pilot,
-            lambda: screen.query_one("#library-note-discard-new", Button).display
-            is False,
+            lambda: (
+                screen.query_one("#library-note-discard-new", Button).visible is False
+            ),
             message="Discard new note never disappeared after typing.",
         )
+        await pilot.pause()
         x_without_discard = mode_controls.region.x
 
         assert x_without_discard == x_with_discard, (
             f"Edit/Preview/Info moved from x={x_with_discard} to "
             f"x={x_without_discard} when Discard new note disappeared."
         )
+        assert task_actions.region.width == width_with_discard, (
+            f"The task row shrank from {width_with_discard} to "
+            f"{task_actions.region.width} when Discard new note disappeared."
+        )
+        assert discard.display is True, "Discard must keep its cells (visibility, not display)"
+        assert discard not in screen.focus_chain, "a hidden Discard is Tab-reachable"
+        assert discard not in screen._compositor.visible_widgets
 
 
 @pytest.mark.asyncio
@@ -911,13 +942,9 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
         row = await _wait_for_selector(screen, pilot, ".library-notes-row")
-        shell = screen.query_one(
-            ".library-notes-route", LibraryAdaptiveReaderShell
-        )
+        shell = screen.query_one(".library-notes-route", LibraryAdaptiveReaderShell)
 
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         assert shell.effective_layout.library_open is True
         assert writes == []
 
@@ -970,8 +997,7 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._notes_state.work_session_phase
-                is NotesWorkSessionPhase.INACTIVE
+                screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
             ),
             message="Database identity clear did not reset work session",
         )
@@ -1014,13 +1040,13 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
         assert screen._notes_state.reader_preferences.library_open is True
 
         await screen._select_library_rail_row("browse-media")
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
 
 
 @pytest.mark.asyncio
-async def test_notes_global_f6_cycles_only_visible_regions_when_library_collapsed() -> None:
+async def test_notes_global_f6_cycles_only_visible_regions_when_library_collapsed() -> (
+    None
+):
     """At 120 columns the hidden Library region is skipped by the F6 cycle."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -1034,9 +1060,7 @@ async def test_notes_global_f6_cycles_only_visible_regions_when_library_collapse
         # tree's async reload (task-32126) and can race the row it presses
         # next.
         await _open_note_editor(screen, pilot)
-        shell = screen.query_one(
-            ".library-notes-route", LibraryAdaptiveReaderShell
-        )
+        shell = screen.query_one(".library-notes-route", LibraryAdaptiveReaderShell)
         assert shell.effective_layout.library_open is False
         screen.query_one("#library-note-title", Input).focus()
         await pilot.pause()
@@ -1064,9 +1088,7 @@ async def test_database_notes_mount_three_retained_roles_once() -> None:
         screen.query_one("#library-row-browse-notes", Button).press()
         await _wait_for_selector(screen, pilot, ".library-notes-route")
 
-        shell = screen.query_one(
-            ".library-notes-route", LibraryAdaptiveReaderShell
-        )
+        shell = screen.query_one(".library-notes-route", LibraryAdaptiveReaderShell)
         rail = shell.query_one("#library-rail")
         items = shell.query_one("#library-notes-canvas", LibraryNotesCanvas)
         work = shell.query_one("#library-note-work-pane", LibraryNoteWorkPane)
@@ -1126,9 +1148,7 @@ async def test_reader_route_parks_dirty_note_selection_and_preview_without_savin
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Reader-to-reader routing retains the Notes-owned working session."""
-    monkeypatch.setattr(
-        library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 3600
-    )
+    monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 3600)
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
@@ -1192,9 +1212,11 @@ async def test_reader_route_parks_dirty_note_selection_and_preview_without_savin
 
         await _wait_for_condition(
             pilot,
-            lambda: len(app.notes_scope_service.save_calls) == 1
-            and screen._library_note_session.snapshot is not None
-            and not screen._library_note_session.snapshot.dirty,
+            lambda: (
+                len(app.notes_scope_service.save_calls) == 1
+                and screen._library_note_session.snapshot is not None
+                and not screen._library_note_session.snapshot.dirty
+            ),
             message="Revisited dirty Notes draft did not resume autosave.",
         )
 
@@ -1211,9 +1233,7 @@ async def test_reader_route_invalidates_autosave_queued_before_park(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A timer-fired autosave cannot begin persistence after Notes is hidden."""
-    monkeypatch.setattr(
-        library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 3600
-    )
+    monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 3600)
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
@@ -1280,9 +1300,11 @@ async def test_reader_route_invalidates_autosave_queued_before_park(
 
         await _wait_for_condition(
             pilot,
-            lambda: len(app.notes_scope_service.save_calls) == 1
-            and screen._library_note_session.snapshot is not None
-            and not screen._library_note_session.snapshot.dirty,
+            lambda: (
+                len(app.notes_scope_service.save_calls) == 1
+                and screen._library_note_session.snapshot is not None
+                and not screen._library_note_session.snapshot.dirty
+            ),
             message="Rearmed autosave did not settle exactly once.",
         )
 
@@ -1461,9 +1483,7 @@ async def test_eighty_columns_protect_editor_and_keep_both_restore_grips() -> No
         # own) re-kicks the tree's async reload and strands the row press
         # that follows (task-32126, confirmed by reproduction).
         await _open_note_editor(screen, pilot)
-        shell = screen.query_one(
-            ".library-notes-route", LibraryAdaptiveReaderShell
-        )
+        shell = screen.query_one(".library-notes-route", LibraryAdaptiveReaderShell)
         await pilot.pause()
 
         assert shell.work.region.width >= 48

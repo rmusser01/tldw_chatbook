@@ -190,7 +190,9 @@ def test_file_size_limit_is_enforced(tmp_path):
         limits=ScriptRunLimits(file_size_bytes=64 * 1024),
     )
     assert "STARTED" in result.stdout, "the script must actually have run"
-    assert "BLOCKED" in result.stdout, "the write must have been refused, not merely absent"
+    assert "BLOCKED" in result.stdout, (
+        "the write must have been refused, not merely absent"
+    )
     assert "WROTE" not in result.stdout
     assert (tmp_path / "big.bin").stat().st_size <= 64 * 1024
 
@@ -225,17 +227,25 @@ def test_limits_apply_to_a_non_python_target(tmp_path):
     result = run_script_subprocess(
         ["/bin/sh", str(script)],
         cwd=tmp_path,
-        limits=ScriptRunLimits(file_size_bytes=file_size_bytes, cpu_seconds=cpu_seconds),
+        limits=ScriptRunLimits(
+            file_size_bytes=file_size_bytes, cpu_seconds=cpu_seconds
+        ),
     )
     assert result.exit_code == 0
     tokens = result.stdout.split()
-    assert len(tokens) == 3, f"expected exactly 3 whitespace-separated tokens, got {result.stdout!r}"
+    assert len(tokens) == 3, (
+        f"expected exactly 3 whitespace-separated tokens, got {result.stdout!r}"
+    )
     echoed, cpu_limit, file_limit = tokens
     assert echoed == "shell-ran"
     # RLIMIT_CPU is reported in seconds by every shell — no unit ambiguity.
-    assert cpu_limit == str(cpu_seconds), f"child did not inherit RLIMIT_CPU: {result.stdout!r}"
+    assert cpu_limit == str(cpu_seconds), (
+        f"child did not inherit RLIMIT_CPU: {result.stdout!r}"
+    )
     # RLIMIT_FSIZE is reported in blocks: 512 bytes per POSIX, 1024 in bash.
-    assert file_limit != "unlimited", f"child did not inherit RLIMIT_FSIZE: {result.stdout!r}"
+    assert file_limit != "unlimited", (
+        f"child did not inherit RLIMIT_FSIZE: {result.stdout!r}"
+    )
     blocks = int(file_limit)
     assert blocks * 512 == file_size_bytes or blocks * 1024 == file_size_bytes, (
         f"child RLIMIT_FSIZE of {blocks} blocks does not match {file_size_bytes} bytes"
@@ -280,7 +290,9 @@ def test_resolve_interpreter_uses_scrubbed_path_only(tmp_path, monkeypatch):
     assert resolve_interpreter("definitely-not-a-real-interpreter-xyz") is None
 
 
-def test_resolve_interpreter_rejects_relative_name_with_separator(tmp_path, monkeypatch):
+def test_resolve_interpreter_rejects_relative_name_with_separator(
+    tmp_path, monkeypatch
+):
     """A relative name containing a separator must never resolve.
 
     ``shutil.which`` special-cases any argument with a dirname component: it
@@ -312,7 +324,9 @@ def test_resolve_interpreter_rejects_non_executable_absolute_paths(tmp_path):
     data_file = tmp_path / "not-an-interpreter"
     data_file.write_text("just data", encoding="utf-8")
 
-    assert resolve_interpreter(str(data_file)) is None, "non-executable file must not resolve"
+    assert resolve_interpreter(str(data_file)) is None, (
+        "non-executable file must not resolve"
+    )
     assert resolve_interpreter(str(tmp_path)) is None, "a directory must not resolve"
     assert resolve_interpreter(str(tmp_path / "missing")) is None
     assert resolve_interpreter("") is None
@@ -380,7 +394,9 @@ def test_returns_promptly_when_a_grandchild_outlives_the_child(tmp_path):
     elapsed = time.monotonic() - started
 
     assert elapsed < 10.0, "must not block on a grandchild that outlives the child"
-    assert "PARENT DONE" in result.stdout, "the child's own output must survive teardown"
+    assert "PARENT DONE" in result.stdout, (
+        "the child's own output must survive teardown"
+    )
     assert result.exit_code == 0
     assert result.timed_out is False
     grandchild_pid = int(marker.read_text())

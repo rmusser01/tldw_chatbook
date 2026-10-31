@@ -111,6 +111,11 @@ class _Host(App[None]):
     ) -> None:
         self.messages.append(message)
 
+    def on_library_notes_add_from_files_canvas_manage_roots_requested(
+        self, message
+    ) -> None:
+        self.messages.append(message)
+
 
 class _HostWithExternalControl(_Host):
     def compose(self) -> ComposeResult:
@@ -295,6 +300,99 @@ async def test_receipt_keeps_durable_status_and_back_visible() -> None:
         await pilot.pause()
         assert "1 applied · listed under Receipts" in _frame(app)
         assert app.query_one("#notes-sync-back", Button)
+
+
+@pytest.mark.parametrize("size", ((60, 20), (120, 36)))
+async def test_an_unhandled_phase_renders_the_chooser_with_a_way_back(
+    size: tuple[int, int],
+) -> None:
+    """TASK-34000.17 AC#5/AC#3: ``roots`` (and any phase the body chain does
+    not name) is the chooser, never a heading over nothing.
+
+    The review's capture verify/nl-v-n-17/13: after a check that ended in
+    "Nothing to review." the page was "Add files to Library notes." and the
+    status line -- no Import once, no Keep synced, no ‹ Notes, nothing
+    focused.
+    """
+
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="roots",
+        status_line="Nothing to review.",
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        for selector in ("#notes-add-import-once", "#notes-add-keep-synced", "#notes-sync-back"):
+            assert app.query(selector), f"{selector} missing for phase roots:\n{_frame(app)}"
+        # Availability is the label: the inert chooser's button stays pressable
+        # (so it can explain the gate) and wears a "○" prefix instead.
+        assert str(app.query_one("#notes-add-import-once", Button).label) == "Import once"
+        assert (
+            str(app.query_one("#notes-add-keep-synced", Button).label)
+            == "Keep a folder synced"
+        )
+        frame = _frame(app)
+        assert "Import once" in frame
+        assert "Keep a folder synced" in frame
+        assert "‹ Notes" in frame
+        app.query_one(LibraryNotesAddFromFilesCanvas).focus_first_safe_control()
+        await _wait_for(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "notes-add-import-once",
+            message=f"phase roots focused {app.focused!r}, not Import once",
+        )
+
+
+async def test_the_history_page_offers_notes_and_the_receipt_offers_manage_sync_folders() -> (
+    None
+):
+    """TASK-34000.17 AC#3/AC#4: every settled bar has ‹ Notes; the receipt
+    routes onward to Manage sync folders."""
+
+    history = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="history",
+        review=_conflict_review(),
+        history=LastingSyncHistory("root-1", (), 1, False, False),
+    )
+    app = _Host(history)
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        assert app.query_one("#notes-sync-history-return", Button)
+        assert app.query_one("#notes-sync-back", Button), (
+            f"the history bar has no ‹ Notes:\n{_frame(app)}"
+        )
+        app.query_one(LibraryNotesAddFromFilesCanvas).focus_first_safe_control()
+        await _wait_for(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "notes-sync-history-return",
+            message=f"phase history focused {app.focused!r}, not Return",
+        )
+
+    receipt = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="receipt",
+        review=_conflict_review(),
+        status_line="Sync root activated.",
+        receipt_line="3 applied · listed under Receipts",
+    )
+    app = _Host(receipt)
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        manage = app.query_one("#notes-sync-manage-roots", Button)
+        assert str(manage.label) == "Manage sync folders"
+        assert "Manage sync folders" in _frame(app)
+        assert app.query_one("#notes-sync-back", Button)
+        manage.press()
+        await _wait_for(
+            pilot,
+            lambda: any(
+                isinstance(m, LibraryNotesAddFromFilesCanvas.ManageRootsRequested)
+                for m in app.messages
+            ),
+            message="Manage sync folders posted no ManageRootsRequested",
+        )
 
 
 @pytest.mark.parametrize("size", ((60, 20), (120, 36)))
@@ -1756,3 +1854,79 @@ async def test_configure_fold_hint_shows_when_the_body_actually_overflows() -> N
         )
         hint = app.query_one("#notes-sync-fold-hint", Static)
         assert hint.display is True
+
+
+async def test_activate_is_held_with_the_blocked_line_while_a_candidate_file_is_skipped() -> None:
+    """TASK-34000.16 fix round 1, I-2: the canvas paints Activate disabled and
+    its tooltip says which file and what to do."""
+
+    from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+        migration_activation_blocked_line,
+    )
+
+    blocker = "b.md · Mixed line endings — save it with one style"
+    review = LastingSyncReview(
+        root_id="root-1",
+        observation_token="d" * 64,
+        activation=True,
+        source="migration",
+        activation_blockers=(blocker,),
+    )
+    app = _Host(
+        replace(
+            initial_lasting_sync_snapshot(lasting_available=True),
+            phase="review",
+            review=review,
+        )
+    )
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        activate = app.query_one("#notes-sync-activate", Button)
+        assert activate.disabled is True
+        assert activate.tooltip == migration_activation_blocked_line((blocker,))
+
+
+@pytest.mark.parametrize(
+    "file_name",
+    [
+        pytest.param("x[/]y.md", id="closing-tag"),
+        pytest.param("[/draft] end.md", id="closing-named-tag"),
+        pytest.param("[draft] plan.md", id="opening-tag-swallowed"),
+    ],
+)
+async def test_the_held_activate_tooltip_paints_a_bracketed_file_name_literally(
+    file_name: str,
+) -> None:
+    """TASK-34000.16 fix round 2 (R2-1): the tooltip is Rich markup; the file
+    name is the user's. ``x[/]y.md`` raised ``MarkupError`` from the tooltip
+    timer and crashed the app; ``[draft] plan.md`` painted " plan.md"."""
+
+    from textual.widgets import Tooltip
+
+    blocker = f"{file_name} · Mixed line endings — save it with one style"
+    review = LastingSyncReview(
+        root_id="root-1",
+        observation_token="d" * 64,
+        activation=True,
+        source="migration",
+        activation_blockers=(blocker,),
+    )
+    app = _Host(
+        replace(
+            initial_lasting_sync_snapshot(lasting_available=True),
+            phase="review",
+            review=review,
+        )
+    )
+    app.TOOLTIP_DELAY = 0.01
+    async with app.run_test(size=(120, 30), tooltips=True) as pilot:
+        await pilot.pause()
+        activate = app.query_one("#notes-sync-activate", Button)
+        assert activate.disabled is True
+        assert await pilot.hover("#notes-sync-activate")
+        await pilot.pause(0.1)
+        tooltip = app.screen.get_child_by_type(Tooltip)
+        assert tooltip.display is True
+        painted = str(tooltip.render())
+        assert file_name in painted, painted
+        assert "Activate is unavailable while 1 file there can't be read" in painted

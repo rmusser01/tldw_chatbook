@@ -1,10 +1,16 @@
 """App-level guards for Textual defects, composed into ``TextualAppGuards``.
 
-Two guards live here, and ``TldwCli`` carries both through the one
+Four App mixins live here, and ``TldwCli`` carries them through the one
 ``TextualAppGuards`` base: ``TextSelectionCrashGuard`` (task-14903, this
-docstring) and ``ThreadWorkerContextGuard`` (TASK-33264, see its class). They
-share a module so a new App-level guard costs neither another ``app.py`` line
-(size ratchet) nor another boot-path module (ADR-097 census).
+docstring), ``ThreadWorkerContextGuard`` (TASK-33264, see its class),
+``UserInputTap`` (TASK-33620.15.3: keeps the idle heap re-freeze off typing)
+and ``DetachedFocusGuard`` (TASK-34000.26: a removed widget under focus must
+not swallow the next key).
+The aggregate also selects a resize-capable native Windows driver (TASK-37173).
+It tracks clipboard write intent so older asynchronous copies cannot publish
+over a later user copy (TASK-37300).
+They share a module so a new App-level guard costs neither another ``app.py``
+line (size ratchet) nor another boot-path module (ADR-097 census).
 
 The bug (present in Textual 8.2.8, the newest 8.x at the time of writing --
 no fixed patch release exists inside this app's ``>=8.0.0,<9`` pin):
@@ -57,18 +63,26 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from types import FrameType
 from typing import Any, Callable, Optional
 
 from loguru import logger
-from textual import events
+from textual import constants, events
+from textual.driver import Driver
+from textual.message import Message
+from textual.screen import Screen
+
+from tldw_chatbook.Utils.ui_responsiveness import note_user_input
 
 __all__ = [
+    "DetachedFocusGuard",
     "FreshContextExecutor",
     "TextSelectionCrashGuard",
     "TextualAppGuards",
     "ThreadWorkerContextGuard",
+    "UserInputTap",
     "match_selection_begin_container_crash",
 ]
 
@@ -208,5 +222,133 @@ class ThreadWorkerContextGuard:
             previous.shutdown(wait=False)
 
 
-class TextualAppGuards(TextSelectionCrashGuard, ThreadWorkerContextGuard):
+#: What counts as the user acting: typing, clicking, scrolling or pasting.
+_USER_INPUT = (events.InputEvent, events.Paste)
+
+
+class UserInputTap:
+    """App mixin: stamp each user input for the idle heap re-freeze (TASK-33620.15.3).
+
+    The re-freeze (ADR-198 amendment) must never land while the user types.
+    Every input event reaches the app twice: when the driver posts it to the
+    app's queue, and when ``App.on_event`` dispatches it to a screen or
+    modal. Both stamp. A refreezer timer can fire between the two, while the
+    key waits in the queue, so dispatch alone would miss it (TASK-33620.15.10).
+    """
+
+    def post_message(self, message: Message) -> bool:
+        if isinstance(message, _USER_INPUT):
+            note_user_input()
+        return super().post_message(message)  # type: ignore[misc]
+
+    async def on_event(self, event: events.Event) -> None:
+        if isinstance(event, _USER_INPUT):
+            note_user_input()
+        await super().on_event(event)  # type: ignore[misc]
+
+
+class DetachedFocusGuard:
+    """App mixin: a dead ``focused`` must not swallow the next key (TASK-34000.26).
+
+    ``App.on_event`` forwards every non-priority key to ``self.focused``
+    (textual/app.py:4137 in 8.2.8). If that widget was removed after a focus
+    write landed on it mid-prune, the key goes to a closed message pump: F1,
+    Ctrl+P, Tab and the screen's own bindings all die until a mouse click
+    (review finding S-10, ``verify/nl-v-s-10/textual-dead-focus-mechanism.out``).
+    The screen-side refusal (``BaseAppScreen.set_focus``) closes the writes
+    this app makes; this guard closes any route, Textual's own included: the
+    dead focus is cleared and the SAME key is forwarded to the screen, so Tab
+    moves, F1 opens help and Ctrl+P opens the palette. Nothing is re-focused
+    here on purpose: a key that found a corpse must never be delivered to a
+    widget the user did not choose (Enter would press it).
+
+    A strict no-op whenever ``focused`` is ``None`` or attached. The check is
+    one ``_pruning`` read plus ``is_attached``, which walks the ancestor chain
+    (O(depth): about 2 us per key at depth 30, a few percent of key dispatch)
+    and touches nothing else. Skipped once the app is exiting: Textual's
+    ``is_attached`` answers False for every node after ``App.exit()``, which
+    would otherwise log a false "removed widget" warning per key during
+    shutdown (fix round 1, M-1).
+    ``_pruning`` is private Textual state -- listed with its other readers in
+    ``lessons-textual.md`` (TASK-23025 entry).
+    """
+
+    async def on_event(self, event: events.Event) -> None:
+        if (
+            isinstance(event, events.Key)
+            and not event.is_forwarded
+            # M-1: after ``App.exit()`` every node reads as detached.
+            and not getattr(self, "_exit", False)
+        ):
+            try:
+                focused = self.focused  # type: ignore[attr-defined]
+                dead = focused is not None and (
+                    getattr(focused, "_pruning", False) or not focused.is_attached
+                )
+            except Exception:  # noqa: BLE001 - never let a guard break input
+                focused, dead = None, False
+            if dead:
+                # The widget id or class name only -- never the key: a healed
+                # press can be a typed character, and this line persists.
+                logger.warning(
+                    "Keyboard focus was on a removed widget ({}); cleared so the "
+                    "key reaches the screen (TASK-34000.26).",
+                    getattr(focused, "id", None) or type(focused).__name__,
+                )
+                try:
+                    # The BASE method on purpose: a screen's own ``set_focus``
+                    # override must not be able to refuse the ``None`` write.
+                    Screen.set_focus(self.screen, None)  # type: ignore[attr-defined]
+                except Exception:  # noqa: BLE001
+                    logger.debug("Clearing a dead focus failed.", exc_info=True)
+        await super().on_event(event)  # type: ignore[misc]
+
+
+class TextualAppGuards(
+    DetachedFocusGuard, TextSelectionCrashGuard, UserInputTap, ThreadWorkerContextGuard
+):
     """Every guard in this module; add BEFORE ``App`` in the base list."""
+
+    @property
+    def clipboard_revision(self) -> int:
+        """Return the revision of the latest in-app clipboard write intent."""
+        return getattr(self, "_clipboard_revision", 0)
+
+    def copy_to_clipboard(self, text: str) -> None:
+        """Copy text and invalidate earlier asynchronous clipboard requests.
+
+        Args:
+            text: Text to send through the existing clipboard transport.
+        """
+        self._clipboard_revision = self.clipboard_revision + 1
+        super().copy_to_clipboard(text)  # type: ignore[misc]
+
+    def get_driver_class(self) -> type[Driver]:
+        """Enable native Windows resize reporting while preserving custom drivers.
+
+        Returns:
+            The upstream driver, or its native Windows resize adapter.
+        """
+        driver_class = super().get_driver_class()  # type: ignore[misc]
+        if sys.platform != "win32" or constants.DRIVER is not None:
+            return driver_class
+
+        from textual.drivers import win32
+        from textual.drivers.windows_driver import WindowsDriver
+
+        if driver_class is not WindowsDriver:
+            return driver_class
+
+        class WindowsResizeDriver(WindowsDriver):
+            def start_application_mode(self) -> None:
+                # Textual 8.2.8 clears ENABLE_WINDOW_INPUT while enabling VT
+                # input, then waits for the resize records that flag admits.
+                # Reapply after EVERY start (including resume). Upstream close
+                # still owns restoration of the original console modes.
+                super().start_application_mode()
+                win32.set_console_mode(
+                    sys.__stdin__,
+                    win32.get_console_mode(sys.__stdin__) | win32.ENABLE_WINDOW_INPUT,
+                )
+
+        return WindowsResizeDriver

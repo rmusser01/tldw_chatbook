@@ -56,9 +56,7 @@ def _retrieval_for(screen) -> ConsoleRetrievalController:
         else None
     )
     owner._library_rag_query = lambda: screen._console_library_rag_query
-    owner._build_console_retrieval_scope_state = (
-        ConsoleRetrievalScopeState.unscoped
-    )
+    owner._build_console_retrieval_scope_state = ConsoleRetrievalScopeState.unscoped
     return owner
 
 
@@ -761,9 +759,9 @@ async def test_the_source_toggles_paint_the_library_legend_at_235_columns():
 
         painted_by_id = {
             str(button.id): _painted(button)
-            for button in modal.query(
-                ".console-rag-settings-source-toggle"
-            ).results(Button)
+            for button in modal.query(".console-rag-settings-source-toggle").results(
+                Button
+            )
         }
         painted = repr(painted_by_id)
         prefix = CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX

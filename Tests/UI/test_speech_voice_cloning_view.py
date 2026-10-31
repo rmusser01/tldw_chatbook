@@ -31,7 +31,8 @@ async def test_choosing_it_switches_the_view_rather_than_pushing_a_screen():
         await app.push_screen(screen)
         await pilot.pause()
         row = next(
-            b for b in screen.query(Button)
+            b
+            for b in screen.query(Button)
             if getattr(b, "lab_view_key", None) == "voice-cloning"
         )
         row.press()
@@ -43,8 +44,7 @@ async def test_choosing_it_switches_the_view_rather_than_pushing_a_screen():
         # unrelated ChatScreen was on it -- measuring every push in the app
         # to catch one.
         pushed = [
-            s for s in app.screen_stack
-            if type(s).__name__ == "VoiceCloningWindow"
+            s for s in app.screen_stack if type(s).__name__ == "VoiceCloningWindow"
         ]
         assert not pushed, "Voice Cloning pushed its own screen; the frame is gone"
         assert isinstance(app.screen, STTSScreen) or screen.is_attached
@@ -61,7 +61,8 @@ async def test_the_profile_surface_is_inside_the_frame():
         await app.push_screen(screen)
         await pilot.pause()
         row = next(
-            b for b in screen.query(Button)
+            b
+            for b in screen.query(Button)
             if getattr(b, "lab_view_key", None) == "voice-cloning"
         )
         row.press()

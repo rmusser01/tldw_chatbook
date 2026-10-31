@@ -19,7 +19,7 @@ cannot be mistaken for a focus cue:
 TASK-24702 already ruled out the obvious repair: on this near-black theme a
 background tint cannot reach the 3:1 non-text floor at any alpha short of
 opaque, so the carrier has to change CELLS, not colours. The house answer is
-the accent edge (`outline-left: thick $ds-action-focus`), which paints a
+the accent edge (`outline-left: thick $ds-active-fg`), which paints a
 solid block glyph. Two physics facts decide where it can be applied, both
 measured rather than assumed:
 

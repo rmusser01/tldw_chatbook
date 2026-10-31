@@ -12,8 +12,12 @@ candidates are usable, in what order, and which failures earn a fallback at all
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Callable, Iterable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .agent_routing import SpawnTarget
 
 from tldw_chatbook.Chat.Chat_Deps import ChatAPIError
 
@@ -38,6 +42,9 @@ class FallbackCandidate:
     native: bool
     ready: bool
     skip_reason: str = ""
+    model: str = ""
+    index: int = 0
+    target: SpawnTarget | None = None
 
 
 @dataclass(frozen=True)
@@ -54,7 +61,9 @@ class FallbackRuntime:
     """
 
     candidates: tuple[FallbackCandidate, ...]
-    build: Callable[[str], Callable | None]
+    build: Callable[[str | FallbackCandidate], Callable | None]
+    pre_tool_only: bool = False
+    select: Callable[[FallbackCandidate], None] | None = None
 
 
 def is_credit_terminal(exc: BaseException) -> bool:

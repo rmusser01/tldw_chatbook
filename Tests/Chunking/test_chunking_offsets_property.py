@@ -11,6 +11,7 @@ from hypothesis import given, strategies as st, settings as hyp_settings, Health
 # _production_sanitization autouse fixture in Tests/Chunking/conftest.py.
 pytestmark = pytest.mark.production_path
 
+
 # The 'tokens' method arm resolves the real gpt2 tokenizer. The root
 # Tests/conftest.py sandboxes HOME per test and the repo network guard
 # blocks HF downloads, so this module pulls in the real_hf_cache fixture
@@ -20,6 +21,7 @@ pytestmark = pytest.mark.production_path
 @pytest.fixture(autouse=True)
 def _tokens_tokenizer_cache(real_hf_cache):
     return real_hf_cache
+
 
 from tldw_chatbook.Chunking.engine import Chunker
 
@@ -87,7 +89,9 @@ def _text_for_language(lang: str):
 
 
 _LANGS = st.sampled_from(["en", "ja", "th"])  # representative locales
-_METHODS = st.sampled_from(["words", "sentences", "paragraphs", "tokens"])  # safe subset
+_METHODS = st.sampled_from(
+    ["words", "sentences", "paragraphs", "tokens"]
+)  # safe subset
 
 
 @hyp_settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
@@ -98,7 +102,9 @@ _METHODS = st.sampled_from(["words", "sentences", "paragraphs", "tokens"])  # sa
     overlap=st.integers(min_value=0, max_value=8),
     data=st.data(),
 )
-def test_chunk_with_metadata_re_slices_source(lang: str, method: str, max_size: int, overlap: int, data):
+def test_chunk_with_metadata_re_slices_source(
+    lang: str, method: str, max_size: int, overlap: int, data
+):
     # Constrain overlap to < max_size for progress
     if overlap >= max_size:
         overlap = max_size - 1

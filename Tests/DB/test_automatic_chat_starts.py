@@ -1,0 +1,856 @@
+"""Native chat starts share finite allowance while retaining local run ownership."""
+
+import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+
+import pytest
+
+from Tests.DB.test_automatic_work_budget import _automatic_work_db as db, chain  # noqa: F401
+from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+
+
+def prepare(db, source_run, target, attempt, **changes):
+    arguments = dict(
+        attempt_id=attempt,
+        source_run_id=source_run,
+        target_conversation_id=target,
+        target_session_id=f"session-{target}",
+        target_session_incarnation=f"incarnation-{target}",
+        owner_id="owner",
+        draft_revision=1,
+        context_epoch=0,
+        request_fingerprint="a" * 64,
+    )
+    arguments.update(changes)
+    return db.automatic_work.prepare_chat_start(**arguments)
+
+
+def source_run(db, **limits):
+    root = chain(db, conversation="source", **limits)
+    return root, db.create_run(
+        conversation_id="source", agent_kind="primary", work_chain_id=root
+    )
+
+
+def test_two_targets_share_the_last_generation(db):
+    root, source = source_run(db, generations=1)
+    first = prepare(db, source, "target-a", "attempt-a")
+    assert db.automatic_work.allowance_root(first.chain_id) == root
+    assert db.automatic_work.snapshot(first.chain_id).conversation_id == "target-a"
+    assert db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+    assert not db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+    assert not db.automatic_work.abort_chat_start(first.id, owner_id="owner")
+    with pytest.raises(AutomaticWorkRefused, match="generation_budget"):
+        prepare(db, source, "target-b", "attempt-b")
+    assert db.automatic_work.snapshot(root).used["generation"] == 1
+
+
+def test_recursive_starts_use_direct_root_and_local_primary(db):
+    root, source = source_run(db)
+    first = prepare(db, source, "a", "first")
+    target = db.create_run(
+        conversation_id="a", agent_kind="primary", work_chain_id=first.chain_id
+    )
+    second = prepare(db, target, "b", "second")
+    assert second.source_chain_id == first.chain_id
+    assert db.automatic_work.allowance_root(second.chain_id) == root
+    assert db.get_run(target)["parent_run_id"] is None
+    with pytest.raises(ValueError, match="scope"):
+        db.create_run(
+            conversation_id="b",
+            agent_kind="primary",
+            parent_run_id=source,
+            work_chain_id=second.chain_id,
+        )
+    with pytest.raises(ValueError, match="scope"):
+        db.create_run(conversation_id="b", agent_kind="primary", work_chain_id=root)
+    with db.transaction() as conn:
+        with pytest.raises(sqlite3.IntegrityError, match="scope"):
+            conn.execute(
+                "UPDATE agent_runs SET conversation_id='b' WHERE id=?", (target,)
+            )
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_preparation_identity_abort_and_completion_are_exact(db):
+    root, source = source_run(db)
+    first = prepare(db, source, "a", "first")
+    assert prepare(db, source, "a", "first") == first
+    for changes in (
+        {"draft_revision": 2},
+        {"context_epoch": 1},
+        {"request_fingerprint": "b" * 64},
+        {"target_session_id": "other"},
+        {"target_session_incarnation": "other"},
+        {"owner_id": "other"},
+    ):
+        with pytest.raises(ValueError, match="identity"):
+            prepare(db, source, "a", "first", **changes)
+    with pytest.raises(ValueError, match="owner"):
+        db.automatic_work.read_chat_start_attempt(first.id, owner_id="other")
+    assert not db.automatic_work.complete_chat_start(first.id, owner_id="owner")
+    assert db.automatic_work.abort_chat_start(first.id, owner_id="owner")
+    assert not db.automatic_work.abort_chat_start(first.id, owner_id="owner")
+    assert not db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+    assert db.automatic_work.snapshot(root).available["generation"] == 3
+    second = prepare(db, source, "a", "second")
+    assert db.automatic_work.accept_chat_start(second.id, owner_id="owner")
+    assert db.automatic_work.complete_chat_start(second.id, owner_id="owner")
+    assert not db.automatic_work.complete_chat_start(second.id, owner_id="owner")
+    with db.connection() as conn:
+        assert (
+            conn.execute("SELECT COUNT(*) FROM automatic_wake_claims").fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "SELECT wake_delivered_at FROM agent_runs WHERE id=?", (source,)
+            ).fetchone()[0]
+            is None
+        )
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_unavailable_source_mints_nothing(db, terminal):
+    if terminal:
+        root, source = source_run(db)
+        db.set_status(source, "done")
+    else:
+        source = db.create_run(conversation_id="source", agent_kind="primary")
+    with pytest.raises(AutomaticWorkRefused, match="source"):
+        prepare(db, source, "a", "first")
+    with db.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM automatic_work_chains").fetchone()[
+            0
+        ] == int(terminal)
+        assert (
+            conn.execute("SELECT COUNT(*) FROM automatic_work_reservations").fetchone()[
+                0
+            ]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM automatic_chat_start_attempts"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_two_targets_race_for_one_generation(db):
+    root, source = source_run(db, generations=1)
+    ready = threading.Barrier(2)
+
+    def compete(number):
+        ready.wait(timeout=5)
+        try:
+            return prepare(db, source, f"target-{number}", f"attempt-{number}")
+        except AutomaticWorkRefused as exc:
+            return str(exc)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(compete, [1, 2]))
+    assert results.count("generation_budget") == 1
+    assert db.automatic_work.snapshot(root).reserved["generation"] == 1
+    with db.connection() as conn:
+        assert (
+            conn.execute("SELECT COUNT(*) FROM automatic_work_chains").fetchone()[0]
+            == 2
+        )
+
+
+@pytest.mark.parametrize("accepted", [False, True])
+def test_recovery_marks_foreign_starts_and_fences_old_owner(db, accepted):
+    root, source = source_run(db)
+    first = prepare(db, source, "a", "first")
+    sibling = prepare(db, source, "b", "second")
+    if accepted:
+        assert db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+    assert db.automatic_work.recover(current_owner_id="replacement") == 1
+    for member in (root, first.chain_id, sibling.chain_id):
+        assert db.automatic_work.snapshot(member).status == "review_required"
+    assert (
+        db.automatic_work.read_chat_start_attempt(first.id, owner_id="owner").state
+        == "review_required"
+    )
+    assert not db.automatic_work.abort_chat_start(first.id, owner_id="owner")
+    with pytest.raises(AutomaticWorkRefused, match="runtime_owner_replaced"):
+        db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+    with pytest.raises(AutomaticWorkRefused, match="runtime_owner_replaced"):
+        prepare(db, source, "c", "third")
+    assert db.automatic_work.recover(current_owner_id="replacement") == 0
+
+
+def test_membership_and_attempt_identity_cannot_be_rewritten(db):
+    root, source = source_run(db)
+    first = prepare(db, source, "a", "first")
+    second_root = chain(db, conversation="other", submission="other")
+    with db.transaction() as conn:
+        for member, parent in (
+            (first.chain_id, second_root),
+            (root, first.chain_id),
+            (root, root),
+        ):
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    "UPDATE automatic_work_chains SET allowance_root_chain_id=? WHERE id=?",
+                    (parent, member),
+                )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO automatic_work_chains (id, conversation_id, root_submission_id, limits_json, created_at, last_observed_at, allowance_root_chain_id) SELECT 'invalid','invalid','invalid',limits_json,created_at,last_observed_at,? FROM automatic_work_chains WHERE id=?",
+                (first.chain_id, root),
+            )
+        for column, value in (
+            ("source_run_id", "other"),
+            ("source_chain_id", second_root),
+            ("chain_id", root),
+            ("conversation_id", "other"),
+            ("session_id", "other"),
+            ("session_incarnation", "other"),
+            ("owner_id", "other"),
+            ("draft_revision", 2),
+            ("context_epoch", 1),
+            ("request_fingerprint", "b" * 64),
+            ("generation_reservation_id", "other"),
+            ("id", "other"),
+        ):
+            with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+                conn.execute(
+                    f"UPDATE automatic_chat_start_attempts SET {column}=? WHERE id=?",
+                    (value, first.id),
+                )
+
+
+def test_descendant_unknown_usage_blocks_siblings(db):
+    root, source = source_run(db)
+    first = prepare(db, source, "a", "first")
+    sibling = prepare(db, source, "b", "sibling")
+    db.automatic_work.reserve(
+        first.chain_id,
+        reservation_id="usage",
+        owner_id="owner",
+        kind="tokens",
+        amount=20,
+    )
+    db.automatic_work.commit("usage", owner_id="owner")
+    db.automatic_work.settle("usage", owner_id="owner", actual_amount=None)
+    for member in (root, first.chain_id, sibling.chain_id):
+        assert db.automatic_work.snapshot(member).status == "review_required"
+    with pytest.raises(AutomaticWorkRefused, match="usage_unknown"):
+        db.automatic_work.accept_chat_start(sibling.id, owner_id="owner")
+
+
+def test_descendant_overage_pauses_siblings_and_late_usage_keeps_review(db):
+    root, source = source_run(db, budget_tokens=100)
+    first = prepare(db, source, "a", "first")
+    sibling = prepare(db, source, "b", "sibling")
+    db.automatic_work.reserve(
+        first.chain_id,
+        reservation_id="usage",
+        owner_id="owner",
+        kind="tokens",
+        amount=20,
+    )
+    db.automatic_work.commit("usage", owner_id="owner")
+    db.automatic_work.settle("usage", owner_id="owner", actual_amount=101)
+    for member in (root, first.chain_id, sibling.chain_id):
+        assert db.automatic_work.snapshot(member).pause_reason == "tokens_budget"
+    with pytest.raises(AutomaticWorkRefused, match="tokens_budget"):
+        db.automatic_work.accept_chat_start(sibling.id, owner_id="owner")
+    db.automatic_work.recover(current_owner_id="replacement")
+    assert db.automatic_work.snapshot(root).status == "review_required"
+    assert db.automatic_work.snapshot(sibling.chain_id).reserved["generation"] == 2
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"draft_revision": True},
+        {"draft_revision": -1},
+        {"context_epoch": 2**63},
+        {"request_fingerprint": "private body"},
+        {"request_fingerprint": "G" * 64},
+    ],
+)
+def test_malformed_native_identity_cannot_mint_allowance(db, changes):
+    root, source = source_run(db)
+    with pytest.raises(ValueError):
+        prepare(db, source, "a", "first", **changes)
+    assert db.automatic_work.snapshot(root).reserved["generation"] == 0
+
+
+def test_descendant_unknown_usage_settles_late_without_restoring_authority(db):
+    root, source = source_run(db)
+    first = prepare(db, source, "a", "first")
+    db.automatic_work.reserve(
+        first.chain_id,
+        reservation_id="usage",
+        owner_id="owner",
+        kind="tokens",
+        amount=20,
+    )
+    db.automatic_work.commit("usage", owner_id="owner")
+    assert db.automatic_work.recover(current_owner_id="replacement") == 1
+    assert db.automatic_work.settle("usage", owner_id="owner", actual_amount=10)
+    assert db.automatic_work.snapshot(first.chain_id).used["tokens"] == 10
+    assert db.automatic_work.snapshot(root).status == "review_required"
+
+
+def test_failed_native_write_rolls_back_member_and_reserved_generation(db):
+    root, source = source_run(db)
+    with db.transaction() as conn:
+        conn.execute(
+            "CREATE TRIGGER deny_start BEFORE INSERT ON automatic_chat_start_attempts BEGIN SELECT RAISE(ABORT, 'write refused'); END"
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="write refused"):
+        prepare(db, source, "a", "first")
+    assert db.automatic_work.snapshot(root).reserved["generation"] == 0
+    with db.connection() as conn:
+        assert (
+            conn.execute("SELECT COUNT(*) FROM automatic_work_chains").fetchone()[0]
+            == 1
+        )
+        assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1
+
+
+def test_failed_native_acceptance_keeps_prepared_charge_and_unstarted_clock(db):
+    root, source = source_run(db)
+    first = prepare(db, source, "a", "first")
+    with db.transaction() as conn:
+        conn.execute(
+            "CREATE TRIGGER deny_accept BEFORE UPDATE OF state ON automatic_chat_start_attempts WHEN NEW.state='accepted' BEGIN SELECT RAISE(ABORT, 'write refused'); END"
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="write refused"):
+        db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+    snapshot = db.automatic_work.snapshot(root)
+    assert snapshot.used["generation"] == 0
+    assert snapshot.reserved["generation"] == 1
+    assert snapshot.started_at is None
+    assert (
+        db.automatic_work.read_chat_start_attempt(first.id, owner_id="owner").state
+        == "prepared"
+    )
+    assert db.automatic_work.abort_chat_start(first.id, owner_id="owner")
+
+
+def test_acceptance_and_abort_race_has_one_winner(db):
+    root, source = source_run(db)
+    first = prepare(db, source, "a", "first")
+    ready = threading.Barrier(2)
+
+    def race(accept):
+        ready.wait(timeout=5)
+        method = (
+            db.automatic_work.accept_chat_start
+            if accept
+            else db.automatic_work.abort_chat_start
+        )
+        return method(first.id, owner_id="owner")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        accepted, aborted = list(pool.map(race, [True, False]))
+    assert accepted != aborted
+    snapshot = db.automatic_work.snapshot(root)
+    assert snapshot.used["generation"] == int(accepted)
+    assert snapshot.reserved["generation"] == 0
+    assert db.automatic_work.read_chat_start_attempt(
+        first.id, owner_id="owner"
+    ).state == ("accepted" if accepted else "aborted")
+
+
+def test_native_abort_never_refunds_a_separately_committed_reservation(db):
+    root, source = source_run(db)
+    first = prepare(db, source, "a", "first")
+    assert db.automatic_work.commit(first.generation_reservation_id, owner_id="owner")
+    assert not db.automatic_work.abort_chat_start(first.id, owner_id="owner")
+    assert db.automatic_work.snapshot(root).used["generation"] == 1
+
+
+def test_stale_owner_cannot_pause_a_completed_native_replacement(db):
+    root, source = source_run(db)
+    first = prepare(db, source, "a", "first")
+    db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+    db.automatic_work.complete_chat_start(first.id, owner_id="owner")
+    assert db.automatic_work.recover(current_owner_id="replacement") == 0
+    with pytest.raises(AutomaticWorkRefused, match="runtime_owner_replaced"):
+        prepare(db, source, "b", "second")
+    for member in (root, first.chain_id):
+        assert db.automatic_work.snapshot(member).status == "active"
+    with db.transaction() as conn:
+        with pytest.raises(sqlite3.IntegrityError, match="scope"):
+            conn.execute(
+                "INSERT INTO agent_runs (id, conversation_id, agent_kind, task, status, steps, budget, created_at, updated_at, work_chain_id) SELECT 'invalid','other',agent_kind,task,status,steps,budget,created_at,updated_at,work_chain_id FROM agent_runs WHERE id=?",
+                (source,),
+            )
+
+
+def test_same_owner_uncertain_start_pauses_root_without_refund_or_replay(db):
+    root, source = source_run(db)
+    first = prepare(db, source, "a", "first")
+    sibling = prepare(db, source, "b", "sibling")
+    assert db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+    before = db.automatic_work.snapshot(root)
+    assert db.automatic_work.mark_chat_start_review_required(first.id, owner_id="owner")
+    assert db.automatic_work.mark_chat_start_review_required(first.id, owner_id="owner")
+    assert (
+        db.automatic_work.read_chat_start_attempt(first.id, owner_id="owner").state
+        == "review_required"
+    )
+    after = db.automatic_work.snapshot(root)
+    assert (
+        after.status == "review_required" and after.pause_reason == "interrupted_work"
+    )
+    assert (after.used, after.reserved, after.started_at, after.deadline_at) == (
+        before.used,
+        before.reserved,
+        before.started_at,
+        before.deadline_at,
+    )
+    with pytest.raises(AutomaticWorkRefused, match="interrupted_work"):
+        db.automatic_work.accept_chat_start(sibling.id, owner_id="owner")
+    assert not db.automatic_work.abort_chat_start(first.id, owner_id="owner")
+    assert not db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+    with db.connection() as conn:
+        assert not db.automatic_work._target_active(conn, "a")
+
+
+@pytest.mark.parametrize("state", ["prepared", "aborted", "completed"])
+def test_review_settlement_never_rewrites_nonaccepted_work(db, state):
+    root, source = source_run(db)
+    first = prepare(db, source, "a", "first")
+    if state == "aborted":
+        assert db.automatic_work.abort_chat_start(first.id, owner_id="owner")
+    elif state == "completed":
+        assert db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+        assert db.automatic_work.complete_chat_start(first.id, owner_id="owner")
+    assert not db.automatic_work.mark_chat_start_review_required(
+        first.id, owner_id="owner"
+    )
+    assert (
+        db.automatic_work.read_chat_start_attempt(first.id, owner_id="owner").state
+        == state
+    )
+    assert db.automatic_work.snapshot(root).status == "active"
+
+
+def test_stale_review_settlement_cannot_pause_healthy_replacement(db):
+    root, source = source_run(db)
+    first = prepare(db, source, "a", "first")
+    assert db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+    assert db.automatic_work.complete_chat_start(first.id, owner_id="owner")
+    db.automatic_work.recover(current_owner_id="replacement")
+    with pytest.raises(AutomaticWorkRefused, match="runtime_owner_replaced"):
+        db.automatic_work.mark_chat_start_review_required(first.id, owner_id="owner")
+    assert db.automatic_work.snapshot(root).status == "active"
+
+
+@pytest.mark.parametrize("memory", [False, True])
+def test_transient_uncertainty_is_store_scoped_and_stale_owner_cannot_poison_replacement(
+    tmp_path, memory
+):
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    first_db = AgentRunsDB(
+        ":memory:" if memory else tmp_path / "first.sqlite", client_id="first"
+    )
+    second_db = AgentRunsDB(
+        ":memory:" if memory else tmp_path / "second.sqlite", client_id="second"
+    )
+    try:
+        root, source = source_run(first_db)
+        other_root, _ = source_run(second_db)
+        start = prepare(first_db, source, "a", "first")
+        assert first_db.automatic_work.accept_chat_start(start.id, owner_id="owner")
+        assert first_db.automatic_work.complete_chat_start(start.id, owner_id="owner")
+        first_db.automatic_work._restrict_chat_start(
+            start.id, owner_id="owner", chain_id=root
+        )
+        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+            first_db.automatic_work.check_active(root, owner_id="owner")
+        assert (
+            second_db.automatic_work.check_active(other_root, owner_id="owner").status
+            == "active"
+        )
+        # Same-owner startup recovery does not reconcile this uncertainty.
+        first_db.automatic_work.recover(current_owner_id="owner")
+        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+            first_db.automatic_work.check_active(root, owner_id="owner")
+        manual_root = chain(first_db, conversation="manual", submission="manual")
+        assert (
+            first_db.automatic_work.check_active(manual_root, owner_id="owner").status
+            == "active"
+        )
+        first_db.automatic_work.recover(current_owner_id="replacement")
+        # A late old-owner callback must not poison durable or runtime authority.
+        first_db.automatic_work._restrict_chat_start(
+            start.id, owner_id="owner", chain_id=None
+        )
+        with pytest.raises(AutomaticWorkRefused, match="runtime_owner_replaced"):
+            first_db.automatic_work.mark_chat_start_review_required(
+                start.id, owner_id="owner"
+            )
+        assert (
+            first_db.automatic_work.check_active(root, owner_id="replacement").status
+            == "active"
+        )
+        first_db.automatic_work._clear_chat_start_restriction(
+            start.id, owner_id="owner"
+        )
+    finally:
+        first_db.close()
+        second_db.close()
+
+
+@pytest.mark.parametrize(
+    "replacement_owner, unknown_root",
+    [("replacement", False), ("replacement", True), ("owner", False)],
+)
+def test_late_recovery_cleanup_preserves_new_owner_uncertainty(
+    db, monkeypatch, replacement_owner, unknown_root
+):
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    old = db.automatic_work
+    old_root, old_source = source_run(db)
+    retired = prepare(db, old_source, "old-target", "retired")
+    assert old.accept_chat_start(retired.id, owner_id="owner")
+    assert old.complete_chat_start(retired.id, owner_id="owner")
+    old._restrict_chat_start(retired.id, owner_id="owner", chain_id=old_root)
+    peer = AgentRunsDB(db.db_path, client_id="replacement", reconcile_on_init=False)
+    committed, release = threading.Event(), threading.Event()
+    transaction = old.transaction
+
+    @contextmanager
+    def pause_after_real_commit():
+        with transaction() as conn:
+            yield conn
+        committed.set()
+        assert release.wait(10)
+
+    monkeypatch.setattr(old, "transaction", pause_after_real_commit)
+
+    def recover_old():
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        with operation_owned_connection(db):
+            return old.recover(current_owner_id="first-recovery")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        recovery = pool.submit(recover_old)
+        try:
+            assert committed.wait(5)
+            ledger = peer.automatic_work
+            ledger.recover(current_owner_id=replacement_owner)
+            root = chain(
+                peer, conversation="replacement-source", submission="replacement"
+            )
+            source = peer.create_run(
+                conversation_id="replacement-source",
+                agent_kind="primary",
+                work_chain_id=root,
+            )
+            start = prepare(
+                peer, source, "target", "uncertain", owner_id=replacement_owner
+            )
+            assert ledger.accept_chat_start(start.id, owner_id=replacement_owner)
+            ledger._restrict_chat_start(
+                start.id,
+                owner_id=replacement_owner,
+                chain_id=None if unknown_root else root,
+            )
+            manual = chain(peer, conversation="manual", submission="manual")
+            if replacement_owner == "owner":
+                # Refresh a captured key after commit: this new unknown-root
+                # callback must not be retired as the earlier known-root entry.
+                ledger._restrict_chat_start(retired.id, owner_id="owner", chain_id=None)
+            before = ledger.snapshot(root)
+            assert before.status == "active" and before.used["generation"] == 1
+            with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                ledger.check_active(root, owner_id=replacement_owner)
+            release.set()
+            assert recovery.result(timeout=5) == 0
+            assert (
+                ledger.read_chat_start_attempt(
+                    start.id, owner_id=replacement_owner
+                ).state
+                == "accepted"
+            )
+            assert ledger.snapshot(root).used == before.used
+            with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                ledger.check_active(root, owner_id=replacement_owner)
+            if replacement_owner == "owner":
+                with pytest.raises(
+                    AutomaticWorkRefused, match="settlement_unconfirmed"
+                ):
+                    ledger.check_active(manual, owner_id=replacement_owner)
+                ledger._clear_chat_start_restriction(retired.id, owner_id="owner")
+                assert (
+                    ledger.check_active(manual, owner_id=replacement_owner).status
+                    == "active"
+                )
+            # Same-owner recovery has not reconciled the accepted uncertainty.
+            ledger.recover(current_owner_id=replacement_owner)
+            with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                prepare(peer, source, "sibling", "sibling", owner_id=replacement_owner)
+            assert not ledger.abort_chat_start(start.id, owner_id=replacement_owner)
+            assert not ledger.accept_chat_start(start.id, owner_id=replacement_owner)
+            # Verified settlement retains the original charge and root pause.
+            assert ledger.mark_chat_start_review_required(
+                start.id, owner_id=replacement_owner
+            )
+            with pytest.raises(AutomaticWorkRefused, match="interrupted_work"):
+                ledger.check_active(root, owner_id=replacement_owner)
+            assert ledger.snapshot(root).used == before.used
+            ledger.recover(current_owner_id="sequential-replacement")
+            healthy = chain(peer, conversation="healthy", submission="healthy")
+            assert (
+                ledger.check_active(healthy, owner_id="sequential-replacement").status
+                == "active"
+            )
+        finally:
+            release.set()
+            try:
+                recovery.result(timeout=5)
+            finally:
+                peer.automatic_work._clear_chat_start_restriction(
+                    "uncertain", owner_id=replacement_owner
+                )
+                peer.automatic_work._clear_chat_start_restriction(
+                    retired.id, owner_id="owner"
+                )
+                peer.close()
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "absent",
+        "present",
+        "foreign_attempt",
+        "stale_runtime",
+        "missing_runtime",
+        "exit_failure",
+        "begin_failure",
+        "read_failure",
+        "commit_failure",
+        "restore_failure",
+    ],
+)
+def test_missing_start_confirmation_requires_successful_owned_transaction(
+    db, monkeypatch, case
+):
+    """Only a successful exact-owner transaction may establish missing authority."""
+    ledger = db.automatic_work
+    ledger.recover(current_owner_id="owner")
+    root, source = source_run(db)
+    if case == "present":
+        prepare(db, source, "target", "attempt")
+    if case == "foreign_attempt":
+        with db.transaction() as conn:
+            conn.execute("UPDATE automatic_work_runtime_owner SET owner_id='foreign'")
+        prepare(db, source, "target", "attempt", owner_id="foreign")
+        with db.transaction() as conn:
+            conn.execute("UPDATE automatic_work_runtime_owner SET owner_id='owner'")
+    if case in {"stale_runtime", "missing_runtime"}:
+        with db.transaction() as conn:
+            if case == "stale_runtime":
+                conn.execute(
+                    "UPDATE automatic_work_runtime_owner SET owner_id='replacement'"
+                )
+            else:
+                conn.execute("DELETE FROM automatic_work_runtime_owner")
+    with db.connection() as conn:
+        before = tuple(
+            tuple(row)
+            for row in conn.execute("SELECT * FROM automatic_chat_start_attempts")
+        )
+        reservations = tuple(
+            tuple(row)
+            for row in conn.execute("SELECT * FROM automatic_work_reservations")
+        )
+    transaction = ledger.transaction
+    if case in {"begin_failure", "read_failure", "commit_failure", "restore_failure"}:
+        connection = db.connection
+
+        class FailingConnection:
+            def __init__(self, conn):
+                self.conn = conn
+
+            def __getattr__(self, name):
+                return getattr(self.conn, name)
+
+            def execute(self, sql, *args):
+                if (
+                    (case == "begin_failure" and sql == "BEGIN IMMEDIATE")
+                    or (
+                        case == "read_failure"
+                        and "FROM automatic_chat_start_attempts" in sql
+                    )
+                    or (
+                        case == "restore_failure"
+                        and sql.startswith("PRAGMA synchronous=")
+                        and sql != "PRAGMA synchronous=FULL"
+                    )
+                ):
+                    raise sqlite3.OperationalError("injected transaction failure")
+                return self.conn.execute(sql, *args)
+
+            def commit(self):
+                if case == "commit_failure":
+                    raise sqlite3.OperationalError("injected commit failure")
+                return self.conn.commit()
+
+        @contextmanager
+        def failing_connection():
+            with connection() as conn:
+                yield FailingConnection(conn)
+
+        monkeypatch.setattr(db, "connection", failing_connection)
+        with pytest.raises(sqlite3.OperationalError):
+            ledger._confirm_chat_start_absent("attempt", owner_id="owner")
+        monkeypatch.setattr(db, "connection", connection)
+    elif case == "exit_failure":
+
+        @contextmanager
+        def fail_exit():
+            with transaction() as conn:
+                yield conn
+            raise sqlite3.OperationalError("policy restoration unavailable")
+
+        monkeypatch.setattr(ledger, "transaction", fail_exit)
+        with pytest.raises(sqlite3.OperationalError):
+            ledger._confirm_chat_start_absent("attempt", owner_id="owner")
+        monkeypatch.setattr(ledger, "transaction", transaction)
+    else:
+        assert ledger._confirm_chat_start_absent("attempt", owner_id="owner") is (
+            case == "absent"
+        )
+    with pytest.raises(ValueError, match="unknown chat start attempt"):
+        ledger.abort_chat_start("unknown", owner_id="owner")
+    with db.connection() as conn:
+        assert (
+            tuple(
+                tuple(row)
+                for row in conn.execute("SELECT * FROM automatic_chat_start_attempts")
+            )
+            == before
+        )
+        assert (
+            tuple(
+                tuple(row)
+                for row in conn.execute("SELECT * FROM automatic_work_reservations")
+            )
+            == reservations
+        )
+    assert ledger.snapshot(root).used["generation"] == 0
+
+
+@pytest.mark.parametrize("memory", [False, True])
+def test_restriction_identity_is_captured_for_aliases_and_memory_peers(
+    tmp_path, monkeypatch, memory
+):
+    """Cleanup and admission keep the same key when filesystem observation fails."""
+    from pathlib import Path
+    import sys
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.automatic_work import AutomaticWorkLedger
+
+    db = AgentRunsDB(
+        ":memory:" if memory else tmp_path / "identity.sqlite", client_id="identity"
+    )
+    other = AgentRunsDB(
+        ":memory:" if memory else tmp_path / "other.sqlite", client_id="other"
+    )
+    peer = None
+    ledger = db.automatic_work
+    ledger.recover(current_owner_id="owner")
+    root, _ = source_run(db)
+    other_root, _ = source_run(other)
+    if memory:
+        sibling = AutomaticWorkLedger(db)
+        assert ledger._restriction_database().startswith("memory:")
+        assert (
+            ledger._restriction_database()
+            != other.automatic_work._restriction_database()
+        )
+    else:
+        alias = tmp_path / "alias"
+        alias.mkdir()
+        peer = AgentRunsDB(
+            alias / ".." / db.db_path.name, client_id="alias", reconcile_on_init=False
+        )
+        sibling = peer.automatic_work
+    assert sibling._restriction_database() == ledger._restriction_database()
+    resolve = Path.resolve
+
+    def fail_resolution(path, *args, **kwargs):
+        if (
+            path == db.db_path or (peer is not None and path == peer.db_path)
+        ) and sys._getframe(1).f_globals.get(
+            "__name__"
+        ) == "tldw_chatbook.DB.automatic_work":
+            raise OSError("private canonical identity failure")
+        return resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fail_resolution)
+    try:
+        ledger._restrict_chat_start("uncertain", owner_id="owner", chain_id=root)
+        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+            sibling.check_active(root, owner_id="owner")
+        other.automatic_work.check_active(other_root, owner_id="owner")
+        sibling.recover(current_owner_id="owner")
+        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+            sibling.check_active(root, owner_id="owner")
+        sibling._clear_chat_start_restriction("uncertain", owner_id="owner")
+        ledger.check_active(root, owner_id="owner")
+        ledger._restrict_chat_start("uncertain", owner_id="owner", chain_id=root)
+        sibling.recover(current_owner_id="replacement")
+        sibling.check_active(root, owner_id="replacement")
+        assert ledger._restriction_database() == sibling._restriction_database()
+    finally:
+        monkeypatch.setattr(Path, "resolve", resolve)
+        ledger._clear_chat_start_restriction("uncertain", owner_id="owner")
+        if peer is not None:
+            peer.close()
+        db.close()
+        other.close()
+
+
+def test_initial_restriction_identity_failure_refuses_automatic_authority(
+    tmp_path, monkeypatch
+):
+    """A failed initial canonical key must not produce an authority-capable ledger."""
+    from pathlib import Path
+    import sys
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    db = AgentRunsDB(tmp_path / "uncertain.sqlite", client_id="identity")
+    resolve = Path.resolve
+
+    def fail_resolution(path, *args, **kwargs):
+        if (
+            path == db.db_path
+            and sys._getframe(1).f_globals.get("__name__")
+            == "tldw_chatbook.DB.automatic_work"
+        ):
+            raise OSError("private initial identity failure")
+        return resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fail_resolution)
+    try:
+        with pytest.raises(OSError):
+            db.automatic_work
+        assert "automatic_work" not in db.__dict__
+        with db.connection() as conn:
+            for table in (
+                "automatic_work_chains",
+                "automatic_work_reservations",
+                "automatic_chat_start_attempts",
+            ):
+                assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+    finally:
+        monkeypatch.setattr(Path, "resolve", resolve)
+        db.close()

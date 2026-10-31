@@ -236,9 +236,7 @@ def build_library_pager_display(
             else "0 of 0"
         )
         page_copy = f"Page {applied_page} of {total_pages}"
-        status_copy = (
-            f"Loading page {requested_page}…" if loading else error_copy
-        )
+        status_copy = f"Loading page {requested_page}…" if loading else error_copy
         if loading:
             previous_disabled = next_disabled = True
             previous_reason = next_reason = _LOADING_REASON
@@ -269,9 +267,7 @@ def build_library_pager_display(
             if error_copy:
                 raise ValueError("stale state uses stale_copy, not error_copy")
             range_copy = "List may be out of date"
-            status_copy = (
-                f"Loading page {requested_page}…" if loading else stale_copy
-            )
+            status_copy = f"Loading page {requested_page}…" if loading else stale_copy
         page_copy = ""
         previous_disabled = next_disabled = True
         reason = _LOADING_REASON if loading else _UNKNOWN_BOUNDARY_REASON

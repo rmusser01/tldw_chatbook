@@ -124,7 +124,9 @@ async def test_test_generate_voice_sends_the_profile_name_not_the_display_name(
         test_select.value = "villain_2"
 
         sent_events: list[Any] = []
-        monkeypatch.setattr(app, "post_message", lambda event: sent_events.append(event))
+        monkeypatch.setattr(
+            app, "post_message", lambda event: sent_events.append(event)
+        )
 
         await widget._test_generate_voice()
 
@@ -151,7 +153,9 @@ async def test_test_generate_routes_to_the_selected_cloning_backend(
         widget.query_one("#test-profile-select", Select).value = "villain_2"
 
         sent_events: list[Any] = []
-        monkeypatch.setattr(app, "post_message", lambda event: sent_events.append(event))
+        monkeypatch.setattr(
+            app, "post_message", lambda event: sent_events.append(event)
+        )
         await widget._test_generate_voice()
 
         assert sent_events[0].request.provider_id == backend

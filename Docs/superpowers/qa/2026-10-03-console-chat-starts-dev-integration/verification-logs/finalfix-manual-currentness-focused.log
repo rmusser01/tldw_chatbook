@@ -1,0 +1,9 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+41.94s call     Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send
+
+(2 durations < 1s hidden.)
+1 passed in 51.82s

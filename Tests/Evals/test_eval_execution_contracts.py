@@ -214,8 +214,9 @@ def _result(sample: EvalSample) -> EvalSampleResult:
 
 
 @pytest.mark.asyncio
-async def test_samples_are_bounded_callbacks_follow_settlement_and_results_keep_order(
-) -> None:
+async def test_samples_are_bounded_callbacks_follow_settlement_and_results_keep_order() -> (
+    None
+):
     samples = _samples(3)
     releases = {sample.id: asyncio.Event() for sample in samples}
     started = {sample.id: asyncio.Event() for sample in samples}
@@ -235,9 +236,7 @@ async def test_samples_are_bounded_callbacks_follow_settlement_and_results_keep_
         finally:
             active -= 1
 
-    async def progress(
-        completed: int, total: int, result: EvalSampleResult
-    ) -> None:
+    async def progress(completed: int, total: int, result: EvalSampleResult) -> None:
         await asyncio.sleep(0)
         callbacks.append((completed, total, result.sample_id))
         delivered[result.sample_id].set()
@@ -279,9 +278,7 @@ async def test_sync_progress_callback_receives_each_result_once() -> None:
     samples = _samples(3)
     callbacks: list[tuple[int, int, str]] = []
     runner = EvalRunner(_task_config(), _model_config())
-    runner.runner.run_sample = lambda sample: asyncio.sleep(
-        0, result=_result(sample)
-    )
+    runner.runner.run_sample = lambda sample: asyncio.sleep(0, result=_result(sample))
 
     def progress(completed: int, total: int, result: EvalSampleResult) -> None:
         callbacks.append((completed, total, result.sample_id))
@@ -392,9 +389,7 @@ async def test_ab_progress_wrapper_awaits_async_callback() -> None:
         )()
 
         async def run_evaluation(self, **kwargs):
-            callback_result = kwargs["progress_callback"](
-                1, 1, _result(_samples(1)[0])
-            )
+            callback_result = kwargs["progress_callback"](1, 1, _result(_samples(1)[0]))
             if inspect.isawaitable(callback_result):
                 await callback_result
             return kwargs["model_id"]

@@ -43,17 +43,13 @@ def migrate(db: _MigrationCapableDB) -> None:
             return
         column_names = {row[1] for row in existing}
         if "timeout_seconds" not in column_names:
-            conn.execute(
-                "ALTER TABLE reminder_tasks ADD COLUMN timeout_seconds REAL"
-            )
+            conn.execute("ALTER TABLE reminder_tasks ADD COLUMN timeout_seconds REAL")
         # Forward-only versioning (same discipline as v1_to_v2): re-applying
         # this migration to an already-newer database must not move the
         # version backward; the common fresh case still lands on exactly 3.
         # A missing schema_version table (fresh :memory: connection) is
         # treated as version 0.
-        row = conn.execute(
-            "SELECT MAX(version) FROM schema_version"
-        ).fetchone()
+        row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
         current_version = int(row[0]) if row and row[0] is not None else 0
         if current_version < 3:
             conn.execute("DELETE FROM schema_version")
@@ -132,9 +128,7 @@ def rollback(db: _MigrationCapableDB) -> None:
             CREATE INDEX IF NOT EXISTS idx_reminder_tasks_server_id
                 ON reminder_tasks (server_id);
             COMMIT;
-            """.format(
-                columns=column_list
-            )
+            """.format(columns=column_list)
         )
         conn.execute("DELETE FROM schema_version")
         conn.execute("INSERT INTO schema_version (version) VALUES (?)", (2,))

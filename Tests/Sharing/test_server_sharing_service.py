@@ -3,11 +3,9 @@ from unittest.mock import Mock
 
 import pytest
 
-import tldw_chatbook.Sharing.server_sharing_service as sharing_module
 import tldw_chatbook.Sharing_Interop.server_sharing_service as sharing_interop_module
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
-from tldw_chatbook.Sharing import ServerSharingService as PublicServerSharingService
 from tldw_chatbook.Sharing_Interop import ServerSharingService
 
 
@@ -98,16 +96,11 @@ class ExplodingClientProvider:
         raise AssertionError("provider should not be used when direct client exists")
 
 
-async def _exercise_public_sharing(service):
-    return await service.list_share_tokens()
-
-
 async def _exercise_interop_sharing(service):
     return await service.list_links()
 
 
 SHARING_IMPORT_PATHS = [
-    (PublicServerSharingService, sharing_module, _exercise_public_sharing),
     (ServerSharingService, sharing_interop_module, _exercise_interop_sharing),
 ]
 

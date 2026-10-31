@@ -210,9 +210,13 @@ class ResearchWindow(Vertical):
                 id="research-limits-input",
             )
             yield Select(
-                [("Balanced", "balanced"), ("Web only", "web_only"),
-                 ("Academic only", "academic_only"), ("Web first", "web_first"),
-                 ("Academic first", "academic_first")],
+                [
+                    ("Balanced", "balanced"),
+                    ("Web only", "web_only"),
+                    ("Academic only", "academic_only"),
+                    ("Web first", "web_first"),
+                    ("Academic first", "academic_first"),
+                ],
                 value=self.source_policy,
                 allow_blank=False,
                 id="research-policy-select",
@@ -297,9 +301,16 @@ class ResearchWindow(Vertical):
         self.limits_text = str((state or {}).get("limits") or "")
         policy = str((state or {}).get("policy") or "balanced")
         self.source_policy = (
-            policy if policy in {
-                "balanced", "web_only", "academic_only", "web_first", "academic_first",
-            } else "balanced"
+            policy
+            if policy
+            in {
+                "balanced",
+                "web_only",
+                "academic_only",
+                "web_first",
+                "academic_first",
+            }
+            else "balanced"
         )
         self.providers_text = str((state or {}).get("providers") or "")
         try:
@@ -323,9 +334,9 @@ class ResearchWindow(Vertical):
 
     def _sync_academic_toggle(self) -> None:
         try:
-            self.query_one("#research-academic-toggle", Checkbox).value = (
-                self.academic_enabled
-            )
+            self.query_one(
+                "#research-academic-toggle", Checkbox
+            ).value = self.academic_enabled
         except Exception:
             pass  # not mounted yet; the compose() initial value covers it
 
@@ -382,9 +393,7 @@ class ResearchWindow(Vertical):
             self._set_status(f"Follow-up failed: {exc}")
             return None
         if result.get("status") == "answered":
-            self.followup_answer_text = (
-                f"Q: {question}\n{result.get('answer') or ''}"
-            )
+            self.followup_answer_text = f"Q: {question}\n{result.get('answer') or ''}"
         else:
             self.followup_answer_text = (
                 f"Q: {question}\n[insufficient evidence] "
@@ -501,13 +510,14 @@ class ResearchWindow(Vertical):
         if typed_variants:
             typed_value = limits[typed_variants[-1]]
             limits = {
-                key: value
-                for key, value in limits.items()
-                if key not in typed_variants
+                key: value for key, value in limits.items() if key not in typed_variants
             }
             limits["max_iterations"] = typed_value
         else:
-            limits = {**limits, "max_iterations": max(1, int(self.iteration_rounds or 1))}
+            limits = {
+                **limits,
+                "max_iterations": max(1, int(self.iteration_rounds or 1)),
+            }
         if limits:
             payload = {**payload, "limits_json": limits}
         # task-16791: lane routing + provider selection ride the run record.
@@ -516,13 +526,18 @@ class ResearchWindow(Vertical):
         if self.providers_text.strip() and not providers:
             self._set_status("Providers input invalid or all-unknown; ignored.")
         if providers:
-            payload = {**payload, "provider_overrides": {
-                "academic_providers": providers,
-            }}
+            payload = {
+                **payload,
+                "provider_overrides": {
+                    "academic_providers": providers,
+                },
+            }
         created = await self.controller.create_run(self.current_source, payload)
         if self.current_source == "local":
             created_id = (
-                created.get("id") if isinstance(created, dict) else getattr(created, "id", None)
+                created.get("id")
+                if isinstance(created, dict)
+                else getattr(created, "id", None)
             )
             if created_id:
                 self._start_local_engine(str(created_id))
@@ -588,7 +603,9 @@ class ResearchWindow(Vertical):
                 # than mutating widgets from worker context (async workers
                 # run on the loop, but deferring is correct for either).
                 try:
-                    self.call_later(self._set_status, f"Local research engine error: {exc}")
+                    self.call_later(
+                        self._set_status, f"Local research engine error: {exc}"
+                    )
                 except Exception:
                     self._set_status(f"Local research engine error: {exc}")
 
@@ -645,7 +662,9 @@ class ResearchWindow(Vertical):
         if default_name:
             if self.is_mounted:
                 try:
-                    self.query_one("#research-artifact-name", Input).value = default_name
+                    self.query_one(
+                        "#research-artifact-name", Input
+                    ).value = default_name
                 except Exception:
                     pass
             await self.load_selected_run_artifact(default_name)
@@ -821,7 +840,10 @@ class ResearchWindow(Vertical):
         if self.current_source != "local" or self.selected_run is None:
             return
         if self._record_field(self.selected_run, "status") in {
-            "completed", "failed", "cancelled", "draft",
+            "completed",
+            "failed",
+            "cancelled",
+            "draft",
         }:
             return
         try:

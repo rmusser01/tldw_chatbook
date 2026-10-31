@@ -1,0 +1,88 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________ test_idle_reconciled_view_does_not_admit_transcript_poll ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x114645610>
+
+    def test_idle_reconciled_view_does_not_admit_transcript_poll(monkeypatch):
+        screen, intervals, _refreshed, _workers = _post_reconciliation_admission_screen(
+            monkeypatch
+        )
+>       screen._start_console_view_after_reconciliation()
+
+Tests/UI/test_console_runtime_ownership.py:1709: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ChatScreen()
+
+    def _start_console_view_after_reconciliation(self) -> None:
+        """Start ordinary view-only mount work after one successful sync."""
+    
+        # A fresh view can attach while its app-owned turn is still running
+        # (notably while a hidden approval is pending). The initial sync only
+        # paints the current snapshot, so re-arm polling for later chunks and
+        # terminalization; the timer stops itself when no live work remains.
+        if self._console_transcript_poll_needed():
+            self._start_console_transcript_sync_timer()
+        # Restore collapsible states after mount
+        self.set_timer(0.1, self._restore_collapsible_states)
+        self.set_timer(0.05, self.sync_task_resume_state)
+        if self._task_resume_state.followed_watchlists_operations:
+            self.set_timer(
+                0.06,
+                partial(
+                    self._follow_console_watchlists_operations,
+                    self._task_resume_state.followed_watchlists_operations,
+                ),
+            )
+        if self._resume_navigation_startup_in_progress:
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                self._start_resume_navigation_startup,
+            )
+        else:
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_chat_handoff
+            )
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                self._consume_pending_conversation_resume,
+            )
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                self._consume_pending_console_roleplay_repair,
+            )
+            # Mirrors the handoff timer above: the native composer is not
+            # guaranteed to exist in the DOM yet at this exact point (it can
+            # still be settling in immediately after mount, same reason every
+            # composer-touching test here awaits `_wait_for_selector` first) --
+            # a failed early attempt releases its claim for this screen's
+            # existing resume/user-triggered retry paths.
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                self._consume_pending_console_prompt_insert,
+            )
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                self._consume_pending_conversation_settings_return,
+            )
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS,
+>               self._session.consume_pending_vllm_console_intent,
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            )
+E           AttributeError: 'types.SimpleNamespace' object has no attribute 'consume_pending_vllm_console_intent'
+
+tldw_chatbook/UI/Screens/chat_screen.py:16651: AttributeError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-04 14:19:40.285 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-04 14:19:40.295 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-04 14:19:40.338 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-04 14:19:40.339 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-14-safe-evidence/red.xml -
+============================= slowest 25 durations =============================
+
+(3 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_runtime_ownership.py::test_idle_reconciled_view_does_not_admit_transcript_poll
+1 failed in 3.10s

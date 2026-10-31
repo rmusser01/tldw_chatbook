@@ -119,7 +119,9 @@ class _ModelCatalogSection(BaseModel):
         return _normalized_key_set(value)
 
 
-def load_model_catalog_settings(settings: Mapping[str, Any] | None) -> ModelCatalogSettings:
+def load_model_catalog_settings(
+    settings: Mapping[str, Any] | None,
+) -> ModelCatalogSettings:
     """Parse the ``[model_catalog]`` section of the loaded settings.
 
     Args:

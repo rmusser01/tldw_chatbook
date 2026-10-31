@@ -32,8 +32,7 @@ TRACE_INDEX_QUERIES: dict[str, tuple[str, tuple[object, ...]]] = {
         ("node", "policy"),
     ),
     "idx_console_trace_events_call_order": (
-        "SELECT event_id FROM console_trace_events WHERE call_id = ? "
-        "ORDER BY sequence",
+        "SELECT event_id FROM console_trace_events WHERE call_id = ? ORDER BY sequence",
         ("call",),
     ),
     "idx_console_trace_events_segment_order": (
@@ -78,8 +77,7 @@ TRACE_INDEX_QUERIES: dict[str, tuple[str, tuple[object, ...]]] = {
         ("revision",),
     ),
     "idx_console_trace_revision_bindings_artifact": (
-        "SELECT revision_id FROM console_trace_revision_bindings "
-        "WHERE artifact_id = ?",
+        "SELECT revision_id FROM console_trace_revision_bindings WHERE artifact_id = ?",
         ("artifact",),
     ),
     "idx_console_trace_segments_parent_boundary": (

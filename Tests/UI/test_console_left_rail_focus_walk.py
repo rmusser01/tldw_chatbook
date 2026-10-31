@@ -74,8 +74,9 @@ async def test_focus_target_walk_matches_the_selector_engine_exactly() -> None:
                 for widget in bounded.viewport.query("*")
                 if isinstance(widget, Widget) and rail._is_enabled_focus_target(widget)
             )
-            if bounded.native_scroll_owner is not None and rail._is_enabled_focus_target(
-                bounded.viewport
+            if (
+                bounded.native_scroll_owner is not None
+                and rail._is_enabled_focus_target(bounded.viewport)
             ):
                 expected = (bounded.viewport, *expected)
 

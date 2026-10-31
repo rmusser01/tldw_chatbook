@@ -164,6 +164,17 @@ def test_snapshots_are_real_not_hollow(ratchet) -> None:
     assert len(union) == pre["pass_added_modules"]
     assert sum(row["loc"] for row in routes.values()) == pre["pass_added_loc"]
 
+    # TASK-33620.15.13: the pass's first-send warm-up, its own row.
+    warm = ratchet.load_json_snapshot("first-send-warmup")
+    entries = warm["entries"]
+    assert "tldw_chatbook.Agents.hooks_v2.lifecycle" in entries
+    assert set(entries) <= set(warm["listed"])
+    warm_union: set[str] = set()
+    for row in entries.values():
+        warm_union |= set(row["modules"])
+    assert len(warm_union) == warm["warmup_added_modules"] > 60
+    assert sum(row["loc"] for row in entries.values()) == warm["warmup_added_loc"]
+
 
 @pytest.mark.unit
 def test_every_guard_wires_the_ratchet_footer_and_headroom_line() -> None:

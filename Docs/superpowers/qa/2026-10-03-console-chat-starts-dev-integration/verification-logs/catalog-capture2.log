@@ -1,0 +1,7 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+1.66s call     Tests/DB/test_zz_console_dev_catalog_capture.py::test_capture
+1.28s setup    Tests/DB/test_zz_console_dev_catalog_capture.py::test_capture
+
+(1 durations < 1s hidden.)
+1 passed in 3.06s

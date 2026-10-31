@@ -1,7 +1,7 @@
 ---
 id: TASK-2706
 title: 'Splash settings: "Animation speed" is written to the wrong config section'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-01'
 labels: [settings, splash, bug]
@@ -37,13 +37,22 @@ has to describe the field without promising it sticks.
 
 ## Acceptance Criteria (the what)
 
-- [ ] Saving "Animation speed (x)" writes to the same section the loader
+- [x] Saving "Animation speed (x)" writes to the same section the loader
       reads (`[splash_screen.effects]`), so reopening the pane shows the
       saved value and the splash honours it.
-- [ ] A test round-trips the value through save → reload → render.
+- [x] A test round-trips the value through save → reload → render.
 - [ ] Confirm which section the splash runtime actually consumes and make
       loader, writer, and runtime agree; if any value already exists in
       the wrong section from this bug, decide and document whether it is
       migrated or ignored.
 - [ ] Update the User Guide note in `Docs/User_Guide/settings.md` once the
       behaviour is fixed.
+
+## Closeout audit 2026-10-11
+
+Verdict: DONE (verified against origin/dev @ a3c47c6c72).
+
+Evidence:
+- Writer routes through `_config_section(key)` (returns `splash_screen.effects` for the three effects keys) into `apply_settings_mutation_to_cli_config` — `tldw_chatbook/Widgets/settings_splash_screen_viewer.py:43` and `:297` (`_persist_splash_config_value`). Loader and writer now agree on `[splash_screen.effects]`.
+- Round-trip test: `Tests/UI/test_settings_splash_screen_viewer.py::test_splash_animation_speed_persists_to_the_section_it_loads` (saves 1.75 → asserts `get_cli_setting("splash_screen.effects", "animation_speed")` → reloads viewer). Introduced with the fix in commit `65cc565d84` ("Fix Interface settings layout and save-state ownership"); read consolidated further by `9eabb5ca97` (TASK-32804.8 #1).
+- AC1 and AC2 ticked. AC3 left unticked (no explicit migration decision documented for values already written into `[splash_screen]` by the old bug). AC4 left unticked: `Docs/User_Guide/settings.md` body (:1167) describes the fixed Enter-to-save behaviour, but a stale known-issues caveat still claims the field saves somewhere unread (:1643-1644, cites this task) — that residue contradicts the fix and should be deleted in a docs pass.

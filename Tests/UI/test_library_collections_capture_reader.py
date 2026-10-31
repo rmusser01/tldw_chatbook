@@ -913,7 +913,7 @@ async def test_legacy_recovery_inspector_and_export_reach_every_page(
         assert len(payload["collections"]) == 45
         assert len(payload["memberships"]) == 45
         assert screen._collections_state.action_status == (
-            "Legacy recovery export complete."
+            f"Legacy recovery export complete: {destination}"
         )
 
 

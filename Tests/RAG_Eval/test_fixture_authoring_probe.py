@@ -35,6 +35,7 @@ pin whose number holds for a new reason is the easiest kind to misread.
 Skipped unless `RAG_EVAL=1` plus the embeddings extras plus a warm model
 cache — see `harness/environment.py`.
 """
+
 from __future__ import annotations
 
 from Tests.RAG_Eval.harness.environment import harness_gate
@@ -217,7 +218,10 @@ def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
         LibraryLocalRagSearchService,
     )
 
-    from Tests.RAG_Eval.harness.fixture_probe import format_probe_report, probe_candidates
+    from Tests.RAG_Eval.harness.fixture_probe import (
+        format_probe_report,
+        probe_candidates,
+    )
     from Tests.RAG_Eval.harness.goldenset import GoldenQuery, load_fixtures
     from Tests.RAG_Eval.harness.ingest import build_eval_runtime
     from Tests.RAG_Eval.harness.runner import SOURCE_TYPES
@@ -285,8 +289,7 @@ def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
         print("\n" + format_probe_report([*results, reachable], k=K))
         for position, source_id, fusion in prompt_provenance:
             print(
-                f"reachability provenance: rank {position} prompt {source_id} "
-                f"{fusion}"
+                f"reachability provenance: rank {position} prompt {source_id} {fusion}"
             )
 
     # THE SPLIT, asserted BEFORE the per-query loop so that it is the oracle
@@ -375,31 +378,33 @@ def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
 #: exists to catch, and a set equality is the only assertion that catches it
 #: here. Derived from a real census run at the shipped default (TASK-15700
 #: Task 4), not transcribed from a report.
-SHIPPED_LEG_CENSUS_IDS = frozenset({
-    "kw-ashgrove-pump",
-    "kw-drayton-conveyor",
-    "kw-fennimore-changeover",
-    "kw-halcyon-ledger",
-    "kw-larkspur-turbine",
-    "kw-marlstone-kiln",
-    "kw-nimbus-rollback",
-    "kw-obsidian-spindle",
-    "kw-pellucid-gauge",
-    "kw-plant-maintenance-record",
-    "kw-quillon-mast",
-    "kw-thimble-relay",
-    "kw-verdigris-coating",
-    "kw-zephyr-asset-tag",
-    "kw-zephyr-flywheel",
-    "pm-vendor-chaser",
-    "sc-duty-board-notice",
-    "sc-intake-screen-survey",
-    "sc-meter-box-key",
-    "sc-pump-chamber-inspection",
-    "sc-sample-point-sign",
-    "sc-storm-overflow-record",
-    "sc-valve-pit-access",
-})
+SHIPPED_LEG_CENSUS_IDS = frozenset(
+    {
+        "kw-ashgrove-pump",
+        "kw-drayton-conveyor",
+        "kw-fennimore-changeover",
+        "kw-halcyon-ledger",
+        "kw-larkspur-turbine",
+        "kw-marlstone-kiln",
+        "kw-nimbus-rollback",
+        "kw-obsidian-spindle",
+        "kw-pellucid-gauge",
+        "kw-plant-maintenance-record",
+        "kw-quillon-mast",
+        "kw-thimble-relay",
+        "kw-verdigris-coating",
+        "kw-zephyr-asset-tag",
+        "kw-zephyr-flywheel",
+        "pm-vendor-chaser",
+        "sc-duty-board-notice",
+        "sc-intake-screen-survey",
+        "sc-meter-box-key",
+        "sc-pump-chamber-inspection",
+        "sc-sample-point-sign",
+        "sc-storm-overflow-record",
+        "sc-valve-pit-access",
+    }
+)
 SHIPPED_LEG_CENSUS = len(SHIPPED_LEG_CENSUS_IDS)
 SHIPPED_LEG_CENSUS_SCOREABLE = 53
 #: The residual bound AC#7 owns: golden queries the leg returns NOTHING for.
@@ -457,9 +462,11 @@ def test_the_shipped_construction_scores_the_census_the_owner_ruling_bought(
         runtime.close()
 
     with capsys.disabled():
-        print(f"\nkeyword-leg census under {construction!r}: "
-              f"{census.hits}/{census.scoreable}, "
-              f"{len(census.zero_row_queries)} zero-row of {census.queries}")
+        print(
+            f"\nkeyword-leg census under {construction!r}: "
+            f"{census.hits}/{census.scoreable}, "
+            f"{len(census.zero_row_queries)} zero-row of {census.queries}"
+        )
 
     # THE HIT-SET, asserted FIRST and as a set EQUALITY. Ordered ahead of
     # the construction guard on purpose: a revert must red with the ids it

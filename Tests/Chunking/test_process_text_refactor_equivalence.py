@@ -9,7 +9,9 @@ from tldw_chatbook.Chunking.engine.exceptions import ChunkingError, InvalidInput
 pytestmark = pytest.mark.unit
 
 
-def test_process_text_normal_path_preserves_text_dict_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_text_normal_path_preserves_text_dict_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     chunker = Chunker()
 
     def fake_chunk_text(*args, **kwargs):
@@ -17,7 +19,9 @@ def test_process_text_normal_path_preserves_text_dict_metadata(monkeypatch: pyte
 
     monkeypatch.setattr(chunker, "chunk_text", fake_chunk_text)
 
-    rows = chunker.process_text("alpha beta", options={"method": "words", "max_size": 10, "overlap": 0})
+    rows = chunker.process_text(
+        "alpha beta", options={"method": "words", "max_size": 10, "overlap": 0}
+    )
 
     assert rows[0]["text"] == "alpha"
     assert rows[0]["metadata"]["start_offset"] == 0
@@ -25,7 +29,9 @@ def test_process_text_normal_path_preserves_text_dict_metadata(monkeypatch: pyte
     assert rows[0]["metadata"]["chunk_method"] == "words"
 
 
-def test_process_text_normal_path_stringifies_custom_chunk_objects(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_text_normal_path_stringifies_custom_chunk_objects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     chunker = Chunker()
 
     class CustomChunk:
@@ -40,7 +46,9 @@ def test_process_text_normal_path_stringifies_custom_chunk_objects(monkeypatch: 
 
     monkeypatch.setattr(chunker, "chunk_text", fake_chunk_text)
 
-    rows = chunker.process_text("alpha beta", options={"method": "words", "max_size": 10, "overlap": 0})
+    rows = chunker.process_text(
+        "alpha beta", options={"method": "words", "max_size": 10, "overlap": 0}
+    )
 
     assert rows[0]["text"] == "custom object text"
     assert "copied_from_attribute" not in rows[0]["metadata"]
@@ -62,7 +70,9 @@ def test_process_text_multi_level_fallback_clamps_offsets(
     def fake_chunk_text(segment, *args, **kwargs):
         return [f"{segment} beyond the paragraph span"]
 
-    monkeypatch.setattr(chunker, "chunk_text_with_metadata", fake_chunk_text_with_metadata)
+    monkeypatch.setattr(
+        chunker, "chunk_text_with_metadata", fake_chunk_text_with_metadata
+    )
     monkeypatch.setattr(chunker, "chunk_text", fake_chunk_text)
 
     rows = chunker.process_text(
@@ -75,7 +85,9 @@ def test_process_text_multi_level_fallback_clamps_offsets(
     assert rows[0]["metadata"]["end_offset"] >= len(first_segment)
     assert rows[0]["metadata"]["end_offset"] <= text.index("Second")
     assert rows[1]["metadata"]["start_offset"] == text.index(second_segment)
-    assert rows[1]["metadata"]["end_offset"] == rows[1]["metadata"]["start_offset"] + len(second_segment)
+    assert rows[1]["metadata"]["end_offset"] == rows[1]["metadata"][
+        "start_offset"
+    ] + len(second_segment)
     assert rows[1]["metadata"]["end_offset"] <= len(text)
 
 
@@ -85,7 +97,12 @@ def test_process_text_hierarchical_template_preserves_section_metadata() -> None
     template = {"levels": [{"name": "heading", "pattern": r"^# .+"}]}
     rows = chunker.process_text(
         "# Title\n\nBody text.",
-        options={"method": "words", "max_size": 20, "overlap": 0, "hierarchical_template": template},
+        options={
+            "method": "words",
+            "max_size": 20,
+            "overlap": 0,
+            "hierarchical_template": template,
+        },
     )
 
     assert [row["text"] for row in rows] == ["# Title", "Body text."]
@@ -95,7 +112,9 @@ def test_process_text_hierarchical_template_preserves_section_metadata() -> None
     assert rows[1]["metadata"]["section_path"] == "Title"
 
 
-def test_process_text_frontmatter_offsets_and_timecode_map_are_original_coordinates() -> None:
+def test_process_text_frontmatter_offsets_and_timecode_map_are_original_coordinates() -> (
+    None
+):
     chunker = Chunker()
     frontmatter = '{"meta": "x", "__tldw_frontmatter__": true}\n\n'
     body = "Body text."
@@ -138,7 +157,9 @@ def test_process_text_string_false_frontmatter_option_remains_truthy() -> None:
     chunker = Chunker()
     payload = '{"meta": "x", "__tldw_frontmatter__": true}\nBody text.'
 
-    rows = chunker.process_text(payload, options={"enable_frontmatter_parsing": "false"})
+    rows = chunker.process_text(
+        payload, options={"enable_frontmatter_parsing": "false"}
+    )
 
     assert rows
     assert rows[0]["metadata"]["initial_document_json_metadata"] == {"meta": "x"}
@@ -151,13 +172,22 @@ def test_process_text_string_false_hierarchical_option_remains_false(
     chunker = Chunker()
 
     def forbidden_hierarchical_path(*args, **kwargs):
-        raise AssertionError("string 'false' hierarchical option must not enable hierarchical mode")
+        raise AssertionError(
+            "string 'false' hierarchical option must not enable hierarchical mode"
+        )
 
-    monkeypatch.setattr(chunker, "chunk_text_hierarchical_flat", forbidden_hierarchical_path)
+    monkeypatch.setattr(
+        chunker, "chunk_text_hierarchical_flat", forbidden_hierarchical_path
+    )
 
     rows = chunker.process_text(
         "# Title\n\nBody text.",
-        options={"method": "words", "max_size": 50, "overlap": 0, "hierarchical": "false"},
+        options={
+            "method": "words",
+            "max_size": 50,
+            "overlap": 0,
+            "hierarchical": "false",
+        },
     )
 
     assert rows
@@ -189,7 +219,9 @@ def test_process_text_tokenizer_override_reaches_chunk_text_without_mutating_cac
     assert getattr(token_strategy, "tokenizer_name", None) != "test-tokenizer"
 
 
-def test_process_text_preserves_explicit_zero_overlap(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_text_preserves_explicit_zero_overlap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     chunker = Chunker()
     calls: list[dict] = []
 
@@ -199,14 +231,18 @@ def test_process_text_preserves_explicit_zero_overlap(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(chunker, "chunk_text", fake_chunk_text)
 
-    rows = chunker.process_text("alpha beta", options={"method": "words", "max_size": 10, "overlap": 0})
+    rows = chunker.process_text(
+        "alpha beta", options={"method": "words", "max_size": 10, "overlap": 0}
+    )
 
     assert calls[0]["overlap"] == 0
     assert rows[0]["metadata"]["overlap"] == 0
     assert rows[0]["metadata"]["overlap_setting"] == 0
 
 
-def test_process_text_clamps_negative_overlap_to_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_text_clamps_negative_overlap_to_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     chunker = Chunker()
     calls: list[dict] = []
 
@@ -216,7 +252,9 @@ def test_process_text_clamps_negative_overlap_to_zero(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(chunker, "chunk_text", fake_chunk_text)
 
-    rows = chunker.process_text("alpha beta", options={"method": "words", "max_size": 10, "overlap": -5})
+    rows = chunker.process_text(
+        "alpha beta", options={"method": "words", "max_size": 10, "overlap": -5}
+    )
 
     assert calls[0]["overlap"] == 0
     assert rows[0]["metadata"]["overlap"] == 0
@@ -225,7 +263,9 @@ def test_process_text_clamps_negative_overlap_to_zero(monkeypatch: pytest.Monkey
 
 def test_process_text_invalid_max_size_raises_invalid_input_error() -> None:
     with pytest.raises(InvalidInputError):
-        Chunker().process_text("alpha beta", options={"method": "words", "max_size": "not-an-int"})
+        Chunker().process_text(
+            "alpha beta", options={"method": "words", "max_size": "not-an-int"}
+        )
 
 
 def test_process_text_invalid_non_string_input_raises_invalid_input_error() -> None:
@@ -238,7 +278,9 @@ def test_process_text_invalid_non_string_input_raises_invalid_input_error() -> N
         )  # type: ignore[arg-type]
 
 
-def test_process_text_invalid_input_increments_process_counter(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_text_invalid_input_increments_process_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import tldw_chatbook.Chunking.engine.chunker as chunker_module
 
     calls: list[tuple[str, dict | None]] = []
@@ -251,7 +293,10 @@ def test_process_text_invalid_input_increments_process_counter(monkeypatch: pyte
     with pytest.raises(InvalidInputError):
         Chunker().process_text(None)
 
-    assert ("chunker_process_total", {"component": "chunker", "op": "process_text"}) in calls
+    assert (
+        "chunker_process_total",
+        {"component": "chunker", "op": "process_text"},
+    ) in calls
 
 
 def test_process_text_wrapper_delegates_to_pipeline_with_chunker_telemetry(
@@ -290,7 +335,9 @@ def test_process_text_wrapper_delegates_to_pipeline_with_chunker_telemetry(
             )
             return [{"text": "delegated", "metadata": {"source": "fake"}}]
 
-    monkeypatch.setattr(chunker_module, "_process_text_telemetry_hooks", lambda: telemetry)
+    monkeypatch.setattr(
+        chunker_module, "_process_text_telemetry_hooks", lambda: telemetry
+    )
     monkeypatch.setattr(chunker_module, "ProcessTextPipeline", FakePipeline)
 
     rows = chunker.process_text(

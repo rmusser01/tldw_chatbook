@@ -120,7 +120,12 @@ def test_poll_waits_through_pending_statuses(adapter, http_recorder, monkeypatch
         {"task": {"status": "Preparing"}},
         {"task": {"status": "queueing"}},
         {"task": {"status": "PROCESSING"}},
-        {"task": {"status": "succeeded", "content": {"url": "https://cdn.example.com/v.mp4"}}},
+        {
+            "task": {
+                "status": "succeeded",
+                "content": {"url": "https://cdn.example.com/v.mp4"},
+            }
+        },
     ]
     routes[("BYTES", "cdn.example.com")] = (b"v", "video/mp4")
 
@@ -134,7 +139,10 @@ def test_resolution_tier_mapping(adapter, http_recorder):
     calls, routes = http_recorder
     routes[("POST", "/v2/video_generation")] = {"task_id": "t1"}
     routes[("GET", "/v2/query/")] = {
-        "task": {"status": "succeeded", "content": {"url": "https://cdn.example.com/v.mp4"}}
+        "task": {
+            "status": "succeeded",
+            "content": {"url": "https://cdn.example.com/v.mp4"},
+        }
     }
     routes[("BYTES", "cdn.example.com")] = (b"v", "video/mp4")
 
@@ -145,13 +153,19 @@ def test_resolution_tier_mapping(adapter, http_recorder):
     assert submits[1]["kwargs"]["json"]["resolution"] == "2K"
 
 
-@pytest.mark.parametrize("observed_type", [None, "application/octet-stream", "video/webm"])
+@pytest.mark.parametrize(
+    "observed_type", [None, "application/octet-stream", "video/webm"]
+)
 def test_file_id_fallback_requires_observed_mp4_mime(
     adapter, http_recorder, observed_type
 ):
     calls, routes = http_recorder
     routes[("POST", "/v2/video_generation")] = {"task_id": "t2"}
-    routes[("GET", "/v2/query/")] = {"task_id": "t2", "status": "Success", "file_id": "98765"}
+    routes[("GET", "/v2/query/")] = {
+        "task_id": "t2",
+        "status": "Success",
+        "file_id": "98765",
+    }
     routes[("GET", "/v1/files/retrieve")] = {
         "file": {"download_url": "https://cdn.example.com/fallback.mp4"}
     }
@@ -258,7 +272,9 @@ def test_missing_api_key(monkeypatch):
 
 
 def test_reference_assets_refused_until_3401_8(adapter):
-    asset = ResolvedReferenceAsset(kind="first_frame", content=b"png", mime_type="image/png")
+    asset = ResolvedReferenceAsset(
+        kind="first_frame", content=b"png", mime_type="image/png"
+    )
     with pytest.raises(VideoGenerationError, match="3401.8"):
         adapter.generate(_request(reference_assets=(asset,)))
 
@@ -295,7 +311,10 @@ def test_cancel_event_stops_polling_and_calls_remote_cancel(adapter, http_record
     calls, routes = http_recorder
     routes[("POST", "/v2/video_generation")] = {"task_id": "t5"}
     routes[("GET", "/v2/query/")] = {"task": {"status": "processing"}}
-    routes[("DELETE", "/v2/video_generation/t5")] = {"task_id": "t5", "action": "cancelled"}
+    routes[("DELETE", "/v2/video_generation/t5")] = {
+        "task_id": "t5",
+        "action": "cancelled",
+    }
 
     cancel_event.set()  # already cancelled before the first poll iteration
     with pytest.raises(VideoGenerationError, match="cancelled by user"):

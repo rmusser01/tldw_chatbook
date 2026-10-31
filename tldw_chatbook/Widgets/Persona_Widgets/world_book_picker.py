@@ -73,7 +73,9 @@ class WorldBookPicker(SafeModalDismissMixin, ModalScreen[int | None]):
                     classes="console-action-secondary",
                 )
                 yield Button(
-                    "Cancel", id="worldbook-pick-cancel", classes="console-action-secondary"
+                    "Cancel",
+                    id="worldbook-pick-cancel",
+                    classes="console-action-secondary",
                 )
 
     def on_mount(self) -> None:

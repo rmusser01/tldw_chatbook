@@ -40,12 +40,15 @@ def test_tool_protocol_template_renders_original_scaffold():
         "call another tool the same way or answer the user directly. If no "
         "tool is needed, just answer directly."
     )
-    assert render_internal_prompt(
-        "agents.tool_protocol",
-        tool_list=tool_list,
-        fence_open=FENCE_OPEN,
-        fence_close=_FENCE_CLOSE,
-    ) == expected
+    assert (
+        render_internal_prompt(
+            "agents.tool_protocol",
+            tool_list=tool_list,
+            fence_open=FENCE_OPEN,
+            fence_close=_FENCE_CLOSE,
+        )
+        == expected
+    )
 
 
 def test_ask_user_tool_description_matches_source_constant():

@@ -1,7 +1,7 @@
 ---
 id: task-22302
 title: Durable turns silently discard citation provenance
-status: To Do
+status: Done
 labels:
   - console
   - citations
@@ -80,11 +80,11 @@ surfaced it.
 
 ## Acceptance Criteria
 
-- [ ] A durable turn with citations writes its trace, owner, evidence and
+- [x] A durable turn with citations writes its trace, owner, evidence and
       attempt rows
-- [ ] The real-stack tests in `test_console_terminal_citation_persistence` pass
-- [ ] A test fails if the finalizer is dropped again (mutation-proven)
-- [ ] The fix is verified on a real ChaChaNotes stack, not a recording double
+- [x] The real-stack tests in `test_console_terminal_citation_persistence` pass
+- [x] A test fails if the finalizer is dropped again (mutation-proven)
+- [x] The fix is verified on a real ChaChaNotes stack, not a recording double
 
 ## Implementation Notes
 
@@ -158,3 +158,13 @@ needs the trigger identified before it can land. The likely suspect is the
 interaction between arming `_terminal_persistence_deferred_ids` and
 `mark_message_complete`'s `terminal_persistence` predicate, which then routes a
 turn to `_persist_new_message` whose row already exists.
+
+## Update 2026-10-01 — fixed on dev by PR #2115; closed with verification, plus a test-infra enrollment this branch contributes
+
+**Premise check first.** At `origin/dev` tip `ef831d9f38`, with this suite enrolled in `keep_bootstrap_profile` (see below), the reproducer `test_real_atomic_direct_controller_persists_exact_body_and_trace_on_restart` **passes** and the full real-stack suite `Tests/Chat/test_console_terminal_citation_persistence.py` is **99 passed** — all six citation tables populated with their expected counts (the test asserts `rag_citation_traces`/`rag_evidence_runs`/`rag_answer_attempt_payloads` etc. = 1 via SQL against a real in-memory ChaChaNotes stack). The defect was fixed by commit `3daa56bf4f` — "fix(citations): persist citation provenance for durable Console turns (TASK-22302)" (PR #2115) — whose message documents the mechanism exactly as this task described it (finalizer popped then dropped by the dispatch-recovery early return) and records that each of its four sequential blockers was **mutation-proven independently**, plus a Qodo-review follow-up (`test_real_durable_fail_closed_finalizer_persists_the_body_once`) covering the finalizer-dropped shape. The task file simply never flipped to Done when the PR merged.
+
+**AC status.** AC1 (durable turn writes trace/owner/evidence/attempt rows): verified live above. AC2 (real-stack tests pass): 99 passed. AC3 (test fails if the finalizer is dropped again, mutation-proven): satisfied by PR #2115's documented per-blocker mutation proofs and its fail-closed finalizer test; an attempted whole-file revert A/B on this branch was invalid (reverting two files to `3daa56bf4f~1` breaks unrelated imports across the intervening commits — `select_valid_memory` drift — so it errors rather than tests) and is recorded here as not-evidence. AC4 (real ChaChaNotes stack, not a recording double): the suite runs the real controller/store/DB stack with SQL-level table counts.
+
+**This branch's delta.** `Tests/conftest.py` enrolls `test_console_terminal_citation_persistence.py` in `keep_bootstrap_profile`: without it, the suite's submit path reads the hook-consent config through the guarded loader and fails closed under the per-test env redirect (`RecoveryRequired("raw_source_selection_changed")` -> send refused as "Hooks unavailable", red since the hook-consent gate `aed1b13501` landed), so this task's regression coverage is unreachable in-suite. Same admission signature and precedent as the neighboring console suites (TASK-32873 / ADR-179).
+
+ADR required: no — the fix itself shipped in PR #2115; this change is a test-infrastructure enrollment plus closeout evidence.

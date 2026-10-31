@@ -142,7 +142,9 @@ async def _run_probe() -> None:
             .get("input", {})
             .get("turn_detection")
         )
-        print(f"server default turn_detection: {json.dumps(default_td, sort_keys=True)}")
+        print(
+            f"server default turn_detection: {json.dumps(default_td, sort_keys=True)}"
+        )
         print()
         for label, candidate in CANDIDATES:
             await _probe_one(ws, label, candidate)

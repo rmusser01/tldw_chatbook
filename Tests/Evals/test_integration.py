@@ -170,7 +170,6 @@ class TestFullEvaluationPipeline:
                 assert exported_data["run_id"] == run_id
                 assert exported_data["metrics"]["exact_match"] == 1.0
 
-
     @pytest.mark.asyncio
     async def test_error_handling_integration(self, setup_test_environment):
         """Test error handling across components."""
@@ -215,7 +214,6 @@ class TestFullEvaluationPipeline:
         # is_budget_exceeded()/check_budget() no longer exist; the observable
         # exceeded-state is a spent budget with nothing remaining.
         assert budget_monitor.get_remaining_budget() == 0
-
 
 
 class TestTemplateIntegration:

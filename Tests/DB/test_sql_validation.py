@@ -20,14 +20,8 @@ from tldw_chatbook.DB.sql_validation import (
 def test_subscription_item_order_profiles_are_centrally_validated():
     resolver = getattr(sql_validation, "get_safe_order_by_clause", None)
     assert callable(resolver), "dynamic ORDER BY profiles need one central validator"
-    assert (
-        resolver("subscription_items_agent")
-        == "i.effective_date DESC, i.id ASC"
-    )
-    assert (
-        resolver("subscription_items_reader")
-        == "i.effective_date DESC, i.id DESC"
-    )
+    assert resolver("subscription_items_agent") == "i.effective_date DESC, i.id ASC"
+    assert resolver("subscription_items_reader") == "i.effective_date DESC, i.id DESC"
     try:
         resolver("i.id DESC; DROP TABLE subscription_items")
     except ValueError:
@@ -108,18 +102,25 @@ class TestValidateTableName:
             assert validate_table_name(table, "chachanotes") is True
 
     def test_valid_media_tables(self):
-        """Test valid table names for media database."""
+        """Test valid table names for media database.
+
+        task-19867: re-synced with the live schema (the previous list
+        carried tables that no longer exist -- MediaVersion,
+        MediaModifications, Media_fts -- and missed the live ones). The
+        live-schema guard class below now keeps this list honest.
+        """
         valid_tables = [
             "Media",
             "Keywords",
             "MediaKeywords",
-            "MediaVersion",
-            "MediaModifications",
             "UnvectorizedMediaChunks",
             "DocumentVersions",
             "sync_log",
-            "Media_fts",
             "MediaChunks",
+            "MediaReadItLaterState",
+            "ReadingProgress",
+            "Transcripts",
+            "schema_version",
             "ChunkingTemplates",
         ]
 
@@ -163,7 +164,13 @@ class TestValidateTableName:
 
         database = CharactersRAGDB(str(tmp_path / "scopes.db"), client_id="test")
         try:
-            for _, table, id_column, _, _ in CharactersRAGDB._SYNC_LOG_LATEST_ONLY_SCOPES:
+            for (
+                _,
+                table,
+                id_column,
+                _,
+                _,
+            ) in CharactersRAGDB._SYNC_LOG_LATEST_ONLY_SCOPES:
                 assert validate_table_name(table, "chachanotes") is True
                 live = {
                     row["name"]
@@ -177,14 +184,20 @@ class TestValidateTableName:
             database.close_connection()
 
     def test_valid_prompts_tables(self):
-        """Test valid table names for prompts database."""
+        """Test valid table names for prompts database.
+
+        task-19867: re-synced with the live schema (the previous list named
+        Keywords / PromptKeywords / the old FTS tables, none of which
+        exist). The live-schema guard class below now keeps this list
+        honest.
+        """
         valid_tables = [
             "Prompts",
-            "Keywords",
-            "PromptKeywords",
             "sync_log",
-            "Prompts_fts",
-            "Keywords_fts",
+            "LocalPromptDrafts",
+            "PromptKeywordLinks",
+            "PromptKeywordsTable",
+            "schema_version",
         ]
 
         for table in valid_tables:
@@ -294,7 +307,10 @@ class TestValidateLinkTable:
         )
         assert validate_link_table("note_keywords", "note_id", "keyword_id") is True
         assert validate_link_table("MediaKeywords", "media_id", "keyword_id") is True
-        assert validate_link_table("PromptKeywords", "prompt_id", "keyword_id") is True
+        # TASK-34903: renamed to the live junction table's actual name.
+        assert (
+            validate_link_table("PromptKeywordLinks", "prompt_id", "keyword_id") is True
+        )
 
     def test_invalid_link_tables(self):
         """Test invalid link table configurations."""
@@ -501,6 +517,146 @@ class TestChachanotesValidTablesMatchesLiveSchema:
             f"exist in the live schema: {sorted(stale)}.\n"
             f"Delete these lines from the set:\n{remove}"
             f"{self._WHERE_TO_FIX}"
+        )
+
+
+def _live_media_table_names() -> set[str]:
+    """Derive the real, substantive Media table set from a live DB.
+
+    Same method and same exclusions as ``_live_chachanotes_table_names``
+    (TASK-864): build a real ``MediaDatabase`` -- which runs the full
+    migration chain to ``_CURRENT_SCHEMA_VERSION`` -- and read its
+    ``sqlite_master`` directly, rather than re-typing a literal table list
+    that could go stale alongside ``VALID_TABLES`` itself (task-19867).
+
+    Excludes, deliberately and identically to the chachanotes guard:
+
+    * ``sqlite_sequence`` -- SQLite's own AUTOINCREMENT bookkeeping table,
+      never a validation target.
+    * FTS5 shadow/virtual tables (anything with ``_fts`` in its name --
+      the virtual table itself plus its ``_data``/``_idx``/``_docsize``/
+      ``_config`` shadow tables). These are written to exclusively by SQL
+      triggers, never through a generic CRUD helper that calls
+      ``validate_table_name``.
+
+    Returns:
+        The set of real, substantive table names the live schema defines.
+    """
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    db = MediaDatabase(":memory:", "sql-validation-schema-sync-test")
+    try:
+        conn = db.get_connection()
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    finally:
+        db.close_connection()
+
+    return {
+        row["name"]
+        for row in rows
+        if row["name"] != "sqlite_sequence" and "_fts" not in row["name"]
+    }
+
+
+def _live_prompts_table_names() -> set[str]:
+    """Derive the real, substantive Prompts table set from a live DB.
+
+    Same method, same exclusions and the same rationale as
+    ``_live_media_table_names`` above (task-19867).
+    """
+    from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+
+    db = PromptsDatabase(":memory:", "sql-validation-schema-sync-test")
+    try:
+        conn = db.get_connection()
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    finally:
+        db.close_connection()
+
+    return {
+        row["name"]
+        for row in rows
+        if row["name"] != "sqlite_sequence" and "_fts" not in row["name"]
+    }
+
+
+class TestMediaValidTablesMatchesLiveSchema:
+    """task-19867: the ``media`` entry of the hand-maintained allowlist.
+
+    ``VALID_TABLES['media']`` had drifted in both directions with no guard
+    at all: six real tables were missing from it and six allowlisted names
+    no longer existed (the FTS tables had been renamed
+    ``Keywords_fts`` -> ``keyword_fts`` and ``Media_fts`` -> ``media_fts``,
+    and ``MediaChunks_fts`` removed). This class mirrors the chachanotes
+    guard (TASK-864/TASK-19568) so the next migration that adds or renames
+    a table fails here instead of quietly widening the gap.
+
+    Currently-unexploitable, stated so nobody re-reports it as an injection
+    defect: the one method that could feed a caller-chosen name into the
+    validator for this database (``MediaDatabase._get_next_version``) has
+    no callers in ``tldw_chatbook/`` or ``Tests/``, and the residual drift
+    fails CLOSED in both directions -- an allowlisted name that no longer
+    exists validates and then fails at SQLite; a real table missing from
+    the allowlist is rejected.
+    """
+
+    def test_no_missing_tables(self):
+        """Every real, substantive table in the live schema must be allowlisted."""
+        live_tables = _live_media_table_names()
+        missing = live_tables - VALID_TABLES["media"]
+        paste = "\n".join(f'        "{name}",' for name in sorted(missing))
+        assert not missing, (
+            f"Live schema has tables not in VALID_TABLES['media']: "
+            f"{sorted(missing)}.\n"
+            f"Paste these lines into the set (or document a deliberate "
+            f"exclusion):\n{paste}"
+        )
+
+    def test_no_stale_tables(self):
+        """Every allowlisted name must correspond to a real, live table."""
+        live_tables = _live_media_table_names()
+        stale = VALID_TABLES["media"] - live_tables
+        remove = "\n".join(f'        "{name}",' for name in sorted(stale))
+        assert not stale, (
+            f"VALID_TABLES['media'] allowlists tables that no longer exist in "
+            f"the live schema: {sorted(stale)}.\n"
+            f"Delete these lines from the set:\n{remove}"
+        )
+
+
+class TestPromptsValidTablesMatchesLiveSchema:
+    """task-19867: the ``prompts`` entry of the hand-maintained allowlist.
+
+    Before this guard only ``Prompts`` and ``sync_log`` matched reality; the
+    allowlist named four tables that do not exist while the live schema
+    defined five unlisted ones. Same currently-unexploitable status as the
+    media entry: ``PromptsDatabase._get_next_version`` has no callers, and
+    the drift fails closed in both directions.
+    """
+
+    def test_no_missing_tables(self):
+        live_tables = _live_prompts_table_names()
+        missing = live_tables - VALID_TABLES["prompts"]
+        paste = "\n".join(f'        "{name}",' for name in sorted(missing))
+        assert not missing, (
+            f"Live schema has tables not in VALID_TABLES['prompts']: "
+            f"{sorted(missing)}.\n"
+            f"Paste these lines into the set (or document a deliberate "
+            f"exclusion):\n{paste}"
+        )
+
+    def test_no_stale_tables(self):
+        live_tables = _live_prompts_table_names()
+        stale = VALID_TABLES["prompts"] - live_tables
+        remove = "\n".join(f'        "{name}",' for name in sorted(stale))
+        assert not stale, (
+            f"VALID_TABLES['prompts'] allowlists tables that no longer exist "
+            f"in the live schema: {sorted(stale)}.\n"
+            f"Delete these lines from the set:\n{remove}"
         )
 
 

@@ -19,6 +19,12 @@ from .builtin_tool_policy import builtin_tool_risk_tags
 _MAX_TAGS = 5
 _RESERVED_EXTERNAL_PROFILE_IDS = frozenset({"__local__", "__virtual_cli__"})
 
+#: Built-in tools the in-process direct runtime always refuses (it cannot
+#: launch a nested LLM chat). The runtime and the agent catalog both read this
+#: one list, so a first Console chat never asks approval for a tool that can
+#: only fail (TASK-34100.5, entry-exit-handoff-24).
+DIRECT_RUNTIME_UNAVAILABLE_TOOLS = frozenset({"chat_with_llm"})
+
 
 @dataclass(frozen=True)
 class HubTool:
@@ -53,6 +59,55 @@ class HubTool:
     @property
     def tool_id(self) -> str:
         return f"{self.server_key}::{self.name}"
+
+
+# Capture before another module can import a replaced constructor. Only slots
+# consumed by shared Console construction/conversion are part of this shape.
+_HUB_TOOL_SLOT_MISSING = object()
+_HUB_TOOL_CONSTRUCTION_ANCHOR = (
+    HubTool,
+    HubTool.__bases__,
+    HubTool.__mro__,
+    _HUB_TOOL_SLOT_MISSING,
+    tuple(
+        (name, vars(HubTool).get(name, _HUB_TOOL_SLOT_MISSING))
+        for name in (
+            "__new__",
+            "__init__",
+            "__getattribute__",
+            "__getattr__",
+            "tool_id",
+            "server_key",
+            "server_label",
+            "source",
+            "name",
+            "description",
+            "input_schema",
+            "tags",
+            "stale",
+            "executable",
+        )
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            (
+                function.__defaults__,
+                function.__kwdefaults__,
+                tuple(dict.items(function.__kwdefaults__))
+                if function.__kwdefaults__ is not None
+                else (),
+                function.__closure__,
+                tuple(
+                    (cell, cell.cell_contents) for cell in function.__closure__ or ()
+                ),
+            ),
+        )
+        for function in (vars(HubTool)["__init__"], vars(HubTool)["tool_id"].fget)
+    ),
+)
 
 
 def _normalized_schema(raw: Any) -> dict | None:

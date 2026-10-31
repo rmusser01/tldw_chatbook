@@ -458,6 +458,53 @@ def test_retained_speech_realtime_draft_is_compared_without_panel_sync(changed):
     assert store._entries["settings"].snapshot["speech_tts_panel_draft"] is snapshot
 
 
+@pytest.mark.parametrize("changed", [False, True])
+def test_retained_speech_pipeline_voice_draft_is_compared(changed):
+    """A pipeline voice edit typed just before leaving reaches save_state in
+    the panel's draft before DraftModified marks settings_drafts, so the
+    Speech snapshot is the only place it shows. The check compared the state
+    and Realtime pairs only and called the visit clean (TASK-33007)."""
+    from tldw_chatbook.Backup_Recovery.unsaved_editors import probe_unsaved_editors
+    from tldw_chatbook.UI.Navigation.screen_state_store import (
+        RuntimeIdentity,
+        ScreenStateStore,
+    )
+    from tldw_chatbook.UI.Screens.settings_speech_tts import (
+        load_global_speech_tts_state,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types import (
+        _PipelineVoiceSettingsDraft,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSPanelDraftSnapshot,
+        _RealtimeSettingsDraft,
+    )
+
+    realtime = _RealtimeSettingsDraft(
+        False, "openai", "gpt-realtime", "", "30", "auto", "semantic_vad", "0.5", "500",
+        "", False,
+    )
+    snapshot = SpeechTTSPanelDraftSnapshot(
+        state=load_global_speech_tts_state({}),
+        original_state=load_global_speech_tts_state({}),
+        realtime_draft=realtime,
+        realtime_original=realtime,
+        configure_provider="audio_cpp",
+        draft_revision=1,
+        pipeline_voice_draft=_PipelineVoiceSettingsDraft(
+            "2000" if changed else "700", True
+        ),
+        pipeline_voice_original=_PipelineVoiceSettingsDraft("700", True),
+    )
+    store = ScreenStateStore()
+    store.save(
+        "settings",
+        {"settings_drafts": {}, "speech_tts_panel_draft": snapshot},
+        RuntimeIdentity("local"),
+    )
+    assert bool(probe_unsaved_editors(screen_state_store=store)) is changed
+
+
 @pytest.mark.parametrize("route", ["library", "personas", "stts"])
 @pytest.mark.parametrize("changed", [False, True])
 def test_retained_navigation_snapshots_are_clean_without_losing_drafts(route, changed):
@@ -780,3 +827,165 @@ def test_installed_library_prompt_mutation_state_is_checked(busy):
     screen._prompts_state.mutation_in_flight = busy
     assert bool(probe_unsaved_editors(editors=(screen,))) is busy
     assert screen._prompts_state.mutation_in_flight is busy
+
+
+def _resolve_state_key(node, namespace):
+    import ast
+
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        return namespace[node.id]
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        return getattr(namespace[node.value.id], node.attr)
+    raise AssertionError(f"unreadable state key: {ast.unparse(node)}")
+
+
+def _written_state_keys(function, namespace, name="state", returns=True) -> set:
+    """The keys ``function`` writes into its dict ``name``, read from source.
+
+    Fails closed: ``name`` may only be bound to a fresh ``{}``, subscripted,
+    handed whole to a helper (followed under that helper's own parameter
+    name, positional or keyword) or, in save_state itself, returned bare.
+    Any other use (a dict literal, ``|=``, ``{**name}``, ``name.update``)
+    could write a key this walker cannot read, so it raises instead.
+    """
+    import ast
+    import inspect
+    import sys
+    import textwrap
+
+    def follow(helper, parameter):
+        module = vars(sys.modules[helper.__module__])
+        return _written_state_keys(helper, module, parameter, returns=False)
+
+    keys = set()
+    tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    for node in ast.walk(tree):
+        if returns and isinstance(node, ast.Return):
+            assert isinstance(node.value, ast.Name) and node.value.id == name, (
+                f"save_state must return the bare {name}: {ast.unparse(node)}"
+            )
+        if not (isinstance(node, ast.Name) and node.id == name):
+            continue
+        parent = parents[node]
+        if isinstance(node.ctx, ast.Store):
+            assert (
+                isinstance(parent, (ast.Assign, ast.AnnAssign))
+                and isinstance(parent.value, ast.Dict)
+                and not parent.value.keys
+            ), f"{name} is bound to more than a fresh {{}}: {ast.unparse(parent)}"
+        elif isinstance(parent, ast.Subscript) and parent.value is node:
+            if isinstance(parent.ctx, ast.Store):
+                keys.add(_resolve_state_key(parent.slice, namespace))
+        elif isinstance(parent, ast.Call) and node in parent.args:
+            assert not any(isinstance(arg, ast.Starred) for arg in parent.args)
+            helper = _resolve_state_key(parent.func, namespace)
+            parameters = list(inspect.signature(helper).parameters)
+            keys |= follow(helper, parameters[parent.args.index(node)])
+        elif isinstance(parent, ast.keyword) and parent.arg is not None:
+            keys |= follow(_resolve_state_key(parents[parent].func, namespace), parent.arg)
+        elif not (returns and isinstance(parent, ast.Return)):
+            raise AssertionError(
+                f"{name} is used in a way this pin cannot read: {ast.unparse(parent)}"
+            )
+    return keys
+
+
+# Toy save_state shapes the key pin below must not be slipped past (an
+# independent review of #3057 ran each against the walker and got set()).
+def _toy_keep(screen, snapshot):
+    snapshot["k"] = 1
+
+
+def _toy_keep_state(screen, state):
+    state["k"] = 1
+
+
+def _toy_dict_literal(self):
+    state: dict = {"k": 1}
+    return state
+
+
+def _toy_or_equals(self):
+    state: dict = {}
+    state |= {"k": 1}
+    return state
+
+
+def _toy_rebound_spread(self):
+    state: dict = {}
+    state = {**state, "k": 1}
+    return state
+
+
+def _toy_keyword(self):
+    state: dict = {}
+    _toy_keep_state(self, state=state)
+    return state
+
+
+def _toy_renamed_parameter(self):
+    state: dict = {}
+    _toy_keep(self, state)
+    return state
+
+
+def _toy_return_spread(self):
+    state: dict = {}
+    return {**state, "k": 1}
+
+
+def _toy_return_or(self):
+    state: dict = {}
+    return state | {"k": 1}
+
+
+@pytest.mark.parametrize(
+    "toy",
+    [
+        _toy_dict_literal,
+        _toy_or_equals,
+        _toy_rebound_spread,
+        _toy_keyword,
+        _toy_renamed_parameter,
+        _toy_return_spread,
+        _toy_return_or,
+    ],
+    ids=lambda toy: toy.__name__.removeprefix("_toy_"),
+)
+def test_save_state_key_pin_reads_or_refuses_every_way_a_key_is_written(toy):
+    """Each toy writes the key "k". The pin's walker must report it (a
+    keyword or a renamed helper parameter) or refuse the shape (a dict
+    literal, |=, a rebinding, a return that is not the bare dict), never
+    return set() as it did for all of them (TASK-33007)."""
+    try:
+        keys = _written_state_keys(toy, globals())
+    except AssertionError:
+        return
+    assert keys == {"k"}, f"{toy.__name__} slipped a key past the pin"
+
+
+def test_retained_settings_check_knows_every_key_settings_save_state_writes():
+    """The retained check refuses a Settings key it does not know, so a key
+    save_state gains turns every kept visit into "unknown-editor-state" and
+    recovery mode refuses (hooks_snapshot, unsaved_titles and
+    snapshot_preferences did, TASK-33007). Read from the source, so a key
+    written only on one branch, or by a helper handed ``state``, counts."""
+    import sys
+
+    from tldw_chatbook.Backup_Recovery.unsaved_editors import SETTINGS_SNAPSHOT_KEYS
+    from tldw_chatbook.UI.Settings_Modules import settings_quit_guard
+
+    namespace = {
+        **vars(sys.modules[SettingsScreen.__module__]),
+        "quit_guard": settings_quit_guard,  # save_state's local import
+    }
+    assert _written_state_keys(SettingsScreen.save_state, namespace) == (
+        SETTINGS_SNAPSHOT_KEYS
+    )

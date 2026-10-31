@@ -606,6 +606,12 @@ def build_library_workspace_depth_state(
 
     workspace_name_cache: dict[str, str] = {}
     rows: list[LibraryWorkspaceSourceRow] = []
+    # TASK-34000.24: resolved BEFORE the row loop so every row's recovery
+    # copy names the workspace the same way the panel heading does.
+    workspace_display_name = library_workspace_display_name(active_workspace)
+    row_workspace_name = (
+        "" if workspace_display_name == NAMELESS_WORKSPACE_LABEL else workspace_display_name
+    )
     for source_type, records in source_records.items():
         for record in records:
             row = _library_workspace_source_row(
@@ -614,14 +620,10 @@ def build_library_workspace_depth_state(
                 source_type,
                 record,
                 workspace_name_cache,
+                active_workspace_name=row_workspace_name,
             )
             if row is not None:
                 rows.append(row)
-    workspace_display_name = (
-        "Local Default"
-        if active_workspace.workspace_id == DEFAULT_WORKSPACE_ID
-        else active_workspace.name
-    )
     if not rows:
         return LibraryWorkspaceDepthState(
             heading="Workspaces",
@@ -905,12 +907,43 @@ def _library_source_rows_without_workspace(
     return tuple(rows)
 
 
+#: What a workspace with no name is called in user-facing copy (fix round 1,
+#: M-5): a plain phrase, never the raw id. ``build_library_workspace_depth_
+#: state`` hands the eligibility copy ``""`` for such a record so the shared
+#: sentence reads "into the active workspace", not "into the the active
+#: workspace workspace".
+NAMELESS_WORKSPACE_LABEL = "the active workspace"
+
+
+def library_workspace_display_name(workspace: WorkspaceRecord) -> str:
+    """The name the Library shows for a workspace (TASK-34000.24).
+
+    The built-in default is "Local Default" everywhere the Library names it
+    (the depth-state heading, the hand-off receipts, the shared refusal
+    copy); any other workspace is its own ``name``. Hoisted from the depth
+    state builder so the link-on-use seam imports the rule instead of
+    copying it. Never the raw id: a nameless record is called
+    ``NAMELESS_WORKSPACE_LABEL``.
+
+    Args:
+        workspace: The workspace record.
+
+    Returns:
+        The display name.
+    """
+    if workspace.workspace_id == DEFAULT_WORKSPACE_ID:
+        return "Local Default"
+    return str(workspace.name or "").strip() or NAMELESS_WORKSPACE_LABEL
+
+
 def _library_workspace_source_row(
     registry_service: Any,
     active_workspace: WorkspaceRecord,
     source_type: str,
     record: Mapping[str, Any],
     workspace_name_cache: dict[str, str],
+    *,
+    active_workspace_name: str = "",
 ) -> LibraryWorkspaceSourceRow | None:
     item_type = _library_workspace_item_type(source_type)
     item_id = _library_source_record_id(record)
@@ -924,6 +957,7 @@ def _library_workspace_source_row(
         item_workspace_ids=workspace_ids,
         item_type=item_type,
         operation=WorkspaceOperation.STAGE_IN_CONSOLE,
+        active_workspace_name=active_workspace_name,
     )
     return LibraryWorkspaceSourceRow(
         item_type=item_type,
@@ -1007,12 +1041,21 @@ def library_item_context_handoff(
     return state.context_handoff_enabled, state.context_handoff_tooltip
 
 
-def _library_workspace_item_type(source_type: str) -> str:
+def library_workspace_item_type(source_type: str) -> str:
+    """Map a Library source type (``"notes"``, ``"media"``,
+    ``"conversations"``) onto the canonical membership item type.
+
+    Public since fix round 1 (I-2) so Search `u` uses this map rather than
+    its own copy.
+    """
     return {
         "notes": "note",
         "media": "media",
         "conversations": "conversation",
     }.get(source_type, source_type.rstrip("s") or "source")
+
+
+_library_workspace_item_type = library_workspace_item_type
 
 
 def _library_source_record_id(record: Mapping[str, Any]) -> str | None:

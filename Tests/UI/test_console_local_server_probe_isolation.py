@@ -38,7 +38,6 @@ from tldw_chatbook.Chat.local_server_discovery import (
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleModelDiscoveryIdentity,
-    ConsoleUnverifiedModelDecision,
 )
 
 
@@ -53,8 +52,13 @@ class ConsoleHarness(ConsolidatedCSSApp):
         await self.push_screen(ChatScreen(self.app_instance))
 
 
-def test_unverified_model_decision_is_not_endpoint_agnostic() -> None:
-    """An approval for one canonical endpoint cannot authorize another endpoint."""
+def test_discovery_identity_is_not_endpoint_agnostic() -> None:
+    """A listing for one canonical endpoint cannot stand for another endpoint.
+
+    TASK-33006.4 deleted the unverified-model approval this pinned (Keep
+    unverified went with the model search); the identity it keyed on keeps
+    the endpoint distinction.
+    """
     first = ConsoleModelDiscoveryIdentity(
         provider_key="vllm",
         connection_identity=("vllm", "http://127.0.0.1:8000"),
@@ -63,12 +67,10 @@ def test_unverified_model_decision_is_not_endpoint_agnostic() -> None:
     second = ConsoleModelDiscoveryIdentity(
         provider_key="vllm",
         connection_identity=("vllm", "http://127.0.0.1:8001"),
-        draft_generation=4,
+        draft_generation=3,
     )
 
-    assert ConsoleUnverifiedModelDecision(first, "custom") != (
-        ConsoleUnverifiedModelDecision(second, "custom")
-    )
+    assert first != second
 
 
 def _blocked_provider_app():

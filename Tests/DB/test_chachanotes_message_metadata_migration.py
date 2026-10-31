@@ -53,9 +53,7 @@ def test_migration_adds_metadata_json_and_bumps_version(tmp_path, monkeypatch):
     db_path = tmp_path / "chachanotes.db"
     _seed_v30_database(db_path, monkeypatch)
 
-    db = open_current_chachanotes_from_legacy(
-        db_path, client_id="migration-test"
-    )
+    db = open_current_chachanotes_from_legacy(db_path, client_id="migration-test")
     connection = db.get_connection()
     assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert "metadata_json" in _message_columns(connection)
@@ -65,9 +63,7 @@ def test_migration_adds_metadata_json_and_bumps_version(tmp_path, monkeypatch):
 def test_metadata_json_excluded_from_sync_triggers(tmp_path, monkeypatch):
     db_path = tmp_path / "chachanotes.db"
     _seed_v30_database(db_path, monkeypatch)
-    db = open_current_chachanotes_from_legacy(
-        db_path, client_id="migration-test"
-    )
+    db = open_current_chachanotes_from_legacy(db_path, client_id="migration-test")
     connection = db.get_connection()
     triggers = connection.execute(
         "SELECT sql FROM sqlite_master WHERE type='trigger' AND name LIKE 'messages_sync%'"

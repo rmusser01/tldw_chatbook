@@ -1,0 +1,202 @@
+"""TASK-34000.27: the sentence a nav-bar click gets when Library's flush
+refuses to let the Notes editor go.
+
+Pure. ``library_note_flush_veto_notice`` builds the toast from the typed
+``NoteFlushOutcome``: a validation veto repeats the save's own message (which
+already names the field and the fix, so a keyword veto never blames the
+title -- review N-25), and every other kind reuses the Esc path's sentence
+(`_library_note_editor_exit_veto_message`, owned by TASK-34000.29) with the
+clicked destination in its head. The two formerly silent Library vetoes get
+an honest generic sentence of the same shape.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from tldw_chatbook.Library.library_notes_session import (
+    NoteFlushOutcome,
+    NoteFlushOutcomeKind,
+)
+from tldw_chatbook.UI.Library_Modules.library_pending_work import (
+    library_file_notes_flush_veto_notice,
+    library_note_flush_veto_notice,
+    library_prompt_mutation_veto_notice,
+)
+from tldw_chatbook.UI.Screens.library_screen import (
+    _library_note_editor_exit_veto_message,
+)
+
+#: ``bootstrap_profile``: importing the Library screen module (for the Esc
+#: path's sentence table) runs the app's recovery bootstrap, which the
+#: per-test sandbox fails locally with ``RecoveryRequired``.
+pytestmark = [pytest.mark.unit, pytest.mark.bootstrap_profile]
+
+_TITLE_REASON = "Title begins or ends with whitespace — remove it to save."
+_KEYWORD_REASON = (
+    "Keywords contain a case-insensitive duplicate — remove one to save."
+)
+
+
+def test_validation_veto_repeats_the_saves_own_reason_after_the_destination():
+    outcome = NoteFlushOutcome(NoteFlushOutcomeKind.VALIDATION_VETO, _TITLE_REASON)
+
+    assert (
+        library_note_flush_veto_notice(outcome, destination="Console")
+        == f"Can't open Console yet: {_TITLE_REASON}"
+    )
+
+
+def test_keyword_veto_never_blames_the_title():
+    outcome = NoteFlushOutcome(NoteFlushOutcomeKind.VALIDATION_VETO, _KEYWORD_REASON)
+
+    text = library_note_flush_veto_notice(outcome, destination="Console")
+
+    assert text == f"Can't open Console yet: {_KEYWORD_REASON}"
+    assert "title" not in text.lower()
+
+
+def test_no_destination_label_falls_back_to_cant_leave_yet():
+    outcome = NoteFlushOutcome(NoteFlushOutcomeKind.VALIDATION_VETO, _TITLE_REASON)
+
+    assert (
+        library_note_flush_veto_notice(outcome, destination="")
+        == f"Can't leave yet: {_TITLE_REASON}"
+    )
+
+
+def test_validation_veto_without_a_message_uses_the_esc_paths_sentence():
+    outcome = NoteFlushOutcome(NoteFlushOutcomeKind.VALIDATION_VETO, "")
+
+    text = library_note_flush_veto_notice(outcome, destination="Console")
+
+    assert text.startswith("Can't open Console yet — ")
+    assert text.endswith(
+        _library_note_editor_exit_veto_message(
+            NoteFlushOutcomeKind.VALIDATION_VETO
+        ).removeprefix("Can't leave yet — ")
+    )
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        NoteFlushOutcomeKind.FAILED,
+        NoteFlushOutcomeKind.CONFLICTED,
+        NoteFlushOutcomeKind.BLOCKED,
+        NoteFlushOutcomeKind.STALE,
+    ],
+)
+def test_other_kinds_reuse_the_esc_sentence_with_the_destination_head(kind):
+    esc_sentence = _library_note_editor_exit_veto_message(kind)
+    assert esc_sentence.startswith("Can't leave yet — "), esc_sentence
+    outcome = NoteFlushOutcome(kind, "status-line wording, not the toast's")
+
+    text = library_note_flush_veto_notice(outcome, destination="Home")
+
+    assert text == "Can't open Home yet — " + esc_sentence.removeprefix(
+        "Can't leave yet — "
+    )
+    assert "status-line wording" not in text
+
+
+def test_a_permitted_outcome_has_nothing_to_say():
+    assert (
+        library_note_flush_veto_notice(
+            NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED), destination="Console"
+        )
+        == ""
+    )
+
+
+def test_the_formerly_silent_vetoes_say_something_honest():
+    files = library_file_notes_flush_veto_notice(destination="Console")
+    prompt = library_prompt_mutation_veto_notice(destination="Console")
+
+    assert files.startswith("Can't open Console yet — ")
+    assert "Folder files" in files
+    # Review 1 Minor 5: the workspace also refuses for a folder change or a
+    # git action in flight, when the file IS saved -- never claim "isn't saved".
+    assert "isn't saved" not in files
+    assert "isn't settled yet" in files and "still running" in files
+    assert prompt.startswith("Can't open Console yet — ")
+    assert "prompt" in prompt.lower() and "in progress" in prompt
+    assert library_prompt_mutation_veto_notice(destination="").startswith(
+        "Can't leave yet — "
+    )
+
+
+# ---------------------------------------------------------------------------
+# TASK-34000.22: Ctrl+Q's prompt names a dirty Media form
+# ---------------------------------------------------------------------------
+
+
+def _screen_with_only_a_media_draft(dirty_form: str):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        _notes_state=SimpleNamespace(file_notes_workspace=None),
+        _library_note_session=SimpleNamespace(snapshot=None),
+        _prompts_state=SimpleNamespace(dirty=False, original_name=""),
+        _skills_state=SimpleNamespace(dirty=False, original_name=""),
+        _library_media_editor_dirty=lambda: dirty_form,
+    )
+
+
+@pytest.mark.parametrize(
+    ("dirty_form", "expected"),
+    [
+        # Fix round 1 (M-8 ruling): the prompt's title already says "unsaved
+        # changes to", so the names do not repeat the word.
+        ("analysis", ["analysis"]),
+        ("edit", ["media details"]),
+        ("", []),
+    ],
+)
+def test_unsaved_names_name_a_dirty_media_form(dirty_form, expected):
+    """``confirm_library_quit`` titles its prompt from these names, so a dirty
+    analysis or metadata form is named there exactly as a dirty prompt is."""
+    from tldw_chatbook.UI.Library_Modules.library_pending_work import _unsaved_names
+
+    assert _unsaved_names(_screen_with_only_a_media_draft(dirty_form)) == expected
+
+
+# ---------------------------------------------------------------------------
+# TASK-34000.22 fix round 3: the navigation-sources barrier carries the veto
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_navigation_sources_flush_refuses_a_dirty_media_form_out_loud():
+    """``_flush_library_navigation_sources`` -- the barrier every navigation
+    INTO Library crosses -- refuses while a Media authoring form holds unsaved
+    text, and says so once, after the note/prompt/skill barriers all admit."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Library_Modules.library_inspection_admission import (
+        _flush_library_navigation_sources,
+    )
+
+    spoken: list[str] = []
+
+    async def permitted():
+        return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED, "")
+
+    async def allowed():
+        return True
+
+    screen = SimpleNamespace(
+        _prompts_state=SimpleNamespace(mutation_in_flight=False),
+        _flush_library_note_save=permitted,
+        _flush_library_prompt_save=allowed,
+        _flush_library_skill_save=allowed,
+        _library_media_editor_dirty=lambda: "analysis",
+        _notify_media_editor_dirty_veto=lambda: spoken.append("media"),
+    )
+
+    assert await _flush_library_navigation_sources(screen, is_current=lambda: True) is False
+    assert spoken == ["media"]
+
+    screen._library_media_editor_dirty = lambda: ""
+    assert await _flush_library_navigation_sources(screen, is_current=lambda: True) is True
+    assert spoken == ["media"]

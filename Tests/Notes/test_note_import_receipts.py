@@ -844,9 +844,12 @@ def test_read_only_prior_observation_lookup_never_migrates_or_repairs_v1(
     assert database.read_bytes() == before
     with sqlite3.connect(database) as connection:
         assert connection.execute("PRAGMA user_version").fetchone() == (1,)
-        assert connection.execute(
-            "SELECT 1 FROM sqlite_schema WHERE name = 'idx_import_items_target'"
-        ).fetchone() is None
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_schema WHERE name = 'idx_import_items_target'"
+            ).fetchone()
+            is None
+        )
 
 
 def test_read_only_prior_observation_lookup_uses_sqlite_enforced_read_only_mode(

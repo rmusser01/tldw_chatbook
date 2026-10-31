@@ -1,0 +1,40 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  🔎│setup                                                                                                            │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  Setup: Run setup wizard…
+  Walk through providers, models, and app configuration
+  Settings & Preferences: Backup & Restore
+  Create backups, inspect archives, and review recovery copies
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+     Archive this chat       │  ───────────────────────────────────────────────────────────────────────────  │
+      Archived chats         │  ▊ Assistant                                                                  │◂ Inspect
+     Search all chats…       │  ▊                                                                            │
+   Reply with just: OK     ▁ │  ▊                                                                            │
+                             │  ▊                                                                            │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ───────────────────────────────────────────────────────────────────────────  │
+  ▊  Filter      ▎           │   System                                                                      │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │   This request cannot fit the selected model. Response reservation and        │
+                             │   safety margin leave no model input capacity. Summarizing older turns        │
+  Chats                 ▾    │   cannot make enough room. Repair the model limit, reduce mandatory context   │
+ ▼ Character · Model · +2    │   or the response maximum, or allow older turns to be omitted.                │
+                             │  ───────────────────────────────────────────────────────────────────────────  │ blocked
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                      │
+│  Response accepted; waiting for dispatch.                                                                            │
+│                                                                                                                      │
+│   Retry response      Discard                                                                                        │
+│                                                                                                                  ▆▆  │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model: gpt-5.6-terra     System Prompt: off
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task..   Send blocked — resolve respon…       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+P · Ctrl+Q

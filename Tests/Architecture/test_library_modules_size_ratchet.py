@@ -159,9 +159,18 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1689,
     # TASK-32659: bounded saved-search loading, including authority/request fencing.
     "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py": 49,
-    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 976,
+    # TASK-33628.10: 976 -> 964. The ensure-selection decision moved to
+    # library_conversation_reader_freshness.py with its new transcript re-check.
+    # 964 -> 967 (2026-10-03, Qodo #2989): a completed load calls that module's
+    # recheck_settled_load, so a load a list read found in flight is re-checked.
+    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 967,
     "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1800,
-    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1453,
+    # 2026-10-21, TASK-34000.22 fix round 1 (owner decision 2026-10-04: raise
+    # the row to the measured value): 1453 -> 1492. Dev itself was already
+    # over this row at 1484 (one of dev's own pre-existing ratchet reds);
+    # this task adds 8 lines -- the Media authoring forms' dirty refusal
+    # beside the Export… opener's note flush (C-1).
+    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1492,
     # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
     # discovery, recipe §17) -- 57 moved methods (byte-for-byte) + a
@@ -239,7 +248,31 @@ _BUDGETS: dict[str, int] = {
     # Keyword-only constructor arity measured, not assumed: 38 -> 41 (43
     # total including `self` and `screen`). No other body touched; 56 movers
     # unchanged. 2623 -> 2721.
-    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 3080,
+    # 2026-10-23, TASK-34000.20 (owner decision 2026-10-04: a fix over a size
+    # ratchet raises the row to the measured value). dev `d0d926e11b` was
+    # ALREADY over this row before the P1-C batch (measured 3087 vs 3080).
+    # This task adds `_library_ingest_preflight_is_current`, the wait-gate at
+    # the top of `_submit_library_ingest_form` (Enter and Start now import
+    # only on a pre-check for the current text), the armed-submit fire in
+    # `_apply_library_ingest_preflight_result`, the debounce stop + arm
+    # re-point in `_trigger_library_ingest_preflight`, and two disarm sites:
+    # 3080 -> 3164 (measured).
+    # 2026-10-23, TASK-34000.20 fix round 1 (same owner decision): the armed
+    # submit is bound to its exact text and fires only while the ingest row
+    # is selected, the Library screen is active and the field still shows
+    # that text (`_arm_/_disarm_library_ingest_submit`,
+    # `_library_ingest_submit_may_fire`, `_library_ingest_preflight_worker_
+    # is_live`), a press on a current not-found verdict re-checks, and the
+    # trigger normalises whitespace: 3164 -> 3242 (measured).
+    # 2026-10-23, TASK-34000.20 fix round 2 (same owner decision): the fire-time
+    # text check reads the live path Input instead of the form echo
+    # (`_library_ingest_submit_may_fire`): 3242 -> 3247 (measured).
+    # 2026-10-24, TASK-34000.20 P1-C final fix round (same owner decision): a
+    # press on a CURRENT verdict that shut the gate for what the check found
+    # (empty folder, nothing importable, nothing the server takes) re-checks
+    # like the path problem does (`_library_ingest_gate_is_shut_by_the_
+    # precheck`, I-B): 3247 -> 3281 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 3281,
     # Re-pinned to the measured value 2026-09-19 by the core-review ratchet
     # re-baseline (TASK-32809.1), which SUPERSEDES the prior Library-wave
     # stance of holding this row at 371. That stance was correct FOR A
@@ -362,7 +395,70 @@ _BUDGETS: dict[str, int] = {
     # `LibraryMediaCanvas(...)` construction site, which is what lets the
     # canvas own its sixteen canvas-origin `@on` rows without reaching back
     # through the screen. The screen shrank 63 lines in the same commit.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4768,
+    # 2026-10-06, perf wave 5 task 12 (media filter debounce): 4768 -> 4769.
+    # Exactly one line: the `MEDIA_FILTER_DEBOUNCE_SECONDS` import that the
+    # filter handler now arms its timer with (it previously reused
+    # SELECTION_SETTLE_SECONDS, a row-selection paint-settle value, as its
+    # search debounce). No moved body was touched.
+    # 2026-10-19, TASK-34000.24 (owner decision 2026-10-04: a fix over a size
+    # ratchet raises the row to the measured value): 4769 -> 4874. origin/dev
+    # 4de437a5c5 was ALREADY at 4812 against this row (one of dev's own
+    # pre-existing ratchet reds, 43 over); this task added 62 lines: the
+    # "Use in Console" link receipt threaded through the Reader build and
+    # the unchanged-compare (+10), the receipt's visibility rule
+    # `_library_media_visible_link_receipt` (+41), and the per-item clear at
+    # the selection entry (+6, with its comment). No code was moved or
+    # reflowed to fit. Re-measured after fix round 1: still 4874.
+    # 2026-10-20, fix round 2 (item 4): 4874 -> 4898 (+24),
+    # `library_media_link_receipt_block` -- why a standing receipt is
+    # withheld (other item / registry unavailable / workspace inactive), so
+    # the Undo handler can tell an unreadable registry from a moved
+    # workspace; the visibility rule now reads it.
+    # 2026-10-20, TASK-34000.18 (owner decision 2026-10-04: a fix over a size
+    # ratchet raises the row to the measured value): 4898 -> 4933 (+35).
+    # origin/dev 4de437a5c5 was ALREADY at 4812 against the old 4769 row
+    # (one of dev's own pre-existing ratchet reds); the clarify batch
+    # measured 4898 on 32caa91c1a. This task added `_library_media_reader_
+    # target_id` -- the one identity every Reader-scoped action reads
+    # (+14, docstring included), the trash confirm's `delete_target_title`
+    # threaded through the Reader build and the unchanged-compare (+5) and
+    # its resolver `_library_media_delete_target_title` (+13), plus the
+    # import and three one-line reads. No code was moved or reflowed to fit.
+    # 2026-10-20, TASK-34000.18 fix round 1 (same owner decision): 4933 ->
+    # 4989 (+56). `_adopt_library_media_highlight` moved onto the controller
+    # (+32 with its docstring; the screen keeps a one-line delegator) so
+    # `_build_library_media_active_child` routes through it too, and the
+    # one predicate `_library_media_reader_holds_highlight` (+22) decides
+    # whether the Reader holds the highlight (viewer view AND unfiltered
+    # scope), read by the builder input (+2) and the adopter.
+    # 2026-10-20, TASK-34000.18 fix round 2 (same owner decision): 4989 ->
+    # 5006 (+17). The hold is ORDER-based now: the predicate reads the
+    # `highlight_held_by_reader` state field instead of the scope (docstring
+    # +4), the row-select seam sets it (+3), and the list canvas's own
+    # presentation resolves the list selection itself (+10) rather than the
+    # Reader's target.
+    # 2026-10-20, TASK-34000.22 (same owner decision; dev was already at
+    # 4812 before this batch, Task 1 took it to 5006): 5006 -> 5185 (+179).
+    # The two authoring forms' draft seams: the baseline reader, the one
+    # dirty predicate every exit reads, the veto toast, the transition-only
+    # resync helper and the five ``Changed`` recorders (+~150 with their
+    # docstrings), the draft seeding/clearing beside every flag write, and
+    # the per-item drop at the reader-row select seam.
+    # 2026-10-21, TASK-34000.22 fix round 1 (same owner decision): 5185 ->
+    # 5227 (+42): the central guard at the reader-row select seam, the
+    # refusal's tab reveal, and the three review-set openers' refusals.
+    # 2026-10-21, TASK-34000.22 fix round 2 (same owner decision): 5227 ->
+    # 5254 (+27): the viewer opener's refusal, the central guard moved ahead
+    # of the select preamble, and ``_reveal_library_media_dirty_form``.
+    # 2026-10-21, TASK-34000.22 fix round 3 (same owner decision): 5254 ->
+    # 5265 (+11): the reveal flips only from "list" (comment) and the
+    # external-detail opener's one-line refusal.
+    # 2026-10-22, P1-A final review C-1 (same owner decision): 5265 -> 5281
+    # (+16): ``reader_action_target`` takes no view (the Reader's controls
+    # act on the loaded item in the list view too), the highlight hold also
+    # holds while a form is dirty in any view, and the trash confirm's title
+    # derives from the same target id as the Delete press. Exact measurement.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5281,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -408,7 +504,85 @@ _BUDGETS: dict[str, int] = {
     # test_obsidian_review_defaults_on_shows_skips_and_never_touches_the_vault`
     # -- without the handler the toggle press never re-checks and the test reds
     # on "Turning Obsidian vault off never re-ran the check."
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6366,
+    #
+    # 2026-10-03, TASK-34000.2: 6366 -> 6311 (-55), a MOVE. The note
+    # location loader's body and its file-written label moved into
+    # `library_notes_sync_attention.py` (which now also answers whether the
+    # note's sync folder is held for attention); the controller keeps a
+    # three-line delegator and one scheduling call.
+    #
+    # 2026-10-08, TASK-34000.13: 6311 -> 6337 (+26), owner decision
+    # (2026-10-04 ruling: a fix over a size ratchet raises the row to the
+    # measured value; never move or reflow code to make it fit). The
+    # delete prompt is now revealed after the refresh:
+    # `handle_library_note_delete` schedules
+    # `_reveal_library_note_delete_prompt` (scroll the whole prompt into
+    # Info, focus Cancel in place) via `call_after_refresh`.
+    #
+    # 2026-10-09, TASK-34000.8: 6337 -> 6338 (+1), owner decision (same
+    # ruling). Not this task's code: the TASK-34000.13 review commit
+    # (8a8970dd2e, "blank line before _reveal_library_note_delete_prompt")
+    # added one line after the 6337 pin was measured, so the row was red on
+    # the base. Re-set to the exact measurement.
+    #
+    # 2026-10-09, TASK-34000.25: 6338 -> 6383 (+45), owner decision (same
+    # 2026-10-04 ruling: a fix over a size ratchet raises the row to the
+    # measured value; never move or reflow code to make it fit). This task's
+    # code: the Media Reader's Note action creates its note through the one
+    # create seam (`_start_library_note_from_media_source`, beside
+    # `_start_library_blank_note`) and the caret lands where the latest
+    # create asked (`_focus_library_note_caret_for_create`, read by both the
+    # create projection and the editor-ready hook). Re-set to the exact
+    # measurement.
+    #
+    # 2026-10-09, PR #3055 review (Minor 4): 6383 -> 6386 (+3), owner
+    # decision (same 2026-10-04 ruling). Three blank lines between
+    # consecutive method definitions (`_focus_library_note_caret_for_create`,
+    # `_start_library_note_from_media_source`, `_focus_library_note_control`)
+    # that the adapt batch left out. Re-set to the exact measurement.
+    #
+    # 2026-10-21, TASK-34000.9: 6386 -> 6389 (+3), owner decision (same
+    # 2026-10-04 ruling). ``_library_note_presentation_state`` carries the
+    # new ``autosave_scheduled`` flag (one kwarg line) read through a lazy
+    # import of the autosave policy module (one line plus its blank); the
+    # predicate itself is in ``library_note_autosave.py``. Re-set to the
+    # exact measurement.
+    #
+    # 2026-10-21, TASK-34000.10: 6389 -> 6397 (+8), owner decision (same
+    # 2026-10-04 ruling). ``_library_note_presentation_state`` carries the
+    # vetoed field and its reason (``validation_field`` /
+    # ``validation_message``: one ``vetoed`` line, two kwargs, a three-line
+    # comment), and the two explicit veto presenters (Save, conflict
+    # Overwrite) each record the field in one line; the focus-independent
+    # guard itself is in ``library_note_autosave.py``, the tidy in
+    # ``Library/library_note_field_tidy.py``. Re-set to the exact measurement.
+    # Fix round 1 (2026-10-22): 6397 -> 6425 (+28), same ruling; fix round 2:
+    # 6425 -> 6428 (+3), the mark checked before "Saving…" (three comment
+    # lines; the check itself moved). The mark
+    # clears only when the vetoed field itself changes (M-5): one
+    # ``clear_vetoed_field`` line in each of the four field handlers, one in
+    # ``_begin_library_note_load`` and one in ``_reset_library_note_editor_
+    # state`` (M-6); the two explicit veto presenters pass the veto's message
+    # (two lines each); ``safe_next_action`` is suppressed while a veto
+    # stands (M-4: one kwarg, three comment lines); the presentation comment
+    # on the ungated mark grew by two lines; the status line keeps the veto
+    # reason while a mark stands and a conflict or a landed save clears it
+    # (nine lines). Exact measurement.
+    # 2026-10-22, P1-A final review I-1 (same owner decision): 6428 -> 6473
+    # (+45): ``_library_notes_defer_focus_to_app_focus`` -- while the
+    # terminal is blurred a focus-identity restore focuses nothing and
+    # re-points Textual's ``_last_focused_on_app_blur`` at the live instance
+    # of the user's field, so AppFocus lands there (docstring included), plus
+    # the two-line call at the restore's ``set_focus``. Exact measurement.
+    # 2026-10-22, TASK-34000.10 final-review re-review (owner decision, same
+    # rule): 6473 -> 6484 -- the blurred-terminal restore leaves another
+    # screen's or a modal's own focus slot alone.
+    # 2026-10-24, TASK-34000 P1-B rebased onto dev with P1-C (owner decision,
+    # "expand the limits, don't modify other code to make it fit"): the batch's
+    # .17/.14/.12/.11/.71 controller work (Add-from-files reset, root-load
+    # belt, link picker insert/follow, lazy-start settle) measured on the
+    # rebased tree: 6484 -> 7200.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7200,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
@@ -431,7 +605,38 @@ _BUDGETS: dict[str, int] = {
     # (keyed on `root_id == ""` => setup), so each of the two Check paths
     # spends exactly one line on it. This row was briefly pinned at 2128 with
     # the table in the controller; that was rejected in review and reverted.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2380,
+    #
+    # 2026-10-03, TASK-32633 slice (N-03): 2380 -> 2366 (-14), a MOVE. The
+    # root-status copy table moved to `Library/library_notes_lasting_sync_
+    # state.py` as `ROOT_STATUS_LABELS`, next to the refusal table above, and
+    # the healthy label is now dated there (`root_status_label`); the
+    # controller spends one line on the call it used to spend three on.
+    #
+    # 2026-10-08, TASK-34000.50, owner decision ("expand the limits, don't
+    # modify other code to make it fit", 2026-10-04): 2366 -> 2375 (+9). The
+    # third per-root label overlay (a healthy root nothing watches reads
+    # "Sync stopped") sits inline beside the other two in `_project_root`.
+    #
+    # 2026-10-09, TASK-32451, owner decision ("expand the limits, don't
+    # modify other code to make it fit", 2026-10-04): 2375 -> 2378 (+3). The
+    # row title is the runtime's `display_name` (the folder's name) instead
+    # of a placeholder literal; three comment lines name the source.
+    # 2026-10-20, TASK-32451 rebase onto dev 250159834c, same owner decision:
+    # 2378 -> 2397. Dev itself already measures 2394 against its own 2375
+    # row (a pre-existing dev red); this branch adds the same +3 above.
+    #
+    # 2026-10-24, TASK-34000.16 fix round 1 (I-2), owner decision ("expand
+    # the limits, don't modify other code to make it fit", 2026-10-04):
+    # 2397 -> 2415 (+18). A migrated candidate whose file the walk could not
+    # read holds Activate: `_review_projection` hands the review's `source`
+    # to the builder (+1), the migration check's status line names the
+    # skipped files (+4), and `activate_root` refuses before asking the
+    # runtime (+10 with its comment); the import is one line.
+    # 2026-10-24, TASK-34000 P1-B rebased onto dev with P1-C (same owner
+    # decision): P1-B's .17 begin_add_from_files / release-on-exit and .71
+    # availability re-derive on top of P1-C's .16 activation hold, measured
+    # on the rebased tree: 2415 -> 2461.
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2461,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
@@ -481,7 +686,8 @@ _BUDGETS: dict[str, int] = {
     # No moved body was touched (byte-for-byte canon intact); this is the
     # §17 re-pin-at-move flow applied to a docstring-only delta. 4991 ->
     # 4998.
-    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5199,
+    # TASK-36454..36458: narrow save/install completion helpers reduce this owner.
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5100,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
     # exact measured line count on landing (42 moved methods + the
@@ -519,7 +725,23 @@ _BUDGETS: dict[str, int] = {
     # bottom. Reworded to match the module docstring's corrected past-tense
     # phrasing. Comment-only growth (+1 line); no method body touched.
     # 1897 -> 1898.
-    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1923,
+    # 2026-10-19, TASK-34000.24 (owner decision 2026-10-04, same rule): 1923 ->
+    # 2028 (+105). Search ▸ evidence ▸ `u` now obeys the readers' link-on-use
+    # rule: `_link_library_rag_result_on_use` (resolves the row-model id,
+    # links through `Workspaces/link_on_use`, refuses a non-linkable block)
+    # plus the two injected dependencies it needs (the workspace depth
+    # state and its invalidation) with their properties and Args entries.
+    # 2026-10-20, TASK-34000.24 fix rounds 1-2 (owner decision 2026-10-04,
+    # same rule): 2028 -> 2051. Fix round 1 added +17 (the seam's one
+    # decision call, the receipt said after the stage, the press's own
+    # write taken back on a refused stage) -- the row raise that round's
+    # commit missed; fix round 2 added +6 (one plain sentence whether the
+    # opener refused or raised).
+    # 2026-10-20, TASK-34000.24 final-review fix (F7; owner decision
+    # 2026-10-04, same rule): 2051 -> 2056 (+5). The locked-Console "staged"
+    # notice is read before the opener but sent only after it succeeds, so
+    # a refused stage no longer shows "staged" beside "could not take it".
+    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 2056,
     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 805,
     # 2026-09-25, TASK-32954 (built-in skills): +3 lines threading the
     # Library-only `include_disabled_builtins` flag through the browse read so
@@ -594,7 +816,32 @@ _BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] =
 
 # ADR-172 / TASK-32870–32872: initial exact pins for the new artifact owners.
 # PR #2754 reviews: initial pin includes finite workers, reader reveal, typed builders and normalized exports.
-_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 806
+# 2026-10-09, TASK-34000.23: 806 -> 876 (+70), owner decision ("expand the
+# limits, don't contort code", 2026-10-04). The Reports demo CTA now asks
+# before seeding: `DemoConsent` (the block's state), `open_demo_consent`
+# (resolves the billed provider · model through
+# `resolve_persisted_briefing_defaults`, reads `list_briefing_schedules`
+# for the reuse wording, no-provider -> disabled run button),
+# `close_demo_consent`, and `start_demo` (the old no-confirm press, now the
+# only way in). Nothing was moved out to make it fit.
+# 2026-10-09, TASK-34000.23 review 1: 876 -> 909 (+33), same owner decision.
+# The 876 pin was measured before the round's last two lines landed (878 at
+# the head commit, review Important #1); this round adds
+# `_reused_schedule_pair` (a reused schedule's default preset bills its own
+# provider/model, so the consent names that pair) and the schedule read it
+# hangs off. Measured with `len(read_text().splitlines())` after the edits.
+# 2026-10-20, TASK-34000.23 rebase onto dev 250159834c, same owner decision:
+# 909 -> 1020. Dev itself already measures 904 against its own 806 row (a
+# pre-existing dev red); this branch adds the same +116 the rows above
+# record (the demo consent block). Measured with `len(read_text().splitlines())`.
+# 2026-10-20, TASK-34000.23 final-review fix (F4; owner decision 2026-10-04,
+# same rule): 1020 -> 1057 (+37). `empty_actions_visible`, the ONE predicate
+# for the Reports empty-state actions (empty page, or a failed newest first
+# run), moved out of the items pane's `sync` so the work pane can hide its
+# standing "Watchlists" button while the items pane offers the empty-state
+# one; plus the reused schedule's name handed to the consent copy (F3).
+# Measured with `len(read_text().splitlines())`.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 1057
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py"] = 339
 
 # 2026-09-25, TASK-32954 (ruling R14): initial exact pin for the built-in

@@ -43,9 +43,21 @@ def test_watchlist_tables_created(db):
 
 def test_create_sources_exact_batch_preserves_identity_order_and_duplicates(db):
     rows = [
-        {"name": "First", "type": "rss", "source": "  https://feeds.example/a?b=2&a=1  "},
-        {"name": "Duplicate", "type": "rss", "source": "https://feeds.example/a?b=2&a=1"},
-        {"name": "Different query order", "type": "rss", "source": "https://feeds.example/a?a=1&b=2"},
+        {
+            "name": "First",
+            "type": "rss",
+            "source": "  https://feeds.example/a?b=2&a=1  ",
+        },
+        {
+            "name": "Duplicate",
+            "type": "rss",
+            "source": "https://feeds.example/a?b=2&a=1",
+        },
+        {
+            "name": "Different query order",
+            "type": "rss",
+            "source": "https://feeds.example/a?a=1&b=2",
+        },
     ]
 
     results = db.create_sources_exact_batch(rows)
@@ -78,9 +90,7 @@ def test_create_sources_exact_batch_resolves_preexisting_exact_identity(db):
         ]
     )
 
-    assert result == [
-        {"input_index": 0, "outcome": "existing", "source_id": source_id}
-    ]
+    assert result == [{"input_index": 0, "outcome": "existing", "source_id": source_id}]
     assert db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 1
 
 
@@ -92,14 +102,19 @@ def test_create_sources_exact_batch_serializes_two_database_instances(tmp_path):
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(
-            pool.map(lambda owner: owner.create_sources_exact_batch([row]), (first, second))
+            pool.map(
+                lambda owner: owner.create_sources_exact_batch([row]), (first, second)
+            )
         )
 
     assert sorted(result[0]["outcome"] for result in results) == ["created", "existing"]
     assert results[0][0]["source_id"] == results[1][0]["source_id"]
-    assert first.conn.execute(
-        "SELECT COUNT(*) FROM subscriptions WHERE source = ?", (row["source"],)
-    ).fetchone()[0] == 1
+    assert (
+        first.conn.execute(
+            "SELECT COUNT(*) FROM subscriptions WHERE source = ?", (row["source"],)
+        ).fetchone()[0]
+        == 1
+    )
 
 
 def test_create_sources_exact_batch_blocks_second_lookup_until_first_commit(tmp_path):
@@ -134,9 +149,7 @@ def test_create_sources_exact_batch_blocks_second_lookup_until_first_commit(tmp_
             return source_id
 
     path = tmp_path / "controlled-race.db"
-    first = CoordinatedSubscriptionsDB(
-        str(path), client_id="first", pause_first=True
-    )
+    first = CoordinatedSubscriptionsDB(str(path), client_id="first", pause_first=True)
     second = CoordinatedSubscriptionsDB(
         str(path), client_id="second", pause_first=False
     )
@@ -173,7 +186,9 @@ def test_item_content_columns_created(db):
 
 
 def test_membership_cascades_on_source_delete(db):
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     with db.transaction() as conn:
         conn.execute("INSERT INTO watchlists (name) VALUES ('Morning')")
         watchlist_id = conn.execute("SELECT id FROM watchlists").fetchone()[0]
@@ -250,7 +265,9 @@ def test_batch_id_added_to_preexisting_run_table(tmp_path):
 
 
 def test_lazy_run_schema_helper_is_gone():
-    from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
+    from tldw_chatbook.Subscriptions.local_watchlists_service import (
+        LocalWatchlistsService,
+    )
 
     assert not hasattr(LocalWatchlistsService, "_ensure_run_schema")
 
@@ -405,7 +422,9 @@ def test_alert_rules_orphaned_row_survives_reopen_with_fk_enforcement_on(tmp_pat
 
 
 def test_lazy_alert_rule_schema_helper_is_gone():
-    from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
+    from tldw_chatbook.Subscriptions.local_watchlists_service import (
+        LocalWatchlistsService,
+    )
 
     assert not hasattr(LocalWatchlistsService, "_ensure_alert_rule_schema")
 
@@ -425,8 +444,16 @@ def test_fts_table_created(db):
 
 
 def test_fts_indexes_inserted_items(db):
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
-    _insert_item(db, source_id, "https://a.example/1", "RAG Evaluation", "retrieval quality rubric")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
+    _insert_item(
+        db,
+        source_id,
+        "https://a.example/1",
+        "RAG Evaluation",
+        "retrieval quality rubric",
+    )
 
     rows = db.conn.execute(
         "SELECT rowid FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
@@ -436,40 +463,62 @@ def test_fts_indexes_inserted_items(db):
 
 
 def test_fts_follows_updates_and_deletes(db):
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     _insert_item(db, source_id, "https://a.example/1", "First", "alpha content")
 
     with db.transaction() as conn:
-        conn.execute("UPDATE subscription_items SET content = 'beta content' WHERE url = ?",
-                     ("https://a.example/1",))
+        conn.execute(
+            "UPDATE subscription_items SET content = 'beta content' WHERE url = ?",
+            ("https://a.example/1",),
+        )
 
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
-        ("alpha",),
-    ).fetchone()[0] == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
-        ("beta",),
-    ).fetchone()[0] == 1
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
+            ("alpha",),
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
+            ("beta",),
+        ).fetchone()[0]
+        == 1
+    )
 
     with db.transaction() as conn:
-        conn.execute("DELETE FROM subscription_items WHERE url = ?", ("https://a.example/1",))
+        conn.execute(
+            "DELETE FROM subscription_items WHERE url = ?", ("https://a.example/1",)
+        )
 
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
-        ("beta",),
-    ).fetchone()[0] == 0
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
+            ("beta",),
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_backfill_is_chunked_and_resumable(db):
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     with db.transaction() as conn:
         conn.execute("DROP TRIGGER subscription_items_fts_ai")
         for index in range(7):
             conn.execute(
                 "INSERT INTO subscription_items (subscription_id, url, title, content) "
                 "VALUES (?, ?, ?, ?)",
-                (source_id, f"https://a.example/{index}", f"Item {index}", "searchable body"),
+                (
+                    source_id,
+                    f"https://a.example/{index}",
+                    f"Item {index}",
+                    "searchable body",
+                ),
             )
 
     # A bare (non-MATCH) query against an external-content FTS5 table is
@@ -477,7 +526,12 @@ def test_backfill_is_chunked_and_resumable(db):
     # so it would read 7 here regardless of indexing state. `_docsize` is the
     # SQLite-documented shadow table populated only by real writes into the
     # fts5 table, so it is what actually reflects "nothing indexed yet".
-    assert db.conn.execute("SELECT COUNT(*) FROM subscription_items_fts_docsize").fetchone()[0] == 0
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items_fts_docsize"
+        ).fetchone()[0]
+        == 0
+    )
 
     first = db.backfill_items_fts(chunk_size=3)
     assert first == 3
@@ -489,10 +543,13 @@ def test_backfill_is_chunked_and_resumable(db):
         total += indexed
     assert total == 7
 
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
-        ("searchable",),
-    ).fetchone()[0] == 7
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
+            ("searchable",),
+        ).fetchone()[0]
+        == 7
+    )
 
 
 def _drop_ai_trigger(db):
@@ -509,13 +566,20 @@ def test_update_of_unindexed_legacy_item_succeeds(db):
     delete leg unconditionally fired 'delete' against `old.id` even when
     that rowid was never in the FTS index -- illegal for an external-content
     FTS5 table, so FTS5 rejected the whole UPDATE statement."""
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     _drop_ai_trigger(db)
     _insert_item(db, source_id, "https://a.example/1", "Legacy", "alpha content")
 
     # Confirm the row really is unindexed first, or this test would pass
     # vacuously.
-    assert db.conn.execute("SELECT COUNT(*) FROM subscription_items_fts_docsize").fetchone()[0] == 0
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items_fts_docsize"
+        ).fetchone()[0]
+        == 0
+    )
 
     with db.transaction() as conn:
         conn.execute(
@@ -528,48 +592,73 @@ def test_update_of_unindexed_legacy_item_succeeds(db):
     ).fetchone()
     assert row["content"] == "beta content"
     # The insert leg of `_au` stays unconditional, so the row is indexed now.
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
-        ("beta",),
-    ).fetchone()[0] == 1
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
+            ("beta",),
+        ).fetchone()[0]
+        == 1
+    )
     # Raises DatabaseError if the FTS index is actually corrupt.
-    db.conn.execute("INSERT INTO subscription_items_fts(subscription_items_fts) VALUES ('integrity-check')")
+    db.conn.execute(
+        "INSERT INTO subscription_items_fts(subscription_items_fts) VALUES ('integrity-check')"
+    )
 
 
 def test_delete_of_unindexed_legacy_item_succeeds(db):
     """Regression for Finding 1 (final review). Same illegal-'delete' bug as
     the UPDATE case, via `_ad` this time."""
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     _drop_ai_trigger(db)
     _insert_item(db, source_id, "https://a.example/1", "Legacy", "alpha content")
 
-    assert db.conn.execute("SELECT COUNT(*) FROM subscription_items_fts_docsize").fetchone()[0] == 0
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items_fts_docsize"
+        ).fetchone()[0]
+        == 0
+    )
 
     with db.transaction() as conn:
-        conn.execute("DELETE FROM subscription_items WHERE url = ?", ("https://a.example/1",))
+        conn.execute(
+            "DELETE FROM subscription_items WHERE url = ?", ("https://a.example/1",)
+        )
 
     assert db.conn.execute("SELECT COUNT(*) FROM subscription_items").fetchone()[0] == 0
     # Raises DatabaseError if the FTS index is actually corrupt.
-    db.conn.execute("INSERT INTO subscription_items_fts(subscription_items_fts) VALUES ('integrity-check')")
+    db.conn.execute(
+        "INSERT INTO subscription_items_fts(subscription_items_fts) VALUES ('integrity-check')"
+    )
 
 
 def test_cascade_delete_of_parent_with_unindexed_items_succeeds(db):
     """Regression for Finding 1 (final review). Deleting a source cascades
     to its items via FK ON DELETE CASCADE, which fires `_ad` once per item --
     all of them unindexed here, exercising the same guard at cascade scale."""
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     _drop_ai_trigger(db)
     _insert_item(db, source_id, "https://a.example/1", "Legacy 1", "alpha content")
     _insert_item(db, source_id, "https://a.example/2", "Legacy 2", "beta content")
 
-    assert db.conn.execute("SELECT COUNT(*) FROM subscription_items_fts_docsize").fetchone()[0] == 0
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items_fts_docsize"
+        ).fetchone()[0]
+        == 0
+    )
 
     with db.transaction() as conn:
         conn.execute("DELETE FROM subscriptions WHERE id = ?", (source_id,))
 
     assert db.conn.execute("SELECT COUNT(*) FROM subscription_items").fetchone()[0] == 0
     # Raises DatabaseError if the FTS index is actually corrupt.
-    db.conn.execute("INSERT INTO subscription_items_fts(subscription_items_fts) VALUES ('integrity-check')")
+    db.conn.execute(
+        "INSERT INTO subscription_items_fts(subscription_items_fts) VALUES ('integrity-check')"
+    )
 
 
 def test_fts_index_passes_integrity_check_after_mixed_mutations(db):
@@ -589,7 +678,9 @@ def test_fts_index_passes_integrity_check_after_mixed_mutations(db):
     belt-and-suspenders coverage for the guarded triggers, not as a
     regression reproduction.
     """
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     _insert_item(db, source_id, "https://a.example/indexed", "Indexed", "alpha content")
 
     _drop_ai_trigger(db)
@@ -600,33 +691,50 @@ def test_fts_index_passes_integrity_check_after_mixed_mutations(db):
             "UPDATE subscription_items SET content = 'alpha updated' WHERE url = ?",
             ("https://a.example/indexed",),
         )
-        conn.execute("DELETE FROM subscription_items WHERE url = ?", ("https://a.example/legacy",))
+        conn.execute(
+            "DELETE FROM subscription_items WHERE url = ?",
+            ("https://a.example/legacy",),
+        )
 
     # Raises DatabaseError if the FTS index is actually corrupt.
-    db.conn.execute("INSERT INTO subscription_items_fts(subscription_items_fts) VALUES ('integrity-check')")
+    db.conn.execute(
+        "INSERT INTO subscription_items_fts(subscription_items_fts) VALUES ('integrity-check')"
+    )
 
 
 def test_backfill_converges_after_guarded_delete_skips_legacy_row(db):
     """Regression for Finding 1 (final review). A guarded, skipped delete
     must not disturb `_docsize` bookkeeping for the rows that remain -- a
     later `backfill_items_fts` call must still index them and converge."""
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     _drop_ai_trigger(db)
     _insert_item(db, source_id, "https://a.example/keep", "Keep", "alpha content")
     _insert_item(db, source_id, "https://a.example/gone", "Gone", "beta content")
 
     with db.transaction() as conn:
-        conn.execute("DELETE FROM subscription_items WHERE url = ?", ("https://a.example/gone",))
+        conn.execute(
+            "DELETE FROM subscription_items WHERE url = ?", ("https://a.example/gone",)
+        )
 
-    assert db.conn.execute("SELECT COUNT(*) FROM subscription_items_fts_docsize").fetchone()[0] == 0
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items_fts_docsize"
+        ).fetchone()[0]
+        == 0
+    )
 
     indexed = db.backfill_items_fts(chunk_size=10)
     assert indexed == 1
     assert db.backfill_items_fts(chunk_size=10) == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
-        ("alpha",),
-    ).fetchone()[0] == 1
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
+            ("alpha",),
+        ).fetchone()[0]
+        == 1
+    )
 
 
 def test_backfill_rejects_non_positive_chunk_size(db):
@@ -658,7 +766,9 @@ def test_guarded_triggers_replace_old_unguarded_ones_in_place(tmp_path):
     """
     path = tmp_path / "already_ran_unguarded_triggers.db"
     db = SubscriptionsDB(str(path), client_id="setup")
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
 
     _drop_ai_trigger(db)
     _insert_item(db, source_id, "https://a.example/1", "Legacy", "alpha content")
@@ -696,9 +806,13 @@ def test_guarded_triggers_replace_old_unguarded_ones_in_place(tmp_path):
             ("https://a.example/1",),
         )
 
-    assert migrated.conn.execute(
-        "SELECT content FROM subscription_items WHERE url = ?", ("https://a.example/1",)
-    ).fetchone()[0] == "beta content"
+    assert (
+        migrated.conn.execute(
+            "SELECT content FROM subscription_items WHERE url = ?",
+            ("https://a.example/1",),
+        ).fetchone()[0]
+        == "beta content"
+    )
 
 
 class _CountingConnection:
@@ -717,14 +831,18 @@ class _CountingConnection:
 
 
 def test_counts_bucket_by_watchlist_unassigned_and_all(db):
-    from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+        WatchlistBundleService,
+    )
 
     service = WatchlistBundleService(db)
     morning = service.create("Morning")
     security = service.create("Security")
 
     shared = db.add_subscription(name="HN", type="rss", source="https://b.example/f")
-    lonely = db.add_subscription(name="Orphan", type="rss", source="https://c.example/f")
+    lonely = db.add_subscription(
+        name="Orphan", type="rss", source="https://c.example/f"
+    )
 
     service.add_source(morning["id"], shared)
     service.add_source(security["id"], shared)
@@ -732,21 +850,25 @@ def test_counts_bucket_by_watchlist_unassigned_and_all(db):
     _insert_item(db, shared, "https://b.example/1", "Shared unread", "body")
     _insert_item(db, lonely, "https://c.example/1", "Orphan unread", "body")
     with db.transaction() as conn:
-        conn.execute("UPDATE subscription_items SET status = 'reviewed' WHERE url = ?",
-                     ("https://c.example/1",))
+        conn.execute(
+            "UPDATE subscription_items SET status = 'reviewed' WHERE url = ?",
+            ("https://c.example/1",),
+        )
 
     counts = db.get_watchlist_item_counts()
 
     assert counts[morning["id"]] == {"total": 1, "unread": 1}
     assert counts[security["id"]] == {"total": 1, "unread": 1}
-    assert counts[-1] == {"total": 1, "unread": 0}   # Unassigned
-    assert counts[-2] == {"total": 2, "unread": 1}   # All sources
+    assert counts[-1] == {"total": 1, "unread": 0}  # Unassigned
+    assert counts[-2] == {"total": 2, "unread": 1}  # All sources
 
 
 def test_counts_include_watchlist_with_no_sources(db):
     """A freshly created watchlist has no sources at all yet, but must still
     appear in the tree (as all zeros) rather than being absent."""
-    from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+        WatchlistBundleService,
+    )
 
     service = WatchlistBundleService(db)
     empty = service.create("Empty")
@@ -759,11 +881,15 @@ def test_counts_include_watchlist_with_no_sources(db):
 def test_counts_include_watchlist_with_sources_but_no_items(db):
     """A watchlist can have a source attached before that source has ever
     produced any items -- it must still report zeros, not be missing."""
-    from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+        WatchlistBundleService,
+    )
 
     service = WatchlistBundleService(db)
     quiet = service.create("Quiet")
-    source = db.add_subscription(name="Quiet Feed", type="rss", source="https://d.example/f")
+    source = db.add_subscription(
+        name="Quiet Feed", type="rss", source="https://d.example/f"
+    )
     service.add_source(quiet["id"], source)
 
     counts = db.get_watchlist_item_counts()
@@ -772,7 +898,9 @@ def test_counts_include_watchlist_with_sources_but_no_items(db):
 
 
 def test_counts_use_a_single_query_regardless_of_watchlist_count(db, monkeypatch):
-    from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+        WatchlistBundleService,
+    )
 
     service = WatchlistBundleService(db)
     for index in range(12):
@@ -822,7 +950,9 @@ def db_with_memberships(tmp_path):
                 (status, url),
             )
     for index in range(2):
-        _insert_item(db, unassigned, f"https://loose.example/{index}", f"Loose {index}", "body")
+        _insert_item(
+            db, unassigned, f"https://loose.example/{index}", f"Loose {index}", "body"
+        )
     return db, watchlist_id, in_watchlist, unassigned
 
 
@@ -888,8 +1018,8 @@ def test_mark_all_read_returns_ids_and_only_touches_new(db_with_memberships):
 
     assert set(ids) == new_ids
     assert all(db.get_item_status(item_id) == "reviewed" for item_id in ids)
-    assert db.get_item_status(reviewed_id) == "reviewed"   # untouched
-    assert db.get_item_status(ingested_id) == "ingested"   # untouched
+    assert db.get_item_status(reviewed_id) == "reviewed"  # untouched
+    assert db.get_item_status(ingested_id) == "ingested"  # untouched
 
 
 def test_mark_all_read_scoped_to_watchlist(db_with_memberships):
@@ -938,7 +1068,9 @@ def test_restore_items_new_only_restores_reviewed(db_with_memberships):
     assert db.restore_items_new([]) == 0
 
 
-def test_restore_items_new_chunks_batches_bigger_than_the_host_parameter_limit(db_with_memberships):
+def test_restore_items_new_chunks_batches_bigger_than_the_host_parameter_limit(
+    db_with_memberships,
+):
     """Qodo review (PR #1383): the undo IN-list binds one parameter per id,
     so a batch past SQLITE_MAX_VARIABLE_NUMBER (999 on older builds) must
     still restore in full -- chunked, inside one transaction."""
@@ -1066,7 +1198,9 @@ def test_get_flagged_items_count_is_status_agnostic(db_with_memberships):
 
 
 def test_get_new_items_orders_by_published_date_desc(db):
-    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    source_id = db.add_subscription(
+        name="Feed", type="rss", source="https://f.example/f"
+    )
     # Fetched together (created_at ~identical), published in a different
     # order: the list must follow PUBLISHED order, not fetch order.
     for url, published in (
@@ -1091,7 +1225,9 @@ def test_get_new_items_orders_by_published_date_desc(db):
 
 
 def test_get_new_items_falls_back_to_created_at_when_unpublished(db):
-    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    source_id = db.add_subscription(
+        name="Feed", type="rss", source="https://f.example/f"
+    )
     _insert_item(db, source_id, "https://f.example/dated", "dated", "body")
     _insert_item(db, source_id, "https://f.example/undated", "undated", "body")
     with db.transaction() as conn:
@@ -1100,7 +1236,11 @@ def test_get_new_items_falls_back_to_created_at_when_unpublished(db):
         # freshly fetched undated item first, not last.
         conn.execute(
             "UPDATE subscription_items SET published_date = ?, created_at = ? WHERE url = ?",
-            ("2026-08-01T09:00:00+00:00", "2026-08-06T09:00:00+00:00", "https://f.example/dated"),
+            (
+                "2026-08-01T09:00:00+00:00",
+                "2026-08-06T09:00:00+00:00",
+                "https://f.example/dated",
+            ),
         )
         conn.execute(
             "UPDATE subscription_items SET created_at = ? WHERE url = ?",
@@ -1158,7 +1298,9 @@ def test_get_new_items_excludes_content_and_extracted_data_from_list_rows(db):
     upstream payload) -- neither has a reader on the list path (see
     `SubscriptionsDB._LIST_ITEM_COLUMNS`'s docstring).
     """
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     with db.transaction() as conn:
         persist_subscription_item(
             conn,
@@ -1181,10 +1323,24 @@ def test_get_new_items_excludes_content_and_extracted_data_from_list_rows(db):
     # Every other column the reader actually depends on (via
     # `normalize_watchlist_item`) is still present.
     for expected in (
-        "id", "subscription_id", "url", "title", "content_hash",
-        "published_date", "author", "status", "created_at", "updated_at",
-        "queued_for_briefing", "run_id", "alert_matches", "content_format",
-        "content_kind", "is_flagged", "subscription_name", "subscription_type",
+        "id",
+        "subscription_id",
+        "url",
+        "title",
+        "content_hash",
+        "published_date",
+        "author",
+        "status",
+        "created_at",
+        "updated_at",
+        "queued_for_briefing",
+        "run_id",
+        "alert_matches",
+        "content_format",
+        "content_kind",
+        "is_flagged",
+        "subscription_name",
+        "subscription_type",
     ):
         assert expected in rows[0], f"missing expected list column: {expected}"
 
@@ -1195,13 +1351,20 @@ def test_get_new_items_content_preview_is_a_cheap_prefix_not_the_full_body(db):
     every list row (unlike `content` itself) and always short, even when the
     underlying body is much longer.
     """
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     long_body = "word " * 10_000  # 50,000 characters, far past the 2000-character cap.
     with db.transaction() as conn:
         persist_subscription_item(
             conn,
             source_id,
-            {"url": "https://a.example/1", "title": "A", "content": long_body, "content_hash": "h1"},
+            {
+                "url": "https://a.example/1",
+                "title": "A",
+                "content": long_body,
+                "content_hash": "h1",
+            },
             run_id=None,
             now="2026-08-11T00:00:00+00:00",
         )
@@ -1218,7 +1381,9 @@ def test_get_new_items_search_like_fallback_still_matches_on_content(db):
     narrowing the SELECT list narrows what comes back in the row, not what
     the search box can match against.
     """
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     with db.transaction() as conn:
         persist_subscription_item(
             conn,
@@ -1244,7 +1409,9 @@ def test_get_new_items_search_like_fallback_still_matches_on_content(db):
 
 def test_get_item_content_returns_full_body(db):
     """AC#1: the DETAIL fetch still loads full content."""
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     with db.transaction() as conn:
         item_id = persist_subscription_item(
             conn,
@@ -1267,7 +1434,9 @@ def test_get_item_content_returns_none_for_missing_row(db):
 
 
 def test_get_item_content_returns_none_for_row_with_null_content(db):
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     with db.transaction() as conn:
         conn.execute(
             "INSERT INTO subscription_items (subscription_id, url, title) VALUES (?, ?, ?)",
@@ -1372,15 +1541,44 @@ def test_ordering_parity_legacy_backfill_vs_new_insert_maintained(tmp_path):
         # row (a mixed legacy/new tie).
         with legacy_db.transaction() as sconn:
             for url, title, published, now, content_hash in (
-                ("https://new.example/valid", "new valid", "2024-06-01T00:00:00Z", "2024-01-01T00:00:00+00:00", "n1"),
-                ("https://new.example/null", "new null", None, "2024-04-01T00:00:00+00:00", "n2"),
-                ("https://new.example/garbage", "new garbage", "still-garbage", "2024-04-15T00:00:00+00:00", "n3"),
-                ("https://new.example/tie-c", "new tie", "2024-05-01T00:00:00Z", "2024-01-01T00:00:00+00:00", "n4"),
+                (
+                    "https://new.example/valid",
+                    "new valid",
+                    "2024-06-01T00:00:00Z",
+                    "2024-01-01T00:00:00+00:00",
+                    "n1",
+                ),
+                (
+                    "https://new.example/null",
+                    "new null",
+                    None,
+                    "2024-04-01T00:00:00+00:00",
+                    "n2",
+                ),
+                (
+                    "https://new.example/garbage",
+                    "new garbage",
+                    "still-garbage",
+                    "2024-04-15T00:00:00+00:00",
+                    "n3",
+                ),
+                (
+                    "https://new.example/tie-c",
+                    "new tie",
+                    "2024-05-01T00:00:00Z",
+                    "2024-01-01T00:00:00+00:00",
+                    "n4",
+                ),
             ):
                 persist_subscription_item(
                     sconn,
                     1,
-                    {"url": url, "title": title, "published_date": published, "content_hash": content_hash},
+                    {
+                        "url": url,
+                        "title": title,
+                        "published_date": published,
+                        "content_hash": content_hash,
+                    },
                     run_id=None,
                     now=now,
                 )
@@ -1412,11 +1610,15 @@ def test_get_new_items_since_predicate_uses_effective_date_column(db):
     `published_date` row whose `created_at` decides which side of the floor
     it lands on.
     """
-    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    source_id = db.add_subscription(
+        name="Feed", type="rss", source="https://f.example/f"
+    )
     _insert_item(db, source_id, "https://f.example/before", "before", "body")
     _insert_item(db, source_id, "https://f.example/at", "at", "body")
     _insert_item(db, source_id, "https://f.example/after", "after", "body")
-    _insert_item(db, source_id, "https://f.example/undated-after", "undated-after", "body")
+    _insert_item(
+        db, source_id, "https://f.example/undated-after", "undated-after", "body"
+    )
     with db.transaction() as conn:
         conn.execute(
             "UPDATE subscription_items SET published_date = ? WHERE url = ?",
@@ -1451,14 +1653,24 @@ def test_get_new_items_since_predicate_uses_effective_date_column(db):
 
 def test_get_new_items_search_matches_title_content_and_author(db):
     """The FTS path covers all three indexed columns."""
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     _insert_item(db, source_id, "https://a.example/1", "RAG Evaluation", "plain body")
-    _insert_item(db, source_id, "https://a.example/2", "Plain title", "retrieval quality rubric")
+    _insert_item(
+        db, source_id, "https://a.example/2", "Plain title", "retrieval quality rubric"
+    )
     with db.transaction() as conn:
         conn.execute(
             "INSERT INTO subscription_items (subscription_id, url, title, content, author) "
             "VALUES (?, ?, ?, ?, ?)",
-            (source_id, "https://a.example/3", "Another plain", "plain body", "Coraline Ada"),
+            (
+                source_id,
+                "https://a.example/3",
+                "Another plain",
+                "plain body",
+                "Coraline Ada",
+            ),
         )
     _insert_item(db, source_id, "https://a.example/4", "Unrelated", "nothing")
 
@@ -1474,19 +1686,27 @@ def test_get_new_items_search_matches_title_content_and_author(db):
 
 
 def test_get_new_items_search_multi_term_is_and(db):
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     _insert_item(db, source_id, "https://a.example/1", "retrieval only", "plain")
-    _insert_item(db, source_id, "https://a.example/2", "retrieval quality", "the rubric")
+    _insert_item(
+        db, source_id, "https://a.example/2", "retrieval quality", "the rubric"
+    )
 
-    assert {r["url"] for r in db.get_new_items(status=None, search="retrieval rubric")} == {
-        "https://a.example/2"
-    }, "every whitespace-separated term must match (AND semantics)"
+    assert {
+        r["url"] for r in db.get_new_items(status=None, search="retrieval rubric")
+    } == {"https://a.example/2"}, (
+        "every whitespace-separated term must match (AND semantics)"
+    )
     assert db.get_new_items(status=None, search="retrieval missing") == []
 
 
 def test_get_new_items_search_hostile_queries_never_raise(db):
     """FTS5 query-syntax injection attempts return a list, never an error."""
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     _insert_item(db, source_id, "https://a.example/1", "RAG Evaluation", "retrieval")
 
     for hostile in (
@@ -1509,7 +1729,9 @@ def test_get_new_items_search_falls_back_to_like_without_fts(db):
     """When the FTS read raises (table absent on a pre-migration DB, fts5
     compiled out), the LIKE fallback answers the same question -- and LIKE
     wildcards in the query stay literal."""
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     _insert_item(db, source_id, "https://a.example/1", "fallback token here", "plain")
     _insert_item(db, source_id, "https://a.example/2", "100x coverage", "plain")
     _insert_item(db, source_id, "https://a.example/3", "100% coverage", "plain")
@@ -1527,9 +1749,15 @@ def test_get_new_items_search_falls_back_to_like_without_fts(db):
 def test_get_new_items_since_floor_uses_effective_date(db):
     """`since` compares the EFFECTIVE date (published, else created) -- the
     same COALESCE the ordering uses."""
-    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
-    for url in ("https://f.example/old-pub", "https://f.example/old-created",
-                "https://f.example/on-floor", "https://f.example/newer"):
+    source_id = db.add_subscription(
+        name="Feed", type="rss", source="https://f.example/f"
+    )
+    for url in (
+        "https://f.example/old-pub",
+        "https://f.example/old-created",
+        "https://f.example/on-floor",
+        "https://f.example/newer",
+    ):
         _insert_item(db, source_id, url, url, "body")
     with db.transaction() as conn:
         conn.execute(
@@ -1564,7 +1792,9 @@ def test_get_new_items_since_floor_handles_mixed_stored_formats(db):
     count as today."""
     from datetime import datetime, timezone
 
-    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    source_id = db.add_subscription(
+        name="Feed", type="rss", source="https://f.example/f"
+    )
     # `_insert_item` sets no created_at, so every row carries the schema's
     # CURRENT_TIMESTAMP default -- the space shape, dated right now.
     _insert_item(db, source_id, "https://f.example/space-shaped", "space", "body")
@@ -1593,7 +1823,9 @@ def test_get_new_items_since_floor_handles_mixed_stored_formats(db):
 
 
 def test_get_new_items_search_and_since_compose_with_the_other_predicates(db):
-    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    source_id = db.add_subscription(
+        name="Feed", type="rss", source="https://f.example/f"
+    )
     _insert_item(db, source_id, "https://f.example/hit", "rubric hit", "body")
     _insert_item(db, source_id, "https://f.example/old", "rubric old", "body")
     _insert_item(db, source_id, "https://f.example/other", "unrelated", "body")
@@ -1618,7 +1850,9 @@ def test_get_new_items_search_and_since_compose_with_the_other_predicates(db):
 
 def test_get_unread_items_count_since_counts_only_newer_unread(db):
     """The Today node badge: unread rows at/after the floor, nothing else."""
-    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    source_id = db.add_subscription(
+        name="Feed", type="rss", source="https://f.example/f"
+    )
     for url in ("https://f.example/a", "https://f.example/b", "https://f.example/c"):
         _insert_item(db, source_id, url, url, "body")
     with db.transaction() as conn:

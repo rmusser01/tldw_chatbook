@@ -162,9 +162,7 @@ async def test_a_torn_down_screen_runs_no_sync_work_and_never_re_arms(tmp_path):
         chat._console_sync_requested = True
         await chat._sync_native_console_chat_ui()
 
-        assert reached == [], (
-            "a torn-down screen still ran its Console UI sync"
-        )
+        assert reached == [], "a torn-down screen still ran its Console UI sync"
         assert not _console_sync_workers(app), (
             "a torn-down screen re-armed its own sync worker; Textual's unmount "
             "sweep has already run, so nothing will ever cancel it"
@@ -214,11 +212,13 @@ async def _arm_midtick_injection(app, pilot, gateway, *, navigate_away: bool):
                 await strip.remove()
 
     # A direct call would coalesce into a tick already in flight.
-    assert await _settle(
-        lambda: not chat._console_sync_in_progress, seconds=10.0
-    ), "a console-sync tick never finished; the direct call would coalesce"
+    assert await _settle(lambda: not chat._console_sync_in_progress, seconds=10.0), (
+        "a console-sync tick never finished; the direct call would coalesce"
+    )
     chat._console_sync_requested = False
-    chat._character._refresh_active_character_avatar_if_scope_changed = _break_the_tab_strip
+    chat._character._refresh_active_character_avatar_if_scope_changed = (
+        _break_the_tab_strip
+    )
     return chat, injected
 
 
@@ -316,7 +316,9 @@ async def test_a_partly_dismantled_screen_mid_tick_is_absorbed(tmp_path):
             lambda: not chat._console_sync_in_progress, seconds=10.0
         ), "a console-sync tick never finished; the direct call would coalesce"
         chat._console_sync_requested = False
-        chat._character._refresh_active_character_avatar_if_scope_changed = _dismantle_mid_tick
+        chat._character._refresh_active_character_avatar_if_scope_changed = (
+            _dismantle_mid_tick
+        )
         try:
             await chat._sync_native_console_chat_ui()
         finally:

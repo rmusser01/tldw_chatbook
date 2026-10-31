@@ -6,6 +6,7 @@ the fixture-invented-shapes trap has bitten this repo four separate times.
 UI tests load the shipped stylesheet (bare harnesses measure fiction) and
 wait on conditions, not pause counts.
 """
+
 from __future__ import annotations
 
 import threading
@@ -250,9 +251,9 @@ async def test_groups_render_for_every_change_kind(review_fixture):
         labels = await _wait_for(
             pilot,
             lambda: (
-                lambda labels: labels
-                if any("new.txt" in label for label in labels)
-                else None
+                lambda labels: (
+                    labels if any("new.txt" in label for label in labels) else None
+                )
             )(_tree_labels(tree)),
             "latest turn's files",
         )
@@ -283,9 +284,9 @@ async def test_diff_pane_renders_markup_verbatim(review_fixture):
         screen.select_file("markup.txt")
         rendered = await _wait_for(
             pilot,
-            lambda: (
-                lambda t: t if "not markup" in t else None
-            )(screen.diff_pane_text()),
+            lambda: (lambda t: t if "not markup" in t else None)(
+                screen.diff_pane_text()
+            ),
             "markup file diff",
         )
         assert "[bold red]not markup[/]" in rendered
@@ -323,9 +324,9 @@ async def test_truncation_row_reports_accurate_hidden_count(tmp_path):
         screen.select_file("big.txt")
         text = await _wait_for(
             pilot,
-            lambda: (
-                lambda t: t if "truncated" in t else None
-            )(screen.diff_pane_text()),
+            lambda: (lambda t: t if "truncated" in t else None)(
+                screen.diff_pane_text()
+            ),
             "truncation row",
         )
         import re
@@ -373,7 +374,9 @@ async def test_opening_loads_each_turn_exactly_once(review_fixture):
         screen._load_turn = lambda turn: (loads.append(turn.run_id), original(turn))[1]
         await _wait_for(
             pilot,
-            lambda: (screen.query(Tree) and _tree_labels(screen.query_one(Tree))) or None,
+            lambda: (
+                (screen.query(Tree) and _tree_labels(screen.query_one(Tree))) or None
+            ),
             "initial load",
         )
         await pilot.pause()
@@ -400,7 +403,10 @@ async def test_a_hostile_cap_cannot_defeat_windowing(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     run = db.create_run(conversation_id="c", agent_kind="primary")
     _record_turn(
-        db, tracker, root, run,
+        db,
+        tracker,
+        root,
+        run,
         lambda: (root / "big.txt").write_text(
             "".join(f"line {n}\n" for n in range(500))
         ),
@@ -426,9 +432,11 @@ async def test_turn_selector_navigates_to_a_previous_turn(review_fixture):
         labels = await _wait_for(
             pilot,
             lambda: (
-                lambda labels: labels
-                if any("first_turn.txt" in label for label in labels)
-                else None
+                lambda labels: (
+                    labels
+                    if any("first_turn.txt" in label for label in labels)
+                    else None
+                )
             )(_tree_labels(screen.query_one(Tree))),
             "previous turn's files",
         )
@@ -461,9 +469,9 @@ async def test_u_reverts_the_focused_file_through_the_confirm(review_fixture):
         await pilot.press("u")
         modal = await _wait_for(
             pilot,
-            lambda: app.screen
-            if isinstance(app.screen, ChangeRevertConfirmModal)
-            else None,
+            lambda: (
+                app.screen if isinstance(app.screen, ChangeRevertConfirmModal) else None
+            ),
             "confirm modal",
         )
         assert "edit.txt" in str(
@@ -519,9 +527,9 @@ async def test_revert_preflight_and_apply_run_off_the_ui_thread(
         await pilot.press("u")
         await _wait_for(
             pilot,
-            lambda: app.screen
-            if isinstance(app.screen, ChangeRevertConfirmModal)
-            else None,
+            lambda: (
+                app.screen if isinstance(app.screen, ChangeRevertConfirmModal) else None
+            ),
             "confirm modal",
         )
         await pilot.click("#change-revert-yes")
@@ -563,9 +571,9 @@ async def test_confirm_names_files_edited_after_the_turn(review_fixture):
         await pilot.press("u")
         modal = await _wait_for(
             pilot,
-            lambda: app.screen
-            if isinstance(app.screen, ChangeRevertConfirmModal)
-            else None,
+            lambda: (
+                app.screen if isinstance(app.screen, ChangeRevertConfirmModal) else None
+            ),
             "confirm modal",
         )
         warning = modal.query_one("#change-revert-edited-warning", Static)
@@ -599,9 +607,9 @@ async def test_revert_refusal_during_active_run_reaches_the_user(review_fixture)
 
         await _wait_for(
             pilot,
-            lambda: app.screen
-            if isinstance(app.screen, ChangeRevertConfirmModal)
-            else None,
+            lambda: (
+                app.screen if isinstance(app.screen, ChangeRevertConfirmModal) else None
+            ),
             "confirm modal",
         )
         await pilot.click("#change-revert-yes")
@@ -639,9 +647,7 @@ async def test_oversize_disclosure_banner_renders(tmp_path, monkeypatch):
             lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
             "review screen",
         )
-        await _wait_for(
-            pilot, lambda: screen.query("#change-review-banner"), "banner"
-        )
+        await _wait_for(pilot, lambda: screen.query("#change-review-banner"), "banner")
         banner = screen.query_one("#change-review-banner", Static)
         text = str(banner.renderable)
         assert "1 oversized" in text, text
@@ -666,8 +672,10 @@ async def test_pruned_snapshots_render_pruned_by_retention(review_fixture, tmp_p
         )
         await _wait_for(
             pilot,
-            lambda: "pruned by retention"
-            in str(screen.query_one("#change-review-banner", Static).renderable),
+            lambda: (
+                "pruned by retention"
+                in str(screen.query_one("#change-review-banner", Static).renderable)
+            ),
             "pruned banner",
         )
 
@@ -708,8 +716,10 @@ async def test_nested_repo_banner_names_the_holes(tmp_path, monkeypatch):
         )
         await _wait_for(
             pilot,
-            lambda: "childrepo"
-            in str(screen.query_one("#change-review-banner", Static).renderable),
+            lambda: (
+                "childrepo"
+                in str(screen.query_one("#change-review-banner", Static).renderable)
+            ),
             "nested banner",
         )
         text = str(screen.query_one("#change-review-banner", Static).renderable)
@@ -822,18 +832,16 @@ async def test_badge_marks_files_no_write_tool_touched(tmp_path):
         labels = await _wait_for(
             pilot,
             lambda: (
-                lambda labels: labels
-                if any("scripted.txt" in label for label in labels)
-                else None
+                lambda labels: (
+                    labels if any("scripted.txt" in label for label in labels) else None
+                )
             )(_tree_labels(tree)),
             "turn files",
         )
         scripted = next(label for label in labels if "scripted.txt" in label)
         tooled = next(label for label in labels if "tooled.txt" in label)
         assert BADGE_COPY in scripted, scripted
-        assert BADGE_COPY not in tooled, (
-            "a write_file-touched file must NOT be badged"
-        )
+        assert BADGE_COPY not in tooled, "a write_file-touched file must NOT be badged"
 
 
 @pytest.mark.asyncio
@@ -851,9 +859,9 @@ async def test_run_with_no_recorded_steps_renders_no_badges(review_fixture):
         labels = await _wait_for(
             pilot,
             lambda: (
-                lambda labels: labels
-                if any("new.txt" in label for label in labels)
-                else None
+                lambda labels: (
+                    labels if any("new.txt" in label for label in labels) else None
+                )
             )(_tree_labels(tree)),
             "turn files",
         )
@@ -917,9 +925,9 @@ async def test_deleted_and_renamed_rows_badge_even_when_path_was_tool_touched(
         labels = await _wait_for(
             pilot,
             lambda: (
-                lambda labels: labels
-                if any("doomed.txt" in label for label in labels)
-                else None
+                lambda labels: (
+                    labels if any("doomed.txt" in label for label in labels) else None
+                )
             )(_tree_labels(tree)),
             "turn files",
         )
@@ -966,9 +974,11 @@ async def test_initial_run_id_opens_directly_on_that_turn(review_fixture):
         labels = await _wait_for(
             pilot,
             lambda: (
-                lambda labels: labels
-                if any("first_turn.txt" in label for label in labels)
-                else None
+                lambda labels: (
+                    labels
+                    if any("first_turn.txt" in label for label in labels)
+                    else None
+                )
             )(_tree_labels(screen.query_one(Tree))),
             "run1's files on initial open",
         )
@@ -995,9 +1005,9 @@ async def test_unknown_initial_run_id_falls_back_to_the_latest_turn(review_fixtu
         labels = await _wait_for(
             pilot,
             lambda: (
-                lambda labels: labels
-                if any("new.txt" in label for label in labels)
-                else None
+                lambda labels: (
+                    labels if any("new.txt" in label for label in labels) else None
+                )
             )(_tree_labels(screen.query_one(Tree))),
             "the latest turn's files as fallback",
         )
@@ -1026,7 +1036,8 @@ async def test_initial_path_opens_focused_on_that_file(review_fixture):
             "review screen",
         )
         await _wait_for(
-            pilot, lambda: screen._leaves and screen._focused_leaf >= 0 or None,
+            pilot,
+            lambda: screen._leaves and screen._focused_leaf >= 0 or None,
             "initial leaf focused",
         )
         text = await _wait_for(
@@ -1047,9 +1058,7 @@ async def test_unknown_initial_path_falls_back_to_the_first_leaf(review_fixture)
     cache and the click) must degrade to today's default -- the turn's
     first leaf -- not an empty or stuck pane."""
     provider, root, run1, run2 = review_fixture
-    app = _Harness(
-        provider, initial_run_id=run2, initial_path="no-such-file.txt"
-    )
+    app = _Harness(provider, initial_run_id=run2, initial_path="no-such-file.txt")
     async with app.run_test(size=(160, 48)) as pilot:
         screen = await _wait_for(
             pilot,
@@ -1057,7 +1066,8 @@ async def test_unknown_initial_path_falls_back_to_the_first_leaf(review_fixture)
             "review screen",
         )
         await _wait_for(
-            pilot, lambda: screen._leaves and screen._focused_leaf >= 0 or None,
+            pilot,
+            lambda: screen._leaves and screen._focused_leaf >= 0 or None,
             "a leaf focused despite the unknown path",
         )
         assert screen._focused_leaf == 0
@@ -1228,10 +1238,7 @@ async def test_initial_snapshot_id_disambiguates_two_windows_on_same_path(
                 lambda: (
                     lambda text: (
                         text
-                        if (
-                            "ALPHA_ONLY_MARKER" in text
-                            or "BRAVO_ONLY_MARKER" in text
-                        )
+                        if ("ALPHA_ONLY_MARKER" in text or "BRAVO_ONLY_MARKER" in text)
                         else None
                     )
                 )(screen.diff_pane_text()),
@@ -1307,7 +1314,8 @@ async def test_turn_switch_after_initial_selection_reverts_to_first_file(
             "review screen",
         )
         await _wait_for(
-            pilot, lambda: screen._leaves and screen._focused_leaf >= 0 or None,
+            pilot,
+            lambda: screen._leaves and screen._focused_leaf >= 0 or None,
             "initial leaf focused",
         )
         _row, change = screen._leaves[screen._focused_leaf]
@@ -1317,17 +1325,21 @@ async def test_turn_switch_after_initial_selection_reverts_to_first_file(
         screen.select_turn(run1)
         await _wait_for(
             pilot,
-            lambda: screen._active_turn is not None
-            and screen._active_turn.run_id == run1
-            or None,
+            lambda: (
+                screen._active_turn is not None
+                and screen._active_turn.run_id == run1
+                or None
+            ),
             "switched to run1",
         )
         screen.select_turn(run2)
         await _wait_for(
             pilot,
-            lambda: screen._active_turn is not None
-            and screen._active_turn.run_id == run2
-            or None,
+            lambda: (
+                screen._active_turn is not None
+                and screen._active_turn.run_id == run2
+                or None
+            ),
             "switched back to run2",
         )
         await pilot.pause()
@@ -1393,10 +1405,12 @@ async def test_initials_survive_a_zero_leaf_initial_turn_regression(tmp_path):
         await _wait_for(
             pilot,
             lambda: (
-                "tracking failed"
-                in str(screen.query_one("#change-review-banner", Static).renderable)
-            )
-            or None,
+                (
+                    "tracking failed"
+                    in str(screen.query_one("#change-review-banner", Static).renderable)
+                )
+                or None
+            ),
             "run1's tracking-error banner (zero leaves)",
         )
         assert screen._leaves == [], "run1 must load with zero leaves"
@@ -1405,9 +1419,11 @@ async def test_initials_survive_a_zero_leaf_initial_turn_regression(tmp_path):
         screen.select_turn(run2)
         await _wait_for(
             pilot,
-            lambda: screen._active_turn is not None
-            and screen._active_turn.run_id == run2
-            or None,
+            lambda: (
+                screen._active_turn is not None
+                and screen._active_turn.run_id == run2
+                or None
+            ),
             "switched to run2",
         )
         await _wait_for(
@@ -1734,9 +1750,9 @@ async def test_binary_file_render_carries_no_cursor(review_fixture):
         screen.select_file("image.bin")
         await _wait_for(
             pilot,
-            lambda: (
-                lambda t: t if "Binary file changed." in t else None
-            )(screen.diff_pane_text()),
+            lambda: (lambda t: t if "Binary file changed." in t else None)(
+                screen.diff_pane_text()
+            ),
             "binary render",
         )
         screen.action_focus_diff()
@@ -1793,9 +1809,7 @@ async def test_diff_cursor_scroll_target_survives_a_long_wrapped_line(tmp_path):
         screen.select_file("big.txt")
         text = await _wait_for(
             pilot,
-            lambda: (lambda t: t if "line 19" in t else None)(
-                screen.diff_pane_text()
-            ),
+            lambda: (lambda t: t if "line 19" in t else None)(screen.diff_pane_text()),
             "big.txt diff",
         )
         raw_lines = text.split("\n")
@@ -2020,8 +2034,8 @@ async def test_notes_strip_lists_all_kinds_with_labels(review_fixture):
 
         texts = await _wait_for(
             pilot,
-            lambda: (
-                (lambda ts: ts if len(ts) >= 3 else None)(_note_strip_texts(screen))
+            lambda: (lambda ts: ts if len(ts) >= 3 else None)(
+                _note_strip_texts(screen)
             ),
             "all three notes rendered",
         )
@@ -2097,9 +2111,7 @@ async def test_delivered_note_renders_sent_without_delete(review_fixture, tmp_pa
         await _wait_for(
             pilot,
             lambda: (
-                True
-                if any("sent" in t for t in _note_strip_texts(screen))
-                else None
+                True if any("sent" in t for t in _note_strip_texts(screen)) else None
             ),
             "delivered note shows sent",
         )
@@ -2153,9 +2165,7 @@ async def test_delete_on_note_delivered_behind_screens_back_notifies(
         await pilot.press("enter")
         await pilot.pause(0.2)
 
-        assert notify_calls, (
-            "pressing delete on an already-delivered note must notify"
-        )
+        assert notify_calls, "pressing delete on an already-delivered note must notify"
         message = notify_calls[0][0][0]
         assert "already sent" in message.lower()
         assert notify_calls[0][1].get("severity") == "warning"
@@ -2198,19 +2208,13 @@ async def test_escape_cancels_comment_input_without_saving_or_dismissing(
         assert not screen.query(".change-review-comment-input"), (
             "escape must unmount the comment input"
         )
-        assert provider.notes_for_run(run2) == [], (
-            "escape must not persist a row"
-        )
-        assert app.screen is screen, (
-            "escape-in-input must not dismiss the screen"
-        )
+        assert provider.notes_for_run(run2) == [], "escape must not persist a row"
+        assert app.screen is screen, "escape-in-input must not dismiss the screen"
         tree = screen.query_one("#change-review-tree", Tree)
         assert app.focused is not tree, (
             "escape-in-input must not move focus to the tree"
         )
-        assert app.focused is pane, (
-            "escape-in-input must return focus to the diff pane"
-        )
+        assert app.focused is pane, "escape-in-input must return focus to the diff pane"
 
 
 @pytest.mark.asyncio
@@ -2274,9 +2278,9 @@ async def test_binary_file_c_noops_C_still_works(review_fixture):
         screen.select_file("image.bin")
         await _wait_for(
             pilot,
-            lambda: (
-                lambda t: t if "Binary file changed." in t else None
-            )(screen.diff_pane_text()),
+            lambda: (lambda t: t if "Binary file changed." in t else None)(
+                screen.diff_pane_text()
+            ),
             "binary render",
         )
         screen.action_focus_diff()
@@ -2410,9 +2414,9 @@ async def test_line_comment_marker_appears_on_its_line_and_survives_cursor_moves
 
         text_lines = await _wait_for(
             pilot,
-            lambda: (
-                lambda ls: ls if ls[target_index].endswith(marker) else None
-            )(screen.diff_pane_text().split("\n")),
+            lambda: (lambda ls: ls if ls[target_index].endswith(marker) else None)(
+                screen.diff_pane_text().split("\n")
+            ),
             "marker rendered on the target line",
         )
         assert text_lines[target_index].endswith(marker), text_lines[target_index]
@@ -2521,13 +2525,14 @@ async def test_notes_strip_scoped_to_its_own_window_not_the_sibling_window(
         async with app.run_test(size=(160, 48)) as pilot:
             screen = await _wait_for(
                 pilot,
-                lambda: app.screen
-                if isinstance(app.screen, ChangeReviewScreen)
-                else None,
+                lambda: (
+                    app.screen if isinstance(app.screen, ChangeReviewScreen) else None
+                ),
                 "review screen",
             )
             await _wait_for(
-                pilot, lambda: screen._leaves and screen._focused_leaf >= 0 or None,
+                pilot,
+                lambda: screen._leaves and screen._focused_leaf >= 0 or None,
                 "leaf focused",
             )
             _row, change = screen._leaves[screen._focused_leaf]
@@ -2575,9 +2580,11 @@ async def test_open_comment_input_closes_on_turn_switch(review_fixture):
         screen.select_turn(run2)
         await _wait_for(
             pilot,
-            lambda: screen._active_turn is not None
-            and screen._active_turn.run_id == run2
-            or None,
+            lambda: (
+                screen._active_turn is not None
+                and screen._active_turn.run_id == run2
+                or None
+            ),
             "switched to run2",
         )
         await pilot.pause()

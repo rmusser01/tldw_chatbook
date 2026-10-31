@@ -28,6 +28,7 @@ import re
 import webbrowser
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
@@ -84,7 +85,6 @@ def _validated_quick_capture_fields(
     ):
         raise ValueError("Note is invalid")
     return title, tags, note
-from ...Utils.path_validation import validate_path_simple
 from ...Widgets.Library import (
     CollectionsCaptureReaderPresentation,
     LibraryAdaptiveReaderShell,
@@ -834,6 +834,8 @@ class LibraryCollectionsController:
         self._library_collections_action_content = ""
         self._refresh_library_collections_capture_reader()
         try:
+            from tldw_chatbook.Utils.egress import UrlProvenance
+
             outcome = await controller.scope_service.save_capture(
                 CaptureSaveRequest(
                     controller.state.authority_key,
@@ -841,6 +843,7 @@ class LibraryCollectionsController:
                     title=title or None,
                     tags=tags,
                     freeform_note=note or None,
+                    url_provenance=UrlProvenance.USER_ENTERED,
                 )
             )
         except CollectionsCaptureError as exc:
@@ -1160,9 +1163,11 @@ class LibraryCollectionsController:
     ) -> None:
         """Choose a destination for a complete coherent legacy JSON export."""
         event.stop()
+        from .library_file_export import library_export_picker_location  # lazy, TASK-34000.3
+
         await self.app.push_screen(
             FileSave(
-                location=str(Path.home()),
+                location=library_export_picker_location(self.app),
                 title="Export Legacy Collections Recovery",
                 default_file="legacy-collections-recovery.json",
             ),
@@ -1174,41 +1179,15 @@ class LibraryCollectionsController:
     async def _export_library_collection_legacy_recovery(
         self, selected_path: Path | None
     ) -> None:
-        """Validate and publish a complete recovery snapshot off the UI loop."""
-        if selected_path is None:
-            return
-        recovery = getattr(
-            self.app_instance, "collections_legacy_recovery_service", None
-        )
-        if recovery is None:
-            return
-        try:
-            destination = validate_path_simple(
-                selected_path,
-                require_exists=False,
-            )
-            if destination.suffix.casefold() != ".json":
-                destination = destination.with_suffix(".json")
-            overwrite_identity = None
-            if destination.exists():
-                metadata = destination.lstat()
-                overwrite_identity = (metadata.st_dev, metadata.st_ino)
-            await asyncio.to_thread(
-                recovery.export_json,
-                destination,
-                overwrite_identity=overwrite_identity,
-            )
-        except Exception as exc:
-            reason = str(getattr(exc, "reason", "legacy_export_failed"))
-            self._library_collections_action_status = (
-                f"Legacy export failed: {reason.replace('_', ' ')}."
-            )
-            self._notify_library_collections_warning(reason)
-        else:
-            self._library_collections_action_status = (
-                "Legacy recovery export complete."
-            )
-        self._refresh_library_collections_capture_reader()
+        """Validate and publish a complete recovery snapshot off the UI loop.
+
+        The body lives in ``library_file_export`` (TASK-34000.3): it asks
+        before replacing an existing file, then publishes through the
+        recovery service's own atomic, identity-guarded writer.
+        """
+        from .library_file_export import export_library_collections_recovery
+
+        await export_library_collections_recovery(self, selected_path)
 
     async def _update_selected_library_collection_capture(
         self,
@@ -1602,7 +1581,15 @@ class LibraryCollectionsController:
         if detail is None or not controller.state.identity_actions_enabled:
             return
         try:
-            webbrowser.open(detail.capture.canonical_url)
+            # TASK-34937: OS spawn off the UI thread. Follow-up note:
+            # a spawn failure is swallowed by exit_on_error=False here
+            # (no toast); the except below only covers pre-spawn reads.
+            self._screen.run_worker(
+                partial(webbrowser.open, detail.capture.canonical_url),
+                thread=True,
+                exit_on_error=False,
+                name="open-capture-url",
+            )
         except Exception:
             self._notify_library_collections_warning(
                 "Could not open the original capture URL."

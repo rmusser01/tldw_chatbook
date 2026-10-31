@@ -1,0 +1,3 @@
+Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py: formatter-required hunk overlaps changed lines
+Tests/Chat/test_console_chat_create_confirm.py: formatter-required hunk overlaps changed lines
+tldw_chatbook/Chat/console_chat_controller.py: formatter-required hunk overlaps changed lines

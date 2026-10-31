@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MappingProxyType
 
+from tldw_chatbook.Backup_Recovery.participants import _core_operation
 from tldw_chatbook.Chat.console_trace_legacy import (
     LegacyDecodedByteLimitError,
     LegacyTraceNormalizer,
@@ -280,12 +281,8 @@ class PhysicalTraceCompactor:
     def _refresh_storage_observation(self, result: TraceGCResult) -> TraceGCResult:
         with self.db.transaction() as cursor:
             page_size = int(cursor.execute("PRAGMA page_size").fetchone()[0])
-            allocated_pages = int(
-                cursor.execute("PRAGMA page_count").fetchone()[0]
-            )
-            freelist_pages = int(
-                cursor.execute("PRAGMA freelist_count").fetchone()[0]
-            )
+            allocated_pages = int(cursor.execute("PRAGMA page_count").fetchone()[0])
+            freelist_pages = int(cursor.execute("PRAGMA freelist_count").fetchone()[0])
         wal_path = Path(f"{self.db.db_path_str}-wal")
         try:
             wal_bytes = max(0, wal_path.stat().st_size)
@@ -349,7 +346,11 @@ class PhysicalTraceCompactor:
     ) -> TraceCompactionOutcome:
         reason: str | None = None
         failure_recorded = False
-        after = (result.allocated_bytes_after, result.freelist_bytes_after, result.wal_bytes)
+        after = (
+            result.allocated_bytes_after,
+            result.freelist_bytes_after,
+            result.wal_bytes,
+        )
         try:
             with self.db.quiesce_connections(
                 timeout_seconds=self.policy.quiesce_timeout_seconds
@@ -741,6 +742,11 @@ class LegacyTraceMaintenance:
         self.max_bytes = max_bytes
         self.max_seconds = float(max_seconds)
         self.clock = clock
+        #: TASK-33801: skip the read-only idle check on the next pass. The check
+        #: costs a storage admission of its own, which a pass with work pays
+        #: only to fall through to the write path. True at first (the state is
+        #: unknown); the runtime loop sets it when an exchange write wakes it.
+        self.expect_work = True
 
     def _complete_without_pending_work(self) -> bool:
         """Read-only: True when the migration is complete with no newer exchange.
@@ -775,11 +781,20 @@ class LegacyTraceMaintenance:
             )
 
     def run_batch(self) -> LegacyMaintenanceBatch:
-        """Run at most one bounded transaction and yield to the caller."""
+        """Run one bounded batch under shared repository admission.
 
+        Returns:
+            Content-free normalization progress or an unadmitted busy result.
+        """
         if self.provider_active():
             return LegacyMaintenanceBatch(False, 0, 0, False)
-        if self._complete_without_pending_work():
+        with _core_operation(self.db):
+            return self._run_admitted_batch()
+
+    def _run_admitted_batch(self) -> LegacyMaintenanceBatch:
+        """Keep the read probe and locked write recheck in the admitted scope."""
+        expect_work, self.expect_work = self.expect_work, False
+        if not expect_work and self._complete_without_pending_work():
             return LegacyMaintenanceBatch(True, 0, 0, True)
         started = self.clock()
         processed_rows = 0
@@ -850,7 +865,9 @@ class LegacyTraceMaintenance:
                             cursor,
                             row,
                             max_decoded_bytes=remaining_bytes,
-                            oversized_policy=("omit" if not processed_rows else "defer"),
+                            oversized_policy=(
+                                "omit" if not processed_rows else "defer"
+                            ),
                         )
                     except LegacyDecodedByteLimitError:
                         break
@@ -1275,9 +1292,7 @@ class TraceGarbageCollector:
         retain_until: str,
         reason_code: str,
     ) -> str:
-        TraceGarbageCollector._validate_utc_timestamp(
-            retain_until, "retain_until"
-        )
+        TraceGarbageCollector._validate_utc_timestamp(retain_until, "retain_until")
         if type(reason_code) is not str or not 1 <= len(reason_code) <= 128:
             raise ValueError("reason_code")
         existing = cursor.execute(
@@ -1440,9 +1455,7 @@ class TraceGarbageCollector:
             "console_trace_redaction_spans": "span_id",
             "console_trace_request_headers": "header_id",
             "console_trace_response_links": "response_link_id",
-            "console_trace_revision_bindings": (
-                "revision_id || char(31) || policy_id"
-            ),
+            "console_trace_revision_bindings": ("revision_id || char(31) || policy_id"),
             "console_trace_segments": "segment_id",
             "console_trace_semantic_revisions": "revision_id",
             "console_trace_surface_nodes": "node_id",
@@ -1457,9 +1470,7 @@ class TraceGarbageCollector:
                 f"SELECT {identity} AS entity_id FROM {table}",
             )
 
-    def _mark_reachable_rows(
-        self, cursor: object, request_id: str, epoch: int
-    ) -> None:
+    def _mark_reachable_rows(self, cursor: object, request_id: str, epoch: int) -> None:
         cursor.execute(
             """WITH RECURSIVE roots(segment_id, through_sequence) AS (
                    SELECT owner.root_segment_id, NULL
@@ -1628,9 +1639,7 @@ class TraceGarbageCollector:
         )
         self._mark_revisions_policies_artifacts(cursor, request_id, epoch)
 
-    def _mark_surface_nodes(
-        self, cursor: object, request_id: str, epoch: int
-    ) -> None:
+    def _mark_surface_nodes(self, cursor: object, request_id: str, epoch: int) -> None:
         self._mark_sql(
             cursor,
             request_id,
@@ -1687,11 +1696,23 @@ class TraceGarbageCollector:
                 WHERE mark.request_id = ? AND mark.entity_kind = 'console_trace_calls'""",
             (request_id,),
         )
+        # Durable admission owns current revisions before call reservation.
+        # Read under the same marked epoch; canonical checkpoint mutations fence
+        # sweep and automatic last_collected_epoch deduplication.
+        from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
+
+        admitted = ConsoleDispatchRepository(self.db).admitted_trace_revision_ids(cursor)
+        cursor.executemany(
+            "INSERT OR IGNORE INTO console_trace_gc_marks "
+            "(request_id, entity_kind, entity_id, marked_epoch) VALUES (?, ?, ?, ?)",
+            [(request_id, "console_trace_semantic_revisions", revision, epoch)
+             for revision in admitted],
+        )
         self._mark_sql(
             cursor,
             request_id,
             epoch,
-            "console_trace_semantic_revisions",
+            "console_trace_payload_revisions",
             """WITH RECURSIVE seeds(revision_id) AS (
                    SELECT node.semantic_revision_id FROM console_trace_surface_nodes AS node
                     JOIN console_trace_gc_marks AS mark ON mark.entity_id = node.node_id
@@ -1702,6 +1723,8 @@ class TraceGarbageCollector:
                    UNION SELECT link.semantic_revision_id FROM console_trace_response_links AS link
                     JOIN console_trace_gc_marks AS mark ON mark.entity_id = link.response_link_id
                    WHERE mark.request_id = ? AND mark.entity_kind = 'console_trace_response_links'
+                   UNION SELECT entity_id FROM console_trace_gc_marks
+                    WHERE request_id = ? AND entity_kind = 'console_trace_semantic_revisions'
                    UNION SELECT entity_id FROM console_trace_retention_roots
                     WHERE entity_kind = 'revision'
                       AND julianday(retain_until) > julianday('now')
@@ -1713,7 +1736,7 @@ class TraceGarbageCollector:
                      JOIN ancestry ON ancestry.revision_id = revision.revision_id
                     WHERE revision.predecessor_revision_id IS NOT NULL
                  ) SELECT revision_id AS entity_id FROM ancestry""",
-            (request_id, request_id, request_id),
+            (request_id, request_id, request_id, request_id),
         )
         self._mark_sql(
             cursor,
@@ -1724,7 +1747,7 @@ class TraceGarbageCollector:
                  FROM console_trace_revision_bindings AS binding
                  JOIN console_trace_gc_marks AS revision
                    ON revision.entity_id = binding.revision_id
-                  AND revision.entity_kind = 'console_trace_semantic_revisions'
+                  AND revision.entity_kind = 'console_trace_payload_revisions'
                  JOIN console_trace_gc_marks AS policy
                    ON policy.entity_id = binding.policy_id
                   AND policy.entity_kind = 'console_trace_policies'
@@ -1742,7 +1765,7 @@ class TraceGarbageCollector:
                   AND ((span.semantic_revision_id IS NOT NULL AND EXISTS (
                          SELECT 1 FROM console_trace_gc_marks AS revision
                           WHERE revision.request_id = ?
-                            AND revision.entity_kind = 'console_trace_semantic_revisions'
+                            AND revision.entity_kind = 'console_trace_payload_revisions'
                             AND revision.entity_id = span.semantic_revision_id))
                     OR (span.artifact_id IS NOT NULL AND EXISTS (
                          SELECT 1 FROM console_trace_gc_marks AS artifact
@@ -1795,6 +1818,30 @@ class TraceGarbageCollector:
             (request_id, request_id),
         )
 
+        # Canonical locators retain identity/FK ancestry, never policy bindings
+        # or archived bytes. Keep these metadata roots separate until payload
+        # reachability has closed, including when another call shares a policy.
+        self._mark_sql(
+            cursor,
+            request_id,
+            epoch,
+            "console_trace_semantic_revisions",
+            """WITH RECURSIVE seeds(revision_id) AS (
+                   SELECT revision_id FROM console_trace_semantic_revisions
+                    WHERE live_message_id IS NOT NULL
+                   UNION SELECT entity_id FROM console_trace_gc_marks
+                    WHERE request_id = ? AND entity_kind = 'console_trace_payload_revisions'
+                 ), ancestry(revision_id) AS (
+                   SELECT revision_id FROM seeds WHERE revision_id IS NOT NULL
+                   UNION
+                   SELECT revision.predecessor_revision_id
+                     FROM console_trace_semantic_revisions AS revision
+                     JOIN ancestry ON ancestry.revision_id = revision.revision_id
+                    WHERE revision.predecessor_revision_id IS NOT NULL
+                 ) SELECT revision_id AS entity_id FROM ancestry""",
+            (request_id,),
+        )
+
     @staticmethod
     def _remaining_owner_conversations(
         cursor: sqlite3.Cursor,
@@ -1835,9 +1882,7 @@ class TraceGarbageCollector:
         return tuple(str(item[0]) for item in rows)
 
     @staticmethod
-    def _sweep_unmarked(
-        cursor: sqlite3.Cursor, request_id: str
-    ) -> dict[str, int]:
+    def _sweep_unmarked(cursor: sqlite3.Cursor, request_id: str) -> dict[str, int]:
         statements = (
             ("console_trace_redaction_spans", "span_id"),
             ("console_trace_response_links", "response_link_id"),
@@ -1926,7 +1971,9 @@ class TraceGarbageCollector:
     @staticmethod
     def _decode_result(value: str) -> TraceGCResult:
         payload = json.loads(value)
-        deleted = {str(key): int(count) for key, count in payload["deleted_rows"].items()}
+        deleted = {
+            str(key): int(count) for key, count in payload["deleted_rows"].items()
+        }
         page_size = int(payload.get("page_size_bytes", 0))
         free_before = int(payload["freelist_pages_before"])
         free_after = int(payload["freelist_pages_after"])

@@ -33,6 +33,7 @@ MESSAGE_CONTROLLER_CALLABLES = (
     "current_chat_store_accessor",
     "ensure_console_chat_controller",
     "current_chat_controller_accessor",
+    "generation_refusal_copy",
     "sync_native_console_chat_ui",
     "active_session_is_ephemeral",
     "active_native_console_session",
@@ -378,3 +379,59 @@ def stub_library_activity_controller(
     )
     screen._library_activity = controller
     return controller
+
+
+def context_spend_for_test(screen: Any):
+    """Wire the real owner on a constructor-free Screen fixture.
+
+    Every dependency reads the fixture's explicit current seam; missing
+    inputs fail normally. A mounted owner is returned without resetting state.
+    """
+    from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
+    from tldw_chatbook.UI.Console_Modules.context_spend import (
+        ConsoleContextSpendController,
+    )
+    from tldw_chatbook.UI.Screens import chat_screen
+
+    existing = vars(screen).get("_context_spend")
+    if existing is not None:
+        return existing
+    display_pricing_catalog = lambda: spend.pricing_catalog_for_display(screen, chat_screen.get_pricing_catalog)
+    build_cost_snapshot = lambda *args, **kwargs: chat_screen.build_cost_snapshot(*args, **kwargs)
+    build_context_estimate = lambda *args, **kwargs: chat_screen.build_console_context_estimate(*args, **kwargs)
+    cost_ttl_seconds = lambda: chat_screen.CONSOLE_COST_TTL_TICK_SECONDS
+    estimate_ttl_seconds = lambda: chat_screen.CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS
+    screen._context_spend = ConsoleContextSpendController(
+        screen,
+        ensure_chat_store=lambda: screen._ensure_console_chat_store(),
+        current_chat_store=lambda: screen._console_chat_store,
+        ensure_chat_controller=lambda: screen._ensure_console_chat_controller(),
+        current_chat_controller=lambda: screen._console_chat_controller,
+        composer=lambda: screen._console_composer_or_none(),
+        pending_launch=lambda: screen._pending_console_launch_context,
+        build_staged_context_state=lambda launch: screen._build_console_staged_context_state(launch),
+        active_settings_readiness=lambda: screen._active_console_settings_readiness(),
+        provider_model_display=lambda: screen._active_console_provider_model_display(),
+        active_session_settings=lambda: screen._session._ensure_active_console_session_settings(),
+        active_native_session=lambda: screen._session._active_native_console_session(),
+        workspace_context=lambda: screen._workspace._current_console_workspace_context(),
+        fleet_token_total=lambda: screen._agent._console_agent_fleet_token_total(),
+        response_rule_usage=lambda session_id: screen._console_runtime().response_rule_usage(session_id),
+        sync_rail_system_line=lambda: screen._sync_console_rail_system_line(),
+        sync_agent_section=lambda: screen._sync_console_agent_section(),
+        request_context_allocation_reconcile=lambda: screen._request_console_context_allocation_reconcile(),
+        record_timer_created=lambda name: screen._record_ui_timer_created(name),
+        record_timer_stopped=lambda name: screen._record_ui_timer_stopped(name),
+        push_inspector=lambda **kwargs: screen._push_console_inspector(**kwargs),
+        context_window_for_display=lambda settings: spend.cached_context_window_for_display(screen, screen._ensure_console_provider_gateway(), settings),
+        context_inputs=lambda controller, session_id: spend.ConsoleContextReadSnapshot.for_screen(screen, max_age=estimate_ttl_seconds()).inputs(controller, session_id),
+        display_pricing_catalog=lambda: display_pricing_catalog(),
+        build_cost_snapshot=lambda *args, **kwargs: build_cost_snapshot(*args, **kwargs),
+        build_context_estimate=lambda *args, **kwargs: build_context_estimate(*args, **kwargs),
+        estimate_tokens_locally=lambda *args, **kwargs: chat_screen._estimate_tokens_locally(*args, **kwargs),
+        next_send_factories=lambda controller, session_id: screen._console_inspector_next_send_factories(controller, session_id),
+        cost_ttl_seconds=lambda: cost_ttl_seconds(),
+        estimate_ttl_seconds=lambda: estimate_ttl_seconds(),
+        refresh_checked_cost_chip=lambda: screen._sync_console_cost_chip(),
+    )
+    return screen._context_spend

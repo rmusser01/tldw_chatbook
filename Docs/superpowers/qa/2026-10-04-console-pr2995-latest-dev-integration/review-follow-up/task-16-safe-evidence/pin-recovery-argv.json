@@ -1,0 +1,12 @@
+{
+  "HEAD": "6cd44c72ffef6d19fca21eab3a05bdcade7c1811",
+  "argv": [
+    "git",
+    "update-ref",
+    "refs/recovery/pr2995-task16-6cd44c72",
+    "6cd44c72ffef6d19fca21eab3a05bdcade7c1811"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "environment_overrides": {},
+  "source_sha256": {}
+}

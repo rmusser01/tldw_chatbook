@@ -100,9 +100,7 @@ class _WorkspaceReadCounter:
             return wrapper
 
         for name, original in self._original_reads.items():
-            setattr(
-                LocalWorkspaceRegistryService, name, _counting_read(name, original)
-            )
+            setattr(LocalWorkspaceRegistryService, name, _counting_read(name, original))
 
         original_connection = self._original_connection
         original_transaction = self._original_transaction
@@ -127,9 +125,7 @@ class _WorkspaceReadCounter:
 
             return wrapper
 
-        WorkspaceDB.connection = _tracing_context(
-            original_connection, "db_connections"
-        )
+        WorkspaceDB.connection = _tracing_context(original_connection, "db_connections")
         WorkspaceDB.transaction = _tracing_context(
             original_transaction, "db_transactions"
         )
@@ -249,9 +245,7 @@ async def test_registry_mutation_reflects_in_the_next_tick():
         await pilot.pause()
 
         after_records = controller._console_browser_workspace_records()
-        assert any(
-            record.workspace_id == "workspace-gamma" for record in after_records
-        )
+        assert any(record.workspace_id == "workspace-gamma" for record in after_records)
         context = controller._current_console_workspace_context()
         assert context.active_workspace_id == "workspace-gamma"
         state = controller._build_console_workspace_context_state()
@@ -381,9 +375,7 @@ async def test_tick_scope_rebuilds_when_session_is_created_mid_scope():
             first = controller._build_console_workspace_context_state()
             assert controller._build_console_workspace_context_state() is first
 
-            session = store.create_session(
-                title="Mid-tick session", activate=True
-            )
+            session = store.create_session(title="Mid-tick session", activate=True)
 
             refreshed = controller._build_console_workspace_context_state()
             assert refreshed is not first, (
@@ -480,16 +472,11 @@ def test_prepared_union_projection_matches_self_contained_projection():
     controller._prune_stale_workspace_page_attempts()
     union = controller._merge_console_browser_rows(
         browser_rows,
-        *(
-            attempt.rows
-            for attempt in controller._workspace_page_attempts.values()
-        ),
+        *(attempt.rows for attempt in controller._workspace_page_attempts.values()),
     )
     union = controller._rows_with_latest_canonical_owner(union)
     union = controller._overlay_current_console_browser_markers(union)
-    prepared = controller.workspace_tree_projection(
-        browser_rows, prepared_rows=union
-    )
+    prepared = controller.workspace_tree_projection(browser_rows, prepared_rows=union)
 
     assert prepared == standalone
     # The seeded shapes actually exercised the interesting paths.

@@ -507,6 +507,13 @@ async def test_provider_switch_clear_is_suppressed_but_user_key_clear_is_staged(
         await pilot.press("backspace")
         await pilot.pause()
 
+        # TASK-33007.2, rewritten on purpose (owner ruling 2026-10-04): an
+        # emptied field keeps the saved key; the user's clear is Clear's key.
+        draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
+        assert "api_key" not in draft.values
+        await pilot.press("ctrl+l")
+        await pilot.pause()
+
         draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
         assert draft.values["api_key"] == ""
 
@@ -843,9 +850,19 @@ async def test_qwencloud_malformed_canonical_table_uses_canonical_recovery_witho
         assert "Advanced Config" in recovery
         assert "config.toml" in recovery
         assert env_var.value == ""
-        assert "Provider settings invalid" in screen._provider_key_status("QwenCloud")
-        assert "ALIAS-SECRET-CANARY" not in screen._provider_key_status("QwenCloud")
-        assert "ALIAS_ENV_CANARY" not in screen._provider_key_status("QwenCloud")
+        # TASK-33007.2, rewritten on purpose: the card's readiness block and
+        # its key line are gone; the API key row's Source word and help say it.
+        from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+            api_key_row_copy,
+        )
+
+        key_row = " ".join(api_key_row_copy(screen, "QwenCloud"))
+        # Review of PR #3057 (R1 #11), rewritten on purpose: the 40-cell
+        # sentence was cut by the row's ellipsis; the guidance line above
+        # still names config.toml.
+        assert key_row == "invalid repair it in Advanced Config"
+        assert "ALIAS-SECRET-CANARY" not in key_row
+        assert "ALIAS_ENV_CANARY" not in key_row
         assert app.app_config["api_settings"] == original_api_settings
 
 
@@ -979,7 +996,14 @@ async def test_qwencloud_alias_only_malformed_table_uses_canonical_recovery_owne
         assert (
             screen.query_one("#settings-provider-credential-env-var", Input).value == ""
         )
-        assert "SECRET-CANARY" not in screen._provider_key_status("QwenCloud")
+        # TASK-33007.2, rewritten on purpose: the API key row's copy.
+        from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+            api_key_row_copy,
+        )
+
+        assert "SECRET-CANARY" not in " ".join(
+            api_key_row_copy(screen, "QwenCloud")
+        )
         assert app.app_config["api_settings"] == original_api_settings
 
 

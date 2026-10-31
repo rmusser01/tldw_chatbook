@@ -58,7 +58,8 @@ async def _open(app, pilot):
     await app.push_screen(screen)
     await pilot.pause()
     row = next(
-        b for b in screen.query(Button)
+        b
+        for b in screen.query(Button)
         if getattr(b, "lab_view_key", None) == "dictation"
     )
     row.press()

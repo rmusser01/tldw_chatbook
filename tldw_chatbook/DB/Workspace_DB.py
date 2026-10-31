@@ -2,27 +2,19 @@
 
 from __future__ import annotations
 
+import inspect
 import sqlite3
-import threading
-import time
-from contextlib import contextmanager
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, Union
+from typing import Union
 
+from . import store_kernel as _store_kernel
 from .base_db import BaseDB
-
-from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_cached_connection,
-    _core_closing,
-    _core_getter,
-    _core_transaction,
-    _register_core_connection,
-)
+from .store_kernel import SQLiteStoreKernel
 
 
-class WorkspaceDB(BaseDB):
+class WorkspaceDB(SQLiteStoreKernel, BaseDB):
     """Database wrapper for local workspace registry state.
 
     task-3011: connections are held per thread (the ChaChaNotes
@@ -32,7 +24,14 @@ class WorkspaceDB(BaseDB):
     paint, cProfile in task-2902's notes).
     """
 
-    _CURRENT_SCHEMA_VERSION = 8
+    _CURRENT_SCHEMA_VERSION = 9
+    _MIGRATE_V8_TO_V9_STATEMENTS = (
+        "CREATE TABLE workspace_binding_authority (binding_id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK (typeof(revision) = 'integer' AND revision > 0))",
+        'CREATE TRIGGER workspace_binding_authority_insert AFTER INSERT ON workspace_runtime_bindings BEGIN INSERT INTO workspace_binding_authority(binding_id,revision) VALUES(NEW.binding_id,1) ON CONFLICT(binding_id) DO UPDATE SET revision=revision+1; END',
+        'CREATE TRIGGER workspace_binding_authority_update AFTER UPDATE ON workspace_runtime_bindings BEGIN INSERT INTO workspace_binding_authority(binding_id,revision) VALUES(NEW.binding_id,1) ON CONFLICT(binding_id) DO UPDATE SET revision=revision+1; END',
+        'CREATE TRIGGER workspace_binding_authority_delete AFTER DELETE ON workspace_runtime_bindings BEGIN INSERT INTO workspace_binding_authority(binding_id,revision) VALUES(OLD.binding_id,1) ON CONFLICT(binding_id) DO UPDATE SET revision=revision+1; END',
+        'CREATE TRIGGER workspace_binding_authority_workspace AFTER UPDATE OF archived,authority ON workspace_records BEGIN UPDATE workspace_binding_authority SET revision=revision+1 WHERE binding_id IN (SELECT binding_id FROM workspace_runtime_bindings WHERE workspace_id=NEW.workspace_id); END',
+    )
     _MIGRATE_V2_TO_V3_SQL = """BEGIN IMMEDIATE;
 
 CREATE TABLE research_source_operations (
@@ -339,149 +338,50 @@ INSERT OR IGNORE INTO schema_version (version) VALUES (6);
 COMMIT;
 """
 
-    #: Liveness-ping gate (mirrors `ChaChaNotes_DB`, task-261): pinging on
-    #: every call roughly doubles the raw statement count on query-heavy
-    #: paths, and this DB is exactly such a path (~1,350 calls per Console
-    #: push). A recently-used held connection is known-good without a ping.
-    _LIVENESS_PING_IDLE_SECONDS = 30.0
+    #: BaseDB-provenance (ADR-228): connections open through BaseDB's
+    #: per-call path under the db.base owner; participants identity
+    #: stays db.base, so no per-store policy entry is minted.
+    _kernel_sqlite_owner = "db.base"
 
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
-        self._thread_local = threading.local()
+        self._init_store_kernel()
         super().__init__(db_path, client_id)
 
-    @_core_getter
-    def _get_connection(self) -> sqlite3.Connection:
-        _core_access(self)
-        conn = super()._get_connection()
-        _register_core_connection(self, conn)
-        try:
-            _core_access(self)
-            conn.execute("PRAGMA foreign_keys = ON")
-            if not self.is_memory_db:
-                conn.execute("PRAGMA journal_mode = WAL")
-            # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
-            # lose the last commit, acceptable for this local registry cache) and
-            # avoids an fsync per commit -- DELETE+FULL's writer-exclusive-locks-
-            # readers behavior was a stall candidate on this held-connection,
-            # query-heavy path (task-15465). Unconditional: synchronous is
-            # per-connection, so every held connection needs it re-applied.
-            conn.execute("PRAGMA synchronous = NORMAL")
-            # task-3012 (missed at task-3011 port time; fixed at task-15480): a
-            # held (long-lived) connection needs true autocommit. Python's
-            # default isolation mode auto-BEGINs on any DML, and an implicit
-            # transaction accumulated outside `transaction()` makes the explicit
-            # `BEGIN` there fail with "cannot start a transaction within a
-            # transaction" -- and silently ROLLS BACK bare DML on close (masked
-            # pre-task-3011 by per-call connections, which committed
-            # explicitly). Audited (task-15480): every `connection()` call site
-            # in `Workspaces/registry_service.py` is read-only -- every write
-            # there already goes through `transaction()` -- and this class's own
-            # `connection()` sites (`_initialize_schema`'s `executescript`,
-            # `get_schema_version`'s read) self-commit or don't write at all.
-            # Latent today, not live; this closes the correctness fuse before
-            # any future bare-DML call site can trip it.
-            conn.isolation_level = None
-            _core_access(self)
-        except BaseException:
-            # Registration retains uncertain native close; never drop its lease.
-            conn.close()
-            raise
+    def _open_connection(self) -> sqlite3.Connection:
+        """Open through BaseDB's db.base path (ADR-228 provenance section)."""
+        return BaseDB._get_connection(self)
+
+    def _configure_connection(self, conn: sqlite3.Connection) -> sqlite3.Connection:
+        """Workspace per-connection policy (kernel wraps registration/gating).
+
+        NORMAL is safe under WAL (app-crash-safe; only an OS/power crash
+        can lose the last commit, acceptable for this local registry cache)
+        and avoids an fsync per commit -- DELETE+FULL's writer-exclusive-
+        locks-readers behavior was a stall candidate on this held-
+        connection, query-heavy path (task-15465). Unconditional:
+        synchronous is per-connection, so every held connection needs it
+        re-applied.
+
+        task-3012/task-15480: a held (long-lived) connection needs true
+        autocommit. Python's default isolation mode auto-BEGINs on any DML,
+        and an implicit transaction accumulated outside ``transaction()``
+        makes the explicit ``BEGIN`` there fail -- and silently ROLLS BACK
+        bare DML on close. Audited at task-15480: every ``connection()``
+        call site in Workspaces/registry_service.py is read-only and this
+        class's own sites self-commit or don't write.
+        """
+        conn.execute("PRAGMA foreign_keys = ON")
+        if not self.is_memory_db:
+            conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.isolation_level = None
         return conn
 
-    @_core_getter
-    def _held_connection(self) -> sqlite3.Connection:
-        """Return this thread's held connection, opening or reviving it.
-
-        A positively closed native connection is transparently replaced.
-        Probe failure on a still-live handle preserves it and propagates the
-        error, mirroring `ChaChaNotes_DB._get_thread_connection`.
-        """
-        _core_access(self)
-        conn = getattr(self._thread_local, "conn", None)
-        conn = _core_cached_connection(self, conn)
-        if conn is not None:
-            last_used = getattr(self._thread_local, "conn_last_used", None)
-            if (
-                last_used is None
-                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
-            ):
-                try:
-                    conn.execute("SELECT 1")
-                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    # A failed probe does not retire a live native borrower.
-                    try:
-                        sqlite3.Connection.in_transaction.__get__(conn)
-                    except sqlite3.ProgrammingError:
-                        conn.close()  # Positively closed; failure retains cache.
-                    else:
-                        raise
-                    conn = None
-        if conn is None:
-            conn = self._get_connection()
-            self._thread_local.conn = conn
-        self._thread_local.conn_last_used = time.monotonic()
-        return conn
-
-    @_core_transaction
-    @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
-        """Yield the thread's held connection (row factory, foreign keys on)."""
-
-        yield self._held_connection()
-
-    @_core_transaction
-    @contextmanager
-    def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
-        """Run a write transaction on the held connection; roll back on failure.
-
-        Nesting: this issues an explicit BEGIN on the ONE connection this
-        thread holds, so nesting a second `transaction()` call inside the
-        first raises `sqlite3.OperationalError: cannot start a transaction
-        within a transaction`. Pre-port each block had its own connection
-        and nesting silently "worked"; the outer block still rolls back
-        cleanly here, because the failure propagates through its `except`
-        before reaching the caller.
-
-        Args:
-            immediate: Reserve the write lock before the first read. Use for
-                read-then-write updates that must serialize concurrent writers.
-
-        Raises:
-            Exception: Re-raised after rolling back, on any error inside
-                the `with` block. On clean exit the transaction commits.
-        """
-
-        conn = self._held_connection()
-        conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
-        try:
-            yield conn
-        # TASK-32801.5: BaseException, not Exception. A CancelledError or
-        # KeyboardInterrupt raised inside the block is not an Exception, so
-        # the rollback used to be skipped and the transaction stayed open --
-        # and because `transaction()` treats an already-open transaction as
-        # nested, every later write on that thread then rode it uncommitted
-        # and was lost at close. Proven on Prompts_DB: a write after an
-        # escaped KeyboardInterrupt did not survive close+reopen.
-        # Library_Collections_DB and Workflows_DB already do this.
-        except BaseException:
-            conn.rollback()
-            raise
-        else:
-            conn.commit()
-
-    def close(self) -> None:
-        """Close the current thread's held connection, if any."""
-
-        conn = getattr(self._thread_local, "conn", None)
-        if conn is not None:
-            with _core_closing(self, conn) as allowed:
-                if not allowed:
-                    return
-                try:
-                    conn.close()
-                except Exception:  # noqa: BLE001 - preserve explicit retirement route
-                    return
-                self._thread_local.conn = None
+    #: Workspace's contract keeps the deferred-BEGIN default (registry
+    #: read-then-write sites defer the lock; explicit immediate=True sites
+    #: still win). A kernel class attribute instead of a method override
+    #: (ADR-228 tri-state).
+    _transaction_immediate_default = False
 
     def _initialize_schema(self) -> None:
         """Initialize the local workspace registry schema."""
@@ -575,9 +475,9 @@ COMMIT;
             )
             conn.commit()
 
-            # v2 migration: add case-insensitive unique index on non-archived names.
-            # Keep this runner SQL aligned with
-            # tldw_chatbook/DB/migrations/workspaces_v1_to_v2_name_unique_index.sql.
+            # v2 migration: add case-insensitive unique index on non-archived
+            # names. task-19565: this runner is the single source (the
+            # decorative workspaces_v1_to_v2 .sql twin was deleted).
             version_row = conn.execute(
                 "SELECT MAX(version) FROM schema_version"
             ).fetchone()
@@ -625,6 +525,7 @@ COMMIT;
                         "PRAGMA table_info(research_quick_note_receipts)"
                     ).fetchall()
                 }
+            needs_v9 = version < 9
             needs_v2 = version < 2 or not v2_index_exists
             needs_v3 = version < 3 or not v3_table_exists
             needs_v4 = version < 4 or not v4_table_exists
@@ -670,6 +571,8 @@ COMMIT;
                 self._migrate_v6_to_v7()
             if needs_v8:
                 self._migrate_v7_to_v8()
+            if needs_v9:
+                self._migrate_v8_to_v9()
             return
 
         # Reserve every existing non-archived name up front (stripped, casefolded)
@@ -717,7 +620,7 @@ COMMIT;
             )
             write_conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (2)"
-                )
+            )
 
         if needs_v3:
             self._migrate_v2_to_v3()
@@ -731,6 +634,8 @@ COMMIT;
             self._migrate_v6_to_v7()
         if needs_v8:
             self._migrate_v7_to_v8()
+        if needs_v9:
+            self._migrate_v8_to_v9()
 
     def _migrate_v2_to_v3(self) -> None:
         """Add durable Research source-operation intent and stage receipts."""
@@ -776,8 +681,8 @@ COMMIT;
         """Add per-workspace reference-backed assistant defaults.
 
         Adds the ``assistant_defaults`` JSON column plus the agent backfill
-        completion flag table. Keep this runner SQL aligned with
-        tldw_chatbook/DB/migrations/workspaces_v6_to_v7_assistant_defaults.sql.
+        completion flag table. (task-19565: this runner is the single
+        source; the decorative workspaces_v6_to_v7 .sql twin was deleted.)
         """
 
         with self.transaction() as write_conn:
@@ -815,6 +720,16 @@ COMMIT;
                 )
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (8)")
 
+    def _migrate_v8_to_v9(self) -> None:
+        """Install non-cascading binding authority witnesses atomically (ADR-241)."""
+        with self.transaction(immediate=True) as conn:
+            for statement in self._MIGRATE_V8_TO_V9_STATEMENTS:
+                conn.execute(statement)
+            conn.execute(
+                "INSERT INTO workspace_binding_authority SELECT binding_id,1 FROM workspace_runtime_bindings"
+            )
+            conn.execute("INSERT INTO schema_version(version) VALUES(9)")
+
     def get_schema_version(self) -> int:
         """Return the initialized schema version."""
 
@@ -842,3 +757,100 @@ COMMIT;
                 """,
                 (datetime.now(timezone.utc).isoformat(),),
             )
+
+
+# Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_WORKSPACE_BASES = WorkspaceDB.__bases__
+_RUN_LOG_PROBE_INHERITED = (
+    "_init_store_kernel",
+    "_get_connection",
+    "_held_connection",
+    "connection",
+    "close",
+)
+_RUN_LOG_PROBE_SLOTS = (
+    (globals(), "WorkspaceDB", WorkspaceDB),
+    (globals(), "BaseDB", BaseDB),
+    (globals(), "SQLiteStoreKernel", SQLiteStoreKernel),
+    (globals(), "_store_kernel", _store_kernel),
+    (globals(), "_RUN_LOG_PROBE_WORKSPACE_BASES", _RUN_LOG_PROBE_WORKSPACE_BASES),
+    (globals(), "_RUN_LOG_PROBE_INHERITED", _RUN_LOG_PROBE_INHERITED),
+    (sys.modules, _store_kernel.__name__, _store_kernel),
+    (vars(_store_kernel), "__name__", _store_kernel.__name__),
+    (vars(_store_kernel), "__file__", _store_kernel.__file__),
+    (vars(_store_kernel), "__spec__", _store_kernel.__spec__),
+    (_store_kernel.__spec__, "origin", getattr(_store_kernel.__spec__, "origin", None)),
+    (vars(_store_kernel), "SQLiteStoreKernel", SQLiteStoreKernel),
+    (SQLiteStoreKernel, "is_memory_db", vars(SQLiteStoreKernel)["is_memory_db"]),
+    (WorkspaceDB, "_kernel_sqlite_owner", vars(WorkspaceDB)["_kernel_sqlite_owner"]),
+    (WorkspaceDB, "_transaction_immediate_default", False),
+    (SQLiteStoreKernel, "_transaction_immediate_default", True),
+    (BaseDB, "_get_connection", vars(BaseDB)["_get_connection"]),
+    (
+        BaseDB._get_connection.__globals__,
+        "connect_private_sqlite",
+        BaseDB._get_connection.__globals__["connect_private_sqlite"],
+    ),
+    *(
+        (WorkspaceDB, name, inspect.getattr_static(WorkspaceDB, name))
+        for name in (
+            "__init__",
+            "_initialize_schema",
+            "_open_connection",
+            "_configure_connection",
+            "transaction",
+            *_RUN_LOG_PROBE_INHERITED,
+        )
+    ),
+    *(
+        (SQLiteStoreKernel, name, vars(SQLiteStoreKernel)[name])
+        for name in (*_RUN_LOG_PROBE_INHERITED, "transaction")
+    ),
+    *(
+        (vars(_store_kernel), name, vars(_store_kernel)[name])
+        for name in (
+            "_core_access",
+            "_core_cached_connection",
+            "_register_core_connection",
+            "_core_closing",
+        )
+    ),
+)
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    _RUN_LOG_PROBE_SLOTS,
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in _RUN_LOG_PROBE_SLOTS
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)

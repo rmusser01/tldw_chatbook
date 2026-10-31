@@ -214,7 +214,7 @@ def test_barriers_precede_all_observable_runtime_hooks(turn_kind: str) -> None:
 
 def test_continuation_checkpoint_uses_the_continuation_projection() -> None:
     """A persisted continuation must not retain a Canvas-like argument body."""
-    raw = '<canvas-html-argument>'
+    raw = "<canvas-html-argument>"
     raw_arguments = json.dumps({"html": raw}, separators=(",", ":"))
     call = ToolCall("calculator", {"html": raw}, "call-1", raw_arguments)
     checkpoint = _checkpoint(
@@ -229,11 +229,13 @@ def test_continuation_checkpoint_uses_the_continuation_projection() -> None:
         invoke=lambda _call: ToolResult(ok=True, content="unused"),
         cancel=lambda: bool(events),
     )
-    deps.project_tool_record = lambda audience, _call, result=None: ToolRecordProjection(
-        arguments={"canvas_id": "canvas-1"} if audience == "continuation" else {},
-        content="revision-1",
-        error="safe-error",
-        ok=result.ok if result is not None else None,
+    deps.project_tool_record = lambda audience, _call, result=None: (
+        ToolRecordProjection(
+            arguments={"canvas_id": "canvas-1"} if audience == "continuation" else {},
+            content="revision-1",
+            error="safe-error",
+            ok=result.ok if result is not None else None,
+        )
     )
     deps.has_tool_record_projection = lambda _call: True
 
@@ -522,9 +524,8 @@ def test_common_executing_barrier_dominates_every_dispatch_branch(
     if dependency == "find_tools":
         deps.find_tools = lambda query: order.append("dispatch") or []
     elif dependency == "load_schemas":
-        deps.load_schemas = (
-            lambda ids, _messages, _call: order.append("dispatch")
-            or ToolLoadSelection()
+        deps.load_schemas = lambda ids, _messages, _call: (
+            order.append("dispatch") or ToolLoadSelection()
         )
     else:
         setattr(deps, dependency, dispatch_result)
@@ -1312,9 +1313,7 @@ def test_continuation_review_exception_fails_closed_without_logging_or_dispatch(
         invoke=lambda actual: invoked.append(actual) or ToolResult(ok=True),
         review=review,
         expand=(lambda actual: []) if restored else None,
-        before_dispatch=lambda batch, _pure: gated.extend(
-            call.name for call in batch
-        ),
+        before_dispatch=lambda batch, _pure: gated.extend(call.name for call in batch),
     )
     kwargs = (
         {
@@ -1822,7 +1821,7 @@ def test_cycle_4d_raised_final_persistence_stops_safely() -> None:
     assert "PRIVATE-CANARY" not in outcome.steps[-1].summary
 
 
-@pytest.mark.parametrize("name", ["report_to_supervisor", "read_agent_messages"])
+@pytest.mark.parametrize("name", ["report_to_supervisor", "read_agent_messages", "list_peer_agents", "send_to_peer"])
 def test_restored_pending_message_call_refuses_before_execution(name):
     from tldw_chatbook.Agents.fleet_message_tools import collect
     from tldw_chatbook.Agents.fleet_messages import MessageIdentity, MessageStore
@@ -1847,6 +1846,8 @@ def test_restored_pending_message_call_refuses_before_execution(name):
         invoked.append(args) or collect(reader, args, 8000)
     )
     deps.report_to_supervisor = lambda args: invoked.append(args) or ToolResult(True)
+    deps.list_peer_agents = lambda args: invoked.append(args) or ToolResult(True)
+    deps.send_to_peer = lambda args: invoked.append(args) or ToolResult(True)
     outcome = run_agent_loop(
         replace(CONFIG, budget=RunBudget(denial_circuit_breaker_limit=1)),
         [],
@@ -2275,13 +2276,16 @@ def test_mixed_native_refusals_stop_on_reader_boundary_without_another_model_cal
 
 def test_continuation_post_tool_hook_receives_uncapped_dispatched_result():
     """Continuation capture must retain the result before history truncation."""
-    call = ToolCall("calculator", {"expression": "2+2"}, "call-1", '{"expression":"2+2"}')
+    call = ToolCall(
+        "calculator", {"expression": "2+2"}, "call-1", '{"expression":"2+2"}'
+    )
     checkpoint = _checkpoint(_pending_call())
     raw_result = "result" * 4000
     fired = []
     deps = _deps(
         [_native_turn((call,), checkpoint), ModelTurn(text="done")],
-        order=[], persist=lambda event: None,
+        order=[],
+        persist=lambda event: None,
         invoke=lambda c: ToolResult(ok=True, content=raw_result),
     )
     deps.post_tool_call = lambda *args: fired.append(args)

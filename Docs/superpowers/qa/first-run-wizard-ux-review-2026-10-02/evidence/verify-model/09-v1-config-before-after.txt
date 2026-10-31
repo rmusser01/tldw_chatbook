@@ -1,0 +1,12 @@
+# v-model-1 (fresh HOME, Anthropic + real key typed in the wizard), config.toml greps recorded live 2026-10-02
+## After Enter on the untouched Model list (capture 02) -- before any later step:
+[chat_defaults] provider = "OpenAI" / model = "gpt-5.6-terra"   (shipped template values, unchanged)
+[api_settings.anthropic] api_key_env_var = "ANTHROPIC_API_KEY" / model = "claude-sonnet-5"   (template; NO api_key line)
+count of the Anthropic key's first 20 chars anywhere in config.toml: 0
+## Summary (capture 04): "✗ Provider — no credentials or saved endpoint" / "– Default model — not selected"; primary button "Review provider setup".
+## Review provider setup (capture 05) -> Provider step, key still staged in memory ("Found 13 model(s) for Anthropic.").
+## Ctrl+N -> Model (same untouched list) -> Enter again -> Voice with Model '!' again (capture 06): the recovery route loops.
+## Negative control: Ctrl+B to Model, ONE Down (selects row 0 = recommended, capture 07), Enter (capture 08):
+[chat_defaults] provider = "anthropic" / model = "claude-sonnet-5-5"
+[api_settings.anthropic] model = "claude-sonnet-5-5"
+count of the Anthropic key's first 20 chars in config.toml: 1

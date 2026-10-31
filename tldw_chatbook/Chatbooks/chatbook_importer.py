@@ -10,6 +10,8 @@ Handles the import and validation of chatbooks into the application.
 
 from tldw_chatbook.Backup_Recovery.local_content_lifetime import call as content_call, own_database
 
+import base64
+import binascii
 import codecs
 import hashlib
 import heapq
@@ -24,7 +26,7 @@ import uuid
 import zipfile
 from contextlib import nullcontext
 from pathlib import Path, PurePosixPath
-from typing import Any, BinaryIO, Dict, List, Mapping, Optional, Tuple
+from typing import Any, BinaryIO, Callable, Dict, List, Mapping, Optional, Tuple
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
@@ -74,6 +76,13 @@ from ..Utils.private_paths import secure_private_directory
 from .chatbook_models import ChatbookManifest, ChatbookVersion, ContentType
 from .conflict_resolver import ConflictResolution, ConflictResolver
 from tldw_chatbook.Utils.timestamps import utc_now_iso
+
+#: Fixed-text import warning when a note's or conversation's keyword could
+#: not be re-linked (TASK-34000.19 fix round 1, M-3). Never carries the
+#: keyword: ADR-057's diagnostics boundary applies to the status too.
+KEYWORD_RESTORE_WARNING = (
+    "Some keywords could not be restored on an imported note/conversation."
+)
 
 _PROMPT_ARCHIVE_ITEM_ID = re.compile(r"(?:[1-9][0-9]*|item-[0-9]{6,})\Z")
 _MAX_ARCHIVE_MEMBERS = 10_000
@@ -150,6 +159,41 @@ _IMPORTABLE_CONTENT_TYPES: Tuple["ContentType", ...] = (
     ContentType.MEDIA,
     ContentType.KEPT_BRIEFING,
 )
+
+
+class ImportConflict:
+    """One chatbook item whose collision key already exists at the destination.
+
+    Produced by :meth:`ChatbookImporter.scan_conflicts` (task-19861): the
+    wizard's conflict step shows exactly these findings, and only their
+    absence -- after the scan ran -- may ever be phrased as "no conflicts".
+    """
+
+    def __init__(self, content_type: "ContentType", title: str, existing_name: str):
+        #: The chatbook content type the colliding item belongs to.
+        self.content_type = content_type
+        #: The colliding item's own name in the chatbook.
+        self.title = title
+        #: The name (or URL, for media) already present at the destination.
+        self.existing_name = existing_name
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return (
+            f"ImportConflict({self.content_type.value!r}, {self.title!r}, "
+            f"{self.existing_name!r})"
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ImportConflict):
+            return NotImplemented
+        return (
+            self.content_type == other.content_type
+            and self.title == other.title
+            and self.existing_name == other.existing_name
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.content_type, self.title, self.existing_name))
 
 
 class ImportTypeResult:
@@ -826,6 +870,216 @@ class ChatbookImporter:
             if extract_dir is not None:
                 shutil.rmtree(extract_dir, ignore_errors=True)
 
+    # --- Pre-import conflict scan (task-19861) ----------------------------
+    #
+    # The wizard's conflict-resolution step used to ship an unconditional
+    # "✅ No conflicts detected - all content is new" with no check behind it.
+    # This scan is what that claim is now earned with: it answers, from the
+    # destination databases, "would any of this chatbook's items collide with
+    # something that is already there?" -- using the same lookup keys the
+    # import path itself uses when it decides to skip, rename, replace or
+    # merge. Every answer the step shows is one of these findings (or the
+    # absence of them, after the scan actually ran).
+
+    @staticmethod
+    def _import_prefix_variants(name: str) -> Tuple[str, str]:
+        """The two names an item can be imported under, by the rename option.
+
+        ``prefix_imported`` is chosen on the options step, which runs AFTER the
+        conflict step, so the scan cannot know which name will be used. Both
+        are therefore checked and a match on either is a potential conflict --
+        the honest answer to "could this collide?".
+        """
+        return name, f"[Imported] {name}"
+
+    def _scan_conflict_keys(
+        self, archive: zipfile.ZipFile, manifest: ChatbookManifest
+    ) -> Dict[ContentType, List[Tuple[str, str]]]:
+        """Read every item's collision key out of the validated archive.
+
+        Returns, per content type this scan covers, a list of
+        ``(display_title, lookup_key)`` pairs. For name-keyed types the lookup
+        key is the item's import name; for media it is the URL, which is what
+        the import path itself conflicts on (a media item's title is never
+        consulted).
+
+        The keys are read from the same files the importer reads at import
+        time -- the conversation file's ``name`` field, the note's manifest
+        title, the parsed character card's name, the media metadata's ``url``
+        -- so the scan cannot quietly disagree with the import about what a
+        conflict is. A member that is missing or unreadable simply produces
+        no key for that item: the scan declines to guess rather than
+        fabricating one.
+        """
+        by_name = {
+            member.filename: member
+            for member in archive.infolist()
+            if not member.is_dir()
+        }
+        keys: Dict[ContentType, List[Tuple[str, str]]] = {
+            ContentType.CONVERSATION: [],
+            ContentType.NOTE: [],
+            ContentType.CHARACTER: [],
+            ContentType.MEDIA: [],
+        }
+
+        def _read_member_json(name: str) -> Optional[Any]:
+            member = by_name.get(name)
+            if member is None:
+                return None
+            try:
+                payload = self._stream_member_bytes(
+                    archive, member, maximum=_MAX_ARCHIVE_MEMBER_BYTES
+                )
+                return json.loads(payload.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                return None
+
+        for item in manifest.content_items:
+            if item.type == ContentType.CONVERSATION:
+                file_name = item.file_path
+                if file_name:
+                    for part in Path(file_name).parts:
+                        validate_filename(part)
+                else:
+                    fallback = f"conversation_{item.id}.json"
+                    validate_filename(fallback)
+                    file_name = f"content/conversations/{fallback}"
+                data = _read_member_json(file_name)
+                if isinstance(data, dict) and isinstance(data.get("name"), str):
+                    keys[ContentType.CONVERSATION].append(
+                        (data["name"], data["name"])
+                    )
+            elif item.type == ContentType.NOTE:
+                # The import path conflicts notes on the manifest title.
+                keys[ContentType.NOTE].append((item.title, item.title))
+            elif item.type == ContentType.CHARACTER:
+                fallback = f"character_{item.id}.json"
+                validate_filename(fallback)
+                data = _read_member_json(
+                    f"content/characters/{fallback}"
+                )
+                if isinstance(data, dict):
+                    try:
+                        parsed_card, _format = detect_and_parse_character_card(data)
+                    except Exception:
+                        parsed_card = None
+                    if parsed_card:
+                        char_data = parsed_card.get("data", parsed_card)
+                        name = char_data.get("name")
+                        if isinstance(name, str) and name:
+                            keys[ContentType.CHARACTER].append((name, name))
+            elif item.type == ContentType.MEDIA:
+                fallback = f"media_{item.id}.json"
+                validate_filename(fallback)
+                data = _read_member_json(
+                    f"content/media/metadata/{fallback}"
+                )
+                if isinstance(data, dict) and isinstance(data.get("url"), str):
+                    url = data["url"]
+                    if url:
+                        keys[ContentType.MEDIA].append((item.title, url))
+        return keys
+
+    @content_call(_content_sources)
+    def scan_conflicts(
+        self, chatbook_path: Path
+    ) -> Tuple[Optional[List["ImportConflict"]], Optional[str]]:
+        """Report items in this chatbook that already exist at the destination.
+
+        A pre-import read-only check that mirrors the import path's own
+        conflict decisions: conversations, notes and characters conflict when
+        the destination already holds an item with the same name (either the
+        plain name or the ``[Imported] ``-prefixed one, since the rename
+        option is chosen after this scan runs), and media conflicts when the
+        destination already holds the same URL. Only those four types are
+        covered, because they are the only ones the conflict-resolution
+        strategy applies to; prompts do not go through the strategy at all.
+
+        Args:
+            chatbook_path: The chatbook archive to scan.
+
+        Returns:
+            ``(findings, None)`` with one :class:`ImportConflict` per
+            chatbook item whose key already exists at the destination, or
+            ``(None, error)`` when the archive could not be read. An empty
+            list means the check ran and found nothing -- the only state in
+            which a caller may tell the user "no conflicts detected".
+        """
+        try:
+            try:
+                chatbook_path = validate_path_simple(
+                    chatbook_path, probe_existing=False
+                )
+            except ValueError:
+                return None, _ARCHIVE_SOURCE_PATH_ERROR
+            if chatbook_path.suffix != ".zip":
+                return None, "Unsupported chatbook format. Only ZIP files are supported."
+            with chatbook_path.open("rb") as archive_source:
+                if (
+                    os.fstat(archive_source.fileno()).st_size
+                    > _MAX_ARCHIVE_CONTAINER_BYTES
+                ):
+                    return None, _ARCHIVE_LIMIT_ERROR
+                with zipfile.ZipFile(archive_source, "r") as archive:
+                    manifest, _manifest_data = self._preflight_archive(archive)
+                    keys = self._scan_conflict_keys(archive, manifest)
+        except Exception as e:
+            error_text = _bounded_error_text(e)
+            logger.error(f"Error scanning chatbook for conflicts: {error_text}")
+            return None, f"Error scanning chatbook for conflicts: {error_text}"
+
+        findings: List[ImportConflict] = []
+        chacha_path = self.db_paths.get("ChaChaNotes")
+        if chacha_path and any(keys[content_type] for content_type in (
+            ContentType.CONVERSATION,
+            ContentType.NOTE,
+            ContentType.CHARACTER,
+        )):
+            db = own_database(CharactersRAGDB(
+                chacha_path,
+                "chatbook_importer",
+                console_library_migration_seed=load_console_library_migration_seed(),
+            ))
+            try:
+                for title, key in keys[ContentType.CONVERSATION]:
+                    for variant in self._import_prefix_variants(key):
+                        if db.get_conversation_by_name(
+                            variant, archive_scope="all"
+                        ):
+                            findings.append(
+                                ImportConflict(
+                                    ContentType.CONVERSATION, title, variant
+                                )
+                            )
+                            break
+                for title, key in keys[ContentType.NOTE]:
+                    for variant in self._import_prefix_variants(key):
+                        if db.get_note_by_title(variant):
+                            findings.append(ImportConflict(ContentType.NOTE, title, variant))
+                            break
+                for title, key in keys[ContentType.CHARACTER]:
+                    for variant in self._import_prefix_variants(key):
+                        if db.get_character_card_by_name(variant):
+                            findings.append(
+                                ImportConflict(ContentType.CHARACTER, title, variant)
+                            )
+                            break
+            finally:
+                db.close_connection()
+
+        media_path = self.db_paths.get("Media")
+        if media_path and keys[ContentType.MEDIA]:
+            db = own_database(MediaDatabase(media_path, "chatbook_importer"))
+            try:
+                for title, url in keys[ContentType.MEDIA]:
+                    if db.get_media_by_url(url):
+                        findings.append(ImportConflict(ContentType.MEDIA, title, url))
+            finally:
+                db.close_connection()
+
+        return findings, None
+
     @content_call(_content_sources)
     def import_chatbook(
         self,
@@ -834,11 +1088,16 @@ class ChatbookImporter:
         conflict_resolution: ConflictResolution = ConflictResolution.ASK,
         prefix_imported: bool = False,
         import_media: bool = True,
-        import_embeddings: bool = False,
         import_status: Optional[ImportStatus] = None,
     ) -> Tuple[bool, str]:
         """
         Import a chatbook into the application.
+
+        There is deliberately no ``import_embeddings`` parameter: this
+        importer cannot write embeddings (it reports ``ContentType.EMBEDDING``
+        items as unsupported), and chatbooks contain no embedding data even in
+        principle -- the exporter never writes any (task-19868). An option
+        that nothing can honour is a claim, not a feature.
 
         Args:
             chatbook_path: Path to the chatbook file
@@ -846,7 +1105,6 @@ class ChatbookImporter:
             conflict_resolution: How to handle conflicts
             prefix_imported: Whether to prefix imported content titles
             import_media: Whether to import media files
-            import_embeddings: Whether to import embeddings
             import_status: Optional status object populated with item-level results
 
         Returns:
@@ -868,7 +1126,7 @@ class ChatbookImporter:
                 f"ChatbookImporter.import_chatbook: Starting import of {chatbook_path}"
             )
             logger.info(
-                f"ChatbookImporter.import_chatbook: Options - conflict_resolution={conflict_resolution}, prefix_imported={prefix_imported}, import_media={import_media}, import_embeddings={import_embeddings}"
+                f"ChatbookImporter.import_chatbook: Options - conflict_resolution={conflict_resolution}, prefix_imported={prefix_imported}, import_media={import_media}"
             )
             logger.info(f"Importing chatbook from {chatbook_path}")
 
@@ -913,6 +1171,7 @@ class ChatbookImporter:
                 ChatbookVersion.V1,
                 ChatbookVersion.V2,
                 ChatbookVersion.V3,
+                ChatbookVersion.V4,
             }:
                 status.add_warning(
                     f"Chatbook version {manifest.version.value} may not be fully compatible"
@@ -1163,334 +1422,400 @@ class ChatbookImporter:
             f"ChatbookImporter._import_conversations: Looking for conversations in {conv_dir}"
         )
 
-        for conv_id in conversation_ids:
-            status.record_processed(ContentType.CONVERSATION)
-            logger.debug(
-                f"ChatbookImporter._import_conversations: Processing conversation {conv_id} ({status.processed_items}/{len(conversation_ids)})"
-            )
-
-            try:
-                if conv_id in idempotent_canvas_conversations:
-                    with db.transaction(immediate=True):
-                        confirmed = self._preflight_canvas_target_conflicts(
-                            extract_dir,
-                            manifest,
-                            [conv_id],
-                            target_db=db,
-                        )
-                    if conv_id not in confirmed:
-                        raise CanvasArchiveValidationError("same_identity_conflict")
-                    status.record_skipped(ContentType.CONVERSATION)
-                    continue
-                if conversation_service is None:
-                    conversation_service, _, _ = (
-                        build_local_citation_conversation_service(
-                            db,
-                            sidecar_path=get_user_data_dir()
-                            / "tldw_chatbook_chat_rag_context.json",
-                        )
-                    )
-                # Find conversation file
-                conv_file = self._conversation_file_path(
-                    extract_dir, conv_dir, manifest, conv_id
-                )
-                if not conv_file.exists():
-                    logger.warning(
-                        f"ChatbookImporter._import_conversations: Conversation file not found: {conv_file.name}"
-                    )
-                    status.add_warning(f"Conversation file not found: {conv_file.name}")
-                    status.record_failure(ContentType.CONVERSATION)
-                    continue
-
-                # Load conversation data
-                with open(conv_file, "r", encoding="utf-8") as f:
-                    conv_data = json.load(f)
-
-                graph_messages = None
-                if manifest.version in {ChatbookVersion.V2, ChatbookVersion.V3}:
-                    if (
-                        not isinstance(conv_data, dict)
-                        or type(conv_id) is not str
-                        or not conv_id.strip()
-                        or type(conv_data.get("id")) is not str
-                        or not conv_data["id"].strip()
-                        or conv_data["id"] != conv_id
-                    ):
-                        raise ValueError("Invalid V2 conversation identity.")
-                    graph_messages = self._validate_v2_conversation_graph(conv_data)
-                    thinking_policy, policy_warning = preflight_thinking_history_policy(
-                        conv_data.get("thinking_history_policy")
-                    )
-                    if policy_warning is not None:
-                        status.add_warning(policy_warning)
-                else:
-                    thinking_policy = "auto"
-
-                # Check for existing conversation with same name
-                conv_name = conv_data["name"]
-                if prefix_imported:
-                    conv_name = f"[Imported] {conv_name}"
-
-                # Check for existing conversations with same name
-                existing_conversations = db.get_conversation_by_name(
-                    conv_name, archive_scope="all"
-                )
+        # One flush of the legacy RAG-context store per import, in a
+        # finally so records staged before a mid-import failure still
+        # land in the store -- the per-message writer they replace also
+        # left every record persisted before an error persisted.
+        try:
+            for conv_id in conversation_ids:
+                status.record_processed(ContentType.CONVERSATION)
                 logger.debug(
-                    f"ChatbookImporter._import_conversations: Found {len(existing_conversations) if existing_conversations else 0} existing conversations with name '{conv_name}'"
+                    f"ChatbookImporter._import_conversations: Processing conversation {conv_id} ({status.processed_items}/{len(conversation_ids)})"
                 )
 
-                if existing_conversations:
-                    # Handle conflict - use the first (most recent) conversation
-                    existing = existing_conversations[0]
-                    resolution = self.conflict_resolver.resolve_conversation_conflict(
-                        existing, conv_data, conflict_resolution
-                    )
-
-                    if resolution == ConflictResolution.SKIP:
-                        logger.debug(
-                            "ChatbookImporter._import_conversations: Skipping conversation due to conflict resolution"
-                        )
+                try:
+                    if conv_id in idempotent_canvas_conversations:
+                        with db.transaction(immediate=True):
+                            confirmed = self._preflight_canvas_target_conflicts(
+                                extract_dir,
+                                manifest,
+                                [conv_id],
+                                target_db=db,
+                            )
+                        if conv_id not in confirmed:
+                            raise CanvasArchiveValidationError("same_identity_conflict")
                         status.record_skipped(ContentType.CONVERSATION)
                         continue
-                    elif resolution == ConflictResolution.RENAME:
-                        old_name = conv_name
-                        conv_name = self._generate_unique_name(conv_name, db)
-                        logger.debug(
-                            f"ChatbookImporter._import_conversations: Renamed conversation from '{old_name}' to '{conv_name}'"
-                        )
-
-                # Create conversation
-                character_id = conv_data.get("character_id")
-                conv_dict = {
-                    "id": str(uuid.uuid4()),
-                    "title": conv_name,
-                    "created_at": conv_data.get(
-                        "created_at", utc_now_iso()
-                    ),
-                    "updated_at": conv_data.get(
-                        "updated_at", utc_now_iso()
-                    ),
-                    "character_id": character_id,
-                    "assistant_authority_id": None,
-                    "root_id": f"imported_{conv_data.get('id', 'unknown')}",
-                    "thinking_history_policy": thinking_policy,
-                }
-                # Stage all filesystem work FIRST (attachment byte loads),
-                # so the transaction below holds the write lock only for
-                # pure DB writes — no disk I/O inside the transaction.
-                staged_messages = []
-                source_messages = (
-                    graph_messages
-                    if graph_messages is not None
-                    else conv_data.get("messages", [])
-                )
-                for msg in source_messages:
-                    image_kwargs, attachment_rows = self._load_message_attachments(
-                        extract_dir, msg, status
-                    )
-                    staged_messages.append((msg, image_kwargs, attachment_rows))
-
-                # One outer transaction per conversation — per conversation,
-                # not per chatbook, to preserve error-isolation semantics
-                # (one bad conversation fails alone; others still import).
-                # TransactionContextManager is depth-tracked/reentrant, so
-                # add_conversation/add_message/set_message_attachments'
-                # own `with self.transaction():` calls become nested and
-                # only this outer block commits, once, per conversation
-                # (task-250 / performance audit finding A5). A failure
-                # partway through the message loop rolls back the whole
-                # conversation (an isolation improvement — the except below
-                # already counted that case as failed). Success accounting
-                # happens AFTER the block so a failed COMMIT can never be
-                # double-counted as both success and failure. Citation
-                # context (a JSON side-store, not this DB) also persists
-                # after commit, so it neither extends the transaction nor
-                # records context for rows that get rolled back.
-                imported_message_context: list[tuple[str, str, dict]] = []
-                new_conv_id = str(conv_dict["id"])
-                message_id_map: dict[str, str] = {}
-                if graph_messages is not None:
-                    message_id_map = {
-                        str(msg["id"]): str(
-                            uuid.uuid5(
-                                uuid.NAMESPACE_URL,
-                                f"chatbook:{new_conv_id}:{msg['id']}",
+                    if conversation_service is None:
+                        conversation_service, _, _ = (
+                            build_local_citation_conversation_service(
+                                db,
+                                sidecar_path=get_user_data_dir()
+                                / "tldw_chatbook_chat_rag_context.json",
                             )
                         )
-                        for msg in graph_messages
-                    }
-                canvas_batch = self._load_canvas_import_batch(
-                    extract_dir=extract_dir,
-                    manifest=manifest,
-                    source_conversation_id=conv_id,
-                    target_conversation_id=new_conv_id,
-                    message_id_map=message_id_map,
-                )
-                with db.transaction(immediate=True) as connection:
-                    new_conv_id = db.add_conversation(conv_dict)
+                    # Find conversation file
+                    conv_file = self._conversation_file_path(
+                        extract_dir, conv_dir, manifest, conv_id
+                    )
+                    if not conv_file.exists():
+                        logger.warning(
+                            f"ChatbookImporter._import_conversations: Conversation file not found: {conv_file.name}"
+                        )
+                        status.add_warning(f"Conversation file not found: {conv_file.name}")
+                        status.record_failure(ContentType.CONVERSATION)
+                        continue
+
+                    # Load conversation data
+                    with open(conv_file, "r", encoding="utf-8") as f:
+                        conv_data = json.load(f)
+
+                    graph_messages = None
+                    if manifest.version in {
+                        ChatbookVersion.V2,
+                        ChatbookVersion.V3,
+                        ChatbookVersion.V4,
+                    }:
+                        if (
+                            not isinstance(conv_data, dict)
+                            or type(conv_id) is not str
+                            or not conv_id.strip()
+                            or type(conv_data.get("id")) is not str
+                            or not conv_data["id"].strip()
+                            or conv_data["id"] != conv_id
+                        ):
+                            raise ValueError("Invalid V2 conversation identity.")
+                        graph_messages = self._validate_v2_conversation_graph(conv_data)
+                        thinking_policy, policy_warning = preflight_thinking_history_policy(
+                            conv_data.get("thinking_history_policy")
+                        )
+                        if policy_warning is not None:
+                            status.add_warning(policy_warning)
+                    else:
+                        thinking_policy = "auto"
+
+                    # Check for existing conversation with same name
+                    conv_name = conv_data["name"]
+                    if prefix_imported:
+                        conv_name = f"[Imported] {conv_name}"
+
+                    # Check for existing conversations with same name
+                    existing_conversations = db.get_conversation_by_name(
+                        conv_name, archive_scope="all"
+                    )
                     logger.debug(
-                        f"ChatbookImporter._import_conversations: Created conversation with ID {new_conv_id}"
+                        f"ChatbookImporter._import_conversations: Found {len(existing_conversations) if existing_conversations else 0} existing conversations with name '{conv_name}'"
                     )
 
-                    if new_conv_id:
-                        logger.debug(
-                            f"ChatbookImporter._import_conversations: Importing {len(staged_messages)} messages"
+                    if existing_conversations:
+                        # Handle conflict - use the first (most recent) conversation
+                        existing = existing_conversations[0]
+                        resolution = self.conflict_resolver.resolve_conversation_conflict(
+                            existing, conv_data, conflict_resolution
                         )
-                        for ordinal, (
-                            msg,
-                            image_kwargs,
-                            attachment_rows,
-                        ) in enumerate(staged_messages, start=1):
-                            msg_dict = {
-                                "conversation_id": new_conv_id,
-                                "sender": msg["role"],
-                                "content": msg["content"],
-                                "timestamp": msg.get(
-                                    "timestamp", utc_now_iso()
-                                ),
-                            }
-                            if graph_messages is not None:
-                                old_id = str(msg["id"])
-                                parent_id = msg.get("parent_id")
-                                msg_dict.update(
-                                    {
-                                        "id": message_id_map[old_id],
-                                        "parent_message_id": message_id_map.get(
-                                            str(parent_id)
-                                            if parent_id is not None
-                                            else ""
-                                        ),
-                                        "role": msg["role"],
-                                    }
+
+                        if resolution == ConflictResolution.SKIP:
+                            logger.debug(
+                                "ChatbookImporter._import_conversations: Skipping conversation due to conflict resolution"
+                            )
+                            status.record_skipped(ContentType.CONVERSATION)
+                            continue
+                        elif resolution == ConflictResolution.RENAME:
+                            old_name = conv_name
+                            conv_name = self._generate_unique_name(conv_name, db)
+                            logger.debug(
+                                f"ChatbookImporter._import_conversations: Renamed conversation from '{old_name}' to '{conv_name}'"
+                            )
+
+                    # Create conversation
+                    character_id = conv_data.get("character_id")
+                    conv_dict = {
+                        "id": str(uuid.uuid4()),
+                        "title": conv_name,
+                        "created_at": conv_data.get(
+                            "created_at", utc_now_iso()
+                        ),
+                        "updated_at": conv_data.get(
+                            "updated_at", utc_now_iso()
+                        ),
+                        "character_id": character_id,
+                        "assistant_authority_id": None,
+                        "root_id": f"imported_{conv_data.get('id', 'unknown')}",
+                        "thinking_history_policy": thinking_policy,
+                    }
+                    # Stage all filesystem work FIRST (attachment byte loads),
+                    # so the transaction below holds the write lock only for
+                    # pure DB writes — no disk I/O inside the transaction.
+                    staged_messages = []
+                    source_messages = (
+                        graph_messages
+                        if graph_messages is not None
+                        else conv_data.get("messages", [])
+                    )
+                    for msg in source_messages:
+                        image_kwargs, attachment_rows = self._load_message_attachments(
+                            extract_dir, msg, status
+                        )
+                        staged_messages.append((msg, image_kwargs, attachment_rows))
+
+                    # One outer transaction per conversation — per conversation,
+                    # not per chatbook, to preserve error-isolation semantics
+                    # (one bad conversation fails alone; others still import).
+                    # TransactionContextManager is depth-tracked/reentrant, so
+                    # add_conversation/add_message/set_message_attachments'
+                    # own `with self.transaction():` calls become nested and
+                    # only this outer block commits, once, per conversation
+                    # (task-250 / performance audit finding A5). A failure
+                    # partway through the message loop rolls back the whole
+                    # conversation (an isolation improvement — the except below
+                    # already counted that case as failed). Success accounting
+                    # happens AFTER the block so a failed COMMIT can never be
+                    # double-counted as both success and failure. Citation
+                    # context (a JSON side-store, not this DB) also persists
+                    # after commit, so it neither extends the transaction nor
+                    # records context for rows that get rolled back.
+                    imported_message_context: list[tuple[str, str, dict]] = []
+                    new_conv_id = str(conv_dict["id"])
+                    message_id_map: dict[str, str] = {}
+                    if graph_messages is not None:
+                        message_id_map = {
+                            str(msg["id"]): str(
+                                uuid.uuid5(
+                                    uuid.NAMESPACE_URL,
+                                    f"chatbook:{new_conv_id}:{msg['id']}",
                                 )
-                                continuation = self._imported_continuation_json(
-                                    msg,
-                                    ordinal=ordinal,
-                                    status=status,
-                                )
-                                if continuation is not None:
-                                    msg_dict["provider_continuation_json"] = (
-                                        continuation
-                                    )
-                                thinking_json = msg.get("_thinking_canonical_json")
-                                if thinking_json is not None:
-                                    msg_dict["thinking_blocks_json"] = thinking_json
-                                continuation_checkpoint = (
-                                    parse_provider_continuation_json(continuation)
-                                    if continuation is not None
-                                    else None
-                                )
-                                raw_state = msg.get("assistant_generation_state")
-                                try:
-                                    generation_state = (
-                                        normalize_assistant_generation_state(
-                                            role=msg["role"],
-                                            raw_state=raw_state,
-                                            has_valid_active_continuation=(
-                                                continuation_checkpoint is not None
-                                                and continuation_checkpoint.state
-                                                == "active"
-                                            ),
-                                        )
-                                    )
-                                except ValueError:
-                                    raise ValueError(
-                                        "Invalid V2 conversation graph."
-                                    ) from None
-                                if (
-                                    generation_state
-                                    is AssistantGenerationState.CONTINUATION_ACTIVE
-                                    and (
-                                        continuation_checkpoint is None
-                                        or continuation_checkpoint.state != "active"
-                                    )
-                                ):
-                                    raise ValueError("Invalid V2 conversation graph.")
-                                msg_dict["assistant_generation_state"] = (
-                                    generation_state.value
-                                    if generation_state is not None
-                                    else None
-                                )
-                            elif msg.get("_private") is not None:
-                                status.add_warning(
-                                    "Exact tool continuation was discarded for "
-                                    f"message {ordinal}."
-                                )
-                            msg_dict.update(image_kwargs)
-                            if attachment_rows:
-                                new_message_id = db.add_message_with_semantic_sidecars(
-                                    msg_dict,
-                                    attachments=attachment_rows,
-                                )
-                            else:
-                                new_message_id = db.add_message(msg_dict)
-                            if new_message_id:
+                            )
+                            for msg in graph_messages
+                        }
+                    canvas_batch = self._load_canvas_import_batch(
+                        extract_dir=extract_dir,
+                        manifest=manifest,
+                        source_conversation_id=conv_id,
+                        target_conversation_id=new_conv_id,
+                        message_id_map=message_id_map,
+                    )
+                    with db.transaction(immediate=True) as connection:
+                        new_conv_id = db.add_conversation(conv_dict)
+                        logger.debug(
+                            f"ChatbookImporter._import_conversations: Created conversation with ID {new_conv_id}"
+                        )
+
+                        if new_conv_id:
+                            logger.debug(
+                                f"ChatbookImporter._import_conversations: Importing {len(staged_messages)} messages"
+                            )
+                            for ordinal, (
+                                msg,
+                                image_kwargs,
+                                attachment_rows,
+                            ) in enumerate(staged_messages, start=1):
+                                msg_dict = {
+                                    "conversation_id": new_conv_id,
+                                    "sender": msg["role"],
+                                    "content": msg["content"],
+                                    "timestamp": msg.get(
+                                        "timestamp", utc_now_iso()
+                                    ),
+                                }
                                 if graph_messages is not None:
-                                    variant_of = msg.get("variant_of")
-                                    connection.execute(
-                                        "UPDATE messages SET variant_of = ?, "
-                                        "variant_number = ?, is_selected_variant = ?, "
-                                        "total_variants = ?, deleted = ? WHERE id = ?",
-                                        (
-                                            message_id_map.get(
-                                                str(variant_of)
-                                                if variant_of is not None
+                                    old_id = str(msg["id"])
+                                    parent_id = msg.get("parent_id")
+                                    msg_dict.update(
+                                        {
+                                            "id": message_id_map[old_id],
+                                            "parent_message_id": message_id_map.get(
+                                                str(parent_id)
+                                                if parent_id is not None
                                                 else ""
                                             ),
-                                            msg["variant_number"],
-                                            int(msg["is_selected_variant"]),
-                                            msg["total_variants"],
-                                            int(msg["deleted"]),
-                                            new_message_id,
-                                        ),
+                                            "role": msg["role"],
+                                        }
                                     )
-                                imported_message_context.append(
-                                    (str(new_conv_id), str(new_message_id), msg)
+                                    continuation = self._imported_continuation_json(
+                                        msg,
+                                        ordinal=ordinal,
+                                        status=status,
+                                    )
+                                    if continuation is not None:
+                                        msg_dict["provider_continuation_json"] = (
+                                            continuation
+                                        )
+                                    thinking_json = msg.get("_thinking_canonical_json")
+                                    if thinking_json is not None:
+                                        msg_dict["thinking_blocks_json"] = thinking_json
+                                    continuation_checkpoint = (
+                                        parse_provider_continuation_json(continuation)
+                                        if continuation is not None
+                                        else None
+                                    )
+                                    raw_state = msg.get("assistant_generation_state")
+                                    try:
+                                        generation_state = (
+                                            normalize_assistant_generation_state(
+                                                role=msg["role"],
+                                                raw_state=raw_state,
+                                                has_valid_active_continuation=(
+                                                    continuation_checkpoint is not None
+                                                    and continuation_checkpoint.state
+                                                    == "active"
+                                                ),
+                                            )
+                                        )
+                                    except ValueError:
+                                        raise ValueError(
+                                            "Invalid V2 conversation graph."
+                                        ) from None
+                                    if (
+                                        generation_state
+                                        is AssistantGenerationState.CONTINUATION_ACTIVE
+                                        and (
+                                            continuation_checkpoint is None
+                                            or continuation_checkpoint.state != "active"
+                                        )
+                                    ):
+                                        raise ValueError("Invalid V2 conversation graph.")
+                                    msg_dict["assistant_generation_state"] = (
+                                        generation_state.value
+                                        if generation_state is not None
+                                        else None
+                                    )
+                                elif msg.get("_private") is not None:
+                                    status.add_warning(
+                                        "Exact tool continuation was discarded for "
+                                        f"message {ordinal}."
+                                    )
+                                msg_dict.update(image_kwargs)
+                                if attachment_rows:
+                                    new_message_id = db.add_message_with_semantic_sidecars(
+                                        msg_dict,
+                                        attachments=attachment_rows,
+                                    )
+                                else:
+                                    new_message_id = db.add_message(msg_dict)
+                                if new_message_id:
+                                    if graph_messages is not None:
+                                        variant_of = msg.get("variant_of")
+                                        connection.execute(
+                                            # task-19566 F9: graph fields ride a
+                                            # versioned write (version bump,
+                                            # last_modified, client_id) so the
+                                            # imported rows stay consistent with
+                                            # the sync log instead of silently
+                                            # desynchronising from it.
+                                            "UPDATE messages SET variant_of = ?, "
+                                            "variant_number = ?, is_selected_variant = ?, "
+                                            "total_variants = ?, deleted = ?, "
+                                            "version = version + 1, "
+                                            "last_modified = ?, client_id = ? "
+                                            "WHERE id = ?",
+                                            (
+                                                message_id_map.get(
+                                                    str(variant_of)
+                                                    if variant_of is not None
+                                                    else ""
+                                                ),
+                                                msg["variant_number"],
+                                                int(msg["is_selected_variant"]),
+                                                msg["total_variants"],
+                                                int(msg["deleted"]),
+                                                utc_now_iso(),
+                                                db.client_id,
+                                                new_message_id,
+                                            ),
+                                        )
+                                    imported_message_context.append(
+                                        (str(new_conv_id), str(new_message_id), msg)
+                                    )
+                            if graph_messages is not None:
+                                active_leaf = conv_data.get("active_leaf_message_id")
+                                connection.execute(
+                                    # task-19566 F9: same versioned-write contract
+                                    # as the message graph patch above.
+                                    "UPDATE conversations SET active_leaf_message_id = ?, "
+                                    "version = version + 1, "
+                                    "last_modified = ?, client_id = ? "
+                                    "WHERE id = ?",
+                                    (
+                                        message_id_map.get(active_leaf),
+                                        utc_now_iso(),
+                                        db.client_id,
+                                        new_conv_id,
+                                    ),
                                 )
-                        if graph_messages is not None:
-                            active_leaf = conv_data.get("active_leaf_message_id")
-                            connection.execute(
-                                "UPDATE conversations SET active_leaf_message_id = ? "
-                                "WHERE id = ?",
-                                (message_id_map.get(active_leaf), new_conv_id),
-                            )
-                        if canvas_batch is not None:
-                            CanvasRepository.import_batch_in_transaction(
-                                connection, canvas_batch
-                            )
+                            if canvas_batch is not None:
+                                CanvasRepository.import_batch_in_transaction(
+                                    connection, canvas_batch
+                                )
 
-                if new_conv_id:
-                    for (
-                        context_conv_id,
-                        context_message_id,
-                        msg,
-                    ) in imported_message_context:
-                        self._persist_imported_message_citation_context(
-                            conversation_service,
+                    if new_conv_id:
+                        for (
                             context_conv_id,
                             context_message_id,
                             msg,
+                        ) in imported_message_context:
+                            # Stage only: the whole legacy RAG-context store is
+                            # serialized+written once per import (the finally
+                            # below), not once per cited message. The canonical
+                            # migration path ignores `stage` and is unchanged.
+                            self._persist_imported_message_citation_context(
+                                conversation_service,
+                                context_conv_id,
+                                context_message_id,
+                                msg,
+                                stage=True,
+                            )
+                        # TASK-34000.19: the conversation JSON's ``keywords``
+                        # is the record; the manifest item's ``tags`` is the
+                        # fallback. Linked after the commit above, so a
+                        # refused keyword can never roll the conversation back.
+                        conversation_keywords = conv_data.get("keywords")
+                        if (
+                            not isinstance(conversation_keywords, list)
+                            or not conversation_keywords
+                        ):
+                            conv_item = next(
+                                (
+                                    item
+                                    for item in manifest.content_items
+                                    if item.id == conv_id
+                                    and item.type == ContentType.CONVERSATION
+                                ),
+                                None,
+                            )
+                            conversation_keywords = (
+                                list(conv_item.tags or []) if conv_item else []
+                            )
+                        self._restore_chachanotes_keywords(
+                            db,
+                            db.link_conversation_to_keyword,
+                            str(new_conv_id),
+                            conversation_keywords,
+                            content_type=ContentType.CONVERSATION,
+                            status=status,
                         )
-                    status.record_success(ContentType.CONVERSATION)
-                    logger.debug(
-                        f"ChatbookImporter._import_conversations: Successfully imported conversation: {conv_name}"
-                    )
-                else:
-                    status.record_failure(ContentType.CONVERSATION)
-                    status.add_error(f"Failed to create conversation: {conv_name}")
-                    logger.error(
-                        f"ChatbookImporter._import_conversations: Failed to create conversation: {conv_name}"
-                    )
+                        status.record_success(ContentType.CONVERSATION)
+                        logger.debug(
+                            f"ChatbookImporter._import_conversations: Successfully imported conversation: {conv_name}"
+                        )
+                    else:
+                        status.record_failure(ContentType.CONVERSATION)
+                        status.add_error(f"Failed to create conversation: {conv_name}")
+                        logger.error(
+                            f"ChatbookImporter._import_conversations: Failed to create conversation: {conv_name}"
+                        )
 
-            except Exception as e:
-                status.record_failure(ContentType.CONVERSATION)
-                status.add_error(
-                    f"Error importing conversation {conv_id}: {_bounded_error_text(e)}"
-                )
-                logger.opt(exception=True).error(
-                    "ChatbookImporter._import_conversations: Error importing conversation {}",
-                    conv_id,
-                )
+                except Exception as e:
+                    status.record_failure(ContentType.CONVERSATION)
+                    status.add_error(
+                        f"Error importing conversation {conv_id}: {_bounded_error_text(e)}"
+                    )
+                    logger.opt(exception=True).error(
+                        "ChatbookImporter._import_conversations: Error importing conversation {}",
+                        conv_id,
+                    )
+        finally:
+            if conversation_service is not None:
+                conversation_service.flush_rag_context_store()
 
     def _preflight_canvas_target_conflicts(
         self,
@@ -1566,13 +1891,14 @@ class ChatbookImporter:
                         "SELECT id, parent_revision_id, sequence, title, runtime_profile, "
                         "html, content_sha256, html_bytes, actor_kind, origin_message_id, "
                         "origin_turn_id, created_at, deleted_at FROM canvas_revisions "
-                        "WHERE canvas_id = ? ORDER BY sequence",
+                        "WHERE canvas_id = ? ORDER BY sequence, id",
                         (document.canvas_id,),
                     ).fetchall()
                     if len(stored_revisions) != len(document.revisions):
                         raise CanvasArchiveValidationError("same_identity_conflict")
                     expected_revisions = sorted(
-                        document.revisions, key=lambda revision: revision.sequence
+                        document.revisions,
+                        key=lambda revision: (revision.sequence, revision.revision_id),
                     )
                     for stored, revision in zip(
                         stored_revisions, expected_revisions, strict=True
@@ -2277,6 +2603,8 @@ class ChatbookImporter:
         conversation_id: str,
         message_id: str,
         message_payload: Mapping[str, Any],
+        *,
+        stage: bool = False,
     ) -> None:
         rag_context = {}
         exported_rag_context = message_payload.get("rag_context")
@@ -2297,6 +2625,7 @@ class ChatbookImporter:
             message_id,
             rag_context=rag_context,
             citations=[item for item in citation_items if isinstance(item, Mapping)],
+            stage=stage,
         )
 
     @content_call(_content_sources)
@@ -2369,16 +2698,22 @@ class ChatbookImporter:
                     content = f.read()
 
                 # Extract frontmatter if present
+                frontmatter_tags: list[str] = []
                 if content.startswith("---"):
                     parts = content.split("---", 2)
                     if len(parts) >= 3:
                         # Parse frontmatter
-                        parts[1].strip()
+                        frontmatter_tags = self._frontmatter_tags(parts[1])
                         note_content = parts[2].strip()
                     else:
                         note_content = content
                 else:
                     note_content = content
+                # TASK-34000.19: the manifest item's ``tags`` is the record
+                # (ADR-057's canonical membership); the frontmatter ``tags:``
+                # line is the fallback for a hand-edited bundle whose
+                # manifest gives none.
+                note_keywords = list(note_item.tags or []) or frontmatter_tags
 
                 # Check for existing note with same title
                 note_title = note_item.title
@@ -2402,11 +2737,20 @@ class ChatbookImporter:
                     elif resolution == ConflictResolution.RENAME:
                         note_title = self._generate_unique_note_title(note_title, db)
 
-                # Create note
-                # Note: keywords/tags are not stored in the notes table
+                # Create note. Keywords are not a notes-table column: they
+                # are re-linked through the ordinary note keyword write path
+                # once the row exists (TASK-34000.19).
                 new_note_id = db.add_note(title=note_title, content=note_content)
 
                 if new_note_id:
+                    self._restore_chachanotes_keywords(
+                        db,
+                        db.link_note_to_keyword,
+                        str(new_note_id),
+                        note_keywords,
+                        content_type=ContentType.NOTE,
+                        status=status,
+                    )
                     status.record_success(ContentType.NOTE)
                     logger.debug(f"Imported note: {note_title}")
                 else:
@@ -2420,6 +2764,118 @@ class ChatbookImporter:
                     "ChatbookImporter._import_notes: Error importing note {}",
                     note_id,
                 )
+
+    @staticmethod
+    def _frontmatter_tags(frontmatter: str) -> list[str]:
+        """Return the comma-separated ``tags:`` line of a note's frontmatter.
+
+        The creator writes ``tags: a, b`` only when the note has keywords;
+        a bundle without the line yields ``[]``.
+        """
+        for line in frontmatter.splitlines():
+            if line.startswith("tags:"):
+                return [
+                    tag.strip()
+                    for tag in line[len("tags:") :].split(",")
+                    if tag.strip()
+                ]
+        return []
+
+    @staticmethod
+    def _ensure_chachanotes_keyword(db: CharactersRAGDB, text: str) -> Optional[int]:
+        """Return the id of the active keyword ``text``, creating it if needed.
+
+        Get-or-create against the ChaChaNotes ``keywords`` table, which has no
+        such method of its own. ``get_keyword_by_text`` is case-insensitive
+        and active-only (the table's ``COLLATE NOCASE`` uniqueness rule), so a
+        destination that already holds ``meeting`` is linked, never
+        duplicated as ``Meeting``. ``add_keyword`` undeletes a soft-deleted
+        row (its documented behaviour) but raises ``ConflictError`` for an
+        active one -- the shape of two importers racing -- so a conflict is
+        answered with one more lookup.
+
+        Args:
+            db: The destination ChaChaNotes database.
+            text: The keyword as the bundle carries it.
+
+        Returns:
+            The keyword's integer id, or ``None`` for a blank (nothing to
+            link).
+        """
+        cleaned = text.strip() if isinstance(text, str) else ""
+        if not cleaned:
+            return None
+        row = db.get_keyword_by_text(cleaned)
+        if row:
+            return int(row["id"])
+        try:
+            keyword_id = db.add_keyword(cleaned)
+        except ConflictError:
+            row = db.get_keyword_by_text(cleaned)
+            return int(row["id"]) if row else None
+        return int(keyword_id) if keyword_id is not None else None
+
+    @staticmethod
+    def _restore_chachanotes_keywords(
+        db: CharactersRAGDB,
+        link: Callable[[str, int], bool],
+        item_id: str,
+        keywords: Any,
+        *,
+        content_type: ContentType,
+        status: ImportStatus,
+    ) -> None:
+        """Re-link an imported note's or conversation's keyword membership.
+
+        ADR-057's rule, applied to notes and conversations (TASK-34000.19):
+        membership comes back through the ordinary keyword write path
+        (``link_note_to_keyword`` / ``link_conversation_to_keyword``, both
+        ``INSERT OR IGNORE``). Blanks are skipped; repeats of the exact
+        stripped text are linked once. De-duplication is on the exact text,
+        never a casefold: the table's ``COLLATE NOCASE`` folds ASCII only, so
+        ``Café``/``CAFÉ`` are two source rows and must arrive as two (fix
+        round 1, M-1). The item's content is the thing being restored, so a
+        keyword that cannot be created or linked is logged with the item id
+        and skipped, and the import carries ONE fixed-text warning for the
+        item (``KEYWORD_RESTORE_WARNING``); it never fails the item. Neither
+        the log nor the warning names the keyword (ADR-057's diagnostics
+        boundary).
+
+        Args:
+            db: The destination ChaChaNotes database.
+            link: The DB's own linker for this content type.
+            item_id: The NEW local id the destination assigned.
+            keywords: The bundle's list of keyword strings; anything that is
+                not a list is treated as no keywords.
+            content_type: Named in the diagnostic.
+            status: The import's status; receives the fixed warning.
+        """
+        if not isinstance(keywords, (list, tuple)):
+            return
+        seen: set[str] = set()
+        failed = False
+        for raw in keywords:
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            cleaned = raw.strip()
+            if cleaned in seen:
+                continue
+            seen.add(cleaned)
+            try:
+                keyword_id = ChatbookImporter._ensure_chachanotes_keyword(db, cleaned)
+                if keyword_id is not None:
+                    link(item_id, keyword_id)
+            except Exception as exc:
+                failed = True
+                logger.warning(
+                    "ChatbookImporter: could not restore a keyword on imported "
+                    "{} {} ({})",
+                    content_type.value,
+                    item_id,
+                    type(exc).__name__,
+                )
+        if failed:
+            status.add_warning(KEYWORD_RESTORE_WARNING)
 
     @content_call(_content_sources)
     def _import_characters(
@@ -2559,6 +3015,19 @@ class ChatbookImporter:
                     for key, value in raw_char_data["card"].items():
                         if key not in card_data and value is not None:
                             card_data[key] = value
+
+                # Server archives mark binary portraits explicitly; the card
+                # format parser omits these transport fields.
+                if "image_encoding" in raw_char_data:
+                    image = raw_char_data.get("image")
+                    if raw_char_data["image_encoding"] != "base64" or not isinstance(
+                        image, str
+                    ):
+                        raise ValueError("Invalid character image encoding")
+                    try:
+                        card_data["image"] = base64.b64decode(image, validate=True)
+                    except (binascii.Error, ValueError):
+                        raise ValueError("Invalid base64 character image") from None
 
                 new_char_id = db.add_character_card(card_data)
                 logger.debug(

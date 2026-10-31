@@ -309,9 +309,7 @@ async def test_one_delivery_at_a_time_app_wide_across_a_screen_replacement(
         )
 
         # (3) a second child settles while the first turn is still parked.
-        run_two = _terminal_survivor_run(
-            runs_db, conversation_id, result=SECOND_RESULT
-        )
+        run_two = _terminal_survivor_run(runs_db, conversation_id, result=SECOND_RESULT)
         _drain_from_child_thread(
             wake, _drain(conversation_id, _survivor(run_two, session_id=session_id))
         )
@@ -323,9 +321,9 @@ async def test_one_delivery_at_a_time_app_wide_across_a_screen_replacement(
         #     completion rides the next one rather than being lost.
         gateway.stall = False
         gateway.release.set()
-        assert await _settle(
-            lambda: len(gateway.payloads) > before, seconds=10.0
-        ), "releasing the probe never delivered the parked wake"
+        assert await _settle(lambda: len(gateway.payloads) > before, seconds=10.0), (
+            "releasing the probe never delivered the parked wake"
+        )
         first_notice = str(gateway.payloads[before][-1]["content"])
         assert CHILD_RESULT in first_notice, first_notice[:200]
 
@@ -378,9 +376,7 @@ async def test_distinct_conversations_wake_concurrently_with_shared_runtime(
         )
         assert outcome.accepted, "harness precondition: session B must send"
         conversation_b = next(
-            s.persisted_conversation_id
-            for s in store.sessions()
-            if s.id == session_b
+            s.persisted_conversation_id for s in store.sessions() if s.id == session_b
         )
         assert conversation_b and conversation_b != conversation_a, (
             "harness precondition: two DISTINCT persisted conversations; got "
@@ -390,9 +386,7 @@ async def test_distinct_conversations_wake_concurrently_with_shared_runtime(
         wake = controller.fleet_wake
         runs_db = controller._agent_bridge.runs_db
         run_a = _terminal_survivor_run(runs_db, conversation_a)
-        run_b = _terminal_survivor_run(
-            runs_db, conversation_b, result=SECOND_RESULT
-        )
+        run_b = _terminal_survivor_run(runs_db, conversation_b, result=SECOND_RESULT)
         marks = app.conversation_local_marks_service
         marks.set_mark(conversation_a, ConversationLocalMarksService.FLEET_UNSEEN)
         marks.set_mark(conversation_b, ConversationLocalMarksService.FLEET_UNSEEN)
@@ -423,7 +417,9 @@ async def test_distinct_conversations_wake_concurrently_with_shared_runtime(
         assert await _settle(
             lambda: gateway.probe_entries == probes_before + 2, seconds=10.0
         ), "independent conversations must be admitted concurrently"
-        assert {conversation_a, conversation_b} <= set(wake.delivering_conversation_ids())
+        assert {conversation_a, conversation_b} <= set(
+            wake.delivering_conversation_ids()
+        )
         assert not (runs_db.get_run(run_b) or {}).get("wake_delivered_at"), (
             "conversation B's ledger row was stamped by a turn that never ran"
         )
@@ -432,8 +428,10 @@ async def test_distinct_conversations_wake_concurrently_with_shared_runtime(
         gateway.stall = False
         gateway.release.set()
         assert await _settle(
-            lambda: bool((runs_db.get_run(run_a) or {}).get("wake_delivered_at"))
-            and bool((runs_db.get_run(run_b) or {}).get("wake_delivered_at")),
+            lambda: (
+                bool((runs_db.get_run(run_a) or {}).get("wake_delivered_at"))
+                and bool((runs_db.get_run(run_b) or {}).get("wake_delivered_at"))
+            ),
             seconds=20.0,
         ), (
             "serializing lost a delivery: A="
@@ -536,7 +534,4 @@ async def test_a_restart_mid_commit_never_re_announces_more_than_once(tmp_path):
         _assert_console_never_mounted(app3)
         assert len(_db_chain(app3.chachanotes_db, conversation_id)) == len(
             rows_after_two
-        ), (
-            "a third launch grew the conversation: "
-            f"{_senders(app3, conversation_id)}"
-        )
+        ), f"a third launch grew the conversation: {_senders(app3, conversation_id)}"

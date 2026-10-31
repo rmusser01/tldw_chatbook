@@ -100,9 +100,7 @@ def _briefing(
         return int(cursor.lastrowid)
 
 
-def _run(
-    db: SubscriptionsDB, source_id: int, status: str, created_at: str
-) -> int:
+def _run(db: SubscriptionsDB, source_id: int, status: str, created_at: str) -> int:
     with db.transaction() as conn:
         cursor = conn.execute(
             """
@@ -194,12 +192,8 @@ def test_collection_latest_timestamps_follow_datetime_then_id_order(
 ) -> None:
     collection_id = _collection(db, "Mixed timestamps")
     _briefing(db, collection_id, "complete", "2026-08-13T10:00:00Z")
-    expected_attempt = _briefing(
-        db, collection_id, "failed", "2026-08-13 11:00:00"
-    )
-    expected_success = _briefing(
-        db, collection_id, "complete", "2026-08-13 10:30:00"
-    )
+    expected_attempt = _briefing(db, collection_id, "failed", "2026-08-13 11:00:00")
+    expected_success = _briefing(db, collection_id, "complete", "2026-08-13 10:30:00")
 
     row = db.list_collections_for_agent(limit=1)["items"][0]
 

@@ -22,7 +22,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Union
+from typing import Any, Union
 from weakref import WeakValueDictionary
 
 from loguru import logger
@@ -40,36 +40,50 @@ def operation_owned_connection(database: object) -> Iterator[None]:
     """Close only the thread-local handle opened by this synchronous operation.
 
     Inspect without acquiring a handle. A pre-existing registered connection,
-    including its active transaction, remains owned by the caller.
+    including its active transaction, remains owned by the caller unless retired
+    during the operation; a newly acquired replacement is operation-owned.
     """
     local = getattr(database, "_local", None)
     registry = getattr(database, "_connection_quiescence", None)
     close = getattr(database, "close_connection", None)
     if local is None or registry is None or not callable(close):
         from .AgentRuns_DB import AgentRunsDB
+        from .Client_Media_DB_v2 import MediaDatabase
         from .Library_Collections_DB import LibraryCollectionsDB
         from .Workspace_DB import WorkspaceDB
 
-        if (
-            type(database) not in {AgentRunsDB, LibraryCollectionsDB, WorkspaceDB}
-            or database.is_memory_db
-        ):
+        owned_types = {AgentRunsDB, LibraryCollectionsDB, MediaDatabase, WorkspaceDB}
+        if type(database).__module__ == "tldw_chatbook.DB.Dreams_DB":
+            from .Dreams_DB import DreamsDB
+
+            owned_types.add(DreamsDB)
+        if type(database).__module__ == "tldw_chatbook.DB.Guardian_DB":
+            from .Guardian_DB import GuardianDB
+
+            owned_types.add(GuardianDB)
+        if type(database) not in owned_types:
+            from .RAG_Indexing_DB import RAGIndexingDB
+
+            owned_types.add(RAGIndexingDB)
+        if type(database) not in owned_types or database.is_memory_db:
             yield
             return
         from tldw_chatbook.Backup_Recovery.participants import _core_cached_connection
 
         # A raw close can leave a stale cache. Use the same native retirement
         # evidence as the getter; a still-live borrowed handle remains owned.
-        local = database._thread_local
+        local = database._local if type(database) is MediaDatabase else database._thread_local
         close = database.close
-        borrowed = _core_cached_connection(database, getattr(local, "conn", None)) is not None
+        previous = _core_cached_connection(database, getattr(local, "conn", None))
+        borrowed = previous is not None
     else:
         previous = getattr(local, "conn", None)
         borrowed = previous is not None and registry.is_registered(previous)
     try:
         yield
     finally:
-        if not borrowed and getattr(local, "conn", None) is not None:
+        current = getattr(local, "conn", None)
+        if current is not None and (not borrowed or current is not previous):
             close()
 
 
@@ -82,6 +96,8 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
 ) -> _CallResult:
     """Run a finite callback and retire only its newly opened worker handle.
 
+    The complete callback owns one counted repository interval, which ends
+    before its newly opened handle retires.
     Cancellation of the awaiting task does not close a handle still in use by
     its executor callback. Existing connections and memory/custom owners retain
     their original lifetimes.
@@ -91,9 +107,20 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
         from .ChaChaNotes_DB import CharactersRAGDB
         from .Workspace_DB import WorkspaceDB
 
-        if type(database) not in {AgentRunsDB, CharactersRAGDB, WorkspaceDB} or database.is_memory_db:
+        owned_types = {AgentRunsDB, CharactersRAGDB, WorkspaceDB}
+        if type(database).__module__ == "tldw_chatbook.DB.Dreams_DB":
+            from .Dreams_DB import DreamsDB
+
+            owned_types.add(DreamsDB)
+        if type(database).__module__ == "tldw_chatbook.DB.Guardian_DB":
+            from .Guardian_DB import GuardianDB
+
+            owned_types.add(GuardianDB)
+        if type(database) not in owned_types or database.is_memory_db:
             return operation(*args, **kwargs)
-        with operation_owned_connection(database):
+        from tldw_chatbook.Backup_Recovery.participants import _core_operation
+
+        with operation_owned_connection(database), _core_operation(database):
             return operation(*args, **kwargs)
 
     return await asyncio.to_thread(invoke)
@@ -998,12 +1025,20 @@ class BaseDB(ABC):
         """
         pass
 
-    def _get_connection(self) -> sqlite3.Connection:
+    def _get_connection(self, **connect_kwargs: Any) -> sqlite3.Connection:
         """
         Get a database connection with row factory.
         Can be overridden by subclasses for custom connection handling.
+
+        Args:
+            **connect_kwargs: Passed through to ``sqlite3.connect`` by the
+                private connector (a subclass that holds one connection
+                per thread and must be able to close them all asks for
+                ``check_same_thread=False``). The connection is still
+                opened HERE, under this module's ``db.base`` owner.
         """
-        conn = connect_private_sqlite("db.base", self.db_path_str)
+        conn = connect_private_sqlite(
+            "db.base", self.db_path_str, **connect_kwargs)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -1055,3 +1090,29 @@ class BaseDB(ABC):
         except Exception as e:
             logger.error(f"Failed to check database integrity: {e}")
             return False
+
+
+# Defining callbacks consumed by the optional finite Character display only.
+_CHARACTER_REFRESH_READERS = tuple(
+    (
+        None,
+        name,
+        descriptor,
+        function,
+        function.__code__,
+        function.__globals__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+        __file__,
+        __spec__,
+        getattr(__spec__, "origin", None),
+    )
+    for name in ("run_owned_db_call",)
+    for descriptor in (globals()[name],)
+    for function in (
+        descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
+    )
+)

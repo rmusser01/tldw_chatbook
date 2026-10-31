@@ -110,6 +110,16 @@ Single-flight joining includes this completion owner's identity; ordinary
 Context/Roleplay callers never inherit an overlay's authorization. Successful
 dismissal preserves composer focus instead of restoring the old source control.
 Refused/stale completion retains the source and uses existing owned rollback.
+The result carries conservative, default-false `presentation_refused` provenance
+only when presentation was refused and owned rollback/restoration completed
+without errors, including an explicit false recovery signal from a best-effort
+adapter. This adds no outcome kind or authorization: genuine opening,
+presentation, rollback or restoration failures remain ordinary `FAILED` results.
+The switcher may explain its exact owned quit-confirmation refusal only with
+that provenance. Retry, Enter and row click for that retained interrupted target
+share one refresh of the immutable results snapshot and
+opens only the same retained target, never a replacement row. A dismissed quit
+question does not automatically replay the refused activation.
 An exceptional reentrant stack change after synchronous pop can still fail the
 final proof; it does not authorize recreating a dismissed source or global stack.
 Waiting for an exposed destination before dismissing its retained modal was
@@ -125,7 +135,9 @@ Roleplay deep links pass through an app-owned navigation coordinator before
 selection changes. The coordinator snapshots all incumbent Roleplay draft and
 in-flight save owners as one aggregate and requires Save and continue, Discard
 and continue, or Stay. Navigation proceeds only after every owned draft domain
-is clean; failure keeps drafts mounted and recoverable.
+is clean; failure keeps drafts mounted and recoverable. (2026-10-03: the single
+predicate over this aggregate is `roleplay_has_unsaved_work()`; see ADR-046's
+2026-10-03 amendment.)
 
 Unresolved identity repair is owned by Library. It accepts the exact
 `UnresolvedConversationKey`, expected conversation version, saved historical

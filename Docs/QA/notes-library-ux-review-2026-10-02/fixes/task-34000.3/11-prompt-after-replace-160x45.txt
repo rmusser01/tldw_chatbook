@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌────────────────────────────────────────────────┐  P  Prompt exported successfully to ~/exp/Weekly review coach.md   │
+│ │ Navigation                     │  a  │ Prompts (10)                                   │  r                                                                 │
+│ │     Import…                    │  v  │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  o                           More actions                          │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ │     │ ▊ Filter prompts… (Enter)                    ▎ │  m  ┃                          Export…                           ┃ │
+│ │ ▊ Search Library…         ▎▊x▎ │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  p                          Copy Markdown                          │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ │     │                                                │  t                            Duplicate                            │
+│ │                                │     │   collection: All prompts                      │  s                           Collections                           │
+│ │ ────────────────────────────── │     │    sort: Newest        Select                  │                                History                             │
+│ │ Browse                     ▾   │     │      Import…          Export…                  │                                 Delete                             │
+│ │    Media (23) — your files     │     │  Release notes from commits                    │                                                                    │
+│ │    Conversations (12)          │     │  Local · User only                             │                                                                    │
+│ │    Notes (122)                 │     │                                                │                                                                    │
+│ │  ▸ Prompts (10) — reuse        │     │  Weekly review coach                           │                                                                    │
+│ │    Skills (4) — AI add-ons     │<--- │  Local · has system and user text              │                                                                    │
+│ │    Collections (6)             │     │                                                │                                                                    │
+│ │    Search / RAG — find all     │     │  SQL query explainer                        ▃  │                                                                    │
+│ │ ────────────────────────────── │     │  Local · has system and user text              │                                                                    │
+│ │ Artifacts                  ▾   │     │                                                │                                                                    │
+│ │    All artifacts               │     │  Rewrite for clarity                           │<---                                                                │
+│ │    Chatbooks                   │     │  Local · User only                             │                                                                    │
+│ │    Reports                     │     │                                                │                                                                    │
+│ │ ────────────────────────────── │     │  Translate to Japanese (polite)                │                                                                    │
+│ │ Create                     ▾   │     │  Local · has system and user text              │                                                                    │
+│ │    New note                    │     │ 1-10 of 10                                     │                                                                    │
+│ │    New prompt                  │<--- │                                                │                                                                    │
+│ │    New skill                   │     │                                                │                                                                    │
+│ │ ────────────────────────────── │     │                                                │                                                                    │
+│ │ Study                      ▾   │     │                                                │                                                                    │
+│ │    Study decks (0)             │     │                                                │                                                                    │
+│ │    Flashcards due: 0           │     │                                                │                                                                    │
+│ │    Quizzes (0)                 │     │                                                │                                                                    │
+│ │ ────────────────────────────── │     │                                                │                                                                    │
+│ │ Import / Export            ▾   │     │                                                │                                                                    │
+│ │    Import…                     │     │                                                │                                                                    │
+│ │    Export                      │     │                                                │                                                                    │
+│ │ ────────────────────────────── │     │                                                │                                                                    │
+│ │ Details                    ▸   │     │                                                │                                                                    │
+│ └────────────────────────────────┘     └────────────────────────────────────────────────┘                                                                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc back to list | F1 help · Ctrl+P palette · Ctrl+Q quit

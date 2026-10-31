@@ -329,9 +329,7 @@ def _sanitize_trace_artifact_bytes(
         decoded = json.loads(value.decode("utf-8"))
         result = CredentialSanitizer().sanitize(decoded)
         sanitized = (
-            result.value
-            if result.available
-            else _CONTENT_FREE_CREDENTIAL_OMISSION
+            result.value if result.available else _CONTENT_FREE_CREDENTIAL_OMISSION
         )
         return json.dumps(
             sanitized,
@@ -364,9 +362,7 @@ def _json_object(
         )
         result = CredentialSanitizer().sanitize(canonical)
         sanitized = (
-            result.value
-            if result.available
-            else _CONTENT_FREE_CREDENTIAL_OMISSION
+            result.value if result.available else _CONTENT_FREE_CREDENTIAL_OMISSION
         )
         encoded = json.dumps(
             sanitized, allow_nan=False, separators=(",", ":"), sort_keys=True
@@ -504,6 +500,7 @@ class ConsoleTraceRepository:
             derive_post_dispatch_trace_ids,
             derive_post_dispatch_trace_node_id,
         )
+
         calls = request.calls
         if not 1 <= len(calls) <= MAX_PROMOTED_TRACE_CALLS:
             raise ValueError("promoted calls must be complete and bounded")
@@ -527,17 +524,29 @@ class ConsoleTraceRepository:
         aggregate_artifacts: dict[str, PostDispatchTraceArtifact] = {}
         previous_settled_at: str | None = None
         for call in calls:
-            for name in ("provider_name", "model_name", "route_identity", "endpoint_identity"):
+            for name in (
+                "provider_name",
+                "model_name",
+                "route_identity",
+                "endpoint_identity",
+            ):
                 value = getattr(call, name)
                 if _sanitize_trace_scalar(value, name) != value:
                     raise TraceIdentityConflict("post_dispatch_credential_projection")
-            for name in ("generation_parameters_json", "adapter_defaults_json",
-                         "response_format_json", "reasoning_controls_json", "usage_json"):
+            for name in (
+                "generation_parameters_json",
+                "adapter_defaults_json",
+                "response_format_json",
+                "reasoning_controls_json",
+                "usage_json",
+            ):
                 value = getattr(call, name)
                 if value is not None:
                     decoded = json.loads(value)
                     if json.loads(_json_object(decoded, name)) != decoded:
-                        raise TraceIdentityConflict("post_dispatch_credential_projection")
+                        raise TraceIdentityConflict(
+                            "post_dispatch_credential_projection"
+                        )
             if (
                 call.call_sequence < len(calls) - 1
                 and call.response.kind == "committed_revision"
@@ -598,10 +607,14 @@ class ConsoleTraceRepository:
                     raise TraceIdentityConflict("post_dispatch_artifact_envelope")
                 # Both supported JSON envelopes must satisfy the same mandatory
                 # projection without changing sealed bytes or their identity.
-                if _sanitize_trace_artifact_bytes(
-                    artifact.sanitized_bytes, media_type="application/json",
-                    normalization_version=_CANONICAL_TRACE_JSON,
-                ) != artifact.sanitized_bytes:
+                if (
+                    _sanitize_trace_artifact_bytes(
+                        artifact.sanitized_bytes,
+                        media_type="application/json",
+                        normalization_version=_CANONICAL_TRACE_JSON,
+                    )
+                    != artifact.sanitized_bytes
+                ):
                     raise TraceIdentityConflict("post_dispatch_artifact_projection")
                 existing = aggregate_artifacts.get(artifact.artifact_id)
                 if existing is not None and existing != artifact:
@@ -780,13 +793,17 @@ class ConsoleTraceRepository:
         if end_sequence - start_sequence + 1 > MAX_SURFACE_REPLACEMENT_SPAN:
             raise TraceIdentityConflict("post_dispatch_surface_span")
         nodes = self.read_lineage_surface_nodes(
-            cursor, segment_id=segment_id,
-            start_sequence=start_sequence, end_sequence=end_sequence,
+            cursor,
+            segment_id=segment_id,
+            start_sequence=start_sequence,
+            end_sequence=end_sequence,
         )
         return SurfaceReplacement(
             predecessor_head_id=predecessor.node_id,
-            start_node_id=nodes[0].node_id, start_sequence=start_sequence,
-            end_node_id=nodes[-1].node_id, end_sequence=end_sequence,
+            start_node_id=nodes[0].node_id,
+            start_sequence=start_sequence,
+            end_node_id=nodes[-1].node_id,
+            end_sequence=end_sequence,
             replacement_node_id=replacement_node_id,
         )
 
@@ -801,6 +818,7 @@ class ConsoleTraceRepository:
             derive_post_dispatch_trace_ids,
             derive_post_dispatch_trace_replacement_id,
         )
+
         identities = derive_post_dispatch_trace_ids(
             request.import_id,
             call_count=len(request.calls),
@@ -808,9 +826,7 @@ class ConsoleTraceRepository:
         self._reject_post_dispatch_identity_residue(cursor, request)
         policy = self.ensure_policy(cursor, request.policy)
         self._admit_post_dispatch_revision_privacy(cursor, request)
-        owner = self.get_attached_owner_by_conversation(
-            cursor, request.conversation_id
-        )
+        owner = self.get_attached_owner_by_conversation(cursor, request.conversation_id)
         if owner is None:
             cursor.execute(
                 "INSERT INTO console_trace_segments(segment_id) VALUES (?)",
@@ -843,7 +859,9 @@ class ConsoleTraceRepository:
         surface_replacement_ids: dict[str, str] = {}
         surface_replacement_targets: dict[str, str] = {}
         initial_replacement = self._post_dispatch_initial_replacement(
-            cursor, segment_id=segment_id, predecessor=surface_tail,
+            cursor,
+            segment_id=segment_id,
+            predecessor=surface_tail,
             replacement_node_id=request.calls[0].request_surface[0].node_id,
         )
         for call in request.calls:
@@ -892,8 +910,10 @@ class ConsoleTraceRepository:
                 assert start is not None and end is not None
                 replacement = SurfaceReplacement(
                     predecessor_head_id=previous_surface[-1].node_id,
-                    start_node_id=start.node_id, start_sequence=start.sequence,
-                    end_node_id=end.node_id, end_sequence=end.sequence,
+                    start_node_id=start.node_id,
+                    start_sequence=start.sequence,
+                    end_node_id=end.node_id,
+                    end_sequence=end.sequence,
                     replacement_node_id=call.request_surface[common_prefix].node_id,
                 )
             if replacement is not None:
@@ -919,7 +939,9 @@ class ConsoleTraceRepository:
                 )
                 self._advance_graph_epoch(cursor)
                 surface_replacement_ids[call.call_id] = replacement_id
-                surface_replacement_targets[call.call_id] = replacement.replacement_node_id
+                surface_replacement_targets[call.call_id] = (
+                    replacement.replacement_node_id
+                )
             surface_heads[call.call_id] = call.request_surface[-1].node_id
             new_surface_nodes[call.call_id] = tuple(appended_node_ids)
             previous_surface = call.request_surface
@@ -1054,7 +1076,10 @@ class ConsoleTraceRepository:
             for node_id in new_surface_nodes[call.call_id]:
                 event("surface_append", surface_node_id=node_id)
                 if node_id == surface_replacement_targets.get(call.call_id):
-                    event("surface_replace", surface_replacement_id=surface_replacement_ids[call.call_id])
+                    event(
+                        "surface_replace",
+                        surface_replacement_id=surface_replacement_ids[call.call_id],
+                    )
             header_id = identities.header_ids[sequence]
             event("call_boundary", call_id=call.call_id)
             event(
@@ -1117,20 +1142,23 @@ class ConsoleTraceRepository:
         revision_ids = {request.user_revision_id, request.assistant_revision_id}
         for call in request.calls:
             revision_ids.update(
-                component.revision_id for component in call.request_surface
+                component.revision_id
+                for component in call.request_surface
                 if component.revision_id is not None
             )
             if call.response.committed_revision_id is not None:
                 revision_ids.add(call.response.committed_revision_id)
             revision_ids.update(
-                component.revision_id for component in call.system_composition
+                component.revision_id
+                for component in call.system_composition
                 if component.revision_id is not None
             )
         for revision_id in sorted(revision_ids):
             omission = None
             try:
                 value = project_semantic_revision_provider_message(
-                    cursor, revision_id=revision_id,
+                    cursor,
+                    revision_id=revision_id,
                     expected_conversation_id=request.conversation_id,
                 )
             except (ValueError, LookupError):
@@ -1143,23 +1171,32 @@ class ConsoleTraceRepository:
                     omission = CUSTOM_PII_RULESET_UNAVAILABLE
                 else:
                     redaction = redact_pii_value_for_ruleset_revision(
-                        credential.value, policy.pii_ruleset_revision_id,
+                        credential.value,
+                        policy.pii_ruleset_revision_id,
                     )
                     if not redaction.available:
-                        omission = redaction.omission_reason_code or CUSTOM_PII_RULESET_UNAVAILABLE
+                        omission = (
+                            redaction.omission_reason_code
+                            or CUSTOM_PII_RULESET_UNAVAILABLE
+                        )
                     else:
                         by_path: dict[str, list[PIIRedactionSpan]] = {}
                         for item in redaction.field_redactions:
                             by_path.setdefault(item.field_path, []).append(item.span)
                         for field_path, spans in sorted(by_path.items()):
                             self.ensure_redaction_spans(
-                                cursor, policy_id=policy.policy_id,
-                                semantic_revision_id=revision_id, artifact_id=None,
-                                field_path=field_path, spans=spans,
+                                cursor,
+                                policy_id=policy.policy_id,
+                                semantic_revision_id=revision_id,
+                                artifact_id=None,
+                                field_path=field_path,
+                                spans=spans,
                             )
             if omission is not None:
                 self.bind_revision_policy(
-                    cursor, revision_id=revision_id, policy_id=policy.policy_id,
+                    cursor,
+                    revision_id=revision_id,
+                    policy_id=policy.policy_id,
                     omission_reason_code=omission,
                 )
 
@@ -1204,7 +1241,9 @@ class ConsoleTraceRepository:
         return artifact.artifact_id
 
     def _ensure_post_dispatch_artifact_masks(
-        self, cursor: sqlite3.Cursor, artifact: PostDispatchTraceArtifact,
+        self,
+        cursor: sqlite3.Cursor,
+        artifact: PostDispatchTraceArtifact,
         policy: FrozenTracePolicy,
     ) -> None:
         by_path: dict[str, list[PIIRedactionSpan]] = {}
@@ -1212,8 +1251,12 @@ class ConsoleTraceRepository:
             by_path.setdefault(item.field_path, []).append(item.span)
         for field_path, spans in sorted(by_path.items()):
             self.ensure_redaction_spans(
-                cursor, policy_id=policy.policy_id, semantic_revision_id=None,
-                artifact_id=artifact.artifact_id, field_path=field_path, spans=spans,
+                cursor,
+                policy_id=policy.policy_id,
+                semantic_revision_id=None,
+                artifact_id=artifact.artifact_id,
+                field_path=field_path,
+                spans=spans,
             )
 
     @staticmethod
@@ -1225,6 +1268,7 @@ class ConsoleTraceRepository:
             derive_post_dispatch_trace_ids,
             derive_post_dispatch_trace_replacement_id,
         )
+
         identities = derive_post_dispatch_trace_ids(
             request.import_id,
             call_count=len(request.calls),
@@ -1301,6 +1345,7 @@ class ConsoleTraceRepository:
             derive_post_dispatch_trace_ids,
             derive_post_dispatch_trace_replacement_id,
         )
+
         calls = tuple(self.get_call(cursor, call.call_id) for call in request.calls)
         present = tuple(call for call in calls if call is not None)
         if not present:
@@ -1374,7 +1419,10 @@ class ConsoleTraceRepository:
                     predecessor is None
                     or (
                         predecessor.segment_id != segment_id
-                        and (segment is None or predecessor.node_id != segment.inherited_surface_head_id)
+                        and (
+                            segment is None
+                            or predecessor.node_id != segment.inherited_surface_head_id
+                        )
                     )
                     or predecessor.sequence + 1 != surface.sequence
                 ):
@@ -1387,8 +1435,13 @@ class ConsoleTraceRepository:
         expected_replacement_ids: list[str] = []
         initial_predecessor_id = stored_surfaces[0].predecessor_node_id
         initial_replacement = self._post_dispatch_initial_replacement(
-            cursor, segment_id=segment_id,
-            predecessor=(None if initial_predecessor_id is None else self.get_surface_node(cursor, initial_predecessor_id)),
+            cursor,
+            segment_id=segment_id,
+            predecessor=(
+                None
+                if initial_predecessor_id is None
+                else self.get_surface_node(cursor, initial_predecessor_id)
+            ),
             replacement_node_id=request.calls[0].request_surface[0].node_id,
         )
         previous_surface = ()
@@ -1400,7 +1453,9 @@ class ConsoleTraceRepository:
                 if previous != current:
                     break
                 common_prefix += 1
-            expected_replacement = initial_replacement if call.call_sequence == 0 else None
+            expected_replacement = (
+                initial_replacement if call.call_sequence == 0 else None
+            )
             if previous_surface and common_prefix < len(previous_surface):
                 replacement_id = derive_post_dispatch_trace_replacement_id(
                     request.import_id, call.call_sequence
@@ -1415,7 +1470,9 @@ class ConsoleTraceRepository:
                     end_sequence=end.sequence,
                     replacement_node_id=call.request_surface[common_prefix].node_id,
                 )
-            replacement_id = derive_post_dispatch_trace_replacement_id(request.import_id, call.call_sequence)
+            replacement_id = derive_post_dispatch_trace_replacement_id(
+                request.import_id, call.call_sequence
+            )
             if expected_replacement is not None:
                 expected_replacement_ids.append(replacement_id)
                 if replacements_by_id.get(replacement_id) != expected_replacement:
@@ -1531,7 +1588,9 @@ class ConsoleTraceRepository:
                     or response.semantic_revision_id is not None
                     or response.artifact_id != artifact.artifact_id
                     or response.verification_outcome != "sanitized_artifact"
-                    or not self._post_dispatch_artifact_matches(cursor, artifact, request.policy)
+                    or not self._post_dispatch_artifact_matches(
+                        cursor, artifact, request.policy
+                    )
                 ):
                     raise TraceIdentityConflict("post_dispatch_response")
             elif (
@@ -1572,24 +1631,35 @@ class ConsoleTraceRepository:
             call_events = tuple(
                 event for event in events if event.call_id == call.call_id
             )
-            boundaries = tuple(event for event in call_events if event.event_type == "call_boundary")
-            if len(boundaries) != 1 or self.surface_head_at_event_boundary(
-                cursor, segment_id=segment_id, through_sequence=boundaries[0].sequence,
-            ) != call.request_surface[-1].node_id:
+            boundaries = tuple(
+                event for event in call_events if event.event_type == "call_boundary"
+            )
+            if (
+                len(boundaries) != 1
+                or self.surface_head_at_event_boundary(
+                    cursor,
+                    segment_id=segment_id,
+                    through_sequence=boundaries[0].sequence,
+                )
+                != call.request_surface[-1].node_id
+            ):
                 raise TraceIdentityConflict("post_dispatch_surface_event_head")
             # Gap events are segment-scoped by the existing schema. Their
             # position immediately after this call's route binds the omission.
             if call.response.kind == "no_response":
                 route_events = tuple(
-                    event for event in call_events
+                    event
+                    for event in call_events
                     if event.event_type == "provider_route_selection"
                 )
                 if len(route_events) != 1:
                     raise TraceIdentityConflict("post_dispatch_events")
                 call_events += tuple(
-                    event for event in events
+                    event
+                    for event in events
                     if event.sequence == route_events[0].sequence + 1
-                    and event.event_type == "gap" and event.call_id is None
+                    and event.event_type == "gap"
+                    and event.call_id is None
                 )
             expected_event_types = [
                 "call_boundary",
@@ -1682,18 +1752,29 @@ class ConsoleTraceRepository:
         for item in artifact.field_redactions:
             by_path.setdefault(item.field_path, []).append(item.span)
         expected_masks = tuple(
-            (path, span.start_codepoint, span.end_codepoint, span.category,
-             span.rule_id, span.detector_version, "applied")
-            for path, spans in sorted(by_path.items()) for span in merge_pii_spans(spans)
+            (
+                path,
+                span.start_codepoint,
+                span.end_codepoint,
+                span.category,
+                span.rule_id,
+                span.detector_version,
+                "applied",
+            )
+            for path, spans in sorted(by_path.items())
+            for span in merge_pii_spans(spans)
         )
-        stored_masks = tuple(tuple(row) for row in cursor.execute(
-            """SELECT field_path, start_codepoint, end_codepoint, category,
+        stored_masks = tuple(
+            tuple(row)
+            for row in cursor.execute(
+                """SELECT field_path, start_codepoint, end_codepoint, category,
                       rule_id, detector_version, outcome
                  FROM console_trace_redaction_spans
                 WHERE policy_id = ? AND artifact_id = ?
                 ORDER BY field_path, start_codepoint, end_codepoint, span_id""",
-            (policy.policy_id, artifact.artifact_id),
-        ))
+                (policy.policy_id, artifact.artifact_id),
+            )
+        )
         if stored_masks != expected_masks:
             return False
         row = cursor.execute(
@@ -1907,12 +1988,9 @@ class ConsoleTraceRepository:
             self._segment_lineage(cursor, source_owner.root_segment_id)
         )
         allowed_sequence = reachable_boundaries.get(boundary.parent_segment_id)
-        if (
-            boundary.parent_segment_id not in reachable_boundaries
-            or (
-                allowed_sequence is not None
-                and boundary.inherited_through_sequence > allowed_sequence
-            )
+        if boundary.parent_segment_id not in reachable_boundaries or (
+            allowed_sequence is not None
+            and boundary.inherited_through_sequence > allowed_sequence
         ):
             raise TraceIdentityConflict("fork_boundary_owner")
         current_head = self.surface_head_at_event_boundary(
@@ -1928,10 +2006,7 @@ class ConsoleTraceRepository:
                 boundary.inherited_through_sequence,
             ),
         ).fetchone()
-        if (
-            event_exists is None
-            or current_head != boundary.inherited_surface_head_id
-        ):
+        if event_exists is None or current_head != boundary.inherited_surface_head_id:
             raise TraceIdentityConflict("fork_boundary_state")
         child = self.create_segment(
             cursor,
@@ -2368,7 +2443,9 @@ class ConsoleTraceRepository:
             "revision" if semantic_revision_id is not None else "artifact"
         )
         source_column = (
-            "semantic_revision_id" if semantic_revision_id is not None else "artifact_id"
+            "semantic_revision_id"
+            if semantic_revision_id is not None
+            else "artifact_id"
         )
         source_id = semantic_revision_id or artifact_id
         assert source_id is not None
@@ -2459,7 +2536,9 @@ class ConsoleTraceRepository:
         if (semantic_revision_id is None) == (artifact_id is None):
             raise ValueError("redaction_source")
         source_column = (
-            "semantic_revision_id" if semantic_revision_id is not None else "artifact_id"
+            "semantic_revision_id"
+            if semantic_revision_id is not None
+            else "artifact_id"
         )
         source_id = semantic_revision_id or artifact_id
         rows = cursor.execute(
@@ -2486,7 +2565,9 @@ class ConsoleTraceRepository:
         if (semantic_revision_id is None) == (artifact_id is None):
             raise ValueError("redaction_source")
         source_column = (
-            "semantic_revision_id" if semantic_revision_id is not None else "artifact_id"
+            "semantic_revision_id"
+            if semantic_revision_id is not None
+            else "artifact_id"
         )
         source_id = semantic_revision_id or artifact_id
         rows = cursor.execute(
@@ -3298,19 +3379,22 @@ class ConsoleTraceRepository:
             Whether any call for this owner and turn remains unresolved.
         """
         # The existing owner-order index starts with (owner_id, turn_id).
-        return cursor.execute(
-            """SELECT 1 FROM console_trace_calls
+        return (
+            cursor.execute(
+                """SELECT 1 FROM console_trace_calls
                 WHERE owner_id = ? AND turn_id = ? AND state IN (?, ?, ?, ?)
                 LIMIT 1""",
-            (
-                owner_id,
-                turn_id,
-                TraceCallState.RESERVED.value,
-                TraceCallState.DISPATCH_STARTED.value,
-                TraceCallState.DISPATCH_UNKNOWN.value,
-                TraceCallState.RESPONSE_STARTED.value,
-            ),
-        ).fetchone() is not None
+                (
+                    owner_id,
+                    turn_id,
+                    TraceCallState.RESERVED.value,
+                    TraceCallState.DISPATCH_STARTED.value,
+                    TraceCallState.DISPATCH_UNKNOWN.value,
+                    TraceCallState.RESPONSE_STARTED.value,
+                ),
+            ).fetchone()
+            is not None
+        )
 
     def get_latest_call_boundary(
         self, cursor: sqlite3.Cursor, segment_id: str

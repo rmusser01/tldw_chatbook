@@ -1,0 +1,32 @@
+........................................................................ [ 37%]
+........................................................................ [ 74%]
+..................................................                       [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-owners-green.xml -
+============================= slowest 25 durations =============================
+5.86s call     Tests/Chat/test_console_note_span_actions.py::test_capture_note_records_the_conversation_and_message_it_came_from
+5.65s call     Tests/Chat/test_console_note_span_actions.py::test_capture_note_dispatch_refuses_a_temporary_chat_before_any_worker
+5.38s call     Tests/Chat/test_console_note_span_actions.py::test_console_note_writes_use_the_configured_notes_identity
+5.25s call     Tests/Chat/test_console_note_span_actions.py::test_capture_note_dispatches_one_exclusive_note_worker
+5.20s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_dispatch_one_exclusive_note_worker[summarize-note]
+4.96s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_dispatch_one_exclusive_note_worker[save-transcript-note]
+4.31s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[agent_chat_start-Agent handoff-save-transcript-note]
+4.28s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[untrusted-Unverified handoff-summarize-note]
+4.23s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_mid_run_notify_instead_of_summarizing[summarize-note]
+4.18s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[untrusted-Unverified handoff-save-transcript-note]
+3.96s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[agent_chat_start-Agent handoff-summarize-note]
+3.91s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_mid_run_notify_instead_of_summarizing[save-transcript-note]
+3.82s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[-User-save-transcript-note]
+3.71s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[-User-summarize-note]
+3.37s call     Tests/Chat/test_console_note_span_actions.py::test_summarize_span_as_note_returns_draft_without_compaction_writes
+3.22s call     Tests/Chat/test_console_note_span_actions.py::test_build_transcript_note_accepts_assistant_target
+3.16s call     Tests/Chat/test_console_note_span_actions.py::test_note_actions_block_off_path_and_unknown_targets
+3.15s call     Tests/Chat/test_console_note_span_actions.py::test_summarize_span_as_note_blocks_oversized_span
+2.96s call     Tests/Chat/test_console_note_span_actions.py::test_build_transcript_note_is_inclusive_and_user_assistant_only
+2.95s call     Tests/Chat/test_console_note_span_actions.py::test_summarize_span_as_note_blocks_when_provider_not_ready
+2.92s call     Tests/Chat/test_console_note_span_actions.py::test_oversized_span_blocks_at_the_real_budget
+1.26s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_empty_history_error
+1.16s call     Tests/Chat/test_console_chat_create_integration.py::test_chat_create_callbacks_reach_bridge_when_ui_sinks_wired
+1.01s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_ephemeral_source_error
+
+(1 durations < 1s hidden.)
+194 passed in 124.87s (0:02:04)

@@ -368,6 +368,7 @@ class _StdioJSONRPCConnection:
         # TASK-26029/lane-6 I2: in-flight server-request handler tasks, run
         # off the read loop so a slow completion can't stall frame draining.
         self._dispatch_tasks: set[asyncio.Task[None]] = set()
+        self._server_request_tasks: dict[int | str, asyncio.Task[None]] = {}
         self._write_lock = asyncio.Lock()
         self._close_lock = asyncio.Lock()
         self._reader_unavailable = False
@@ -853,6 +854,7 @@ class _StdioJSONRPCConnection:
             dispatch_set = getattr(self, "_dispatch_tasks", None)
             if dispatch_set is not None:
                 dispatch_set.clear()
+            getattr(self, "_server_request_tasks", {}).clear()
             for task in (self._read_task, self._stderr_task):
                 if task is None or task is current_task:
                     continue
@@ -989,6 +991,9 @@ class _StdioJSONRPCConnection:
             if payload["method"] == "notifications/progress":
                 self._handle_progress(payload.get("params"))
                 return
+            if payload["method"] == "notifications/cancelled":
+                self._handle_server_cancellation(payload.get("params"))
+                return
             logger.debug("Ignoring MCP server notification")
             return
 
@@ -997,6 +1002,23 @@ class _StdioJSONRPCConnection:
             return
 
         logger.debug("Ignoring unrecognized MCP payload")
+
+    def _handle_server_cancellation(self, params: object) -> None:
+        """Cancel only the referenced inbound server request, without replying.
+
+        Args:
+            params: Untrusted cancellation notification parameters.
+        """
+        if not isinstance(params, dict):
+            return
+        request_id = params.get("requestId")
+        # bool/float IDs must not alias integer IDs; arrays/objects cannot be
+        # dictionary keys. Opposite-direction requests use _pending_requests.
+        if type(request_id) not in (int, str):
+            return
+        task = getattr(self, "_server_request_tasks", {}).get(request_id)
+        if task is not None and not task.done():
+            task.cancel()
 
     def _handle_progress(self, params: object) -> None:
         """Deliver valid progress only to its still-active request observer."""
@@ -1047,6 +1069,15 @@ class _StdioJSONRPCConnection:
         # hangs waiting on a reply.
         dispatcher = self._server_request_dispatcher
         if dispatcher is not None:
+            request_tasks = getattr(self, "_server_request_tasks", None)
+            if request_tasks is None:
+                request_tasks = {}
+                self._server_request_tasks = request_tasks
+            valid_id = type(request_id) in (int, str)
+            if valid_id:
+                previous = request_tasks.get(request_id)
+                if previous is not None and not previous.done():
+                    return  # a duplicate must not orphan the original owner
             params = payload.get("params")
             if not isinstance(params, dict):
                 params = {}
@@ -1064,7 +1095,20 @@ class _StdioJSONRPCConnection:
                 dispatch_tasks = set()
                 self._dispatch_tasks = dispatch_tasks
             dispatch_tasks.add(task)
-            task.add_done_callback(dispatch_tasks.discard)
+            if valid_id:
+                request_tasks[request_id] = task
+
+            def forget_dispatch(done: asyncio.Task[None]) -> None:
+                """Release a finished task without deleting a reused ID's owner.
+
+                Args:
+                    done: Completed or cancelled inbound dispatch task.
+                """
+                dispatch_tasks.discard(done)
+                if valid_id and request_tasks.get(request_id) is done:
+                    request_tasks.pop(request_id, None)
+
+            task.add_done_callback(forget_dispatch)
             return
 
         await self._send_message(

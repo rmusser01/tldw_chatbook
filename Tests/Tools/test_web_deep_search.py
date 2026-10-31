@@ -11,22 +11,43 @@ from tldw_chatbook.Tools.web_tool_impls import LocalToolError, web_deep_search
 from tldw_chatbook.Web_Scraping import WebSearch_APIs
 
 
-_PHASE1 = {"web_search_results_dict": {"results": [{"title": "T", "url": "https://e.com/"}],
-                                        "warnings": []},
-           "sub_query_dict": {"sub_questions": ["sq1"], "main_goal": "q"}}
+_PHASE1 = {
+    "web_search_results_dict": {
+        "results": [{"title": "T", "url": "https://e.com/"}],
+        "warnings": [],
+    },
+    "sub_query_dict": {"sub_questions": ["sq1"], "main_goal": "q"},
+}
 
-_FINAL = {"text": "Deep answer [1].",
-          "evidence": [{"id": 1, "url": "https://e.com/", "title": "T",
-                        "content": "c", "original_content": "o", "reasoning": "r",
-                        "chunk_index": 0}],
-          "confidence": 0.78, "chunks": [{}]}
+_FINAL = {
+    "text": "Deep answer [1].",
+    "evidence": [
+        {
+            "id": 1,
+            "url": "https://e.com/",
+            "title": "T",
+            "content": "c",
+            "original_content": "o",
+            "reasoning": "r",
+            "chunk_index": 0,
+        }
+    ],
+    "confidence": 0.78,
+    "chunks": [{}],
+}
 
 
-_DEEP_SETTINGS = {"search_provider_default": "google", "relevance_analysis_llm": "openai",
-                  "final_answer_llm": "openai", "search_enable_subquery": False,
-                  "search_default_max_queries": 5, "search_result_max": 10,
-                  "relevance_llm_timeout_s": 30, "relevance_scrape_timeout_s": 30,
-                  "deep_search_timeout_s": 240}
+_DEEP_SETTINGS = {
+    "search_provider_default": "google",
+    "relevance_analysis_llm": "openai",
+    "final_answer_llm": "openai",
+    "search_enable_subquery": False,
+    "search_default_max_queries": 5,
+    "search_result_max": 10,
+    "relevance_llm_timeout_s": 30,
+    "relevance_scrape_timeout_s": 30,
+    "deep_search_timeout_s": 240,
+}
 
 
 @pytest.fixture
@@ -34,13 +55,18 @@ def deep_env(monkeypatch):
     monkeypatch.setattr(WebSearch_APIs, "generate_and_search", lambda q, p: _PHASE1)
 
     async def fake_aa(wsr, sqd, params, cancel_event=None):
-        return {"final_answer": dict(_FINAL), "relevant_results": {"1": {}},
-                "web_search_results_dict": wsr}
+        return {
+            "final_answer": dict(_FINAL),
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
 
     monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa)
     # The tool reads config through the module function _deep_search_settings()
     # (returns a dict of the resolved [SearchSettings] values) -- patched wholesale:
-    monkeypatch.setattr(web_tool_impls, "_deep_search_settings", lambda: dict(_DEEP_SETTINGS))
+    monkeypatch.setattr(
+        web_tool_impls, "_deep_search_settings", lambda: dict(_DEEP_SETTINGS)
+    )
     yield
 
 
@@ -53,8 +79,11 @@ def test_deep_search_happy_path(deep_env):
 
 def test_deep_search_no_synthesis_llm_fails_before_spend(deep_env, monkeypatch):
     calls = {"n": 0}
-    monkeypatch.setattr(WebSearch_APIs, "generate_and_search",
-                        lambda q, p: calls.__setitem__("n", calls["n"] + 1) or _PHASE1)
+    monkeypatch.setattr(
+        WebSearch_APIs,
+        "generate_and_search",
+        lambda q, p: calls.__setitem__("n", calls["n"] + 1) or _PHASE1,
+    )
     settings = dict(_DEEP_SETTINGS, final_answer_llm="")
     monkeypatch.setattr(web_tool_impls, "_deep_search_settings", lambda: settings)
     with pytest.raises(LocalToolError, match=r"deep-search-failed.*synthesis"):
@@ -64,8 +93,11 @@ def test_deep_search_no_synthesis_llm_fails_before_spend(deep_env, monkeypatch):
 
 def test_deep_search_no_relevance_llm_fails_before_spend(deep_env, monkeypatch):
     calls = {"n": 0}
-    monkeypatch.setattr(WebSearch_APIs, "generate_and_search",
-                        lambda q, p: calls.__setitem__("n", calls["n"] + 1) or _PHASE1)
+    monkeypatch.setattr(
+        WebSearch_APIs,
+        "generate_and_search",
+        lambda q, p: calls.__setitem__("n", calls["n"] + 1) or _PHASE1,
+    )
     settings = dict(_DEEP_SETTINGS, relevance_analysis_llm="")
     monkeypatch.setattr(web_tool_impls, "_deep_search_settings", lambda: settings)
     with pytest.raises(LocalToolError, match=r"deep-search-failed.*relevance"):
@@ -93,10 +125,15 @@ def test_deep_search_invalid_question(deep_env):
 
 def test_deep_search_zero_results_after_search(deep_env, monkeypatch):
     empty_phase1 = {
-        "web_search_results_dict": {"results": [], "warnings": ["duckduckgo: rate limited"]},
+        "web_search_results_dict": {
+            "results": [],
+            "warnings": ["duckduckgo: rate limited"],
+        },
         "sub_query_dict": {"sub_questions": [], "main_goal": "q"},
     }
-    monkeypatch.setattr(WebSearch_APIs, "generate_and_search", lambda q, p: empty_phase1)
+    monkeypatch.setattr(
+        WebSearch_APIs, "generate_and_search", lambda q, p: empty_phase1
+    )
     with pytest.raises(LocalToolError, match=r"deep-search-failed.*search.*no results"):
         web_deep_search("q")
 
@@ -104,8 +141,12 @@ def test_deep_search_zero_results_after_search(deep_env, monkeypatch):
 def test_deep_search_zero_relevant_is_not_an_error(deep_env, monkeypatch):
     async def fake_aa_none(wsr, sqd, params, cancel_event=None):
         return {
-            "final_answer": {"text": "No relevant results found. Unable to provide an answer.",
-                              "evidence": [], "confidence": 0.0, "chunks": []},
+            "final_answer": {
+                "text": "No relevant results found. Unable to provide an answer.",
+                "evidence": [],
+                "confidence": 0.0,
+                "chunks": [],
+            },
             "relevant_results": {},
             "web_search_results_dict": wsr,
         }
@@ -128,7 +169,11 @@ def test_deep_search_deadline_sets_cancel_event(deep_env, monkeypatch):
     async def fake_aa_deadline(wsr, sqd, params, cancel_event=None):
         await asyncio.sleep(0.05)
         observed["cancelled"] = bool(cancel_event and cancel_event.is_set())
-        return {"final_answer": dict(_FINAL), "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
+        return {
+            "final_answer": dict(_FINAL),
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
 
     monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_deadline)
     settings = dict(_DEEP_SETTINGS, deep_search_timeout_s=0.01)
@@ -145,12 +190,19 @@ def test_deep_search_answer_byte_capped(deep_env, monkeypatch):
 
     async def fake_aa_huge(wsr, sqd, params, cancel_event=None):
         final = dict(_FINAL, text=huge_text)
-        return {"final_answer": final, "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
+        return {
+            "final_answer": final,
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
 
     monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_huge)
     out = web_deep_search("what is love")
     answer_part = out.split("Sources:", 1)[0]
-    assert len(answer_part.encode("utf-8")) <= web_tool_impls.DEEP_SEARCH_ANSWER_MAX_BYTES + 64
+    assert (
+        len(answer_part.encode("utf-8"))
+        <= web_tool_impls.DEEP_SEARCH_ANSWER_MAX_BYTES + 64
+    )
     assert "truncated" in out
 
 
@@ -162,7 +214,11 @@ def test_deep_search_sources_capped_at_max(deep_env, monkeypatch):
 
     async def fake_aa_many(wsr, sqd, params, cancel_event=None):
         final = dict(_FINAL, evidence=evidence)
-        return {"final_answer": final, "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
+        return {
+            "final_answer": final,
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
 
     monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_many)
     out = web_deep_search("what is love")
@@ -178,8 +234,14 @@ def test_deep_search_footer_fallback_note(deep_env, monkeypatch):
     # the per-chunk except branch) means "summarization failed, truncated
     # raw text was substituted" -- that's what the footer counts.
     async def fake_aa_fallback(wsr, sqd, params, cancel_event=None):
-        final = dict(_FINAL, chunks=[{"generated": False, "fallback": True}, {"generated": True}])
-        return {"final_answer": final, "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
+        final = dict(
+            _FINAL, chunks=[{"generated": False, "fallback": True}, {"generated": True}]
+        )
+        return {
+            "final_answer": final,
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
 
     monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_fallback)
     out = web_deep_search("what is love")
@@ -194,38 +256,71 @@ def test_deep_search_footer_fallback_note(deep_env, monkeypatch):
 # faking only chat_api_call / Summarization_General_Lib.analyze (the
 # established seams), not the chunk-metadata shape itself.
 
-_REL_SINGLE_CHUNK = {"1": {"content": "sum one", "original_content": "orig", "reasoning": "r1",
-                            "url": "https://one.example/", "title": "One"}}
+_REL_SINGLE_CHUNK = {
+    "1": {
+        "content": "sum one",
+        "original_content": "orig",
+        "reasoning": "r1",
+        "url": "https://one.example/",
+        "title": "One",
+    }
+}
 
 _REL_MULTI_CHUNK = {
-    "a": {"content": "A" * 4000, "reasoning": "ra", "url": "https://a.example/", "title": "A"},
-    "b": {"content": "B" * 4000, "reasoning": "rb", "url": "https://b.example/", "title": "B"},
+    "a": {
+        "content": "A" * 4000,
+        "reasoning": "ra",
+        "url": "https://a.example/",
+        "title": "A",
+    },
+    "b": {
+        "content": "B" * 4000,
+        "reasoning": "rb",
+        "url": "https://b.example/",
+        "title": "B",
+    },
 }
 
 
-def test_deep_search_footer_no_fallback_mention_for_healthy_single_chunk_run(deep_env, monkeypatch):
+def test_deep_search_footer_no_fallback_mention_for_healthy_single_chunk_run(
+    deep_env, monkeypatch
+):
     """The single-chunk skip path is the MAJORITY, healthiest case
     (synthesis succeeded, nothing failed) -- reproduced bug: it used to be
     reported as '1 chunk(s) used a fallback summary'."""
-    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", lambda **kwargs: "Deep answer [1].")
+    monkeypatch.setattr(
+        WebSearch_APIs, "chat_api_call", lambda **kwargs: "Deep answer [1]."
+    )
 
     async def fake_aa_real_single_chunk(wsr, sqd, params, cancel_event=None):
-        final_answer = WebSearch_APIs.aggregate_results(_REL_SINGLE_CHUNK, "what is love", [], "openai")
-        return {"final_answer": final_answer, "relevant_results": _REL_SINGLE_CHUNK,
-                "web_search_results_dict": wsr}
+        final_answer = WebSearch_APIs.aggregate_results(
+            _REL_SINGLE_CHUNK, "what is love", [], "openai"
+        )
+        return {
+            "final_answer": final_answer,
+            "relevant_results": _REL_SINGLE_CHUNK,
+            "web_search_results_dict": wsr,
+        }
 
-    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_real_single_chunk)
+    monkeypatch.setattr(
+        WebSearch_APIs, "analyze_and_aggregate", fake_aa_real_single_chunk
+    )
     out = web_deep_search("what is love")
     assert "fallback" not in out.lower()
 
 
-def test_deep_search_footer_counts_exactly_failed_chunks_as_fallback(deep_env, monkeypatch):
+def test_deep_search_footer_counts_exactly_failed_chunks_as_fallback(
+    deep_env, monkeypatch
+):
     """A genuine per-chunk MAP-phase summarization failure (multi-chunk) must
     be counted, and counted EXACTLY -- not inflated by the healthy chunk
     alongside it."""
-    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", lambda **kwargs: "Deep answer [1][2].")
+    monkeypatch.setattr(
+        WebSearch_APIs, "chat_api_call", lambda **kwargs: "Deep answer [1][2]."
+    )
 
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib
+
     calls = {"n": 0}
 
     def fake_analyze(*a, **kwargs):
@@ -237,27 +332,40 @@ def test_deep_search_footer_counts_exactly_failed_chunks_as_fallback(deep_env, m
     monkeypatch.setattr(Summarization_General_Lib, "analyze", fake_analyze)
 
     async def fake_aa_real_multi_chunk(wsr, sqd, params, cancel_event=None):
-        final_answer = WebSearch_APIs.aggregate_results(_REL_MULTI_CHUNK, "what is love", [], "openai")
-        return {"final_answer": final_answer, "relevant_results": _REL_MULTI_CHUNK,
-                "web_search_results_dict": wsr}
+        final_answer = WebSearch_APIs.aggregate_results(
+            _REL_MULTI_CHUNK, "what is love", [], "openai"
+        )
+        return {
+            "final_answer": final_answer,
+            "relevant_results": _REL_MULTI_CHUNK,
+            "web_search_results_dict": wsr,
+        }
 
-    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_real_multi_chunk)
+    monkeypatch.setattr(
+        WebSearch_APIs, "analyze_and_aggregate", fake_aa_real_multi_chunk
+    )
     out = web_deep_search("what is love")
     assert "1 chunk(s) used a fallback summary" in out
 
 
 def test_deep_search_footer_warning_note(deep_env, monkeypatch):
     phase1_with_warnings = {
-        "web_search_results_dict": {"results": [{"title": "T", "url": "https://e.com/"}],
-                                     "warnings": ["bing: quota exceeded"]},
+        "web_search_results_dict": {
+            "results": [{"title": "T", "url": "https://e.com/"}],
+            "warnings": ["bing: quota exceeded"],
+        },
         "sub_query_dict": {"sub_questions": ["sq1"], "main_goal": "q"},
     }
-    monkeypatch.setattr(WebSearch_APIs, "generate_and_search", lambda q, p: phase1_with_warnings)
+    monkeypatch.setattr(
+        WebSearch_APIs, "generate_and_search", lambda q, p: phase1_with_warnings
+    )
     out = web_deep_search("what is love")
     assert "warning" in out.lower()
 
 
-def test_deep_search_footer_surfaces_subquery_generation_failure_warning(deep_env, monkeypatch):
+def test_deep_search_footer_surfaces_subquery_generation_failure_warning(
+    deep_env, monkeypatch
+):
     """task-3221: exhausting all 3 paid sub-query-generation attempts must
     leave a trace the user can see -- otherwise it's indistinguishable from
     the feature being off. Passthrough test (phase-boundary fake, like
@@ -271,13 +379,19 @@ def test_deep_search_footer_surfaces_subquery_generation_failure_warning(deep_en
         "searched only the original query"
     )
     phase1_with_subquery_failure = {
-        "web_search_results_dict": {"results": [{"title": "T", "url": "https://e.com/"}],
-                                     "warnings": [warning_text]},
+        "web_search_results_dict": {
+            "results": [{"title": "T", "url": "https://e.com/"}],
+            "warnings": [warning_text],
+        },
         "sub_query_dict": {"sub_questions": [], "main_goal": "q"},
     }
-    monkeypatch.setattr(WebSearch_APIs, "generate_and_search", lambda q, p: phase1_with_subquery_failure)
+    monkeypatch.setattr(
+        WebSearch_APIs, "generate_and_search", lambda q, p: phase1_with_subquery_failure
+    )
     out = web_deep_search("what is love")
-    assert "1 search warning(s)" in out  # counted through, like any other provider warning
+    assert (
+        "1 search warning(s)" in out
+    )  # counted through, like any other provider warning
 
 
 def test_deep_search_phase1_exception_wrapped(deep_env, monkeypatch):
@@ -285,7 +399,9 @@ def test_deep_search_phase1_exception_wrapped(deep_env, monkeypatch):
         raise RuntimeError("provider exploded")
 
     monkeypatch.setattr(WebSearch_APIs, "generate_and_search", boom)
-    with pytest.raises(LocalToolError, match=r"deep-search-failed.*search.*provider exploded"):
+    with pytest.raises(
+        LocalToolError, match=r"deep-search-failed.*search.*provider exploded"
+    ):
         web_deep_search("q")
 
 
@@ -314,7 +430,9 @@ def test_deep_search_places_timeouts_into_search_params(deep_env, monkeypatch):
     assert seen["search_params"].get("relevance_scrape_timeout_s") == 30
 
 
-def test_deep_search_places_respect_robots_txt_into_search_params(deep_env, monkeypatch):
+def test_deep_search_places_respect_robots_txt_into_search_params(
+    deep_env, monkeypatch
+):
     """task-3260: the tool must place the real, configured
     [webfetch] respect_robots_txt setting into search_params -- the
     pydantic-safe channel analyze_and_aggregate/search_result_relevance
@@ -333,7 +451,9 @@ def test_deep_search_places_respect_robots_txt_into_search_params(deep_env, monk
     assert seen["search_params"].get("respect_robots_txt") is True
 
 
-def test_deep_search_places_respect_robots_txt_false_into_search_params(deep_env, monkeypatch):
+def test_deep_search_places_respect_robots_txt_false_into_search_params(
+    deep_env, monkeypatch
+):
     """Same seam, opposite value -- proves this isn't hardcoded True."""
     monkeypatch.setattr(
         web_tool_impls, "_webfetch_settings", lambda: {"respect_robots_txt": False}
@@ -365,7 +485,9 @@ def test_deep_search_places_max_queries_cap_into_search_params(deep_env, monkeyp
     assert seen["search_params"].get("search_default_max_queries") == 5
 
 
-def test_deep_search_places_phase1_time_budget_into_search_params(deep_env, monkeypatch):
+def test_deep_search_places_phase1_time_budget_into_search_params(
+    deep_env, monkeypatch
+):
     """Important 3a (final review): the tool computes its remaining phase-1
     budget from deep_search_timeout_s at entry and hands it to
     generate_and_search via search_params -- checked at entry, so with
@@ -378,10 +500,13 @@ def test_deep_search_places_phase1_time_budget_into_search_params(deep_env, monk
 
     monkeypatch.setattr(WebSearch_APIs, "generate_and_search", fake_generate)
     web_deep_search("q")
-    assert seen["search_params"].get("phase1_time_budget_s") == pytest.approx(240, abs=2)
+    assert seen["search_params"].get("phase1_time_budget_s") == pytest.approx(
+        240, abs=2
+    )
 
 
 # --- Fix-round: deadline-before-first-relevant honesty (CRITICAL) -----------
+
 
 def test_deep_search_deadline_before_first_relevant_is_honest(deep_env, monkeypatch):
     """A watchdog firing before ANY result is scored must not report
@@ -400,7 +525,12 @@ def test_deep_search_deadline_before_first_relevant_is_honest(deep_env, monkeypa
         await asyncio.sleep(0.05)  # let the watchdog fire before we check
         if cancel_event and cancel_event.is_set():
             return {
-                "final_answer": {"text": "", "evidence": [], "confidence": 0.0, "chunks": []},
+                "final_answer": {
+                    "text": "",
+                    "evidence": [],
+                    "confidence": 0.0,
+                    "chunks": [],
+                },
                 "relevant_results": {},
                 "web_search_results_dict": wsr,
             }
@@ -420,7 +550,10 @@ def test_deep_search_deadline_before_first_relevant_is_honest(deep_env, monkeypa
 
 # --- Fix-round: typed [SearchSettings] coercion (IMPORTANT) -----------------
 
-def test_deep_search_settings_malformed_timeout_falls_back_without_crashing(monkeypatch):
+
+def test_deep_search_settings_malformed_timeout_falls_back_without_crashing(
+    monkeypatch,
+):
     import tldw_chatbook.config as config_module
 
     def fake_get_cli_setting(section, key=None, default=None):
@@ -461,7 +594,10 @@ def test_deep_search_settings_negative_timeout_falls_back_to_default(monkeypatch
 
 # --- Fix-round: same-region minors -------------------------------------------
 
-def test_deep_search_invalid_config_engine_default_names_config_key(deep_env, monkeypatch):
+
+def test_deep_search_invalid_config_engine_default_names_config_key(
+    deep_env, monkeypatch
+):
     """An invalid ENGINE ARGUMENT is [invalid-args] (caller's mistake); an
     invalid CONFIG default must not blame the caller's (absent) argument."""
     settings = dict(_DEEP_SETTINGS, search_provider_default="not-a-real-engine")
@@ -475,7 +611,9 @@ def test_deep_search_invalid_config_engine_default_names_config_key(deep_env, mo
 
 
 def test_deep_search_malformed_phase1_result_is_structured_error(deep_env, monkeypatch):
-    monkeypatch.setattr(WebSearch_APIs, "generate_and_search", lambda q, p: {"oops": True})
+    monkeypatch.setattr(
+        WebSearch_APIs, "generate_and_search", lambda q, p: {"oops": True}
+    )
     with pytest.raises(LocalToolError, match=r"deep-search-failed.*search.*malformed"):
         web_deep_search("q")
 
@@ -483,7 +621,11 @@ def test_deep_search_malformed_phase1_result_is_structured_error(deep_env, monke
 def test_deep_search_non_numeric_confidence_does_not_crash(deep_env, monkeypatch):
     async def fake_aa_bad_confidence(wsr, sqd, params, cancel_event=None):
         final = dict(_FINAL, confidence="high")
-        return {"final_answer": final, "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
+        return {
+            "final_answer": final,
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
 
     monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_bad_confidence)
     out = web_deep_search("what is love")
@@ -493,10 +635,13 @@ def test_deep_search_non_numeric_confidence_does_not_crash(deep_env, monkeypatch
 def test_deep_search_footer_uses_relevant_scored_wording(deep_env):
     out = web_deep_search("what is love")
     assert "Relevant: 1 of 1 scored" in out
-    assert "Analyzed" not in out  # replaced -- K was the relevant count, not an analyzed count
+    assert (
+        "Analyzed" not in out
+    )  # replaced -- K was the relevant count, not an analyzed count
 
 
 # --- Fix round 2: N4 -- a genuine TOTAL budget (answer + sources + footer) --
+
 
 def test_deep_search_sources_block_is_byte_capped(deep_env, monkeypatch):
     """A genuinely large answer (consuming essentially the whole answer
@@ -516,9 +661,15 @@ def test_deep_search_sources_block_is_byte_capped(deep_env, monkeypatch):
 
     async def fake_aa_large_answer_and_titles(wsr, sqd, params, cancel_event=None):
         final = dict(_FINAL, text=huge_text, evidence=evidence)
-        return {"final_answer": final, "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
+        return {
+            "final_answer": final,
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
 
-    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_large_answer_and_titles)
+    monkeypatch.setattr(
+        WebSearch_APIs, "analyze_and_aggregate", fake_aa_large_answer_and_titles
+    )
     out = web_deep_search("what is love")
 
     total_bytes = len(out.encode("utf-8"))
@@ -530,7 +681,9 @@ def test_deep_search_sources_block_is_byte_capped(deep_env, monkeypatch):
     assert "truncated" in out.lower()  # the answer was genuinely capped
 
 
-def test_deep_search_sources_omission_marker_when_budget_exceeded(deep_env, monkeypatch):
+def test_deep_search_sources_omission_marker_when_budget_exceeded(
+    deep_env, monkeypatch
+):
     """A large answer plus 20 sources with BOTH an oversized title AND an
     oversized URL (URL truncation is new in this round -- N4): the sources
     budget is squeezed tight enough by the answer that most sources can't
@@ -545,9 +698,15 @@ def test_deep_search_sources_omission_marker_when_budget_exceeded(deep_env, monk
 
     async def fake_aa_large_answer_and_long_fields(wsr, sqd, params, cancel_event=None):
         final = dict(_FINAL, text=huge_text, evidence=evidence)
-        return {"final_answer": final, "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
+        return {
+            "final_answer": final,
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
 
-    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_large_answer_and_long_fields)
+    monkeypatch.setattr(
+        WebSearch_APIs, "analyze_and_aggregate", fake_aa_large_answer_and_long_fields
+    )
     out = web_deep_search("what is love")
 
     total_bytes = len(out.encode("utf-8"))
@@ -568,7 +727,11 @@ def test_deep_search_sources_url_truncated(deep_env, monkeypatch):
 
     async def fake_aa_one_long_url(wsr, sqd, params, cancel_event=None):
         final = dict(_FINAL, evidence=evidence)
-        return {"final_answer": final, "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
+        return {
+            "final_answer": final,
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
 
     monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_one_long_url)
     out = web_deep_search("what is love")
@@ -583,12 +746,18 @@ def test_deep_search_sources_count_cap_marker(deep_env, monkeypatch):
     marker -- rather than silently dropping the excess with no signal."""
     evidence = [
         {"id": i, "url": f"https://e.com/{i}", "title": f"T{i}"}
-        for i in range(1, web_tool_impls.DEEP_SEARCH_SOURCES_MAX + 6)  # 5 over the count cap
+        for i in range(
+            1, web_tool_impls.DEEP_SEARCH_SOURCES_MAX + 6
+        )  # 5 over the count cap
     ]
 
     async def fake_aa_over_count_cap(wsr, sqd, params, cancel_event=None):
         final = dict(_FINAL, evidence=evidence)
-        return {"final_answer": final, "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
+        return {
+            "final_answer": final,
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
 
     monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_over_count_cap)
     out = web_deep_search("what is love")
@@ -600,20 +769,28 @@ def test_deep_search_sources_count_cap_marker(deep_env, monkeypatch):
     assert "5" in out  # exactly 5 were dropped by the count cap
 
 
-def test_deep_search_sources_single_oversized_line_still_emits_marker(deep_env, monkeypatch):
+def test_deep_search_sources_single_oversized_line_still_emits_marker(
+    deep_env, monkeypatch
+):
     """When the sources budget is squeezed so tight that even the FIRST
     line can't fit, the block must still say so -- not silently render as
     "Sources: (none)" as if no evidence existed at all. Forced by raising
     the answer cap close to the total and supplying an answer that actually
     fills it, leaving ~0 bytes for sources -- less than even one line."""
-    raised_cap = web_tool_impls.DEEP_SEARCH_TOTAL_MAX_BYTES - 100  # leaves less than one source line
+    raised_cap = (
+        web_tool_impls.DEEP_SEARCH_TOTAL_MAX_BYTES - 100
+    )  # leaves less than one source line
     monkeypatch.setattr(web_tool_impls, "DEEP_SEARCH_ANSWER_MAX_BYTES", raised_cap)
     huge_text = "A" * (raised_cap + 5000)
     evidence = [{"id": 1, "url": "https://e.com/1", "title": "T"}]
 
     async def fake_aa_tiny_budget(wsr, sqd, params, cancel_event=None):
         final = dict(_FINAL, text=huge_text, evidence=evidence)
-        return {"final_answer": final, "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
+        return {
+            "final_answer": final,
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
 
     monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_tiny_budget)
     out = web_deep_search("what is love")
@@ -625,7 +802,10 @@ def test_deep_search_sources_single_oversized_line_still_emits_marker(deep_env, 
 
 # --- Fix-round: backstop must hold even when a pipeline call blocks the loop
 
-def test_deep_search_backstop_holds_when_pipeline_blocks_the_loop(deep_env, monkeypatch):
+
+def test_deep_search_backstop_holds_when_pipeline_blocks_the_loop(
+    deep_env, monkeypatch
+):
     """Even a misbehaving pipeline call that blocks the event loop
     synchronously (no yield) must not make the tool hang past its deadline
     when invoked from inside an already-running loop: only the loop-safe
@@ -637,7 +817,11 @@ def test_deep_search_backstop_holds_when_pipeline_blocks_the_loop(deep_env, monk
 
     async def fake_aa_blocks_loop(wsr, sqd, params, cancel_event=None):
         time.sleep(0.5)  # blocks the event loop thread synchronously
-        return {"final_answer": dict(_FINAL), "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
+        return {
+            "final_answer": dict(_FINAL),
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
 
     monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_blocks_loop)
     settings = dict(_DEEP_SETTINGS, deep_search_timeout_s=0.01)
@@ -650,10 +834,13 @@ def test_deep_search_backstop_holds_when_pipeline_blocks_the_loop(deep_env, monk
     with pytest.raises(LocalToolError, match=r"deep-search-failed.*timeout"):
         asyncio.run(call_from_loop())
     elapsed = time.monotonic() - start
-    assert elapsed < 0.4, f"backstop did not cut in before the 0.5s block finished (took {elapsed:.2f}s)"
+    assert elapsed < 0.4, (
+        f"backstop did not cut in before the 0.5s block finished (took {elapsed:.2f}s)"
+    )
 
 
 # --- Fix round 2: N1 -- empty-string config value must not fake a default --
+
 
 def test_deep_search_empty_string_provider_still_blocks_spend(tmp_path, monkeypatch):
     """[SearchSettings] relevance_analysis_llm = "" in REAL TOML must still
@@ -685,7 +872,10 @@ def test_deep_search_empty_string_provider_still_blocks_spend(tmp_path, monkeypa
 
 # --- Fix round 2: N2 -- deadline message must not claim an unknowable count
 
-def test_deep_search_deadline_message_makes_no_scored_count_claim(deep_env, monkeypatch):
+
+def test_deep_search_deadline_message_makes_no_scored_count_claim(
+    deep_env, monkeypatch
+):
     """The pipeline exposes no "how many were scored before cancellation"
     signal -- a watchdog firing partway through the loop (some results
     genuinely examined, just none proved relevant) must get a message that
@@ -701,12 +891,19 @@ def test_deep_search_deadline_message_makes_no_scored_count_claim(deep_env, monk
     async def fake_aa_deadline_midloop(wsr, sqd, params, cancel_event=None):
         await asyncio.sleep(0.05)  # let the watchdog fire mid-"loop"
         return {
-            "final_answer": {"text": "", "evidence": [], "confidence": 0.0, "chunks": []},
+            "final_answer": {
+                "text": "",
+                "evidence": [],
+                "confidence": 0.0,
+                "chunks": [],
+            },
             "relevant_results": {},
             "web_search_results_dict": wsr,
         }
 
-    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_deadline_midloop)
+    monkeypatch.setattr(
+        WebSearch_APIs, "analyze_and_aggregate", fake_aa_deadline_midloop
+    )
     settings = dict(_DEEP_SETTINGS, deep_search_timeout_s=0.01)
     monkeypatch.setattr(web_tool_impls, "_deep_search_settings", lambda: settings)
 
@@ -724,12 +921,21 @@ def test_deep_search_footer_deadline_note_says_may_be_incomplete(deep_env, monke
     successfully, must not get flagged as definitely "partial" -- the code
     only knows the deadline was reached, not whether that cost anything
     (the b2 probe: a fully-completed run flagged as partial)."""
+
     async def fake_aa_completes_anyway(wsr, sqd, params, cancel_event=None):
         await asyncio.sleep(0.05)  # give the tiny-timeout watchdog a chance to fire
-        return {"final_answer": dict(_FINAL), "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
+        return {
+            "final_answer": dict(_FINAL),
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
 
-    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_completes_anyway)
-    settings = dict(_DEEP_SETTINGS, deep_search_timeout_s=0.01)  # fires well before the 0.05s sleep ends
+    monkeypatch.setattr(
+        WebSearch_APIs, "analyze_and_aggregate", fake_aa_completes_anyway
+    )
+    settings = dict(
+        _DEEP_SETTINGS, deep_search_timeout_s=0.01
+    )  # fires well before the 0.05s sleep ends
     monkeypatch.setattr(web_tool_impls, "_deep_search_settings", lambda: settings)
 
     out = web_deep_search("what is love")
@@ -742,14 +948,24 @@ def test_deep_search_footer_discloses_gate_fallback(deep_env, monkeypatch):
     final_answer = dict(_FINAL)
     final_answer["gate"] = {"relevant": 3, "raw": 5, "fallback": True}
     final_answer["evidence"] = [
-        {"id": 1, "url": "https://e.com/", "title": "T", "content": "c",
-         "original_content": "o", "reasoning": "gate fallback", "chunk_index": 0,
-         "gate_unverified": True},
+        {
+            "id": 1,
+            "url": "https://e.com/",
+            "title": "T",
+            "content": "c",
+            "original_content": "o",
+            "reasoning": "gate fallback",
+            "chunk_index": 0,
+            "gate_unverified": True,
+        },
     ]
 
     async def fake_aa(wsr, sqd, params, cancel_event=None):
-        return {"final_answer": final_answer, "relevant_results": {"1": {}},
-                "web_search_results_dict": wsr}
+        return {
+            "final_answer": final_answer,
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
 
     monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa)
     out = web_deep_search("what is love")
@@ -758,16 +974,23 @@ def test_deep_search_footer_discloses_gate_fallback(deep_env, monkeypatch):
 
 # --- shared pipeline param assembly (task-16484) ----------------------------------
 
+
 def test_deep_search_pipeline_params_shape_and_overrides():
     from tldw_chatbook.Tools.web_tool_impls import deep_search_pipeline_params
 
     params = deep_search_pipeline_params()
 
     for key in (
-        "engine", "relevance_analysis_llm", "final_answer_llm",
-        "relevance_llm_timeout_s", "relevance_scrape_timeout_s",
-        "search_default_max_queries", "result_count", "subquery_generation",
-        "phase1_time_budget_s", "respect_robots_txt",
+        "engine",
+        "relevance_analysis_llm",
+        "final_answer_llm",
+        "relevance_llm_timeout_s",
+        "relevance_scrape_timeout_s",
+        "search_default_max_queries",
+        "result_count",
+        "subquery_generation",
+        "phase1_time_budget_s",
+        "respect_robots_txt",
     ):
         assert key in params, key
 

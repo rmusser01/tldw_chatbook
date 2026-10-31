@@ -200,9 +200,7 @@ class RealtimeMicTap:
             return False
 
         try:
-            started = self._recorder.start_recording(
-                callback=self._on_recorder_frames
-            )
+            started = self._recorder.start_recording(callback=self._on_recorder_frames)
         except Exception as exc:
             logger.error(
                 "RealtimeMicTap.start: recorder start_recording raised: "

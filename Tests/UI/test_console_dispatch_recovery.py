@@ -214,17 +214,24 @@ def _activity() -> ConsoleControllerActivity:
 def test_queue_presentation_cannot_offer_resume_while_dispatch_recovery_blocks() -> (
     None
 ):
-    state = _state()
+    """The shelf keeps its own queue vocabulary while a response recovery blocks it.
+
+    The recovery's actions live only on the #console-dispatch-recovery card.
+    TASK-33625.5 removed the shelf's copy of them, which production never
+    reached, so this pins the input production passes:
+    ``presentation_for``'s ``dispatch_recovery_blocked``.
+    """
 
     presentation = derive_prompt_queue_presentation(
         _empty_queue_snapshot(),
         _activity(),
-        dispatch_recovery=state,
+        dispatch_recovery_blocked=True,
     )
 
-    assert presentation.state_label == "Response accepted; waiting for dispatch."
+    assert presentation.state_label == "Paused for response recovery"
+    assert presentation.pause_label == "Resume"
     assert presentation.pause_enabled is False
-    assert presentation.primary_action == "dispatch-recovery"
+    assert presentation.primary_action == "toggle-pause"
 
 
 def test_unreconstructable_reason_is_model_owned_and_markup_neutral() -> None:

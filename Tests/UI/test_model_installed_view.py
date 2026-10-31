@@ -301,10 +301,12 @@ async def test_reveal_reference_focuses_the_exact_installed_row_without_activati
         )
         await _wait_until(
             pilot,
-            lambda: app.focused is not None
-            and any(
-                getattr(ancestor, "reference", None) == target
-                for ancestor in app.focused.ancestors_with_self
+            lambda: (
+                app.focused is not None
+                and any(
+                    getattr(ancestor, "reference", None) == target
+                    for ancestor in app.focused.ancestors_with_self
+                )
             ),
         )
 
@@ -381,10 +383,12 @@ async def test_reveal_reference_focuses_after_a_fresh_inventory_load(
         )
         await _wait_until(
             pilot,
-            lambda: app.focused is not None
-            and any(
-                getattr(ancestor, "reference", None) == target
-                for ancestor in app.focused.ancestors_with_self
+            lambda: (
+                app.focused is not None
+                and any(
+                    getattr(ancestor, "reference", None) == target
+                    for ancestor in app.focused.ancestors_with_self
+                )
             ),
         )
 
@@ -449,8 +453,9 @@ async def test_reveal_reference_inventory_error_keeps_retryable_identity(
 
         assert view._revealed_reference == target
         assert not view.query("#installed-reveal-status")
-        assert "The local model inventory could not be loaded." in _rendered_static_text(
-            view
+        assert (
+            "The local model inventory could not be loaded."
+            in _rendered_static_text(view)
         )
 
 
@@ -2247,7 +2252,9 @@ async def test_import_progress_updates_without_replacing_focused_cancel(
         assert view.query_one("#installed-gguf-import-cancel", Button) is cancel
         assert cancel.has_focus is True
         painted = _rendered_static_text(view)
-        assert "2.0 MiB / 4.0 MiB" in painted
+        # TASK-34100.14: the shared progress widget writes the unit once
+        # ("2.0 of 4.0 MiB", then speed and time left once it has a rate).
+        assert "2.0 of 4.0 MiB" in painted
 
         release.set()
         await _wait_until(pilot, lambda: service.activation_finished.is_set())

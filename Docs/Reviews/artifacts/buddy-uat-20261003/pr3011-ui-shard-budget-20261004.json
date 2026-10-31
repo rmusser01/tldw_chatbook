@@ -1,0 +1,89 @@
+{
+  "predecessor_head": "ae297322cd7be531b70192d62e910a4cc068c521",
+  "ci_run": "https://github.com/rmusser01/tldw_chatbook/actions/runs/37232967293",
+  "ui_shard_2_job": "https://github.com/rmusser01/tldw_chatbook/actions/runs/37232967293/job/111527401154",
+  "timeout_annotation": "The job has exceeded the maximum execution time of 20m0s",
+  "job_elapsed_seconds": 1215,
+  "ui_shard_2_pytest": {
+    "passed": 1070,
+    "warnings": 6,
+    "seconds": 1132.73,
+    "job_conclusion": "cancelled"
+  },
+  "predecessor_completed_jobs": {
+    "PR Fast Lane": [
+      {
+        "passed": 1249,
+        "skipped": 1,
+        "seconds": 598.16
+      },
+      {
+        "passed": 135,
+        "xfailed": 1,
+        "seconds": 193.6
+      }
+    ],
+    "UI Fast Lane (1)": {
+      "passed": 465,
+      "seconds": 691.74
+    },
+    "UI latency guardrails": "success"
+  },
+  "workflow_change": {
+    "old_shards": [
+      1,
+      2
+    ],
+    "new_shards": [
+      1,
+      2,
+      3
+    ],
+    "existing_patch": "https://github.com/rmusser01/tldw_chatbook/pull/2918",
+    "only_one_line_changed": true,
+    "census_unchanged": true,
+    "test_assertions_unchanged": true,
+    "timeout_minutes": 20,
+    "fail_fast": false,
+    "required_aggregation": "unchanged; every shard must succeed"
+  },
+  "targeted_ci_contracts": {
+    "name": "pytest",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "tests": "34",
+    "time": "0.961",
+    "timestamp": "2026-10-04T14:39:02.498634-07:00",
+    "hostname": "Roberts-MacBook-Pro-2.local"
+  },
+  "source_and_test_trees_unchanged": [
+    "tldw_chatbook",
+    "Tests",
+    "scripts",
+    "pyproject.toml"
+  ],
+  "independent_review": "no actionable findings",
+  "ADR_required": false,
+  "ADR_path": "backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md",
+  "current_head_hosted_qualification": "pending publication and fresh hosted checks",
+  "human_uat_repeated": false,
+  "logs": {
+    "ui2-cancelled": {
+      "path": "/private/tmp/chatbook-buddy-ae297-ui2-cancelled-20261004.log",
+      "sha256": "f1c5a6deb2918f2b079316e7c79813c20d6aa29bcabe6dabe31412980904c8b7"
+    },
+    "ui1": {
+      "path": "/private/tmp/chatbook-buddy-ae297-ui1-20261004.log",
+      "sha256": "fc7fc9353b36d506703cad604462d0f502d2bfba7b74e256e0461b7ad0b5c15f"
+    },
+    "fast": {
+      "path": "/private/tmp/chatbook-buddy-ae297-fast-20261004.log",
+      "sha256": "ab8a750c6aeada370801bf979e59dac2be2a1a4dffeea000901640ef6a1ca1f0"
+    }
+  },
+  "ci_contract_junit": {
+    "path": "/private/tmp/chatbook-buddy-third-shard-20261004.xml",
+    "sha256": "6a41df9272e7c11d392eefb230920de4bbff27675ce7a6db8de3c98dfcdf3f27"
+  }
+}

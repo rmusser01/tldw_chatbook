@@ -44,6 +44,7 @@ from tldw_chatbook.Utils.sensitive_paths import (
     SensitiveExclusion,
     SensitivePathContext,
     merge_sensitive_context,
+    refuses_new_directory_chain,
     resolve_sensitive_context,
     sensitive_exclusions_under,
 )
@@ -202,6 +203,11 @@ class WorkspaceToolExecutor:
         )
         self._user_exclusion_paths = user_exclusion_paths
 
+    @property
+    def local_authority_chain(self) -> DirectoryChain | None:
+        """Return the immutable captured local pin; SSH has no local chain."""
+        return self._authority_chain
+
     def _call_context(self) -> SensitivePathContext:
         """Per-call deny context: base denylist merged with user exclusions.
 
@@ -299,7 +305,11 @@ class WorkspaceToolExecutor:
             tree = ExecutorProcessTree(adapter, admission, identity)
             tree.admit()
 
-            if process.stdout is None or process.stderr is None or process.stdin is None:
+            if (
+                process.stdout is None
+                or process.stderr is None
+                or process.stdin is None
+            ):
                 raise WorkspaceToolExecutionError("spawn_failed")
             candidate_supervisor = _CleanupSupervisor(tree, process, deadline)
             candidate_supervisor.start()
@@ -332,7 +342,9 @@ class WorkspaceToolExecutor:
                     process,
                     deadline,
                 )
-                _join_threads_until(deadline, writer_thread, stdout_thread, stderr_thread)
+                _join_threads_until(
+                    deadline, writer_thread, stdout_thread, stderr_thread
+                )
                 if not cleanup:
                     raise WorkspaceToolExecutionError("cleanup_unproven") from None
                 raise WorkspaceToolExecutionError("worker_timed_out") from None
@@ -447,8 +459,8 @@ class WorkspaceToolExecutor:
             writer_errors.clear()
             stdout_capture.clear()
             stderr_capture.clear()
-            active_cancellation = (
-                active_error is not None and not isinstance(active_error, Exception)
+            active_cancellation = active_error is not None and not isinstance(
+                active_error, Exception
             )
             if not active_cancellation:
                 if cleanup_cancellation is not None:
@@ -491,9 +503,7 @@ class WorkspaceToolExecutor:
                     ".", chain.canonical_root, intent="list", context=context
                 )
                 exclusions, _ = _parent_read_exclusions(root, context)
-                normalized["sensitive_exclusions"] = _serialize_exclusions(
-                    exclusions
-                )
+                normalized["sensitive_exclusions"] = _serialize_exclusions(exclusions)
                 raw_path = arguments.get("path")
                 if raw_path is not None:
                     if type(raw_path) is not str:
@@ -529,24 +539,31 @@ class WorkspaceToolExecutor:
                     if type(raw_pattern) is not str:
                         raise ValueError("invalid glob pattern")
                     normalized["pattern"] = _normalize_glob_pattern(raw_pattern)
-            if operation in {"fs_write", "fs_edit"} and type(arguments) is dict:
+            if (
+                operation in {"fs_write", "fs_edit", "fs_mkdir"}
+                and type(arguments) is dict
+            ):
                 raw_path = arguments.get("path")
                 if type(raw_path) is not str:
                     raise ValueError("invalid mutation path")
                 context = self._call_context()
-                resolve_workspace_path(
+                resolved = resolve_workspace_path(
                     raw_path,
                     chain.canonical_root,
                     intent="write",
                     context=context,
                 )
+                if operation == "fs_mkdir" and refuses_new_directory_chain(
+                    resolved, context=context
+                ):
+                    # The write-intent choke point guards the ancestors of
+                    # a FILE target; mkdir's leaf IS a new directory, so
+                    # the shadow-directory walk must start at the target
+                    # itself (TASK-849 guard, applied per fs_mkdir).
+                    raise ValueError("invalid mutation path")
                 normalized["path"] = _normalize_relative_path(raw_path)
-                exclusions, _ = _parent_read_exclusions(
-                    chain.canonical_root, context
-                )
-                normalized["sensitive_exclusions"] = _serialize_exclusions(
-                    exclusions
-                )
+                exclusions, _ = _parent_read_exclusions(chain.canonical_root, context)
+                normalized["sensitive_exclusions"] = _serialize_exclusions(exclusions)
             if operation == "fs_patch" and type(arguments) is dict:
                 raw_diff = arguments.get("diff")
                 if type(raw_diff) is not str:
@@ -565,12 +582,8 @@ class WorkspaceToolExecutor:
                     )
                     targets.append(_normalize_relative_path(rel_path))
                 normalized["targets"] = targets
-                exclusions, _ = _parent_read_exclusions(
-                    chain.canonical_root, context
-                )
-                normalized["sensitive_exclusions"] = _serialize_exclusions(
-                    exclusions
-                )
+                exclusions, _ = _parent_read_exclusions(chain.canonical_root, context)
+                normalized["sensitive_exclusions"] = _serialize_exclusions(exclusions)
             request = WorkspaceToolRequest(
                 operation_id=uuid.uuid4().hex,
                 operation=operation,  # type: ignore[arg-type]
@@ -706,7 +719,10 @@ class WorkspaceToolExecutor:
                     if type(raw_pattern) is not str:
                         raise ValueError("invalid glob pattern")
                     normalized["pattern"] = _normalize_glob_pattern(raw_pattern)
-            if operation in {"fs_write", "fs_edit"} and type(arguments) is dict:
+            if (
+                operation in {"fs_write", "fs_edit", "fs_mkdir"}
+                and type(arguments) is dict
+            ):
                 raw_path = arguments.get("path")
                 if type(raw_path) is not str:
                     raise ValueError("invalid mutation path")
@@ -831,9 +847,13 @@ def _parent_read_exclusions(
     return tuple(dict.fromkeys(exclusions)), tuple(dict.fromkeys(content_exclusions))
 
 
-def _serialize_exclusions(exclusions: tuple[SensitiveExclusion, ...]) -> list[dict[str, str]]:
+def _serialize_exclusions(
+    exclusions: tuple[SensitiveExclusion, ...],
+) -> list[dict[str, str]]:
     """Serialize bounded parent exclusions into the closed worker request."""
-    return [{"kind": exclusion.kind, "value": exclusion.value} for exclusion in exclusions]
+    return [
+        {"kind": exclusion.kind, "value": exclusion.value} for exclusion in exclusions
+    ]
 
 
 def _start_bounded_reader(

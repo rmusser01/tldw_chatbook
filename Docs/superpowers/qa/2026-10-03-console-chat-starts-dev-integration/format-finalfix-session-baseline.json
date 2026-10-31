@@ -1,0 +1,79 @@
+{
+  "base_ref": "473c7b26eccf1e7b77c4c8e2d4c7f57ccb840afe",
+  "base_sha": "473c7b26eccf1e7b77c4c8e2d4c7f57ccb840afe",
+  "baseline_red_paths": [
+    "tldw_chatbook/UI/Console_Modules/session.py"
+  ],
+  "files": {
+    "tldw_chatbook/UI/Console_Modules/session.py": {
+      "debt_units": 70,
+      "formatter_required": true,
+      "normalized_diff_sha256": "032a37088d45b0281ddc33ccb2e2b56feb7600bd44d5127572531baaaf036a7d",
+      "source_hunks": [
+        [
+          518,
+          527
+        ],
+        [
+          630,
+          638
+        ],
+        [
+          2771,
+          2777
+        ],
+        [
+          3499,
+          3506
+        ],
+        [
+          3603,
+          3617
+        ],
+        [
+          3622,
+          3628
+        ],
+        [
+          3852,
+          3860
+        ],
+        [
+          4335,
+          4343
+        ],
+        [
+          4620,
+          4628
+        ],
+        [
+          5489,
+          5497
+        ],
+        [
+          5526,
+          5535
+        ],
+        [
+          5538,
+          5545
+        ],
+        [
+          5588,
+          5596
+        ],
+        [
+          5630,
+          5638
+        ]
+      ],
+      "source_sha256": "8e33e9bab83559396016ca30f8c3f8d0303b1a8076f31ff9dd2af4b603e37102"
+    }
+  },
+  "generated_at_utc": "2026-10-03T21:06:03.172959+00:00",
+  "paths": [
+    "tldw_chatbook/UI/Console_Modules/session.py"
+  ],
+  "ruff_version": "ruff 0.16.6",
+  "schema_version": 1
+}

@@ -1,9 +1,10 @@
 ---
 id: TASK-399.7
 title: B1a Build journaled create save and autosave foundation
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-07-23 14:24'
+updated_date: '2026-10-04'
 labels:
   - notes
   - filesystem
@@ -40,3 +41,17 @@ Roll-up tracker for the three PR-sized B1a children that establish writable owne
 - [TASK-399.7.1](task-399.7.1%20-%20B1a1-Pair-recovery-storage-and-acquire-writable-ownership.md) — recovery pairing, capability admission, leases, and capacity
 - [TASK-399.7.2](task-399.7.2%20-%20B1a2-Implement-journaled-create-and-save-publication.md) — journaled create/save mutation core
 - [TASK-399.7.3](task-399.7.3%20-%20B1a3-Integrate-autosave-recovery-classification-and-controlled-shutdown.md) — autosave, recovery classification/access, and shutdown
+
+## Closeout 2026-10-04
+
+Closed superseded, not implemented as written (roll-up tracker; owned no
+separate PR). The B1a substance landed under ADR-029 disk-authority semantics:
+create/save are hash-guarded atomic writes with no-clobber create
+(`tldw_chatbook/Notes/file_notes_service.py`) and autosave/conflict states
+ship in the workbench (TASK-969, PR #992). The journaled intent/completion
+protocol, mutation leases, recovery-store pairing, and B1 gating this tracker
+rolled up were rejected by ADR-029 and never built. Children TASK-399.7.1,
+TASK-399.7.2, and TASK-399.7.3 are each closed superseded alongside this
+flip; the controlled-shutdown concern survives in TASK-19561.
+
+Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).

@@ -68,6 +68,98 @@ class ConsolePreparationPauseKind(str, Enum):
     TRACE_PROVENANCE = "trace_provenance"
     TRACE_CALL = "trace_call"
     TEMPORARY_CAPTURE = "temporary_capture"
+    #: TASK-34350: the send reached the compaction threshold under Ask.
+    CONTEXT_COMPACTION = "context_compaction"
+
+
+@dataclass(frozen=True, slots=True)
+class ContextCompactionHold:
+    """Why one send is held at the compaction threshold (TASK-34350).
+
+    Content-free: token counts and whether they rest on an estimated
+    context window, for the hold card's copy.
+    """
+
+    session_id: str
+    used_tokens: int
+    trigger_tokens: int
+    budget_tokens: int
+    estimated: bool
+
+
+#: TASK-33621.20: why an Automatic Library search paused a send, keyed by the
+#: preparation's error code. The shelf prefixes it with "Not sent: ", so it
+#: stays short and names no query or source.
+LIBRARY_PAUSE_COPY: Mapping[str, str] = MappingProxyType(
+    {
+        "library_retrieval_timeout": "Library search timed out",
+        "library_retrieval_failed": "Library search failed",
+        "library_retrieval_stopped": "Library search stopped",
+    }
+)
+LIBRARY_PAUSE_CANCELLED_COPY = "Library search canceled; nothing was sent."
+
+
+def library_pause_copy(error_code: str | None) -> str:
+    """Return the visible reason for a Library-paused send.
+
+    Args:
+        error_code: The preparation outcome's bounded error code, if any.
+
+    Returns:
+        A short reason; a generic one for an unknown or missing code.
+    """
+    return LIBRARY_PAUSE_COPY.get(error_code or "", "Library search did not finish")
+
+
+#: How long the Library's first-use runtime build (embedding model, vector
+#: store) may take before an automatic send pauses with a timeout. Generous on
+#: purpose: a first build that had to download the model took 18 s live. The
+#: search itself keeps its own short budget.
+LIBRARY_INITIALIZATION_TIMEOUT_SECONDS = 60.0
+
+#: TASK-33621.20 review: the pauses that the send's own Retry/Cancel card and
+#: the unsent-turn shelf's Restore/Discard can end -- the kinds the
+#: controller's generic cancel handles. A Retry or Send once without Library
+#: that meets a provider that is not ready re-pauses as DESTINATION_CHANGED;
+#: before this set, nothing showed or released that pause. Trace, capture and
+#: compaction pauses keep their own recovery.
+SHELF_RELEASABLE_PAUSES: frozenset[ConsolePreparationPauseKind] = frozenset(
+    {
+        ConsolePreparationPauseKind.RETRIEVAL,
+        ConsolePreparationPauseKind.DESTINATION_CHANGED,
+        ConsolePreparationPauseKind.PERSISTENCE,
+    }
+)
+
+#: Why a prepared send re-paused on its way out (the card's title reason).
+RESEND_PAUSE_COPY: Mapping[ConsolePreparationPauseKind, str] = MappingProxyType(
+    {
+        ConsolePreparationPauseKind.DESTINATION_CHANGED: (
+            "Provider not ready or changed"
+        ),
+        ConsolePreparationPauseKind.PERSISTENCE: "Send could not be saved",
+    }
+)
+SEND_CANCELLED_COPY = "Send canceled; nothing was sent."
+
+
+def prepared_cancel_copy(preparation: ConsoleTurnPreparation) -> str:
+    """Return the run chip's copy once a prepared send is cancelled.
+
+    Args:
+        preparation: The preparation as it was when the cancel began.
+
+    Returns:
+        The Library copy for a send cancelled while (or because) its Library
+        search ran; the plain send copy for any other prepared send.
+    """
+    if (
+        preparation.pause_kind is ConsolePreparationPauseKind.RETRIEVAL
+        or preparation.state is ConsoleTurnPreparationState.PREPARING
+    ):
+        return LIBRARY_PAUSE_CANCELLED_COPY
+    return SEND_CANCELLED_COPY
 
 
 PAUSE_ACTIONS: Mapping[ConsolePreparationPauseKind, tuple[str, ...]] = MappingProxyType(
@@ -90,6 +182,11 @@ PAUSE_ACTIONS: Mapping[ConsolePreparationPauseKind, tuple[str, ...]] = MappingPr
             "send_without_capture",
             "cancel",
         ),
+        ConsolePreparationPauseKind.CONTEXT_COMPACTION: (
+            "compact_and_send",
+            "send_without_compacting",
+            "cancel",
+        ),
     }
 )
 
@@ -101,7 +198,7 @@ class ConsoleTurnPreparation:
     preparation_id: str
     attempt_id: str
     session_id: str
-    origin: Literal["manual", "queued"]
+    origin: Literal["manual", "queued", "agent_chat_start"]
     queue_entry_id: str | None
     executed_draft: str = field(repr=False)
     execution_context: ConsoleTurnExecutionContext = field(repr=False)
@@ -121,6 +218,8 @@ class ConsoleTurnPreparation:
     pii_redaction_enabled: bool = False
     pii_ruleset_revision_id: str | None = None
     next_trace_privacy_revision: int | None = None
+    #: None preserves legacy draft restore/clear semantics.
+    input_draft_revision: int | None = None
 
     def __post_init__(self) -> None:
         """Reject malformed, mutable, or internally inconsistent state."""
@@ -514,6 +613,7 @@ def _transition_is_legal(
                 ConsolePreparationPauseKind.PERSISTENCE,
                 ConsolePreparationPauseKind.DESTINATION_CHANGED,
                 ConsolePreparationPauseKind.TRACE_PROVENANCE,
+                ConsolePreparationPauseKind.CONTEXT_COMPACTION,
             }
         if current in {
             ConsoleTurnPreparationState.ACCEPTED,
@@ -557,6 +657,13 @@ def _transition_is_legal(
         if pause is ConsolePreparationPauseKind.TRACE_CALL:
             return (
                 new is ConsoleTurnPreparationState.ACCEPTED
+                and transition.new_attempt_id is None
+            )
+        if pause is ConsolePreparationPauseKind.CONTEXT_COMPACTION:
+            # TASK-34350: nothing was committed, so an answered hold re-enters
+            # the send exactly where it stopped -- READY, before commit.
+            return (
+                new is ConsoleTurnPreparationState.READY
                 and transition.new_attempt_id is None
             )
         return False
@@ -711,9 +818,10 @@ def _validate_preparation(preparation: ConsoleTurnPreparation) -> None:
     if type(preparation.origin) is not str or preparation.origin not in {
         "manual",
         "queued",
+        "agent_chat_start",
     }:
         _invalid("origin")
-    if preparation.origin == "manual":
+    if preparation.origin in {"manual", "agent_chat_start"}:
         if (
             preparation.queue_entry_id is not None
             or preparation.queue_generation is not None
@@ -764,6 +872,13 @@ def _validate_preparation(preparation: ConsoleTurnPreparation) -> None:
         preparation.capture_mode is not ConsoleTraceCaptureMode.CAPTURE_OFF
     ):
         _invalid("Capture Off mode")
+
+    if preparation.input_draft_revision is not None and (
+        not isinstance(preparation.input_draft_revision, int)
+        or isinstance(preparation.input_draft_revision, bool)
+        or preparation.input_draft_revision < 0
+    ):
+        _invalid("input draft revision")
 
     _validate_execution_context(preparation)
     auto_retrieve = preparation.execution_context.library_authority.policy.auto_retrieve

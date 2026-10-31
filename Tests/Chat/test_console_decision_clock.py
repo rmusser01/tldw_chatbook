@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from Tests.Chat.test_console_interrupt_rounds import FakeSeamsFull
-from tldw_chatbook.Chat.console_interrupt_rounds import (
-    KIND_SETTER_ATTRS,
-    InterruptRoundHost,
+from Tests.Chat.console_interrupt_test_bindings import (
+    make_interrupt_host as InterruptRoundHost,
 )
+from Tests.Chat.test_console_interrupt_rounds import FakeSeamsFull
+from tldw_chatbook.Chat.console_interrupt_rounds import KIND_SETTER_ATTRS
 
 
 @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))

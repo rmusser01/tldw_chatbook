@@ -27,6 +27,7 @@ def build_console_workbench_state(
     ephemeral: bool = False,
     hook_attention: int = 0,
     readiness_word: str = "",
+    blocked_turn: str = "",
 ) -> WorkbenchState:
     """Return a shared Workbench state snapshot for Console.
 
@@ -46,6 +47,9 @@ def build_console_workbench_state(
         hook_attention: Enabled hooks or permission errors needing attention.
         readiness_word: The active chat's spec §5 readiness word
             (TASK-33005.3); the header badge shows it unless a run is active.
+        blocked_turn: Why an accepted turn is stuck unsent, or "". A
+            stuck turn badges the header "Blocked", not the readiness word
+            (TASK-33621.2).
         density: Requested Workbench density, currently ``normal`` or ``compact``.
         ephemeral: Whether the active session is temporary. Retained for
             callers even though no top action reads it today: Save Chatbook
@@ -151,11 +155,15 @@ def build_console_workbench_state(
             subtitle="— Chat, source handoffs, live runs, and control actions.",
             # TASK-347: a live generation must not read "Ready". A run only
             # runs once past the blocker gate, so running takes precedence.
-            status="running" if run_active else ("blocked" if blocker else "ready"),
+            status="running"
+            if run_active
+            else ("blocked" if blocker or blocked_turn else "ready"),
             density=workbench_density,
             # TASK-33005.3: the badge is the status row's readiness word, so
             # the strip below keeps its width for the context/cost chip.
-            status_label="" if run_active else readiness_word,
+            status_label=""
+            if run_active
+            else ("Blocked" if blocked_turn else readiness_word),
         ),
         modes=modes,
         actions=actions,

@@ -44,18 +44,20 @@ class WatchlistContentAlertService:
                 except re.error:
                     is_match = False
             if is_match:
-                matched.append({
-                    "rule_id": rule.get("id"),
-                    "rule_name": rule.get("name"),
-                    "severity": rule.get("severity", "warning"),
-                    "message": f"Alert '{rule.get('name')}' matched item: {item.get('title') or item.get('url')}",
-                    "notification_payload": {
-                        "kind": "watchlist_content_alert",
-                        "source_domain": "watchlists",
-                        "source_entity_kind": "watchlist_item",
-                        "source_entity_id": str(item.get("id") or ""),
-                        "rule_id": str(rule.get("id")),
-                        "dedupe_key": f"watchlist-content-alert:{rule.get('id')}:{item.get('id')}",
-                    },
-                })
+                matched.append(
+                    {
+                        "rule_id": rule.get("id"),
+                        "rule_name": rule.get("name"),
+                        "severity": rule.get("severity", "warning"),
+                        "message": f"Alert '{rule.get('name')}' matched item: {item.get('title') or item.get('url')}",
+                        "notification_payload": {
+                            "kind": "watchlist_content_alert",
+                            "source_domain": "watchlists",
+                            "source_entity_kind": "watchlist_item",
+                            "source_entity_id": str(item.get("id") or ""),
+                            "rule_id": str(rule.get("id")),
+                            "dedupe_key": f"watchlist-content-alert:{rule.get('id')}:{item.get('id')}",
+                        },
+                    }
+                )
         return matched

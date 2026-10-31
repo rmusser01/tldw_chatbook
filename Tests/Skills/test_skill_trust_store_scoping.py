@@ -46,7 +46,7 @@ def test_scoped_marker_accounts_do_not_cross_read(monkeypatch):
     assert a.load_marker() is not None
     assert b.load_marker() is None  # scoped: B cannot see A's marker
     # And the legacy global account is untouched by scoped writes:
-    assert (KeyringSkillTrustGenerationMarkerStore.__dataclass_fields__)  # sanity
+    assert KeyringSkillTrustGenerationMarkerStore.__dataclass_fields__  # sanity
     assert kr.store.get(("tldw_chatbook.skill_trust", _MARKER_USERNAME)) is None
 
 
@@ -59,6 +59,13 @@ def test_scoped_key_cache_accounts_do_not_cross_read(monkeypatch):
     ca = KeyringSkillTrustKeyCache(keyring_backend=kr, account_scope="aaaa")
     cb = KeyringSkillTrustKeyCache(keyring_backend=kr, account_scope="bbbb")
     # Write a raw payload under A's scoped account, prove B can't read it.
-    kr.set_password("tldw_chatbook.skill_trust.keys", f"{_KEY_CACHE_USERNAME}:aaaa", "x")
-    assert kr.get_password("tldw_chatbook.skill_trust.keys", f"{_KEY_CACHE_USERNAME}:bbbb") is None
-    assert kr.get_password("tldw_chatbook.skill_trust.keys", _KEY_CACHE_USERNAME) is None
+    kr.set_password(
+        "tldw_chatbook.skill_trust.keys", f"{_KEY_CACHE_USERNAME}:aaaa", "x"
+    )
+    assert (
+        kr.get_password("tldw_chatbook.skill_trust.keys", f"{_KEY_CACHE_USERNAME}:bbbb")
+        is None
+    )
+    assert (
+        kr.get_password("tldw_chatbook.skill_trust.keys", _KEY_CACHE_USERNAME) is None
+    )

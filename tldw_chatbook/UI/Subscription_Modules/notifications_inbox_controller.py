@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
-from typing import Any
+from typing import Any, Callable
 
 
 class NotificationsInboxController:
@@ -17,6 +18,36 @@ class NotificationsInboxController:
         if inspect.isawaitable(value):
             return await value
         return value
+
+    async def _call_store(
+        self, method: Callable[..., Any], /, *args: Any, **kwargs: Any
+    ) -> Any:
+        """Offload known file stores; keep memory and custom callables on their owner."""
+        from tldw_chatbook.Notifications.client_notifications_db import (
+            ClientNotificationsDB,
+        )
+
+        if (
+            type(self.store) is ClientNotificationsDB
+            and not self.store.is_memory_db
+            and getattr(method, "__self__", None) is self.store
+            and getattr(method, "__func__", None)
+            in {
+                ClientNotificationsDB.list_notifications,
+                ClientNotificationsDB.mark_read,
+                ClientNotificationsDB.dismiss_notification,
+            }
+        ):
+            from tldw_chatbook.Backup_Recovery.participants import (
+                run_finite_local_worker,
+            )
+
+            # Retire only newly owned worker handles after the synchronous call,
+            # including when its awaiting screen worker has been cancelled.
+            return await asyncio.to_thread(
+                run_finite_local_worker, method, *args, **kwargs
+            )
+        return await self._maybe_await(method(*args, **kwargs))
 
     async def _require_update_policy(self) -> Any:
         require_allowed = getattr(self.app_instance, "require_ui_action_allowed", None)
@@ -76,17 +107,16 @@ class NotificationsInboxController:
         )
         if not callable(list_method):
             return []
-        rows = await self._maybe_await(
-            list_method(
-                limit=100,
-                include_dismissed=False,
-                category=category,
-                severity=severity,
-                source_backend=source_backend,
-                source_entity_kind=source_entity_kind,
-                source_entity_id=source_entity_id,
-                is_read=is_read,
-            )
+        rows = await self._call_store(
+            list_method,
+            limit=100,
+            include_dismissed=False,
+            category=category,
+            severity=severity,
+            source_backend=source_backend,
+            source_entity_kind=source_entity_kind,
+            source_entity_id=source_entity_id,
+            is_read=is_read,
         )
         return [dict(row) for row in list(rows or [])]
 
@@ -138,7 +168,7 @@ class NotificationsInboxController:
         if not callable(mark_method):
             return False
         return bool(
-            await self._maybe_await(mark_method(int(notification_id), is_read=is_read))
+            await self._call_store(mark_method, int(notification_id), is_read=is_read)
         )
 
     async def dismiss(self, notification_id: int, *, is_dismissed: bool) -> bool:
@@ -153,7 +183,7 @@ class NotificationsInboxController:
         if not callable(dismiss_method):
             return False
         return bool(
-            await self._maybe_await(
-                dismiss_method(int(notification_id), is_dismissed=is_dismissed)
+            await self._call_store(
+                dismiss_method, int(notification_id), is_dismissed=is_dismissed
             )
         )

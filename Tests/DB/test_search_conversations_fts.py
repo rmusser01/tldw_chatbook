@@ -487,7 +487,9 @@ class TestCoherentConversationPages:
         reader.close_connection()
         writer.close_connection()
 
-    @pytest.mark.parametrize("method_name", ["search_conversations_page", "locate_conversation_page"])
+    @pytest.mark.parametrize(
+        "method_name", ["search_conversations_page", "locate_conversation_page"]
+    )
     def test_direct_cursor_page_reads_wrap_sqlite_errors(
         self, db, monkeypatch, method_name
     ):
@@ -510,25 +512,22 @@ class TestLocateConversationPage:
         expected_ids = _seed_coherent_conversation_population(db)
         target_id = expected_ids[24]
 
-        located = db.locate_conversation_page(
-            target_id, scope_type="all", limit=20
-        )
+        located = db.locate_conversation_page(target_id, scope_type="all", limit=20)
 
         assert located["offset"] == 20
         assert located["target_index"] == 24
         assert located["total"] == 45
         assert target_id in {row["id"] for row in located["rows"]}
-        assert located["rows"][located["target_index"] - located["offset"]][
-            "id"
-        ] == target_id
+        assert (
+            located["rows"][located["target_index"] - located["offset"]]["id"]
+            == target_id
+        )
         assert len(located["rows"]) == 20
 
     def test_handles_first_final_and_exactly_aligned_pages(self, db):
         expected_ids = _seed_coherent_conversation_population(db)
 
-        first = db.locate_conversation_page(
-            expected_ids[0], scope_type="all", limit=20
-        )
+        first = db.locate_conversation_page(expected_ids[0], scope_type="all", limit=20)
         aligned = db.locate_conversation_page(
             expected_ids[20], scope_type="all", limit=20
         )
@@ -579,9 +578,7 @@ class TestLocateConversationPage:
         target_id = db.add_conversation({"title": "Target"})
 
         with pytest.raises(InputError, match="limit"):
-            db.locate_conversation_page(
-                target_id, scope_type="all", limit=limit
-            )
+            db.locate_conversation_page(target_id, scope_type="all", limit=limit)
 
 
 # ---------------------------------------------------------------------------
@@ -666,7 +663,9 @@ class TestListLibraryConversationsPage:
 
     def test_keywords_are_capped_with_exact_total(self, db):
         conv_id = _library_conversation(
-            db, title="Keyword heavy", keywords=[f"kw-{index:02d}" for index in range(25)]
+            db,
+            title="Keyword heavy",
+            keywords=[f"kw-{index:02d}" for index in range(25)],
         )
 
         page = db.list_library_conversations_page(limit=10, offset=0)
@@ -727,13 +726,9 @@ class TestSearchLibraryConversationsPage:
         assert other not in ids
 
     def test_fts_operator_input_is_inert(self, db):
-        _library_conversation(
-            db, title="alpha", messages=[("user", "hello world")]
-        )
+        _library_conversation(db, title="alpha", messages=[("user", "hello world")])
         for query in ('foo"bar', "foo*", "OR AND NOT", "(unclosed"):
-            page = db.search_library_conversations_page(
-                query=query, limit=10, offset=0
-            )
+            page = db.search_library_conversations_page(query=query, limit=10, offset=0)
             assert isinstance(page["total"], int)
             assert isinstance(page["items"], list)
 
@@ -823,9 +818,7 @@ class TestGetLibraryConversationMessages:
         assert not any(isinstance(value, bytes) for value in message.values())
 
     def test_page_windows_each_message_to_max_chars(self, db):
-        conv_id = _library_conversation(
-            db, title="win", messages=[("user", "y" * 100)]
-        )
+        conv_id = _library_conversation(db, title="win", messages=[("user", "y" * 100)])
 
         detail = db.get_library_conversation_messages(conv_id, max_chars=10)
         message = detail["messages"][0]
@@ -878,15 +871,11 @@ class TestGetLibraryConversationMessages:
         ]
 
         assert db.update_message(msg_id, {"content": "after"}, expected_version=1)
-        after = db.get_library_conversation_messages(conv_id)["messages"][0][
-            "revision"
-        ]
+        after = db.get_library_conversation_messages(conv_id)["messages"][0]["revision"]
         assert before != after
 
     def test_include_rag_context_is_always_false(self, db):
-        conv_id = _library_conversation(
-            db, title="ctx", messages=[("user", "hello")]
-        )
+        conv_id = _library_conversation(db, title="ctx", messages=[("user", "hello")])
 
         detail = db.get_library_conversation_messages(conv_id)
         assert detail["include_rag_context"] is False

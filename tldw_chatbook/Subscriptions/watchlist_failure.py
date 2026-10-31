@@ -177,7 +177,9 @@ def _category_for(
 ) -> WatchlistFailureCategory | None:
     if _is_policy_error(error):
         return WatchlistFailureCategory.POLICY_BLOCKED
-    if isinstance(error, (InvalidFeedError, json.JSONDecodeError, ElementTree.ParseError)):
+    if isinstance(
+        error, (InvalidFeedError, json.JSONDecodeError, ElementTree.ParseError)
+    ):
         return WatchlistFailureCategory.INVALID_FEED
     if status == 401 or isinstance(error, AuthenticationError):
         return WatchlistFailureCategory.AUTHENTICATION_REQUIRED
@@ -218,11 +220,7 @@ def classify_watchlist_failure(error: BaseException) -> WatchlistFailure:
     """Map one internal failure to a bounded user-safe domain outcome."""
     chain = _error_chain(error)
     policy_error = next(
-        (
-            candidate
-            for candidate in reversed(chain)
-            if _is_policy_error(candidate)
-        ),
+        (candidate for candidate in reversed(chain) if _is_policy_error(candidate)),
         None,
     )
     category: WatchlistFailureCategory | None = None

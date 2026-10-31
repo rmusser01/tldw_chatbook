@@ -4022,9 +4022,20 @@ class ChangeReviewScreen(Screen):
             row, change = self._leaves[self._focused_leaf]
             notes = self._notes_for_leaf(row, change)
         strip.display = bool(notes)
+        # TASK-34942: build every row, then ONE mount call -- one per note
+        # left each freshly-appended row un-laid-out for up to a tick.
+        rows = []
         for note in notes:
             try:
-                strip.mount(self._build_note_row(note))
+                rows.append(self._build_note_row(note))
+            except Exception as exc:
+                logger.warning(
+                    "change_review: note row build failed exception_type={}",
+                    type(exc).__name__,
+                )
+        if rows:
+            try:
+                strip.mount(*rows)
             except Exception as exc:
                 logger.warning(
                     "change_review: note row mount failed exception_type={}",

@@ -109,7 +109,8 @@ def test_spawn_schema_omits_override_args_when_disabled():
 
 def test_spawn_schema_offers_override_args_when_enabled():
     schema = build_spawn_schema(
-        [PRESET], override_enabled=True,
+        [PRESET],
+        override_enabled=True,
         override_targets=(("custom-ep:qwen-local", ("qwen3.8-27b",)),),
     )
     props = schema.parameters["properties"]
@@ -514,7 +515,10 @@ def test_registration_read_coerces_quoted_false_to_not_registered(monkeypatch):
     calls the arc's fifth `bool("false")` site.
     """
     import tldw_chatbook.config as config_module
-    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS, BuiltinToolProvider
+    from tldw_chatbook.Agents.tool_catalog import (
+        _GATEABLE_BUILTINS,
+        BuiltinToolProvider,
+    )
 
     target = _GATEABLE_BUILTINS[0]
 
@@ -531,7 +535,10 @@ def test_registration_read_coerces_quoted_false_to_not_registered(monkeypatch):
 def test_registration_read_coerces_quoted_true_to_registered(monkeypatch):
     """The mirror case: a quoted `"true"` MUST register the tool."""
     import tldw_chatbook.config as config_module
-    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS, BuiltinToolProvider
+    from tldw_chatbook.Agents.tool_catalog import (
+        _GATEABLE_BUILTINS,
+        BuiltinToolProvider,
+    )
 
     target = _GATEABLE_BUILTINS[0]
 
@@ -654,9 +661,7 @@ def test_deferred_disclosure_plan_lists_available_tools():
 
     assert plan.offer_find_load, "300 padded tools must defer disclosure"
     find_schema = next(
-        schema
-        for schema in plan.runtime_schemas
-        if schema.name == "find_tools"
+        schema for schema in plan.runtime_schemas if schema.name == "find_tools"
     )
     # 301 tools exceed the name-listing bound, so the surface degrades to
     # groups (AC#3) -- and the fs group is still named, so the capability

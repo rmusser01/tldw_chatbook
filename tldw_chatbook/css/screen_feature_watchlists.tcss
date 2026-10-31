@@ -11,7 +11,7 @@ $ds-surface-panel: $panel;
 $ds-surface-raised: $surface;
 $ds-surface-inspector: $surface;
 $ds-grid-line: $tldw-boundary;
-$ds-column-line: $surface-lighten-2;
+$ds-column-line: $tldw-boundary;
 $ds-text-primary: $text;
 $ds-text-muted: $text-muted;
 $ds-text-disabled: $text-disabled;
@@ -31,6 +31,7 @@ $ds-status-approval-required: $warning;
 $ds-status-blocked: $error;
 $ds-status-error: $error;
 $ds-status-error-readable: $text-error;
+$ds-status-warning-readable: $text-warning;
 $ds-text-placeholder: $text-muted;
 $ds-text-disabled-readable: $text-muted;
 $ds-status-paused: $warning;
@@ -76,7 +77,6 @@ $ds-console-workspace-grid-height: 1fr;
 $ds-console-composer-height: 1;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;
-$ds-library-note-task-actions-min-width: 61;
 $ds-workflow-navigator-width: 27;
 $ds-library-source-action-width: auto;
 $ds-library-source-action-min-width: 0;
@@ -96,6 +96,7 @@ $ds-control-height: 3;
 $ds-control-height-compact: 1;
 $ds-textarea-min-height: 5;
 $ds-model-switcher-width: 140;
+$ds-chat-settings-width: 176;
 $ds-width-full: 100%;
 $ds-width-fill: 1fr;
 $ds-width-auto: auto;
@@ -157,6 +158,7 @@ $ds-size-90: 90;
 $ds-size-92: 92;
 $ds-size-94: 94;
 $ds-size-96: 96;
+$ds-size-100: 100;
 $ds-splash-progress-cap: 100;
 $ds-size-104: 104;
 $ds-size-110: 110;
@@ -194,6 +196,11 @@ $ds-watchlists-artifacts-detail-share: 8fr;
 $ds-agentic-mcp-table-cap: 70%;
 $ds-agentic-prompt-vars-pane: 27;
 $ds-agentic-mcp-compact-canvas-share: 7fr;
+$ds-agentic-mcp-row-share: 8fr;
+$ds-agentic-mcp-compact-row-share: 9fr;
+$ds-wizards-voice-long-share: 21fr;
+$ds-wizards-voice-mid-share: 14fr;
+$ds-wizards-voice-short-share: 11fr;
 $ds-research-chat-pane-floor: 58;
 $ds-new-ingest-media-panel-share: 65%;
 $ds-new-ingest-activity-panel-share: 35%;
@@ -271,8 +278,6 @@ $ds-theme-preview-dark-ink: #000000;
 $ds-theme-preview-light-ink: #FFFFFF;
 $ds-theme-preview-invalid: #808080;
 
-$ds-console-settings-wide-max-width: 196;
-
 $ds-inspector-modal-width: 120;
 $ds-inspector-modal-height: 42;
 $ds-inspector-section-width: 28;
@@ -281,6 +286,14 @@ $ds-conversation-action-width: 4;
 $ds-conversation-action-ascii-width: 9;
 $ds-inspector-usage-list-width: 60;
 $ds-conversation-menu-width: 30;
+
+$ds-portrait-blink-min: 3s;
+$ds-portrait-blink-max: 7s;
+$ds-portrait-idle-cycle: 6s;
+$ds-portrait-idle-offset-px: 0;
+
+$ds-portrait-review-cols: 24;
+$ds-portrait-review-lines: 13;
 
 
 .tldw-agentic-split-preamble-end { }
@@ -541,7 +554,7 @@ $ds-conversation-menu-width: 30;
 .watchlists-pane-grip:focus,
 .watchlists-pane-grip:hover:focus {
     border: none;
-    border-left: solid $ds-action-focus;
+    border-left: solid $ds-active-fg;
     outline: none;
     color: $ds-focus-fg;
     background: $ds-focus-bg;

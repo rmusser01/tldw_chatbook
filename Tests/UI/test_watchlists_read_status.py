@@ -200,7 +200,9 @@ async def test_read_status_is_global_across_watchlists():
             run_id=None,
             now="2026-07-28T09:00:00+00:00",
         )
-    assert len(watchlist_ids) == 2, "fixture must attach the source to two distinct watchlists"
+    assert len(watchlist_ids) == 2, (
+        "fixture must attach the source to two distinct watchlists"
+    )
 
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
@@ -525,7 +527,9 @@ async def test_mark_read_on_open_does_not_overwrite_an_item_ingested_behind_the_
     """
     app = _build_test_app()
     db = app.local_watchlists_service._db()
-    _source_id, item_id = _seed_one_new_item(db, content_hash="hash-stale-cache-overwrite")
+    _source_id, item_id = _seed_one_new_item(
+        db, content_hash="hash-stale-cache-overwrite"
+    )
 
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
@@ -543,7 +547,9 @@ async def test_mark_read_on_open_does_not_overwrite_an_item_ingested_behind_the_
 
         item = pane.items[0]
         assert item["item_id"] == item_id
-        assert item.get("status") == "new", "precondition: the cached dict starts at 'new'"
+        assert item.get("status") == "new", (
+            "precondition: the cached dict starts at 'new'"
+        )
 
         # Dispatch mark-read-on-open first: queues the desired "reviewed"
         # entry and schedules the per-item drainer without running any of it

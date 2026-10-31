@@ -24,7 +24,10 @@ def test_startup_discovery_found(tmp_path):
 
 def test_startup_discovery_disabled(tmp_path):
     _skill(tmp_path)
-    assert startup_discovery_for(tmp_path, enabled=False, ledger_dir=tmp_path / "d") is None
+    assert (
+        startup_discovery_for(tmp_path, enabled=False, ledger_dir=tmp_path / "d")
+        is None
+    )
 
 
 def test_startup_discovery_respects_never(tmp_path):
@@ -32,9 +35,13 @@ def test_startup_discovery_respects_never(tmp_path):
     from tldw_chatbook.Skills_Interop.project_skills_prompt import (
         ProjectSkillsPromptLedger,
     )
+
     ledger = ProjectSkillsPromptLedger(tmp_path / "data")
     ledger.record(tmp_path.resolve(), "never", "anything")
-    assert startup_discovery_for(tmp_path, enabled=True, ledger_dir=tmp_path / "data") is None
+    assert (
+        startup_discovery_for(tmp_path, enabled=True, ledger_dir=tmp_path / "data")
+        is None
+    )
 
 
 def test_discover_project_skills_for_startup_never_raises(monkeypatch, tmp_path):

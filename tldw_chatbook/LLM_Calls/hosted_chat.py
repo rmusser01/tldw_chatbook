@@ -19,19 +19,19 @@ from typing import Any, Literal, Never, Protocol, cast
 from urllib.parse import unquote, urlsplit
 
 import requests
-from requests.adapters import HTTPAdapter
 from requests.exceptions import RequestException, Timeout as RequestsTimeout
 from urllib3.util import Retry
 
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
+    model_unavailable_error,
     ChatBadRequestError,
     ChatConfigurationError,
     ChatProviderError,
     ChatRateLimitError,
 )
 from tldw_chatbook.LLM_Calls.hosted_chat_streaming import OwnedSSEStream, SSERecord
-from tldw_chatbook.Utils.egress import create_default_session
+from tldw_chatbook.Utils.egress import create_pooled_default_session
 from tldw_chatbook.Utils.sensitive_llm_logging import llm_retry_count
 
 
@@ -142,6 +142,10 @@ class HostedHTTPTransportConfig:
     # construct without the field and keep the byte-identical ``"bearer"``
     # default.
     auth_scheme: str = "bearer"
+    # The name user-facing error copy uses ("NVIDIA NIM authentication
+    # failed"); ``provider`` stays the error's identity key. Unset keeps the
+    # key in the copy, as legacy adapters always had (TASK-33002.14).
+    display_name: str | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -178,8 +182,12 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         usage_optional: bool = False,
         event_check: Callable[[Mapping[str, Any]], None] | None = None,
         annotation_key: str | None = None,
+        wire_normalizer: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
     ) -> None:
         self._records = records
+        # The call-owned provider normalizer runs between bounded JSON loading
+        # and the unchanged strict wire/terminal checks (ADR-179).
+        self._wire_normalizer = wire_normalizer
         # A provider annotation frame (TASK-33505: Azure's
         # prompt_filter_results): no choices, no usage, this key present.
         self._annotation_key = annotation_key
@@ -257,6 +265,12 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         try:
             if self._event_check is not None:
                 self._event_check(cast(Mapping[str, Any], event))
+            if self._wire_normalizer is not None:
+                event = self._wire_normalizer(cast(Mapping[str, Any], event))
+                if not isinstance(event, Mapping) or not _json_shape_is_safe(event):
+                    raise HostedChatProtocolError(
+                        "Hosted Chat normalized event is malformed."
+                    )
             safe_event = self._consume_event(cast(Mapping[str, Any], event))
         except (HostedChatProtocolError, ChatProviderError):
             self.close()
@@ -411,9 +425,20 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         ORIGINAL validated values, so filtering never affects the turn.
         Records without allowances or tolerance can never carry unknown
         keys past validation, so their visible frames are unchanged.
+
+        Copy strategy (perf remediation, wave 3): the raw event is parsed
+        fresh for every SSE record and discarded after this call, and every
+        leaf at the rebuilt levels is an immutable scalar validated by
+        ``_consume_event`` (strings, ints, bools, None) -- so constructing
+        each level as a fresh dict isolates the consumer without deepcopy.
+        The one exception is ``usage`` at either level: provider usage
+        payloads may nest arbitrary mappings (OpenRouter
+        ``prompt_tokens_details``/``cost``), so that key path keeps its
+        deepcopy. The mutable-leaf enumeration this relies on is pinned by
+        ``Tests/LLM_Calls/test_hosted_streaming_copy_tax.py``.
         """
         safe: dict[str, Any] = {
-            key: deepcopy(event[key])
+            key: deepcopy(event[key]) if key == "usage" else event[key]
             for key in _KNOWN_TOP_LEVEL_KEYS
             if key in event
         }
@@ -428,17 +453,17 @@ class HostedChatStream(Iterator[dict[str, Any]]):
 
     @staticmethod
     def _filtered_choice(choice: Mapping[str, Any]) -> dict[str, Any]:
+        # Same copy strategy as ``_filtered_event``: fresh dict per level,
+        # validated immutable leaves by reference, ``usage`` deep-copied.
         safe_choice: dict[str, Any] = {
-            key: deepcopy(choice[key])
+            key: deepcopy(choice[key]) if key == "usage" else choice[key]
             for key in _KNOWN_STREAM_CHOICE_KEYS
             if key in choice
         }
         delta = safe_choice.get("delta")
         if isinstance(delta, Mapping):
             safe_delta: dict[str, Any] = {
-                key: deepcopy(delta[key])
-                for key in _KNOWN_MESSAGE_KEYS
-                if key in delta
+                key: delta[key] for key in _KNOWN_MESSAGE_KEYS if key in delta
             }
             tool_calls = safe_delta.get("tool_calls")
             if isinstance(tool_calls, list):
@@ -452,17 +477,16 @@ class HostedChatStream(Iterator[dict[str, Any]]):
 
     @staticmethod
     def _filtered_tool_call(call: Mapping[str, Any]) -> dict[str, Any]:
+        # ``_consume_tool_deltas`` validated every leaf here (index int,
+        # id/type strings, function name/arguments strings) before the
+        # event reaches the filter, so fresh dicts isolate the consumer.
         safe_call: dict[str, Any] = {
-            key: deepcopy(call[key])
-            for key in _KNOWN_STREAM_TOOL_KEYS
-            if key in call
+            key: call[key] for key in _KNOWN_STREAM_TOOL_KEYS if key in call
         }
         function = safe_call.get("function")
         if isinstance(function, Mapping):
             safe_call["function"] = {
-                key: deepcopy(function[key])
-                for key in ("name", "arguments")
-                if key in function
+                key: function[key] for key in ("name", "arguments") if key in function
             }
         return safe_call
 
@@ -514,15 +538,19 @@ class HostedChatStream(Iterator[dict[str, Any]]):
                 self._tools[index] = state
                 self._reserve_output(len(call_id) + len(name))
             else:
-                if "id" in raw_tool and raw_tool.get("id") != state.call_id:
+                # A continuation may repeat a field as null (Fireworks sends
+                # ``"id": null``) instead of omitting it. Null claims nothing,
+                # so it counts as not sent; any other value must still match
+                # the call's first delta (TASK-34364).
+                if raw_tool.get("id") is not None and raw_tool["id"] != state.call_id:
                     raise HostedChatProtocolError(
                         "Hosted Chat stream tool identity changed."
                     )
-                if "type" in raw_tool and raw_tool.get("type") != "function":
+                if raw_tool.get("type") is not None and raw_tool["type"] != "function":
                     raise HostedChatProtocolError(
                         "Hosted Chat stream tool type changed."
                     )
-                if "name" in function and function.get("name") != state.name:
+                if function.get("name") is not None and function["name"] != state.name:
                     raise HostedChatProtocolError(
                         "Hosted Chat stream tool name changed."
                     )
@@ -545,10 +573,37 @@ def normalize_hosted_chat_response(
     allowed_choice_keys: frozenset[str] = frozenset(),
     allowed_message_keys: frozenset[str] = frozenset(),
     tolerant_top_level_extras: bool = False,
+    wire_normalizer: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
+    allowed_tool_call_keys: frozenset[str] = frozenset(),
 ) -> HostedChatTurn:
-    """Normalize one non-streaming OpenAI-shaped Chat response."""
+    """Normalize one non-streaming OpenAI-shaped Chat response.
+
+    Args:
+        response: The decoded response body.
+        finish_policy: Validates the finish reason and reasoning content.
+        allowed_extra_keys: Tolerated extra top-level keys.
+        allowed_choice_keys: Tolerated extra choice-level keys (value rule).
+        allowed_message_keys: Tolerated extra message-level keys (value rule).
+        tolerant_top_level_extras: The long-tail tolerant profile switch.
+        wire_normalizer: Provider-owned normalization before strict shape checks.
+        allowed_tool_call_keys: Tolerated extra keys on each tool-call object
+            (value rule), validated then dropped (TASK-34364).
+
+    Returns:
+        The normalized turn.
+
+    Raises:
+        HostedChatProtocolError: The response does not match the strict shape
+            plus the given allowances.
+    """
     if not _json_shape_is_safe(response) or not isinstance(response, Mapping):
         raise HostedChatProtocolError("Hosted Chat response JSON is malformed.")
+    if wire_normalizer is not None:
+        response = wire_normalizer(response)
+        if not isinstance(response, Mapping) or not _json_shape_is_safe(response):
+            raise HostedChatProtocolError(
+                "Hosted Chat normalized response is malformed."
+            )
     _check_top_level_extras(
         response,
         allowed_extra_keys=allowed_extra_keys,
@@ -594,6 +649,7 @@ def normalize_hosted_chat_response(
     tool_calls = _normalize_tool_calls(
         message.get("tool_calls", ()),
         tolerant_extras=tolerant_top_level_extras,
+        allowed_keys=allowed_tool_call_keys,
     )
     if (
         len(text) + len(reasoning or "") + _tool_character_count(tool_calls)
@@ -628,6 +684,7 @@ def hosted_chat_request(
     allowed_choice_keys: frozenset[str] = frozenset(),
     allowed_message_keys: frozenset[str] = frozenset(),
     tolerant_top_level_extras: bool = False,
+    wire_normalizer: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
 ) -> HostedChatTurn | HostedChatStream:
     """Run one hosted Chat-Completions request through the shared boundary."""
     response = owned_json_post(
@@ -644,6 +701,7 @@ def hosted_chat_request(
             allowed_choice_keys=allowed_choice_keys,
             allowed_message_keys=allowed_message_keys,
             tolerant_top_level_extras=tolerant_top_level_extras,
+            wire_normalizer=wire_normalizer,
         )
     return normalize_hosted_chat_response(
         response,
@@ -652,6 +710,36 @@ def hosted_chat_request(
         allowed_choice_keys=allowed_choice_keys,
         allowed_message_keys=allowed_message_keys,
         tolerant_top_level_extras=tolerant_top_level_extras,
+        wire_normalizer=wire_normalizer,
+    )
+
+
+def _new_zero_retry_session() -> requests.Session:
+    """Build one zero-transport-retry session for the per-thread registry.
+
+    ADR-222 (TASK-34418) + task-34387: identical wire semantics to the
+    session ``owned_json_post`` used to build per call -- a default session
+    with the transport-level Retry(total=0) mount that keeps every retry
+    decision in the engine's own bounded loop. The adapter is mounted by
+    :func:`create_pooled_default_session` at pooled-session creation (its
+    configuration is part of the pool key), so the shared session is never
+    mutated after creation. Resolved through this module's
+    ``create_pooled_default_session`` global at call time so the existing
+    test seam (monkeypatching it) keeps working.
+    """
+    retry_policy = Retry(
+        total=0,
+        connect=0,
+        read=0,
+        redirect=0,
+        status=0,
+        other=0,
+        allowed_methods=frozenset({"POST"}),
+        raise_on_status=False,
+    )
+    return create_pooled_default_session(
+        mount_retry=retry_policy,
+        mount_prefixes=("https://", "http://"),
     )
 
 
@@ -680,8 +768,13 @@ def owned_json_post(
         ChatBadRequestError: For other client request failures.
         ChatProviderError: For network, service, or malformed response failures.
     """
+    label = (
+        config.display_name
+        if isinstance(config.display_name, str) and config.display_name.strip()
+        else config.provider
+    )
     if route not in {"chat/completions", "responses"}:
-        raise _transport_error(config.provider, "request route is invalid")
+        raise _transport_error(config.provider, "request route is invalid", label=label)
     try:
         base_url = normalize_hosted_chat_base_url(
             config.base_url,
@@ -691,6 +784,7 @@ def owned_json_post(
         raise _transport_error(
             config.provider,
             "transport configuration is invalid",
+            label=label,
         ) from None
     if (
         not isinstance(config.provider, str)
@@ -719,7 +813,7 @@ def owned_json_post(
             for name, value in config.extra_headers.items()
         )
     ):
-        raise _transport_error(config.provider, "transport configuration is invalid")
+        raise _transport_error(config.provider, "transport configuration is invalid", label=label)
 
     retries = llm_retry_count(max(0, config.retries))
     url = f"{base_url}/{route}"
@@ -743,93 +837,110 @@ def owned_json_post(
             "Content-Type": "application/json",
             **config.extra_headers,
         }
-    session = create_default_session()
+    from tldw_chatbook.LLM_Calls.provider_sessions import (
+        get_session,
+        trust_setting_fragment,
+    )
+
+    # ADR-222 (TASK-34418): one registry session per (provider, base_url)
+    # per thread; the TLS-trust value is part of the key because this call
+    # relies on the session's `verify` set at factory time. The zero-retry
+    # adapter mount lives in the factory -- mounting per call on a cached
+    # session would swap the adapter (and its warm pool) every call.
+    session = get_session(
+        f"{config.provider}:{base_url}:{trust_setting_fragment()}",
+        _new_zero_retry_session,
+    )
     response: requests.Response | None = None
-    stream_owns_session = False
-    try:
-        retry_policy = Retry(
-            total=0,
-            connect=0,
-            read=0,
-            redirect=0,
-            status=0,
-            other=0,
-            allowed_methods=frozenset({"POST"}),
-            raise_on_status=False,
-        )
-        adapter = HTTPAdapter(max_retries=retry_policy)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-        for attempt in range(retries + 1):
-            response = None
-            try:
-                response = session.post(
-                    url,
-                    headers=headers,
-                    json=deepcopy(dict(payload)),
-                    timeout=float(config.timeout),
-                    stream=True,
+    for attempt in range(retries + 1):
+        response = None
+        try:
+            # ADR-222: `requests` never mutates the json= argument (it
+            # json.dumps's it per attempt); passing the payload by
+            # reference drops a full-history deepcopy per attempt.
+            response = session.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=float(config.timeout),
+                stream=True,
+            )
+            status = int(response.status_code)
+            if status in _RETRYABLE_STATUS_CODES and attempt < retries:
+                delay = _retry_delay(
+                    response,
+                    attempt=attempt,
+                    retry_delay=float(config.retry_delay),
                 )
-                status = int(response.status_code)
-                if status in _RETRYABLE_STATUS_CODES and attempt < retries:
-                    delay = _retry_delay(
-                        response,
-                        attempt=attempt,
-                        retry_delay=float(config.retry_delay),
-                    )
-                    _best_effort_close(response)
-                    response = None
-                    if delay > 0:
-                        time.sleep(delay)
-                    continue
-                if status >= 400:
-                    _raise_http_error(config.provider, status)
-                if streaming:
-                    stream = OwnedSSEStream(response=response, session=session)
-                    response = None
-                    stream_owns_session = True
-                    return stream
-                try:
-                    result = response.json()
-                except Exception:
-                    raise _transport_error(
-                        config.provider, "returned malformed provider JSON"
-                    ) from None
-                if not isinstance(result, Mapping):
-                    raise _transport_error(
-                        config.provider, "response envelope must be an object"
-                    )
-                return deepcopy(dict(result))
-            except (ChatAuthenticationError, ChatRateLimitError, ChatBadRequestError):
-                raise
-            except ChatProviderError:
-                raise
-            except (requests.ConnectionError, RequestsTimeout) as exc:
-                if attempt < retries:
-                    if response is not None:
-                        _best_effort_close(response)
-                        response = None
-                    delay = float(config.retry_delay) * (2**attempt)
-                    if delay > 0:
-                        time.sleep(delay)
-                    continue
-                raise _transport_error(
+                _best_effort_close(response)
+                response = None
+                if delay > 0:
+                    time.sleep(delay)
+                continue
+            if status >= 400:
+                if status in {400, 404}:
+                    try:
+                        error_payload = response.json()
+                    except ValueError:
+                        error_payload = None
+                    unavailable = model_unavailable_error(config.provider, status, error_payload)
+                    if unavailable is not None:
+                        raise unavailable
+                _raise_http_error(
                     config.provider,
-                    "network request failed",
-                    status_code=504 if isinstance(exc, RequestsTimeout) else 502,
-                ) from None
-            except RequestException:
+                    status,
+                    label=label,
+                    response=response,
+                    known_credentials=(config.api_key,),
+                )
+            if streaming:
+                # ADR-222: the stream owns (and closes) its response; the
+                # session belongs to the per-thread registry.
+                stream = OwnedSSEStream(response=response, session=None)
+                response = None
+                return stream
+            try:
+                result = response.json()
+            except Exception:
                 raise _transport_error(
-                    config.provider, "network request failed"
+                    config.provider, "returned malformed provider JSON", label=label
                 ) from None
-            finally:
+            if not isinstance(result, Mapping):
+                raise _transport_error(
+                    config.provider, "response envelope must be an object", label=label
+                )
+            return deepcopy(dict(result))
+        except (ChatAuthenticationError, ChatRateLimitError, ChatBadRequestError):
+            raise
+        except ChatProviderError:
+            raise
+        except (requests.ConnectionError, RequestsTimeout) as exc:
+            if attempt < retries:
                 if response is not None:
                     _best_effort_close(response)
                     response = None
-    finally:
-        if not stream_owns_session:
-            _best_effort_close(session)
-    raise _transport_error(config.provider, "request attempts were exhausted")
+                delay = float(config.retry_delay) * (2**attempt)
+                if delay > 0:
+                    time.sleep(delay)
+                continue
+            raise _transport_error(
+                config.provider,
+                "network request failed",
+                status_code=504 if isinstance(exc, RequestsTimeout) else 502,
+                label=label,
+            ) from None
+        except RequestException:
+            raise _transport_error(
+                config.provider, "network request failed", label=label
+            ) from None
+        finally:
+            if response is not None:
+                _best_effort_close(response)
+                response = None
+    # ADR-222 (TASK-34418): the session is registry-owned for this
+    # thread's lifetime and must NOT be closed here; each attempt's
+    # response is closed inside the loop above.
+    raise _transport_error(config.provider, "request attempts were exhausted", label=label)
 
 
 def _json_shape_is_safe(value: object) -> bool:
@@ -1266,6 +1377,7 @@ def _normalize_tool_calls(
     value: object,
     *,
     tolerant_extras: bool = False,
+    allowed_keys: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, Any], ...]:
     if value is None:
         return ()
@@ -1279,13 +1391,20 @@ def _normalize_tool_calls(
         if not isinstance(raw_call, Mapping):
             raise HostedChatProtocolError("Hosted Chat tool call is malformed.")
         keys = set(raw_call)
-        if not _REQUIRED_TOOL_CALL_KEYS <= keys or (
-            not tolerant_extras and keys != _REQUIRED_TOOL_CALL_KEYS
-        ):
+        if not _REQUIRED_TOOL_CALL_KEYS <= keys:
+            raise HostedChatProtocolError("Hosted Chat tool call is malformed.")
+        if not tolerant_extras:
             # Tolerant profile (controller ruling a): call objects may carry
             # extra keys (ollama emits ``index``); id/type/function stay
-            # mandatory and extras are dropped, never passed through.
-            raise HostedChatProtocolError("Hosted Chat tool call is malformed.")
+            # mandatory and extras are dropped, never passed through. A strict
+            # record may allow named extras (Fireworks: ``index``, ``name``).
+            _check_level_extras(
+                raw_call,
+                known=_REQUIRED_TOOL_CALL_KEYS,
+                allowed=allowed_keys,
+                tolerant=False,
+                label="tool call is malformed",
+            )
         call_id = _required_metadata(raw_call.get("id"), "tool ID")
         if raw_call.get("type") != "function" or call_id in call_ids:
             raise HostedChatProtocolError("Hosted Chat tool identity is malformed.")
@@ -1378,34 +1497,64 @@ def _transport_error(
     detail: str,
     *,
     status_code: int = 502,
+    label: str | None = None,
 ) -> ChatProviderError:
     return ChatProviderError(
         provider=provider,
-        message=f"{provider} {detail}.",
+        message=f"{label or provider} {detail}.",
         status_code=status_code,
     )
 
 
-def _raise_http_error(provider: str, status: int) -> Never:
+def _raise_http_error(
+    provider: str,
+    status: int,
+    *,
+    label: str | None = None,
+    response: object | None = None,
+    known_credentials: tuple[str, ...] = (),
+) -> Never:
+    name = label or provider
     if status in {401, 403}:
-        raise ChatAuthenticationError(
+        error: Exception = ChatAuthenticationError(
             provider=provider,
-            message=f"{provider} authentication failed. Check the API key.",
-        ) from None
-    if status == 429:
-        raise ChatRateLimitError(
+            message=f"{name} authentication failed. Check the API key.",
+        )
+    elif status == 429:
+        error = ChatRateLimitError(
             provider=provider,
-            message=f"{provider} rate limit exceeded. Retry later.",
-        ) from None
-    if 400 <= status < 500:
-        raise ChatBadRequestError(
+            message=f"{name} rate limit exceeded. Retry later.",
+        )
+    elif status == 404:
+        # Usually an unknown model, or one this key cannot use: Fireworks,
+        # SambaNova, Nous and GMI check the model before the key (probed
+        # 2026-09-30, TASK-33640).
+        error = ChatBadRequestError(
             provider=provider,
-            message=f"{provider} rejected the request (status {status}).",
-        ) from None
-    raise _transport_error(
-        provider,
-        f"service failed (status {status})",
-        status_code=status,
+            message=(
+                f"{name} could not find that model or endpoint (status 404). "
+                "Check the model name and that your key can use it."
+            ),
+            status_code=404,
+        )
+    elif 400 <= status < 500:
+        error = ChatBadRequestError(
+            provider=provider,
+            message=f"{name} rejected the request (status {status}).",
+        )
+    else:
+        error = _transport_error(
+            provider,
+            f"service failed (status {status})",
+            status_code=status,
+            label=label,
+        )
+    # TASK-34100.5: keep the provider's own allowlisted sentence (error.message)
+    # as data on the exception; the chain stays severed (no body in str()).
+    from tldw_chatbook.Chat.provider_error_reason import attach_provider_reason
+
+    raise attach_provider_reason(
+        error, response, known_credentials=known_credentials
     ) from None
 
 

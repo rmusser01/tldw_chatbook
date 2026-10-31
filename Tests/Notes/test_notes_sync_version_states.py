@@ -162,9 +162,7 @@ async def test_authority_excludes_tombstones_at_its_own_level(
     db.add_note("Doomed", "doomed body", note_id="note-doomed")
     db.soft_delete_note("note-doomed", 1)
     authority = NotesScopeSyncAuthority(
-        NotesScopeService(
-            local_notes_service=_DirectBackend(db), server_service=None
-        ),
+        NotesScopeService(local_notes_service=_DirectBackend(db), server_service=None),
         scope=ScopeType.LOCAL_NOTE,
         user_id=_USER,
         note_scope_id="local_note",
@@ -183,9 +181,7 @@ async def test_authority_wraps_backend_failure_into_bounded_reason(
             raise RuntimeError("private backend outage with details")
 
     authority = NotesScopeSyncAuthority(
-        NotesScopeService(
-            local_notes_service=_FailingBackend(), server_service=None
-        ),
+        NotesScopeService(local_notes_service=_FailingBackend(), server_service=None),
         scope=ScopeType.LOCAL_NOTE,
         user_id=_USER,
         note_scope_id="local_note",

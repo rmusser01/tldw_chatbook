@@ -1,0 +1,48 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-8.4.2, pluggy-1.6.0 -- /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python
+cachedir: .pytest_cache
+hypothesis profile 'tldw' -> deadline=None, max_examples=25, stateful_step_count=20, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook
+configfile: pyproject.toml
+plugins: anyio-4.12.1, mock-3.15.1, asyncio-1.2.0, Faker-40.15.0, cov-7.1.0, xdist-3.8.0, timeout-2.4.0, hypothesis-6.152.3
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 300.0s
+timeout method: signal
+timeout func_only: False
+collecting ... collected 6 items
+
+Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime --- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PASSED [ 16%]
+Tests/UI/test_console_runtime_ownership.py::test_a_superseded_screen_never_detaches_the_successors_runtime --- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PASSED [ 33%]
+Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll --- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PASSED [ 50%]
+Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged] --- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PASSED [ 66%]
+Tests/UI/test_console_runtime_ownership.py::test_manual_console_fixture_owns_startup_before_any_mount --- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PASSED [ 83%]
+Tests/UI/test_console_runtime_ownership.py::test_public_startup_console_keeps_its_claim_across_navigation --- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PASSED [100%]
+
+============================= slowest 25 durations =============================
+16.15s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]
+13.77s call     Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll
+12.79s call     Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime
+10.33s call     Tests/UI/test_console_runtime_ownership.py::test_a_superseded_screen_never_detaches_the_successors_runtime
+9.79s call     Tests/UI/test_console_runtime_ownership.py::test_public_startup_console_keeps_its_claim_across_navigation
+6.57s call     Tests/UI/test_console_runtime_ownership.py::test_manual_console_fixture_owns_startup_before_any_mount
+
+(12 durations < 1s hidden.)
+========================= 6 passed in 75.72s (0:01:15) =========================

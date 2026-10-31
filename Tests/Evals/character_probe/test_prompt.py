@@ -1,11 +1,16 @@
 import pytest
 
 from tldw_chatbook.Evals.character_probe.models import CardSnapshot
-from tldw_chatbook.Evals.character_probe.prompt import build_messages, compose_system_prompt
+from tldw_chatbook.Evals.character_probe.prompt import (
+    build_messages,
+    compose_system_prompt,
+)
 
 
 def _card(**overrides):
-    base = dict(id=1, name="Vex", system_prompt="You are Vex.", first_message="You again.")
+    base = dict(
+        id=1, name="Vex", system_prompt="You are Vex.", first_message="You again."
+    )
     base.update(overrides)
     return CardSnapshot(**base)
 
@@ -43,14 +48,22 @@ def test_prior_replies_accumulate_in_order():
         _card(), None, ["One", "Two", "Three"], ["Reply one", "Reply two"]
     )
     assert [m["role"] for m in messages] == [
-        "system", "assistant", "user", "assistant", "user", "assistant", "user",
+        "system",
+        "assistant",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+        "user",
     ]
     assert messages[-1] == {"role": "user", "content": "Three"}
     assert messages[-2] == {"role": "assistant", "content": "Reply two"}
 
 
 def test_personality_and_scenario_reach_the_system_prompt():
-    card = _card(system_prompt="You are Vex.", personality="sardonic", scenario="a rooftop")
+    card = _card(
+        system_prompt="You are Vex.", personality="sardonic", scenario="a rooftop"
+    )
     composed = compose_system_prompt(card, None)
     assert "sardonic" in composed
     assert "rooftop" in composed

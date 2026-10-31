@@ -1,0 +1,32 @@
+[
+  {
+    "command": [
+      "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "scripts/check_index_plan_pins.py"
+    ],
+    "exit_code": 0,
+    "seconds": 7.411,
+    "receipt": "check_index_plan_pins-fixed.txt",
+    "output": "index plan pins: 326 index names declared under tldw_chatbook/DB, 326 census rows, 109 plan-pinned.\r\ncheck_index_plan_pins: OK\r\n\nSTDERR\n"
+  },
+  {
+    "command": [
+      "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "scripts/check_textual_worker_contract.py"
+    ],
+    "exit_code": 0,
+    "seconds": 71.464,
+    "receipt": "check_textual_worker_contract-fixed.txt",
+    "output": "textual worker contract: no synchronous run_worker targets; 316 post-await DOM lookup(s) in 149 function(s), none new; 10 baseline lookup(s) resolved; 43 wait-for-dismiss push(es) reachable from 23 non-worker entry point(s), none new; 27 baseline push(es) resolved.\r\n\nSTDERR\n"
+  },
+  {
+    "command": [
+      "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "scripts/check_timestamp_writers.py"
+    ],
+    "exit_code": 0,
+    "seconds": 39.941,
+    "receipt": "check_timestamp_writers-fixed.txt",
+    "output": "timestamp writers: 0 datetime.utcnow() site(s), 0 naive_now_iso, 98 offset_now_iso, 18 strftime_iso occurrence(s) (117 pinned).\r\ncheck_timestamp_writers: OK\r\n\nSTDERR\n"
+  }
+]

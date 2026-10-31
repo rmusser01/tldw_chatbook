@@ -8,12 +8,11 @@ and ``transaction()`` (BEGIN IMMEDIATE) for writes.
 
 from __future__ import annotations
 
+import inspect
 import json
 import sqlite3
-import threading
-import time
+import sys
 import uuid
-from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cached_property
 from datetime import datetime, timezone
@@ -30,7 +29,9 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
 from tldw_chatbook.Chat.sampling_params import params_to_dict
+from . import store_kernel as _store_kernel
 from .base_db import BaseDB
+from .store_kernel import SQLiteStoreKernel
 
 if TYPE_CHECKING:
     from .automatic_work import AutomaticWorkLedger
@@ -82,7 +83,8 @@ CREATE TABLE IF NOT EXISTS automatic_work_chains (
     deadline_at REAL,
     clock_owner_id TEXT,
     started_monotonic REAL,
-    last_observed_at REAL NOT NULL
+    last_observed_at REAL NOT NULL,
+    allowance_root_chain_id TEXT REFERENCES automatic_work_chains(id)
 );
 CREATE TABLE IF NOT EXISTS automatic_work_reservations (
     id TEXT PRIMARY KEY,
@@ -105,6 +107,8 @@ CREATE TABLE IF NOT EXISTS automatic_wake_attempts (
     owner_id TEXT NOT NULL,
     generation_reservation_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_reservations(id),
     run_ids_json TEXT NOT NULL,
+    cause TEXT NOT NULL DEFAULT 'completion' CHECK (cause IN ('completion', 'progress', 'mixed')),
+    message_ids_json TEXT NOT NULL DEFAULT '[]',
     state TEXT NOT NULL CHECK (state IN ('prepared', 'accepted', 'completed', 'aborted', 'review_required')),
     created_at REAL NOT NULL,
     accepted_at REAL,
@@ -118,12 +122,69 @@ CREATE TABLE IF NOT EXISTS automatic_wake_claims (
 );
 CREATE INDEX IF NOT EXISTS idx_automatic_claims_attempt
     ON automatic_wake_claims(attempt_id);
+CREATE TABLE IF NOT EXISTS automatic_progress_wake_claims (
+    message_id TEXT PRIMARY KEY,
+    source_run_id TEXT NOT NULL REFERENCES agent_runs(id),
+    attempt_id TEXT NOT NULL REFERENCES automatic_wake_attempts(id)
+);
+CREATE INDEX IF NOT EXISTS idx_automatic_progress_claims_attempt
+    ON automatic_progress_wake_claims(attempt_id);
 CREATE TRIGGER IF NOT EXISTS automatic_chain_identity_immutable
-BEFORE UPDATE OF conversation_id, root_submission_id, limits_json ON automatic_work_chains
-WHEN OLD.conversation_id IS NOT NEW.conversation_id
+BEFORE UPDATE OF id, conversation_id, root_submission_id, limits_json, allowance_root_chain_id ON automatic_work_chains
+WHEN OLD.id IS NOT NEW.id
+  OR OLD.allowance_root_chain_id IS NOT NEW.allowance_root_chain_id
+  OR OLD.conversation_id IS NOT NEW.conversation_id
   OR OLD.root_submission_id IS NOT NEW.root_submission_id
   OR OLD.limits_json IS NOT NEW.limits_json
 BEGIN SELECT RAISE(ABORT, 'automatic chain identity is immutable'); END;
+CREATE INDEX IF NOT EXISTS idx_automatic_chains_allowance_root
+    ON automatic_work_chains(allowance_root_chain_id);
+CREATE TRIGGER IF NOT EXISTS automatic_chain_root_insert
+BEFORE INSERT ON automatic_work_chains
+WHEN NEW.allowance_root_chain_id IS NOT NULL
+AND (NEW.id=NEW.allowance_root_chain_id OR NOT EXISTS (
+    SELECT 1 FROM automatic_work_chains WHERE id=NEW.allowance_root_chain_id
+    AND allowance_root_chain_id IS NULL))
+BEGIN SELECT RAISE(ABORT, 'automatic allowance must name a direct root'); END;
+CREATE TRIGGER IF NOT EXISTS automatic_chain_root_update
+BEFORE UPDATE OF allowance_root_chain_id ON automatic_work_chains
+WHEN NEW.allowance_root_chain_id IS NOT NULL
+AND (NEW.id=NEW.allowance_root_chain_id OR NOT EXISTS (
+    SELECT 1 FROM automatic_work_chains WHERE id=NEW.allowance_root_chain_id
+    AND allowance_root_chain_id IS NULL))
+BEGIN SELECT RAISE(ABORT, 'automatic allowance must name a direct root'); END;
+CREATE TABLE IF NOT EXISTS automatic_chat_start_attempts (
+    id TEXT PRIMARY KEY,
+    source_run_id TEXT NOT NULL REFERENCES agent_runs(id),
+    source_chain_id TEXT NOT NULL REFERENCES automatic_work_chains(id),
+    chain_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_chains(id),
+    conversation_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    session_incarnation TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    draft_revision INTEGER NOT NULL CHECK (typeof(draft_revision)='integer' AND draft_revision>=0),
+    context_epoch INTEGER NOT NULL CHECK (typeof(context_epoch)='integer' AND context_epoch>=0),
+    request_fingerprint TEXT NOT NULL CHECK (length(request_fingerprint)=64 AND request_fingerprint NOT GLOB '*[^0-9a-f]*'),
+    generation_reservation_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_reservations(id),
+    state TEXT NOT NULL CHECK (state IN ('prepared', 'accepted', 'completed', 'aborted', 'review_required')),
+    created_at REAL NOT NULL,
+    accepted_at REAL,
+    completed_at REAL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_automatic_chat_start_conversation_active
+    ON automatic_chat_start_attempts(conversation_id) WHERE state IN ('prepared', 'accepted');
+CREATE TRIGGER IF NOT EXISTS automatic_chat_start_identity_immutable
+BEFORE UPDATE OF id, source_run_id, source_chain_id, chain_id, conversation_id,
+    session_id, session_incarnation, owner_id, draft_revision, context_epoch,
+    request_fingerprint, generation_reservation_id ON automatic_chat_start_attempts
+WHEN OLD.id IS NOT NEW.id OR OLD.source_run_id IS NOT NEW.source_run_id
+  OR OLD.source_chain_id IS NOT NEW.source_chain_id OR OLD.chain_id IS NOT NEW.chain_id
+  OR OLD.conversation_id IS NOT NEW.conversation_id OR OLD.session_id IS NOT NEW.session_id
+  OR OLD.session_incarnation IS NOT NEW.session_incarnation OR OLD.owner_id IS NOT NEW.owner_id
+  OR OLD.draft_revision IS NOT NEW.draft_revision OR OLD.context_epoch IS NOT NEW.context_epoch
+  OR OLD.request_fingerprint IS NOT NEW.request_fingerprint
+  OR OLD.generation_reservation_id IS NOT NEW.generation_reservation_id
+BEGIN SELECT RAISE(ABORT, 'chat start identity is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS automatic_run_chain_immutable
 BEFORE UPDATE OF work_chain_id ON agent_runs
 WHEN OLD.work_chain_id IS NOT NULL AND OLD.work_chain_id IS NOT NEW.work_chain_id
@@ -146,15 +207,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_cached_connection,
-    _core_closing,
-    _core_getter,
-    _core_operation,
-    _core_transaction,
-    _register_core_connection,
-)
+from tldw_chatbook.Backup_Recovery.participants import _core_operation
 
 # SQLite caps host parameters per statement. The ceiling is build-dependent:
 # 32766 on SQLite >= 3.32, but 999 on older builds, and this project's floor
@@ -233,7 +286,7 @@ def _canonical_step_payload(index: int, payload: dict) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
-class AgentRunsDB(BaseDB):
+class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     """Run records for the agent runtime (vertical-slice spec data model).
 
     SCHEMA VERSIONING (task-15669 resolution, folded into the v11
@@ -262,13 +315,14 @@ class AgentRunsDB(BaseDB):
     # to v21 and chains after v20. The guarded ALTERs below are idempotent
     # either way, and the from-now-on contract only requires the constant to
     # equal the HIGHEST recorded version.
-    _CURRENT_SCHEMA_VERSION = 21
+    _CURRENT_SCHEMA_VERSION = 24
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
-    #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
-    #: a per-call ``SELECT 1`` would double statement count on the per-step
-    #: persistence path; a recently-used held connection is known-good.
-    _LIVENESS_PING_IDLE_SECONDS = 30.0
+    #: BaseDB-provenance (ADR-228): connections open through BaseDB's
+    #: per-call path under the db.base owner; participants identity
+    #: stays db.base, so no per-store policy entry is minted.
+    _kernel_sqlite_owner = "db.base"
+
 
     def __init__(
         self,
@@ -277,7 +331,7 @@ class AgentRunsDB(BaseDB):
         *,
         reconcile_on_init: bool = True,
     ) -> None:
-        self._thread_local = threading.local()
+        self._init_store_kernel()
         self.receipt_capability_available = False
         super().__init__(db_path, client_id)
         # After super().__init__: the agent_runs table exists (base_db ran
@@ -304,148 +358,47 @@ class AgentRunsDB(BaseDB):
 
         return AutomaticWorkLedger(self)
 
-    @_core_getter
-    def _get_connection(self) -> sqlite3.Connection:
-        _core_access(self)
-        conn = super()._get_connection()
-        _register_core_connection(self, conn)
-        try:
-            _core_access(self)
-            conn.execute("PRAGMA foreign_keys = ON")
-            # busy_timeout FIRST: the journal_mode=WAL conversion below is the
-            # one PRAGMA here that can itself contend (switching a rollback-
-            # journal file to WAL briefly needs an exclusive lock), so it must
-            # not run while busy_timeout is still 0 -- a contended cross-process
-            # first conversion would otherwise raise 'database is locked'
-            # immediately instead of waiting. busy_timeout is harmless to set
-            # for in-memory DBs too, so it's unconditional (kept for
-            # uniformity); WAL itself is unavailable for in-memory DBs, so that
-            # one stays guarded on is_memory_db.
-            conn.execute("PRAGMA busy_timeout = 5000")
-            if not self.is_memory_db:
-                conn.execute("PRAGMA journal_mode = WAL")
-            # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
-            # lose the last commit or two, acceptable for this local agent-run
-            # ledger) and avoids an fsync on every commit -- the default FULL was
-            # fsyncing the WAL on every commit despite WAL already being enabled,
-            # on a per-agent-step persistence path. See Library_Ingest_Jobs_DB.py:
-            # 57-61 for the original template (task-15465).
-            conn.execute("PRAGMA synchronous = NORMAL")
-            conn.row_factory = sqlite3.Row
-            # task-3012: the held (long-lived) connection needs true autocommit.
-            # Python's default isolation mode auto-BEGINs on any DML, and an
-            # implicit transaction accumulated outside `transaction()` makes the
-            # explicit `BEGIN IMMEDIATE` there fail with "cannot start a
-            # transaction within a transaction" (per-call connections masked
-            # this — and silently ROLLED BACK any bare DML on close). Audited:
-            # every `connection()` site is read-only except `_initialize_schema`,
-            # whose `executescript` self-commits under either mode.
-            conn.isolation_level = None
-            _core_access(self)
-        except BaseException:
-            # Registration retains uncertain native close; never drop its lease.
-            conn.close()
-            raise
+    @cached_property
+    def goal_runs(self):
+        """Load private goal storage only for an explicit goal operation."""
+        from .goal_runs import GoalRunsStore
+
+        return GoalRunsStore(self)
+
+    def _open_connection(self) -> sqlite3.Connection:
+        """Open through BaseDB's db.base path (ADR-228 provenance section)."""
+        return BaseDB._get_connection(self)
+
+    def _configure_connection(self, conn: sqlite3.Connection) -> sqlite3.Connection:
+        """AgentRuns per-connection policy (kernel wraps registration/gating).
+
+        busy_timeout FIRST: the journal_mode=WAL conversion below is the one
+        PRAGMA here that can itself contend (switching a rollback-journal
+        file to WAL briefly needs an exclusive lock), so it must not run
+        while busy_timeout is still 0 -- a contended cross-process first
+        conversion would otherwise raise 'database is locked' immediately
+        instead of waiting. busy_timeout is harmless for in-memory DBs too,
+        so it's unconditional; WAL itself is unavailable in-memory and stays
+        guarded on is_memory_db.
+
+        NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+        lose the last commit or two, acceptable for this local agent-run
+        ledger) and avoids an fsync on every commit (task-15465 lineage).
+
+        task-3012: the held (long-lived) connection needs true autocommit;
+        an implicit transaction accumulated outside ``transaction()`` makes
+        the explicit BEGIN IMMEDIATE fail. Audited: every ``connection()``
+        site is read-only except ``_initialize_schema``, whose
+        ``executescript`` self-commits under either mode.
+        """
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        if not self.is_memory_db:
+            conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.row_factory = sqlite3.Row
+        conn.isolation_level = None
         return conn
-
-    @_core_getter
-    def _held_connection(self) -> sqlite3.Connection:
-        """Return this thread's held connection, opening or reviving it.
-
-        task-3012: mirrors ``WorkspaceDB._held_connection`` (itself the
-        ChaChaNotes idiom). Every per-connection property this DB relies on
-        — WAL, busy_timeout, foreign keys, row factory — is applied by
-        ``_get_connection`` when the held connection is (re)opened.
-        """
-        _core_access(self)
-        conn = getattr(self._thread_local, "conn", None)
-        conn = _core_cached_connection(self, conn)
-        if conn is not None:
-            last_used = getattr(self._thread_local, "conn_last_used", None)
-            if (
-                last_used is None
-                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
-            ):
-                try:
-                    conn.execute("SELECT 1")
-                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    # A failed probe does not retire a live native borrower.
-                    try:
-                        sqlite3.Connection.in_transaction.__get__(conn)
-                    except sqlite3.ProgrammingError:
-                        conn.close()  # Positively closed; failure retains cache.
-                    else:
-                        raise
-                    conn = None
-        if conn is None:
-            conn = self._get_connection()
-            self._thread_local.conn = conn
-        self._thread_local.conn_last_used = time.monotonic()
-        return conn
-
-    @_core_transaction
-    @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
-        """Yield the calling thread's held read connection.
-
-        Yields:
-            The thread's held ``sqlite3.Connection`` (per-thread isolation
-            replaces the old per-call isolation; WAL keeps concurrent
-            reader/writer threads and processes non-blocking).
-        """
-        yield self._held_connection()
-
-    def close(self) -> None:
-        """Close the current thread's held connection, if any."""
-
-        conn = getattr(self._thread_local, "conn", None)
-        if conn is not None:
-            with _core_closing(self, conn) as allowed:
-                if not allowed:
-                    return
-                try:
-                    conn.close()
-                except Exception:  # noqa: BLE001 - preserve explicit retirement route
-                    return
-                self._thread_local.conn = None
-
-    @_core_transaction
-    @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Yield a write connection inside an immediate transaction.
-
-        Uses ``BEGIN IMMEDIATE`` (not the deferred default ``BEGIN``) so
-        the write lock is acquired up front: with multiple workers writing
-        concurrently (e.g. a primary run and its sub-agent runs), a
-        deferred transaction that reads then writes can hit a lock-upgrade
-        conflict between two readers; acquiring the write lock immediately
-        avoids that class of failure.
-
-        Yields:
-            A ``sqlite3.Connection`` with a write transaction already
-            started.
-
-        Raises:
-            Exception: Re-raised after rolling back, on any error inside
-                the ``with`` block. On clean exit the transaction commits.
-        """
-        conn = self._held_connection()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield conn
-        # TASK-32801.5: BaseException, not Exception. A CancelledError or
-        # KeyboardInterrupt raised inside the block is not an Exception, so
-        # the rollback used to be skipped and the transaction stayed open --
-        # and because `transaction()` treats an already-open transaction as
-        # nested, every later write on that thread then rode it uncommitted
-        # and was lost at close. Proven on Prompts_DB: a write after an
-        # escaped KeyboardInterrupt did not survive close+reopen.
-        # Library_Collections_DB and Workflows_DB already do this.
-        except BaseException:
-            conn.rollback()
-            raise
-        else:
-            conn.commit()
 
     def _initialize_schema(self) -> None:
         with self.connection() as conn:
@@ -502,7 +455,9 @@ class AgentRunsDB(BaseDB):
                     resolved_provider TEXT,
                     resolved_model TEXT,
                     resolved_base_url TEXT,
-                    resolved_params_json TEXT
+                    resolved_params_json TEXT,
+                    fallback_targets_json TEXT,
+                    active_fallback_index INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
@@ -590,6 +545,7 @@ class AgentRunsDB(BaseDB):
                     -- overrides as a JSON object string ('{}' = none).
                     provider TEXT NOT NULL DEFAULT '',
                     params_json TEXT NOT NULL DEFAULT '{}',
+                    fallback_models_json TEXT NOT NULL DEFAULT '[]',
                     enabled INTEGER NOT NULL DEFAULT 1,
                     max_wall_seconds REAL,
                     deleted INTEGER NOT NULL DEFAULT 0,
@@ -741,6 +697,19 @@ class AgentRunsDB(BaseDB):
                     "ALTER TABLE agent_runs ADD COLUMN work_chain_id TEXT "
                     "REFERENCES automatic_work_chains(id)"
                 )
+            # ADR-219: historical roots keep NULL membership and their limits.
+            chain_columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(automatic_work_chains)")
+            }
+            if chain_columns and "allowance_root_chain_id" not in chain_columns:
+                conn.execute(
+                    "ALTER TABLE automatic_work_chains ADD COLUMN allowance_root_chain_id "
+                    "TEXT REFERENCES automatic_work_chains(id)"
+                )
+                conn.execute(
+                    "DROP TRIGGER IF EXISTS automatic_chain_identity_immutable"
+                )
             conn.executescript(AUTOMATIC_WORK_SCHEMA)
             conn.executescript(AGENT_WORKTREES_SCHEMA)
             definition_columns = {
@@ -822,9 +791,7 @@ class AgentRunsDB(BaseDB):
                     "ALTER TABLE change_notes ADD COLUMN diff_line_index INTEGER"
                 )
             if "diff_line_text" not in note_columns:
-                conn.execute(
-                    "ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT"
-                )
+                conn.execute("ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT")
             # v20->v21 (ADR-147, TASK-32477): preset routing fields on
             # agent_definitions; resolved-target snapshot on agent_runs.
             # Same idempotent-ALTER mechanism as every column above.
@@ -848,13 +815,45 @@ class AgentRunsDB(BaseDB):
                     "TEXT NOT NULL DEFAULT '{}'"
                 )
             for column in (
-                "resolved_provider", "resolved_model",
-                "resolved_base_url", "resolved_params_json",
+                "resolved_provider",
+                "resolved_model",
+                "resolved_base_url",
+                "resolved_params_json",
             ):
                 if column not in existing_columns:
-                    conn.execute(
-                        f"ALTER TABLE agent_runs ADD COLUMN {column} TEXT"
-                    )
+                    conn.execute(f"ALTER TABLE agent_runs ADD COLUMN {column} TEXT")
+            # ADR-200: authored pairs and immutable candidate snapshots.
+            if "fallback_models_json" not in definition_columns:
+                conn.execute(
+                    "ALTER TABLE agent_definitions ADD COLUMN fallback_models_json TEXT NOT NULL DEFAULT '[]'"
+                )
+            if "fallback_targets_json" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN fallback_targets_json TEXT"
+                )
+            if "active_fallback_index" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN active_fallback_index INTEGER NOT NULL DEFAULT 0"
+                )
+            # ADR-199: wake claims retain report IDs, never report bodies.
+            wake_columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(automatic_wake_attempts)")
+            }
+            if "cause" not in wake_columns:
+                conn.execute(
+                    "ALTER TABLE automatic_wake_attempts ADD COLUMN cause TEXT NOT NULL DEFAULT 'completion' CHECK (cause IN ('completion', 'progress', 'mixed'))"
+                )
+            if "message_ids_json" not in wake_columns:
+                conn.execute(
+                    "ALTER TABLE automatic_wake_attempts ADD COLUMN message_ids_json TEXT NOT NULL DEFAULT '[]'"
+                )
+            # ADR-227: goal storage is additive after shipped automatic-work v23.
+            if "attempt_kind" not in wake_columns:
+                conn.execute(
+                    "ALTER TABLE automatic_wake_attempts ADD COLUMN attempt_kind TEXT NOT NULL DEFAULT 'fleet_wake' CHECK (attempt_kind IN ('fleet_wake', 'goal_iteration'))"
+                )
+            conn.executescript(_GOAL_RUNS_SCHEMA)
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
             # convention above (UPDATE would collide on the UNIQUE column
@@ -907,6 +906,9 @@ class AgentRunsDB(BaseDB):
             # + agent_runs resolved-target snapshot (planned as v16;
             # renumbered past dev's v16-v20, landed via #2641 and #2665).
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (21)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (22)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (23)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (24)")
 
     def _create_console_activity_receipts_schema(
         self, conn: sqlite3.Connection
@@ -1836,6 +1838,8 @@ class AgentRunsDB(BaseDB):
         resolved_model: str | None = None,
         resolved_base_url: str | None = None,
         resolved_params_json: str | None = None,
+        fallback_targets_json: str | None = None,
+        active_fallback_index: int = 0,
     ) -> str:
         """Create a new run record in ``running`` status.
 
@@ -1909,8 +1913,8 @@ class AgentRunsDB(BaseDB):
                     assistant_message_id, agent_definition, definition_fingerprint,
                     resumed_from_run_id, spawn_event_id, work_chain_id,
                     resolved_provider, resolved_model,
-                    resolved_base_url, resolved_params_json)
-                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    resolved_base_url, resolved_params_json, fallback_targets_json, active_fallback_index)
+                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id,
                     conversation_id,
@@ -1930,6 +1934,8 @@ class AgentRunsDB(BaseDB):
                     resolved_model,
                     resolved_base_url,
                     resolved_params_json,
+                    fallback_targets_json,
+                    active_fallback_index,
                 ),
             )
         return run_id
@@ -1953,9 +1959,9 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     """INSERT INTO agent_definitions
                        (id, name, description, instructions, tool_allowlist,
-                        model, provider, params_json, enabled,
+                        model, provider, params_json, fallback_models_json, enabled,
                         max_wall_seconds, deleted, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
                     (
                         definition_id,
                         defn.name,
@@ -1965,6 +1971,7 @@ class AgentRunsDB(BaseDB):
                         defn.model,
                         defn.provider,
                         json.dumps(params_to_dict(defn.params)),
+                        json.dumps(defn.fallback_models),
                         1 if defn.enabled else 0,
                         wall_cap,
                         now,
@@ -1999,7 +2006,7 @@ class AgentRunsDB(BaseDB):
                     """UPDATE agent_definitions
                        SET name = ?, description = ?, instructions = ?,
                            tool_allowlist = ?, model = ?, provider = ?,
-                           params_json = ?, enabled = ?,
+                           params_json = ?, fallback_models_json = ?, enabled = ?,
                            max_wall_seconds = ?, updated_at = ?
                        WHERE id = ? AND deleted = 0""",
                     (
@@ -2010,6 +2017,7 @@ class AgentRunsDB(BaseDB):
                         defn.model,
                         defn.provider,
                         json.dumps(params_to_dict(defn.params)),
+                        json.dumps(defn.fallback_models),
                         1 if defn.enabled else 0,
                         wall_cap,
                         _now_iso(),
@@ -2036,6 +2044,7 @@ class AgentRunsDB(BaseDB):
         # ``tool_allowlist`` above follows (JSON text in, decoded value
         # out). ``provider`` needs no decoding and flows through as-is.
         data["params"] = json.loads(data.pop("params_json") or "{}")
+        data["fallback_models"] = json.loads(data.pop("fallback_models_json") or "[]")
         data.pop("deleted", None)
         return data
 
@@ -2310,6 +2319,7 @@ class AgentRunsDB(BaseDB):
             if cursor.rowcount != 1:
                 raise RuntimeError("terminal status changed during transaction")
         return True
+
     def continuation_budget(self, conversation_id: str, run_id: str) -> dict | None:
         """Read this sub-agent's recorded budget and continuation ancestors.
 
@@ -2723,18 +2733,63 @@ class AgentRunsDB(BaseDB):
         with self.connection() as conn:
             row = conn.execute(
                 "SELECT resolved_provider, resolved_model,"
-                " resolved_base_url, resolved_params_json"
+                " resolved_base_url, resolved_params_json, fallback_targets_json, active_fallback_index"
                 " FROM agent_runs WHERE id = ?",
                 (run_id,),
             ).fetchone()
         if row is None or row[0] is None:
             return None
+        if row[4] is not None:
+            targets = json.loads(row[4])
+            index = row[5]
+            if not isinstance(index, int) or not 0 <= index < len(targets):
+                raise ValueError("invalid frozen fallback index")
+            return {
+                key: targets[index][key]
+                for key in ("provider", "model", "base_url", "params_json")
+            }
         return {
             "provider": row[0],
             "model": row[1],
             "base_url": row[2],
             "params_json": row[3],
         }
+
+    def get_run_fallback_state(self, run_id: str) -> dict | None:
+        """Read original audit identity and selected immutable candidate."""
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT fallback_targets_json, active_fallback_index FROM agent_runs WHERE id=?",
+                (run_id,),
+            ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        targets = json.loads(row[0])
+        if type(row[1]) is not int or not 0 <= row[1] < len(targets):
+            raise ValueError("invalid frozen fallback index")
+        return {
+            "targets_json": row[0],
+            "active_index": row[1],
+            "active_target": targets[row[1]],
+            "original_target": targets[0],
+        }
+
+    def set_run_active_fallback(self, run_id: str, index: int) -> None:
+        """Persist selection before dispatch; failed persistence stops fallback."""
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT fallback_targets_json, active_fallback_index FROM agent_runs WHERE id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None or not row[0]:
+                raise ValueError("no frozen fallback targets")
+            targets = json.loads(row[0])
+            if type(index) is not int or not row[1] < index < len(targets):
+                raise ValueError("invalid fallback target index")
+            conn.execute(
+                "UPDATE agent_runs SET active_fallback_index=?, updated_at=? WHERE id=?",
+                (index, _now_iso(), run_id),
+            )
 
     def latest_primary_run(self, conversation_id: str) -> dict | None:
         """Fetch the newest non-superseded PRIMARY run for a conversation.
@@ -2839,6 +2894,28 @@ class AgentRunsDB(BaseDB):
         with self.connection() as conn:
             rows = conn.execute(query, params).fetchall()
             return self._rows_to_dicts(conn, rows)
+
+    def list_change_review_run_anchors(self, conversation_id: str) -> list[dict]:
+        """Read primary run anchors without loading unrelated history payloads.
+
+        Args:
+            conversation_id: Console conversation whose markers are projected.
+
+        Returns:
+            Non-superseded primary IDs and assistant anchors, oldest first.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, assistant_message_id FROM agent_runs
+                WHERE conversation_id = ? AND agent_kind = 'primary'
+                    AND status != 'superseded'
+                ORDER BY created_at ASC, id ASC
+                """,
+                (conversation_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
 
     def list_subagent_run_headers(
         self,
@@ -3377,3 +3454,253 @@ class AgentRunsDB(BaseDB):
                 ),
             )
             return cursor.rowcount
+
+
+# Additive goal DDL stays with the existing storage owner: no startup import.
+_GOAL_RUNS_SCHEMA = """
+BEGIN IMMEDIATE;
+CREATE TABLE IF NOT EXISTS goal_runs (
+    id TEXT PRIMARY KEY,
+    launch_id TEXT NOT NULL UNIQUE,
+    payload_hash TEXT NOT NULL,
+    request_json TEXT NOT NULL CHECK (length(CAST(request_json AS BLOB)) <= 131072),
+    conversation_id TEXT NOT NULL UNIQUE,
+    chain_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_chains(id),
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    status TEXT NOT NULL DEFAULT 'starting',
+    pause_reason TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS goal_waits (
+    goal_id TEXT PRIMARY KEY REFERENCES goal_runs(id),
+    retry_at REAL NOT NULL,
+    reason TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS goal_iterations (
+    id TEXT PRIMARY KEY,
+    goal_id TEXT NOT NULL REFERENCES goal_runs(id),
+    ordinal INTEGER NOT NULL CHECK (ordinal > 0),
+    launch_id TEXT NOT NULL UNIQUE,
+    attempt_id TEXT NOT NULL UNIQUE REFERENCES automatic_wake_attempts(id),
+    run_id TEXT REFERENCES agent_runs(id),
+    status TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    check_results_json TEXT NOT NULL DEFAULT '[]' CHECK (length(CAST(check_results_json AS BLOB)) <= 131072),
+    evidence_refs_json TEXT NOT NULL DEFAULT '[]' CHECK (length(CAST(evidence_refs_json AS BLOB)) <= 8192),
+    UNIQUE(goal_id, ordinal)
+);
+CREATE TABLE IF NOT EXISTS goal_reports (
+    id TEXT PRIMARY KEY,
+    goal_id TEXT NOT NULL REFERENCES goal_runs(id),
+    iteration_id TEXT UNIQUE REFERENCES goal_iterations(id),
+    payload_json TEXT NOT NULL CHECK (length(CAST(payload_json AS BLOB)) <= 65536)
+);
+CREATE TABLE IF NOT EXISTS goal_checkpoints (
+    attempt_id TEXT PRIMARY KEY REFERENCES automatic_wake_attempts(id),
+    goal_id TEXT NOT NULL REFERENCES goal_runs(id),
+    payload_hash TEXT NOT NULL,
+    payload_json TEXT NOT NULL CHECK(length(CAST(payload_json AS BLOB)) <= 131072)
+);
+CREATE TABLE IF NOT EXISTS goal_evidence (
+    id TEXT PRIMARY KEY,
+    goal_id TEXT NOT NULL REFERENCES goal_runs(id),
+    attempt_id TEXT NOT NULL REFERENCES automatic_wake_attempts(id),
+    payload_json TEXT NOT NULL CHECK(length(CAST(payload_json AS BLOB)) <= 131072)
+);
+CREATE TABLE IF NOT EXISTS goal_payload_reservations (
+    attempt_id TEXT PRIMARY KEY REFERENCES automatic_wake_attempts(id),
+    goal_id TEXT NOT NULL REFERENCES goal_runs(id),
+    bytes INTEGER NOT NULL CHECK(bytes >= 0)
+);
+DROP TRIGGER IF EXISTS goal_launch_immutable;
+CREATE TRIGGER goal_launch_immutable
+BEFORE UPDATE OF launch_id, payload_hash, request_json, conversation_id, chain_id ON goal_runs
+WHEN OLD.launch_id IS NOT NEW.launch_id OR OLD.payload_hash IS NOT NEW.payload_hash
+ OR (OLD.request_json IS NOT NEW.request_json AND NOT (NEW.request_json='' AND NEW.status='removed'
+     AND OLD.status IN ('completed','paused','awaiting_result_review','stopped')
+     AND NOT EXISTS (SELECT 1 FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id
+         WHERE i.goal_id=OLD.id AND a.state IN ('prepared','accepted','review_required'))))
+ OR OLD.conversation_id IS NOT NEW.conversation_id OR OLD.chain_id IS NOT NEW.chain_id
+BEGIN SELECT RAISE(ABORT, 'goal launch is immutable'); END;
+
+COMMIT;
+"""
+
+
+# Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_AGENT_BASES = AgentRunsDB.__bases__
+_RUN_LOG_PROBE_INHERITED = (
+    "_init_store_kernel",
+    "_get_connection",
+    "_held_connection",
+    "connection",
+    "transaction",
+    "close",
+    "_transaction_immediate_default",
+)
+_AGENT_RUNS_FACTORY_SLOTS = (
+    (globals(), "AgentRunsDB", AgentRunsDB),
+    (globals(), "BaseDB", BaseDB),
+    (globals(), "SQLiteStoreKernel", SQLiteStoreKernel),
+    (globals(), "_store_kernel", _store_kernel),
+    (globals(), "_RUN_LOG_PROBE_AGENT_BASES", _RUN_LOG_PROBE_AGENT_BASES),
+    (globals(), "_RUN_LOG_PROBE_INHERITED", _RUN_LOG_PROBE_INHERITED),
+    (globals(), "__file__", __file__),
+    (globals(), "__spec__", __spec__),
+    (__spec__, "origin", getattr(__spec__, "origin", None)),
+    (sys.modules, __name__, sys.modules[__name__]),
+    (sys.modules, _store_kernel.__name__, _store_kernel),
+    (vars(_store_kernel), "__name__", _store_kernel.__name__),
+    (vars(_store_kernel), "__file__", _store_kernel.__file__),
+    (vars(_store_kernel), "__spec__", _store_kernel.__spec__),
+    (_store_kernel.__spec__, "origin", getattr(_store_kernel.__spec__, "origin", None)),
+    (vars(_store_kernel), "SQLiteStoreKernel", SQLiteStoreKernel),
+    (BaseDB, "_get_connection", vars(BaseDB)["_get_connection"]),
+    (
+        BaseDB._get_connection.__globals__,
+        "connect_private_sqlite",
+        BaseDB._get_connection.__globals__["connect_private_sqlite"],
+    ),
+    *(
+        (AgentRunsDB, name, inspect.getattr_static(AgentRunsDB, name))
+        for name in (
+            "__init__",
+            "_open_connection",
+            "_configure_connection",
+            "_kernel_sqlite_owner",
+            "__getattribute__",
+            "__dict__",
+            *_RUN_LOG_PROBE_INHERITED,
+        )
+    ),
+    *(
+        (SQLiteStoreKernel, name, vars(SQLiteStoreKernel)[name])
+        for name in (*_RUN_LOG_PROBE_INHERITED, "is_memory_db")
+    ),
+    *(
+        (vars(_store_kernel), name, vars(_store_kernel)[name])
+        for name in (
+            "_core_access",
+            "_core_cached_connection",
+            "_register_core_connection",
+            "_core_closing",
+        )
+    ),
+)
+_RUN_LOG_PROBE_SLOTS = (
+    *_AGENT_RUNS_FACTORY_SLOTS,
+    *(
+        (AgentRunsDB, name, inspect.getattr_static(AgentRunsDB, name))
+        for name in (
+            "get_run_metadata",
+            "latest_primary_run_metadata",
+            "_metadata_row_to_dict",
+        )
+    ),
+)
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    _RUN_LOG_PROBE_SLOTS,
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in _RUN_LOG_PROBE_SLOTS
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+_CHANGE_REVIEW_FACTORY_SOURCES = tuple(
+    ((function, code, defaults, kwdefaults, items), defining, closure, cells, wrapped)
+    for function, code, defining, defaults, kwdefaults, items, closure, cells, wrapped
+    in _RUN_LOG_PROBE_SOURCE[5]
+)
+
+
+# Exact current badge callbacks; custom callbacks retain their original path.
+from inspect import getattr_static as _badge_count_getattr_static
+
+_CONVERSATION_SUBAGENT_COUNT_CALLBACK = (
+    AgentRunsDB,
+    "count_subagents_by_conversation",
+    AgentRunsDB.count_subagents_by_conversation,
+    AgentRunsDB.count_subagents_by_conversation.__code__,
+    AgentRunsDB.count_subagents_by_conversation.__globals__,
+    AgentRunsDB.__getattribute__,
+    _badge_count_getattr_static(AgentRunsDB, "__dict__"),
+)
+del _badge_count_getattr_static
+
+
+# Bind the preceding public reader in its defining module before bridge use.
+_CHANGE_REVIEW_LIST_RUNS_SOURCE = (
+    AgentRunsDB.list_runs, AgentRunsDB.list_runs.__code__,
+    AgentRunsDB.list_runs.__defaults__,
+)
+
+
+# Direct defining callbacks for finite marker presentation.
+_CHANGE_REVIEW_READ_SOURCES = tuple(
+    (
+        name,
+        inspect.getattr_static(AgentRunsDB, name),
+        tuple(
+            (
+                function,
+                function.__code__,
+                function.__defaults__,
+                function.__kwdefaults__,
+                tuple((function.__kwdefaults__ or {}).items()),
+            )
+            for function in (
+                outer,
+                *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+                *(
+                    (outer.__wrapped__.__wrapped__,)
+                    if hasattr(outer, "__wrapped__")
+                    and hasattr(outer.__wrapped__, "__wrapped__")
+                    else ()
+                ),
+            )
+        ),
+    )
+    for name in (
+        "list_runs",
+        "list_change_review_run_anchors",
+        "change_snapshots_for_conversation",
+        "_open_connection",
+        "_configure_connection",
+        "connection",
+        "_held_connection",
+        "_get_connection",
+        "close",
+    )
+    for outer in (inspect.getattr_static(AgentRunsDB, name),)
+)

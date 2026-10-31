@@ -1,0 +1,32 @@
+
+==================================== ERRORS ====================================
+____________ ERROR collecting Tests/Chat/test_console_chat_start.py ____________
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/python.py:498: in importtestmodule
+    mod = import_path(
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:549: in import_path
+    mod = _import_module_using_spec(
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:725: in _import_module_using_spec
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/assertion/rewrite.py:186: in exec_module
+    exec(co, module.__dict__)
+Tests/Chat/test_console_chat_start.py:9: in <module>
+    from Tests.Chat.test_console_chat_create_integration import _FakeConfirm, _FakeExecutor
+<frozen importlib._bootstrap>:1360: in _find_and_load
+    ???
+<frozen importlib._bootstrap>:1331: in _find_and_load_unlocked
+    ???
+<frozen importlib._bootstrap>:935: in _load_unlocked
+    ???
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/assertion/rewrite.py:186: in exec_module
+    exec(co, module.__dict__)
+Tests/Chat/test_console_chat_create_integration.py:19: in <module>
+    from tldw_chatbook.Chat.console_agent_bridge import (
+E     File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_agent_bridge.py", line 5618
+E       fork_chat_enabled: bool = False,
+E       ^^^^^^^^^^^^^^^^^^^^^^^
+E   SyntaxError: duplicate argument 'fork_chat_enabled' in function definition
+=========================== short test summary info ============================
+ERROR Tests/Chat/test_console_chat_start.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 0.52s

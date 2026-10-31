@@ -273,7 +273,7 @@ _ACTION_LABELS: dict[HubAction, str] = {
     HubAction.VALIDATE: "Check readiness",
     HubAction.VIEW_DETAILS: "View details",
     HubAction.OPEN_TOOL_CATALOG: "Open tool catalog",
-    HubAction.OPEN_AUDIT: "Open audit",
+    HubAction.OPEN_AUDIT: "Open history",
 }
 
 # Tooltips for the actions that have first-class UI (see _wired_actions()).
@@ -282,7 +282,7 @@ _ACTION_LABELS: dict[HubAction, str] = {
 _WIRED_ACTION_TOOLTIPS: dict[HubAction, str] = {
     HubAction.VIEW_DETAILS: "Show this server's detail view in Servers mode.",
     HubAction.OPEN_TOOL_CATALOG: "Switch to Tools mode.",
-    HubAction.OPEN_AUDIT: "Switch to Audit mode.",
+    HubAction.OPEN_AUDIT: "Switch to History mode.",
     HubAction.CONNECT: "Connect to this server and discover its tools.",
     HubAction.VALIDATE: "Test the connection without changing the cached catalog.",
     HubAction.REFRESH_DISCOVERY: "Reconnect and refresh the tool/resource/prompt catalog.",
@@ -347,6 +347,8 @@ def _risk_floored_notice(effective: EffectiveToolState) -> str:
     if effective.origin == "tool_override":
         return _ALWAYS_ASK_NOTICE
     return _RISK_FLOORED_NOTICE
+
+
 # task-32281: cap on one exact-input allow rule row's displayed argument
 # summary -- long enough to be legible, short enough that a row with a big
 # argument payload doesn't dominate the permission block.
@@ -2287,7 +2289,9 @@ class MCPInspector(VerticalScroll):
         """
         # Capture before yielding; cached refreshes retain the original review.
         if tool is not None and reviewed_definition_hash is None:
-            reviewed_definition_hash = definition_hash(tool.description, tool.input_schema)
+            reviewed_definition_hash = definition_hash(
+                tool.description, tool.input_schema
+            )
         self._current_permission_definition_hash = reviewed_definition_hash
         container = self.query_one("#mcp-inspector-permission", Vertical)
         self._retire_permission_navigation("mcp-inspector-goto-permission")
@@ -2440,8 +2444,7 @@ class MCPInspector(VerticalScroll):
             )
             widgets.append(
                 Static(
-                    f"{rule_prefix} · {_arg_rule_summary(args_json)}"
-                    f"{inherited_suffix}",
+                    f"{rule_prefix} · {_arg_rule_summary(args_json)}{inherited_suffix}",
                     id=f"mcp-inspector-arg-rule-{index}",
                     classes="ds-field-row",
                     markup=False,
@@ -2497,7 +2500,9 @@ class MCPInspector(VerticalScroll):
                 tooltip=_SESSION_APPROVAL_REVOKE_TOOLTIP,
             )
             self._session_approval_actions[button] = (
-                server_key, tool_name, self._current_permission_profile_context
+                server_key,
+                tool_name,
+                self._current_permission_profile_context,
             )
             widgets.append(button)
         if show_goto_button:
@@ -2577,7 +2582,8 @@ class MCPInspector(VerticalScroll):
                 session_approvals=session_approvals,
                 reviewed_definition_hash=(
                     self._current_permission_definition_hash
-                    if expected_view is not None else None
+                    if expected_view is not None
+                    else None
                 ),
             )
 
@@ -3043,7 +3049,7 @@ class MCPInspector(VerticalScroll):
         """The `HubTool` `#mcp-inspector-tool` currently describes, or `None`.
 
         Read-only accessor for `MCPWorkbench.open_test_for_selected_tool()`
-        (the `t` keybinding's entry point, mcp_screen.py) to check whether
+        (the `t` keybinding's entry point, the Tools & MCP pane) to check whether
         there's anything to test before dispatching -- mirrors how every
         other cross-widget read here goes through a public method rather
         than reaching into `_current_tool` directly.

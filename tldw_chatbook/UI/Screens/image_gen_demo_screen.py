@@ -9,6 +9,7 @@ Renders the generated image with the low-level `rich_pixels`/PIL primitives
 directly (NOT the Console transcript/attachment rendering path), since this
 panel has no message list to attach an image to.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -18,6 +19,7 @@ from textual import work
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Input, Label, Select, Static, TextArea
+from textual.worker import Worker, get_current_worker
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ...Image_Generation.worker import build_request, run_generation
@@ -39,7 +41,7 @@ class ImageGenDemoScreen(BaseAppScreen):
             yield Label("Image Gen (dev) — throwaway Phase-1 panel")
             opts = [
                 (
-                    f'{entry["name"]}{"" if entry.get("is_configured") else "  (not configured)"}',
+                    f"{entry['name']}{'' if entry.get('is_configured') else '  (not configured)'}",
                     entry["name"],
                 )
                 for entry in list_image_models_for_catalog()
@@ -105,6 +107,8 @@ class ImageGenDemoScreen(BaseAppScreen):
         # call_from_thread(). Everything (incl. the render/decode step) stays
         # inside this try/except so no failure mode can crash the app --
         # @work defaults to exit_on_error=True.
+        worker = get_current_worker()
+        app = self.app
         try:
             req = build_request(
                 backend=backend,
@@ -114,25 +118,51 @@ class ImageGenDemoScreen(BaseAppScreen):
                 image_format="png",
             )
             res = run_generation(req)  # blocking; we are in a worker thread
-            self.app.call_from_thread(self._render_result, res, req)
+            # task-34935: decode/thumbnail/pixel conversion also run on the
+            # worker thread; only the widget updates marshal to the loop.
+            pixels, meta = self._decode_result(res, req)
+            app.call_from_thread(self._publish_generation, worker, pixels, meta)
         except Exception as exc:  # surface any failure (incl. render/decode) as status
             logger.warning("Image Gen (dev) generation failed: {}", exc)
             # Marshal the DOM write onto the UI thread -- query_one() must not
             # run on the worker thread.
-            self.app.call_from_thread(self._set_status, f"Error: {exc}")
+            app.call_from_thread(
+                self._publish_generation, worker, error=f"Error: {exc}"
+            )
 
-    def _render_result(self, res, req) -> None:
-        # Low-level render (rich-pixels), decoupled from the Console
-        # transcript/attachment path -- this panel has no message list.
+    def _publish_generation(
+        self, worker: Worker, pixels=None, meta: str = "", *, error: str | None = None
+    ) -> None:
+        """Publish only while the originating worker and screen are still live."""
+        # Exclusive workers cancel predecessors, but their threads (and queued
+        # UI callbacks) can outlive cancellation. Check at the actual DOM write.
+        if worker.is_cancelled or self._pruning or not self.is_attached:
+            return
+        if error is not None:
+            self._set_status(error)
+        else:
+            self._apply_result(pixels, meta)
+
+    def _decode_result(self, res, req):
+        """Decode + downscale + pixel-convert on the worker thread (TASK-34935).
+
+        Kept inside the worker's try/except: a decode failure surfaces as
+        the same status error as a generation failure.
+        """
         from rich_pixels import Pixels
         from PIL import Image as PILImage
         import io
 
         img = PILImage.open(io.BytesIO(res.content))
         img.thumbnail((80, 40))
-        self.query_one("#imagegen-status", Static).update("Done")
-        self.query_one("#imagegen-image", Static).update(Pixels.from_image(img))
-        self.query_one("#imagegen-meta", Static).update(
+        meta = (
             f"backend={req.backend} format={res.content_type} bytes={res.bytes_len} "
             f"seed={req.seed} prompt={req.prompt!r}"
         )
+        return Pixels.from_image(img), meta
+
+    def _apply_result(self, pixels, meta: str) -> None:
+        # UI-thread half: widget updates only.
+        self.query_one("#imagegen-status", Static).update("Done")
+        self.query_one("#imagegen-image", Static).update(pixels)
+        self.query_one("#imagegen-meta", Static).update(meta)

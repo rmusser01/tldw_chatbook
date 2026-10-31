@@ -1,0 +1,179 @@
+# Dreams and Guardian current-dev integration
+
+**Goal:** Complete PR2921's approved Dreams Settings/query-angle and local Guardian scope, address all fifteen review threads and independent findings, then qualify and merge against sequential current dev.
+
+**Source:** latest independently reviewed author0c941ba2ec984d960ba83376aeace0e830452bbc, frozen codex/wave2-update-pr-2921-0c941ba2. Exact feature range9595facbbb56b3eee533ad8c12e034eb986f32c0..source is113nonmergecommits/88paths. Earlier6c074d6e (84/78) remains immutable history. Original7f18b6ec and its22commit/56path range remain historical provenance. Private governance is prepared on actual merged Goal9595facbbb; Private implementation may start only on the separately identified, independently cleared current-dev plus PersonalContext/2874/Buddy code stack described below. Recheck actual post-Buddy/latest dev and live author head before publication. No stale whole-file replacement or imported dev prerequisites.
+
+**Spec:** TASK33165,33200,34792 and admitted source follow-ups34801–34804 and34815–34817; original approved daily Dreams design and local Guardian design. Source/task claims and historical qualification remain evidence. Local Guardian is the approved scope; companion-server implementation is outside this PR.
+
+ADR required: yes, amendments to existing provenance/storage/recovery decisions.
+ADR path: exact existing196 Dreams,204 local Guardian,207 egress provenance and126 recovery decisions, with029 privacy,150/161 design tokens and current custody/decision/automatic-work ADRs.
+Reason: implement the already-approved budget/privacy/provenance and recovery policies at actual shared owners; a versioned Subscriptions provenance migration and qualified optional Guardian/Dreams stores must be documented before their implementation. No competing ADR IDs, new dependency, clinical advice or server activation.
+
+## Global Constraints
+
+- Root assigns one isolated worktree/branch and records both actual dev and the exact independently cleared private combined start before dispatch; the private stack is never represented as merged dev. No primary/foreign edits, stash, shared Git config, gc/prune, GitHub writes or child agents. Normal hooks; per-command git gc.auto=0; root handles exact lease publication/protected sequential merge.
+- Preserve prior integrated Goal/Personal Context/Buddy and actual captured-send, queue, prompt/admission, permissions, hooks, accounting, source-root, endpoint and teardown owners. Original Settings F9 notes stay historical; live canonical Settings uses current F4 destination.
+- The scope includes all genuine remaining approved source outcomes. Do not drop Guardian or its Settings entry to avoid fixing blockers. Phases1-3 Dreams already landed; replay only the exact remaining range and necessary review fixes.
+- No untrusted URL obtains user-entered/self origin authority. Persist stable provenance through every Subscriptions fetch/redirect boundary; UNKNOWN is fail-closed. Preserve explicitly user-entered intranet subscriptions under current ADR207. Migration never relabels old unknown/model-derived rows as user-entered merely to preserve access.
+- Guardian disabled means no runtime checks/build/read signals. Explicit Settings/history may inspect an already-open store under their own authority. Live revocation/crisis change removes Guardian-derived outbound contribution without deleting separately authorized user/seed/other-source interests. Private spans and unsearchable goals never enter outbound synthesis/export payloads.
+- Pin Guardian checks and notices to the captured send session and visit. Delayed work never retargets the active chat; blank chats obtain real ownership before durable counters/notices. Current refusal/draft acknowledgement semantics survive every await.
+- Revalidate enabled/consent at every actual external spend boundary after waits. Already-started work settles normally, but no next search/provider/story/judge/notification begins after disable. Cycles and track checks use one atomic daily reservation owner; attempted invocations remain charged and no duplicate post-call increments are added.
+- Preserve generating query/goal attribution through Candidate dedup/ranking and story persistence. Lexical topic matching remains separate and cannot manufacture goal provenance. Every new stored shape uses the next actual schema version with exact predecessor upgrade/rollback/reopen/refusal proof and measured recovery catalogs.
+- Guardian and Dreams stores participate in current recovery inventory/admission/capture/validation/relocation/groups/persistence with correct optional-unused and custom-path behavior. Restored behavioral settings/rules remain inert until current activation accepts them. Private construction uses current BaseDB/helper ownership; no direct fake namespace or blanket path exemptions.
+- Offload known file-backed blocking DB/trend work with a finite grouped scope and real drain/quiescence ownership. In-memory/unknown notification stores retain thread affinity. Never close borrowed/foreign handles, force GC, suppress unraisables or relax descriptor/deadline/custody limits.
+- Crisis-derived direct, trend, aggregate and next-visit summary notices carry the same existing resource/disclaimer block. Crisis rules remain notify-only and never feed discovery. Do not broaden crisis content into private model calls.
+- Read design-language/component patterns/live-verification lessons before UI; compose existing token-backed spacing/status/opacity/control classes. Source CSS modules and canonical builder only. Verify actual isolated modal focus/clipping at narrow width; no size/style/import/boot/CSS cap increase.
+- Python3.12.11/project venv; targeted offline/private-profile checks only. No full sweep, user profile/keyring/provider/server, live cloud spend or fabricated historical proof. Exact source hashes/node inventories/JUnit/commands and native cleanup phases bind fresh claims to final committed source.
+- Keep older Dreams33165, Guardian33200 and Settings34792 identities; incoming Personal Context Canvas is34800. Coordinate any fresh identifiers with root after fresh all-ref/worktree census. Task plans precede code, notes preserve history; Done awaits all actual acceptance/review requirements.
+
+## Task 1: Integrate and qualify the complete local Dreams/Guardian arc
+
+**Files:** The exact88-path second updated author feature range and connected current Subscriptions/egress, Dreams discovery/cycle/track/profile/query, Guardian DB/check/trend/settings, Scheduling handler/drain, current Console captured-dispatch/summary, canonical Settings groups/modal, backup/recovery owner/inventory/catalog/participants/paths/groups, source-derived diagnostics/UI CSS and applicable tests. Produce a final path/function disposition manifest including every shared changed caller and test.
+
+1. Read exact source tasks/specs/current decisions and audit. Recheck actual base/range intersection; restore original task/history and approved source governance without unrelated prerequisites. CLI reopen33165/33200/34792 and append current plan before code; add only acceptance outcomes needed to describe reviewed provenance/consent/recovery/cost obligations. Document exact schema and ownership amendments before implementation. Carry only the113 updated nonmerge feature commits as a range or equivalent attributable exact patch, retaining all actual dev owner/ratchet/lesson additions. Put source follow-ups34801/34802/34804/34815–34817 InProgress; retain34803 author completion/history and reopen only final integrated qualification and append their plans before implementation; do not create duplicate IDs.
+2. Carry the updated source's actual fifteen remediations and preserve its addressed atomic shared-budget/generating-goal contracts. Reproduce the remaining updated privacy/spend/recovery/Guardian/navigation blockers with meaningful real-DB/real-owner regressions, including master-off startup and first restored fetch. Incorporate token/lint/mixed-goal selection and remaining direct literal-name sinks. Shared runtime Toast/notify finding13 is already fixed: preserve its exact author code, real mounted tests and caller audit. Retained prior updated audit probes establish8intended failures/1positive; second-source unchanged post-await probes freshly remain2RED while23 author positives pass; adapt only obsolete fixture/caller seams without weakening assertions. Requalify addressed exact generating-goal, shared last-budget and per-search disable positives rather than reimplement them.
+3. Fix provenance at shared Subscriptions boundaries once, with a versioned next-schema migration, conservative legacy provenance, redirect/DNS rebinding controls and user-entered intranet positives. Update exact recovery/schema/SQL audit catalogs and qualify populated predecessor data, rollback/reopen/future/hybrid refusal.
+4. Fix live Guardian signal authorization and captured-chat ownership in shared paths. Prove opt-in -> revoked/crisis/disabled transitions, independently authorized topic preservation, A->B switching across blocked thread work, real blank chat IDs and no cross-chat private notices/refusal.
+5. Preserve the updated BEGIN IMMEDIATE shared atomic reservation owner for every cycle/track synthesis/search/story/judge; add sticky enabled/consent checks after actual waits at each invocation. Pending Dreams work must fail closed at its own fetch/dispatch boundary when boot suspension/backfill times out or fails; retain unrelated scheduler progress and finite boot ownership, with no accepted fail-open authority window. Prove concurrent cycle+track last-slot race, disable inside first batch search, after provider resolution, before judges/alerts, and conservative started-call settlement.
+6. Retain generating query/goal IDs through discovery dedup/ranking/story persistence and feedback-angle writes without changing goal weights. Qualify actual Dreams v6 (and the next version only if a new stored shape is necessary), every supported populated predecessor v1–v5 upgrade, exact columns/IDs/timestamps/searchable flags/user-seed-goal angles, failed upgrade rollback, reopening and recovery admission.
+7. Declare Guardian/Dreams optional recovery ownership and inert restore authority. Add actual installed-adapter/fresh-catalog/custom-path/unused/maintenance/capture/validation/relocation/persistence tests. Group file-backed daily trend work with exact drain and notification-affinity controls, preserving original owners. Carry crisis provenance/resource rendering through every surface and test aggregate/summary paths separately from direct hits.
+8. Compose canonical Settings modal tokens and fix new-file lint without renaming established public module seams blindly. Verify actual production modal focus and narrow-width geometry, all Dreams/Guardian settings registration/footer/summary/inspector/gates, provider-unset behavior and current profile/theme/Goal suspend/reload ownership. Rebuild derived outputs from source and measure boot/size/detector/custody guards against exact base.
+9. Measure goal/topic selection before and after using the actual mixed profile; give goal-found stories a practical opportunity while retaining topic results/private-goal/budget/provenance contracts. Persist CaptureSaveRequest lineage into versioned Collections records and through actual Library Retry/redirect/DNS consumers; explicit user-entered sources retain authorized behavior. Qualify actual Collections populated predecessor upgrade, failed migration rollback, reopening, unknown/malformed/future/hybrid refusal and installed recovery catalogs/participants/custom-path/capture/validation/relocation before accepting that new shape. Preserve the already-fixed shared Toast and both notify sinks plus their real Textual tests; fix only remaining unsafe direct Schedules/Watchlists runtime-name sinks under34817, preserving existing Text/control-character protections. Route Dreams story list, every existing story action and goals editor through actual Library navigation/catalog/controller owners; replace old ArtifactsScreen test routing with the production destination and update real location/key hints. Show recorded degradation_notes at the actual collection-reading view under34815 without adding normal-completion noise or a new cycle policy. Do not invent a second artifact shell.
+10. Bind a bounded critical selection of every new privacy/provenance/spend/recovery/navigation/notification/worker-currentness regression into existing required PR lanes and exact membership guards, preserving prior Goal/PC/Buddy targets/order/census/deadlines. Freeze the complete targeted affected inventory; qualify actual final runtime/source/UI/recovery/notification/scheduler/Console ownership lanes and the specific thread contracts. Self-review, commit normal hooks/gc disabled, bind report to exact final bytes; run only checks invalidated by final edits. Preserve every source receipt and earlier failed/intermediate run distinctly. No publication, task Done or merged claim by worker.
+11. Root obtains independent complete-head spec and quality review, routes one coherent fix wave if needed, checks final latest dev overlap and required hosted CI, replies/resolves each thread using actual integrated evidence, updates PR scope/body and exact-leased branch, and performs authorized protected sequential rebase merge.
+
+## Report and review gate
+
+One cohesive phased implementation task; no child agents. Brief/report live in this plan's isolated SDD workspace. Return status, commits, one-line targeted evidence and concerns only; full report includes exact scope/manifests/schema/owner proof, source-vs-fresh claims, commands/counts/limits and all fifteen thread dispositions. Both independent spec and quality verdicts are required before publication; no old source count substitutes for integrated source or physical retirement.
+
+## Historical first author update (superseded by second update below)
+
+Original7f18b6ec remains frozen provenance. Latest reviewed author6c074d6eed is84 feature commits/78paths on7b7193d647; its240path old-to-new delta also imports dev prerequisites. Carry only the actual new feature range onto the real post-Buddy sequential base, preserving current Goal/Personal Context/Buddy and native owner/ratchet work. Source budgets now use one BEGIN IMMEDIATE reservation owner; generating query/exact goal survives dedup/story/feedback. Preserve and requalify these addressed contracts rather than reimplement them. Dreams durable shape is nowv6, not the old plan'sv3.
+
+Independent report pr2921-updated-source-independent-review.md maps all9 original blockers and15threads, retains8 intended failures/1newpositive and22 source positives. Updated blocking work is: conservative stored legacy/malformed/failed-mark provenance; end-to-end Capture/Collections/Retry provenance; live Guardian consent and disabled runtime access; captured nonempty chat/session/visit ownership; post-await sticky-disable dispatch; exact Dreamsv6/Guardianv1 plus affected Collections durable recovery/admission/relocation/participants and inert restored activation; finite file-backed Guardian work/drain; crisis provenance/resources on every relevant projection; and actual Library-owned Dreams story/goals routing. Correct new UI tokens/F4 docs and20 new Guardian lint findings.
+
+Existing author follow-ups34801-34804 are restored without new IDs or history loss. Their acceptance criteria govern the additional selection, capture Retry, literal notification and production-navigation corrections. Read them and put them In Progress via CLI before implementation; append an ADR check/plan first, then qualify actual outcomes. The smallest mixed-goal/topic selection correction must give an otherwise-unselected goal result a practical opportunity while retaining topic stories; keep private-goal and budget/provenance contracts. Shared runtime notifications must render literally at toast and both fallbacks, with deliberately formatted producers audited/preserved.
+
+Use current recovery/owner architecture and amend existing ADR196/204/207/126 as appropriate; no competing ADR/task IDs. Measure all actual supported Dreams predecessors throughv6 and Guardianv1 shapes, plus any new Collections version, before recovery catalogs are accepted. Keep unknown/malformed/future refusal, rollback/reopen, custom selectors and absent optional stores explicit. Restored configuration/rules remain inert pending current activation. No version relabelling or whole-tree replacement.
+
+Later PR3042 is only partially overlapped: the author already routes Dreams through BaseDB's connector and adds a strong locked connection registry/close_all, but publicclose still retires only the caller. Preserve that registry, actual v3-v6 migrations and provenance; reconcile and qualify the remaining public quiescent-close outcome at3042's sequence position. Do not replay its older whole DB or close it as fully superseded.
+
+Task1 above is rewritten for the updated84commit/78path/v6 source and admitted follow-ups; the old22commit/v3 phase wording is historical, never a dispatch requirement. No product implementation has begun on this branch. Root will refresh the author head/lease and ID census before implementation/publication; independent source experiments remain historical until final integrated bytes and native recovery/UI/resource behavior qualify.
+
+## Second author update — authoritative source and remaining boundaries
+
+Author0c941ba2ec984d960ba83376aeace0e830452bbc is113 nonmerge feature commits/88paths after actual mergedGoal9595. Old6c84/78 and7f22/56 plus all three bundles remain historical; the169path6c-to0c delta includes Goal/Evals prerequisites and is never the feature payload. The complete Task1 above and regenerated brief govern current implementation. Read pr2921-second-updated-source-independent-review.md; both verdicts remain CHANGES_REQUIRED. No product implementation has begun.
+
+Preserve strong shielded boot reconcile lifetime, both-store activation checks, explicit user URL-edit lineage, verifying backfill and interrupted suspension debt/reminder handover. Preserve actual shared notification fixes and34803 author completion/caller audit; requalify integrated bytes without reimplementing them. Actual shared budgets/exact generating-goal attribution remain addressed.
+
+The remaining load-bearing obligations include conservative missing/malformed/restored provenance at first fetch with Dreams on/off (34816), end-to-end initial Capture plus Retry/every redirect and qualified Collections migration (renamed34802), live Guardian consent/captured-session ownership, post-await sticky disable and fail-closed pending master-off startup dispatch, exact Dreamsv6/Guardianv1 optional/custom recovery and finite physical lifetime, crisis resources, actual Library navigation/goals plus persisted degradation detail (34804/34815), mixed-topic/goal selection (34801), and unsafe direct Schedules/Watchlists name sinks (34817). Their descriptions disclose defects; filing them does not defer required fixes. Shared DNS address pinning remains an accurately reported existing residual unless the actual shared transport qualifies it.
+
+Ruling: refresh the authoritative Task1/brief and preserve all newly pushed author work before implementation — obsolete84/78/helper-fix wording would drop useful fixes and duplicate work — costs a governance refresh and final combined qualification. Ruling: reopen34803 only for combined qualification while retaining its author Done/check history — actual source already fixes the product sink — costs a targeted real-Toast check rather than reimplementation. Ruling: admit34815–34817 and the expanded34802 into existing approved remediation — they specify concrete connected privacy/navigation/presentation outcomes — costs bounded implementation and installed recovery/native proof without a new feature boundary.
+
+## Private implementation start; protected publication stays sequential
+
+Before Task1 implementation, root must independently clear PersonalContext's currentdf transplant, restack the already-reviewed2874/Buddy narrow deltas on that exact code, and qualify only their changed production route/stale controls plus the current preimport budget. Freeze that combined private code head, then transplant only this Dreams governance after9595 onto it, preserving all source task identities/history and actualdf Notes/Buddy/Library/Settings owners. This is a concrete private implementation base, never an actual-merge or hosted-green claim. No implementation begins while that gate is unmet.
+
+The actual post-Buddy/latestdev gate still precedes Dreams publication. Reconcile only reviewed Dreams feature/governance onto the real sequential merged base, qualify changed boundaries only, refresh the live author head/exactlease and every thread, require protected current-headCI, then rebase-merge in user order. Earlier PC/2874/Buddy protectedCI/finalthreads/merges cannot be skipped or reordered by this private start.
+
+Ruling: allow Dreams implementation on the independently cleared currentdev/PC/2874/Buddy private code stack while protected predecessorCI runs — all runtime prerequisites can be concretely reviewed before merge and user requested continuous progress alongside other merges — costs a later attributable feature-only rebase and any genuinely invalidated controls; actualpostBuddy/latestbase publication, full remaining fixes and protected sequential merge remain binding.
+
+### Task 1 execution note: provenance qualification fixture scope
+
+The affected source authoring families `Tests/Subscriptions/test_local_watchlists_service.py` and `Tests/Watchlists/test_watchlists_bulk_source_authoring.py` require their existing private collection-time source selection. An isolated service node fails before the intended assertions on both the current provenance edits and the exact pre-phase c2bae700a1 export. Module-local `bootstrap_profile` markers repair only these source-bound families, retaining original assertions, private DB ownership, deadlines and teardown. This is pre-phase control evidence, not accepted-dev attribution. Final affected required-lane placement must include the real authoring/UI cases and their source-bound fixture admission; no global marker plugin or production admission exemption is authorized. Details and distinct raw receipts remain in the Task1 report.
+
+
+### Task1 execution ruling: Guardian historical crisis provenance
+
+Inspection of the integrated v1 guardian_alerts schema confirmed no durable crisis
+snapshot/payload field. A current-rule join cannot preserve classification after
+edit/deletion. Root approved the smallest additive next-version migration under
+ADR204 (amended before code): Guardian v2 crisis_provenance tri-state, unknown
+legacy rows excluded from discovery and resource-bearing when surfaced. Preserve
+all v1 proofs/catalogs as predecessor evidence; qualify populated migration,
+rollback/reopen/future/hybrid refusal and measured installed recovery. No fresh ADR
+or task ID and no broad rules/history redesign. Remaining Task1 gates unchanged.
+
+
+### Task1 startup admission implementation ruling
+
+ADR required: yes (existing ADR196 amended before this interface change).
+ADR path: backlog/decisions/196-dreams-daily-discovery-and-tracking.md.
+Reason: separate bounded scheduler startup waiting from per-task authority. A
+failed/timeout boot pass retains pending Dreams dispatch refusals, preserves
+unrelated task progress and occurrence state, and conservatively holds
+unclassified watchlists when ownership could not be established. Qualify real
+scheduler dispatch, error/timeout, known unrelated work, and successful later
+settlement; do not weaken scheduler timeout or existing suspension ownership.
+
+
+The actual SchedulerLoop regression family also reads its guarded emergency-stop
+source imported at collection. Its original due-reminder node fails in isolation
+on both current source and frozen private START9ab, reporting emergency-stop
+active before dispatch. A module-local bootstrap_profile marker preserves that
+existing selected private source under the conftest contract; original dispatch,
+ordering, exception, timeout and owner assertions remain. No emergency-stop or
+config admission gate is changed. Bind the affected scheduler nodes to the final
+required-lane inventory alongside the new Dreams startup controls.
+
+
+### Dreams historical admission execution note
+
+Native source-bound census of the eight distinct historical author definitions
+produced 30 catalogs across v1–v6, including retained-index and ALTER variants.
+ADR196 records the marker-history ruling before implementation. Qualify every
+measured catalog with populated rows, direct upgrade/reopen, rollback and
+malformed/future/hybrid refusal, then install the same exact catalogs in recovery.
+No new version is necessary for recognizing existing v6 shapes.
+
+### Task1 execution ruling: bounded required-lane enrollment
+
+Retain the original64 fast-contract and23 admission targets byte-for-byte and in
+order, and all187 original UI census entries. Add two named PR Fast Lane steps
+for the affected Dreams/Guardian contracts: isolated sandboxed/native boundaries
+and the source-bound bootstrap/capture/authoring families, with the existing
+180/300-second per-test limits and unchanged35-minute job. Pin their exact
+comment-aware argv, conditions, no-continue-on-error and disjoint membership in
+the existing queue-pressure guard. Add the actual production Library Dreams UI
+file to the existing UI census and raise its membership floor only (no time,
+style, import, byte or runtime cap change). Existing module-local bootstrap
+corrections for the two Watchlists authoring families stay in the admission
+invocation; no global marker or profile reset. Local qualification runs only
+new targets in their actual process group, plus affected membership guards;
+original unrelated64/23/187 bodies are not repeated. Measured target costs and
+final source receipts will bind this selection before handoff.
+
+ADR required: no new ADR. ADR196/204/207/126 and existing CI ownership apply;
+this enrolls approved outcomes without a new service/storage/runtime boundary.
+Native schema receipt tests must write under pytest's private tmp_path, never
+under an implementation machine's evidence directory; external source-bound
+receipts are retained separately by the qualification runner.
+
+## Task 2: Qualify the required Library modal readiness contract
+
+**Files:** Tests/UI/test_library_dreams_reader.py and TASK34804 existing notes; this plan and source-bound review/qualification records. Published Task1 code7bdfe6a7 remains independently cleared; this task fixes the newly observed hosted required-test boundary without changing production behavior.
+
+ADR required:no. ADR path:N/A (existing current Library/modal contracts). Reason:routine test synchronization correction under existing Textual asynchronous mount contract, no application/service/schema/policy choice.
+
+1. Read pr2921-hosted-ui4-investigation.md, exact completed UI4 job114997169971/run38305118522, current source and TASK34804. Preserve non-reproduced original-node1PASS and captured decorated-child environment as such; no baseline node exists on dev and no confirmed-flake claim. Append concrete plan to existing TASK34804 via private CLI before test edits, retain full history/status/AC.
+2. Correct only the new test's story and Goals readiness fences: wait for expected modal, mounted state and actual expected control within original five-second loop, then retain every existing literal/list/selectedID/eight-button/action/DB/refresh/close assertion. No deadline/sleep/marker/fixture/service/runtime change. Use an existing relevant waiting pattern where possible, minimum code.
+3. Add a bounded real mount-boundary witness that shows screen-stack identity precedes child readiness, proves the corrected readiness remains pending at that boundary and succeeds after release. Use actual Textual modal/harness, preserve original private child and admission/physical lifetimes; no forced GC/warning suppression/background-service fixes. Hosted error is actual original failure; distinguish controlled local witness from natural local non-reproduction.
+4. Run only corrected exact node and relevant small mount witness/current family controls; verify source before/after, node inventory/JUnit, Ruff/diff checks and existing required UI census membership. Test-only delta keeps production trees and limits unchanged. No replay of310-case shard/160/80/full native/UI/full suite.
+5. Self-review, normal commit/gc.auto=0; append final notes via private CLI, no task Done or GH writes. Root gets one scoped independent task review, exact lease/currentdev refresh and normal new-head required hosted qualification before protected merge. Source source-bound earlier green groups retain their exact head and are not reclassified as current-head CI.
+
+Report: external pr2921-hosted-readiness-task2-report.md, separate handoff/source/node/argv/raw/JUnit integrity; preserve all sealed earlier private/actual/fix/whitespace assets. No child agents, other worktree edits, source/functionality expansion, new IDs or late unrelated cleanup.
+
+## Task 3: Keep introduced critical CI inside existing job budgets
+
+**Files:** .github/workflows/derived-artifacts.yml and every genuine Tests/CI consumer of its pytest-step names/counts/locations, existing TASK33200 notes, this plan and exact new evidence. Task2 bd83869a remains preserved. Source/functionality outside CI governance is unchanged.
+
+ADR required:no newADR. ADR path:existing ADR103 and the established bounded Derived Artifacts six-lane contract. Reason:routine redistribution within existing runners/jobs/required aggregate, no new dependency/runtime/job, permission or public application boundary.
+
+1. Read completed first-run Fast job114997170027/log and current workflow/tests/task. Runfastcontract has exactly one stale guard failure (six pytest steps versus expectedfour),2025passed/1skipped; original admission509passed/1existingxfail; introduced boundary164passed109.43s; introduced admission89collected but canceled around35m18s, not a pass. ConsoleP0passed8m26s with unchanged20min cap; original Fast main+admission each15min, so its35min cap cannot reliably absorb the two addedgroups. Root did not cancel it. Append concrete TASK33200 CLI plan before code, preserve history/AC/status.
+2. Move ONLY the two introduced Dreams/Guardian pytest invocation blocks, unchanged executable argv/order/targets/flags/conditions, from Fast35min job to after the two original ConsoleP0 invocations in the existing20min job. Preserve every original Fast/P0 step/target/order/dependency and all job/test caps. Required aggregate already depends on both jobs and all four UI lanes; preserve names/needs/failure propagation/no continue-on-error/no conditional omission. Keep sandbox/admission as separate processes. Existing measured8m26+1m49+partial~2m17+remainingnativeSettings has ample20min margin; new hosted qualification stillrequired. No new job, raised timeout or unselected test.
+3. Fix the stale step-count guard meaningfully, retaining executable-target resolution/overlap checks and pinning the intended six step names/locations. Audit every workflow count/location/member consumer (including ConsoleP0 and CIqueuepressure tests) before edits so relocating groups does not create another stale assertion. Update exact Dreams membership location and preserve missing/comment-only/suppression/order negatives. Prove original4 invocation argv/flags/order and all timeouts unchanged; newgroups each occur once in aggregate-requiredConsole job.
+4. Establish the stale count/location RED; qualify only affected CI consumer files and negative controls plus static workflow/timeout/source preservation. Do not replay164/89/native/UI cohorts locally: the groups' executable bytes remain identical and upcoming normal hostedrun qualifies their new placement. Retain every canceled/failed/skip/xfail result as such; no blanket first-run success.
+5. Self-review, normalcommit/gcauto0, CLI concise finalnotes/noDone. Root gets one scoped independent spec/quality review covering full Task3 delta and preserved Task2 handoff, refreshes exactpublished7bd lease/currentdev/allthreads, pushes reviewed cumulative head and obtains normal new-head requiredCI before protected merge. No user/cloud/profile/server/model actions or source/workflow publication by worker.
+
+Report: E/pr2921-hosted-ci-budget-task3-report.md plus separate source/member/argv/JUnit/hashhandoff. Preserve all earlier seals, productionTrees/Test2bytes and unrelatedGitHub/foreignworktrees. No children/newIDs/cap/deadline/marker/guard weakening.

@@ -133,7 +133,9 @@ def _seed_row_document(screen, service, index: int, content: str):
 
 async def _load_row_with_document(screen, pilot, service, index: int, content: str):
     """Seed row ``index`` with ``content`` and open it from the Items list."""
-    canonical_id, backing_id, title = _seed_row_document(screen, service, index, content)
+    canonical_id, backing_id, title = _seed_row_document(
+        screen, service, index, content
+    )
     screen.query_one(f"#library-media-row-{index}", Button).press()
     await _wait_for_detail_call(service, backing_id)
     service.release(backing_id)
@@ -201,9 +203,7 @@ def _raw_static(screen) -> VirtualizedRawContent:
     through ``render_line`` instead (see ``_highlighted_words_in_raw``).
     """
     body = screen.query_one("#library-media-viewer-content", LibraryMediaContentBody)
-    return body.query_one(
-        "#library-media-viewer-content-text", VirtualizedRawContent
-    )
+    return body.query_one("#library-media-viewer-content-text", VirtualizedRawContent)
 
 
 def _status_text(screen) -> str:
@@ -295,8 +295,7 @@ async def test_match_navigation_patches_the_highlight_instead_of_rebuilding_it()
 
         second = _raw_static(screen)
         assert second is raw, (
-            "A match click rebuilt the Raw view instead of patching its "
-            "search state."
+            "A match click rebuilt the Raw view instead of patching its search state."
         )
         assert second._match_index == 1
         assert _highlighted_words_in_raw(second) == {NEEDLE}

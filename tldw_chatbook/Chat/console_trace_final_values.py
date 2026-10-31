@@ -11,6 +11,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     canonical_provider_endpoint_identity,
 )
 from tldw_chatbook.Chat.console_prepared_request import freeze_json
+from tldw_chatbook.Chat.console_provider_endpoints import meaningful_adapter_base_url
 from tldw_chatbook.Chat.console_provider_support import (
     CUSTOM_OPENAI_EXECUTION_KEYS,
 )
@@ -42,6 +43,9 @@ from tldw_chatbook.Chat.provider_continuation import (
 )
 
 
+from tldw_chatbook.provider_registry import ENGINE_RECORDS
+
+_ENGINE_EXECUTION_KEYS = frozenset(record.key for record in ENGINE_RECORDS)
 _SURFACE_VERIFICATION_ISSUER = object()
 
 
@@ -747,9 +751,11 @@ def reconstruct_provider_gateway_kwargs(
     if supports_local_reasoning(provider, resolution.model or ""):
         kwargs["api_base_url"] = resolution.base_url or None
         kwargs["api_key_resolved"] = True
-    elif execution_key == "qwencloud":
+    elif execution_key in {"qwencloud", "deepseek"}:
         kwargs["api_mode"] = getattr(resolution, "api_mode")
         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+    elif execution_key in (_ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS):
+        kwargs["api_base_url"] = resolution.base_url or None
     elif execution_key in {"moonshot", "zai"}:
         kwargs.update(
             api_base_url=getattr(resolution, "base_url") or None,
@@ -774,6 +780,21 @@ def reconstruct_provider_gateway_kwargs(
             kwargs["api_key_resolved"] = True
     elif execution_key == "openai" and getattr(request, "response_format") is not None:
         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+    else:
+        # TASK-2117: mirror the gateway's conditional endpoint pin for the
+        # first-party cloud keys -- pinned only when the resolved endpoint
+        # differs from the provider's shipped default. The rule lives in
+        # ``console_provider_endpoints.meaningful_adapter_base_url`` so this
+        # independent reconstruction and the gateway cannot drift.
+        pinned_base_url = meaningful_adapter_base_url(
+            execution_key, getattr(resolution, "base_url", None)
+        )
+        if pinned_base_url is not None:
+            kwargs["api_base_url"] = pinned_base_url
+    if execution_key in _ENGINE_EXECUTION_KEYS and request.continuation_groups:
+        kwargs["provider_continuations"] = [
+            group.checkpoint for group in request.continuation_groups
+        ]
     return {name: value for name, value in kwargs.items() if value is not None}
 
 

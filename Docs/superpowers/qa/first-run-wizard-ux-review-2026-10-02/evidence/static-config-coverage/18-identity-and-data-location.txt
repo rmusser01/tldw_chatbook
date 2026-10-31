@@ -1,0 +1,47 @@
+# Data location / profile name
+## users_name selects the data folder (Backup_Recovery/profile_paths.py:77-90)
+def data_base(config: Mapping[str, object]) -> Path:
+    selected = setting(config, "paths", "data_dir")
+    if selected is None:
+        selected = setting(config, "Paths", "data_dir")
+    if selected and not isinstance(selected, str):
+        raise ValueError("invalid_config_path")
+    return lexical_path(selected) if selected else selected_default_base_data_dir()
+
+
+def user_data_dir(config: Mapping[str, object]) -> Path:
+    name = setting(config, "general", "users_name", "default_user")
+    if not isinstance(name, str):
+        raise ValueError("invalid_profile_name")
+    return data_base(config) / user_folder_name(name)
+
+## Template:
+3889:users_name = "default_user" # Default user name for the TUI
+4342:USER_DB_BASE_DIR = "~/.local/share/tldw_cli/"
+5286:user_display_name = "User"
+
+## Settings > Storage edits base data dir + DB paths (settings_storage_defaults.py:55-64)
+STORAGE_FIELD_LABELS: Mapping[str, str] = {
+    "user_db_base_dir": "Base data directory",
+    "chachanotes_db_path": "ChaChaNotes DB",
+    "prompts_db_path": "Prompts DB",
+    "media_db_path": "Media DB",
+    "research_db_path": "Research DB",
+    "writing_db_path": "Writing DB",
+    "library_collections_db_path": "Library Collections DB",
+    "workspaces_db_path": "Workspaces DB",
+}
+
+## Summary footer shows the config path but not the data path (FirstRunSetupWizard.py:7875-7880)
+        try:
+            self.query_one("#setup-summary-footer", Static).update(
+                "Config file: "
+                f"{wizard_state.middle_truncate_path(config_path_text, max(40, (self.size.width or 120) - 18))}\n"
+                "Re-run setup any time: Settings ▸ Diagnostics ▸ Run setup wizard."
+            )
+
+## Settings > Console Behavior owns user_display_name (settings_screen.py:1457-1460)
+CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS = frozenset(
+    {
+        "user_display_name",
+        "streaming",

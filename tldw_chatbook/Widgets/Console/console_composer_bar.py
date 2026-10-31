@@ -18,12 +18,12 @@ import json
 import re
 import secrets
 from bisect import bisect_right
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from rich.cells import cell_len, split_graphemes
-from tldw_chatbook.Utils.input_validation import escape_markup as escape
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -45,17 +45,42 @@ from textual.events import (
 )
 from textual.geometry import Region
 from textual.message import Message
+from textual.message_pump import NoActiveAppError
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Utils.input_validation import escape_markup as escape
+
 from ...Chat.console_display_state import build_console_disabled_reason
 from ...Chat.console_glyphs import GLYPH_VOICE_RECORDING, GLYPH_VOICE_WORKING
-from ...Chat.console_voice_input import (
-    STATE_FINISHING,
-    STATE_IDLE,
-    STATE_LISTENING,
-    STATE_PREPARING,
+
+# TASK-22504: the dictation STATE_* constants are loaded on first voice
+# use (this widget rides the Chat first-paint leg and `console_voice_input`
+# must stay off it); bound into this module's globals by
+# `_load_console_voice_states` so the call sites keep the bare names.
+_CONSOLE_VOICE_STATE_NAMES = (
+    "STATE_FINISHING",
+    "STATE_IDLE",
+    "STATE_LISTENING",
+    "STATE_PREPARING",
 )
+
+if TYPE_CHECKING:  # static-only declarations of the lazily bound names
+    from ...Chat.console_voice_input import (
+        STATE_FINISHING,
+        STATE_IDLE,
+        STATE_LISTENING,
+        STATE_PREPARING,
+    )
+
+
+def _load_console_voice_states() -> None:
+    """Import `console_voice_input` and bind the state names (first use)."""
+    from ...Chat import console_voice_input as _module
+
+    module_globals = globals()
+    for name in _CONSOLE_VOICE_STATE_NAMES:
+        module_globals[name] = getattr(_module, name)
 from ...Chat.prompt_history import PromptHistory
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -245,6 +270,9 @@ class ConsoleDraftStash:
     raw_cli_prefix_typed: bool = False
     edit_serial: int = 0
     generation: int = 0
+    #: The dispatched form of an escaped ``\! `` chat draft: the composer
+    #: shows ``text`` behind one backslash (TASK-33620.15.2).
+    escape_removed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,6 +310,7 @@ def unescape_console_raw_chat_stash(stash: ConsoleDraftStash) -> ConsoleDraftSta
         segments=segments,
         text=escaped_text,
         raw_cli_prefix_typed=False,
+        escape_removed=True,
     )
 
 
@@ -468,6 +497,37 @@ class ComposerControlButton(Button):
             composer.focus_draft_from(self)
 
 
+def _swap_size_class(widget: Widget, prefix: str, wanted: str) -> None:
+    """Give ``widget`` the ``wanted`` size class in place of any ``prefix`` one.
+
+    Idle when it already has exactly that class. Removing then re-adding an
+    unchanged class restyles the widget twice, and the voice chip and the
+    attachment indicator did that on every post-action Console sync
+    (TASK-33628.5.2). The Send reason strip replaces its classes atomically
+    with ``set_classes`` instead (TASK-31966).
+    """
+    stale = [
+        name for name in widget.classes if name.startswith(prefix) and name != wanted
+    ]
+    if not stale and widget.has_class(wanted):
+        return
+    widget.remove_class(*stale)
+    setattr(widget.styles, "width" if prefix == "w-" else "height", None)
+    widget.add_class(wanted)
+
+
+def _clear_static_content(widget: Static) -> None:
+    """Empty ``widget`` unless it already renders nothing.
+
+    ``Static.update`` always requests a whole-screen layout, and the voice
+    chip's idle branch re-ran on every 0.2 s run tick (TASK-33620.15.7).
+    """
+    current = widget.content
+    if isinstance(current, (str, Content)) and not str(current):
+        return
+    widget.update(Content(""))
+
+
 class ConsoleComposerBar(Horizontal):
     """Expose Console-owned composer actions while reusing active chat sessions."""
 
@@ -527,6 +587,17 @@ class ConsoleComposerBar(Horizontal):
             """
             return self.composer
 
+    #: TASK-33620.15.8: the bar's focus and draft-presence state classes,
+    #: and the descendants that rules keyed on them style. Textual restyles
+    #: a node's whole subtree when one of its classes changes: 26 nodes and
+    #: about 10 ms live when a Send's acceptance cleared the draft, inside
+    #: run start's longest UI-loop callback. The rules keyed on these classes
+    #: (`css/features/_console.tcss`) style only the bar and its visible
+    #: draft, so `_sync_interaction_classes` restyles just those.
+    #: `Tests/UI/test_console_composer_state_restyle.py` fails when a rule
+    #: keyed on either class styles a node missing here.
+    INTERACTION_CLASSES = ("console-composer-focused", "console-composer-has-draft")
+    INTERACTION_STYLED_DESCENDANTS = ("#console-command-visible-text",)
     DEFAULT_STATUS = "No active Console session."
     DRAFT_PLACEHOLDER = "Ask, command, or paste task..."
     PASTE_COLLAPSE_THRESHOLD = DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD
@@ -543,9 +614,9 @@ class ConsoleComposerBar(Horizontal):
     # Fits the 51-cell shared-executor busy copy plus the chip's cell of
     # horizontal padding on each side at ordinary Console widths.
     VOICE_CHIP_MAX_WIDTH = 53
-    #: Cell cap for the inline `#console-send-disabled-reason` strip. The
-    #: longest copy `build_console_disabled_reason` emits is 49 cells, so 52
-    #: renders every reason whole at common widths. TASK-24415: this is only
+    #: Cell cap for the `#console-send-disabled-reason` strip, its padding
+    #: (0 1) included: a reason shows whole only at <= 50 cells, or 48 for a
+    #: setup blocker, which adds " ›". TASK-24415: this is only
     #: the UPPER bound -- the effective cap is `_send_reason_width_cap`,
     #: derived from the live row width so the strip ellipsizes (or hides,
     #: below `SEND_REASON_MIN_LEGIBLE_WIDTH`) instead of starving the draft;
@@ -650,6 +721,7 @@ class ConsoleComposerBar(Horizontal):
         paste_collapse_threshold: int = DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
         send_price_tooltip_provider: Callable[[str], str | None] | None = None,
         send_price_available_provider: Callable[[str], bool] | None = None,
+        sendable_attachment_provider: Callable[[], bool] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -660,6 +732,10 @@ class ConsoleComposerBar(Horizontal):
         # actually on Send, where a 0.5s hover delay pays for it.
         self._send_price_tooltip_provider = send_price_tooltip_provider
         self._send_price_available_provider = send_price_available_provider
+        #: TASK-33620.15.22: whether something staged would be sent with an
+        #: empty draft, asked live of the screen's send gate predicate. The
+        #: attachment label is presentation and never makes Send ready.
+        self._sendable_attachment_provider = sendable_attachment_provider
         #: Whether the last `sync_action_state` decided a price tooltip
         #: exists. Gates the hover handlers so they never overwrite a
         #: blocked/idle Send tooltip.
@@ -689,6 +765,7 @@ class ConsoleComposerBar(Horizontal):
         # programmatic load/clear/restore leave it untouched so callers can
         # detect "the user typed since X".
         self._user_edit_serial = 0
+        self._authored_draft_observer = None
         # Monotonic scope/version guard for changes that can retain identical
         # bytes and edit serials (notably a same-text session/load swap).
         # Improvement snapshots carry this value so an old request can never
@@ -700,6 +777,10 @@ class ConsoleComposerBar(Horizontal):
         # even when its text/edit serial are byte-identical. The value remains
         # monotonic for this owner as scope replacements advance it.
         self._draft_generation = secrets.randbits(63)
+        # TASK-33620.15.2: generations a send took (committed, or sent and
+        # retired). A capture of one is never sent again; a clear or a new
+        # draft spends nothing, so a press made before it is still sent.
+        self._spent_generations: deque[int] = deque(maxlen=16)
         # Per-composer authentication key for opaque protected placeholders.
         # Tokens reveal neither inline-file metadata nor this key, so edited or
         # user-authored lookalikes cannot be accepted as protected segments.
@@ -2016,6 +2097,9 @@ class ConsoleComposerBar(Horizontal):
         matching cache means the hidden input already holds it.
         """
         canonical = self._canonical_draft_text()
+        observer = self._authored_draft_observer
+        if observer is not None:
+            observer(canonical, (self._draft_generation, self._user_edit_serial))
         if canonical == self._hidden_input_mirror:
             return
         try:
@@ -2025,23 +2109,51 @@ class ConsoleComposerBar(Horizontal):
         self._hidden_input_mirror = canonical
 
     def _sync_interaction_classes(self) -> None:
-        """Mirror focus-within and draft presence onto stable CSS state classes."""
-        self.set_class(self.has_focus_within, "console-composer-focused")
-        self.set_class(
-            self._has_any_draft_content(),
-            "console-composer-has-draft",
-        )
+        """Mirror focus-within and draft presence onto stable CSS state classes.
+
+        TASK-33620.15.8: a change restyles only the bar and
+        `INTERACTION_STYLED_DESCENDANTS`, the nodes rules keyed on these
+        classes style, instead of the bar's whole subtree.
+        """
+        focused, has_draft = self.INTERACTION_CLASSES
+        wanted = {
+            focused: bool(self.has_focus_within),
+            has_draft: bool(self._has_any_draft_content()),
+        }
+        if any(self.has_class(name) != on for name, on in wanted.items()):
+            self.update_classes(wanted, update=False)
+            nodes: list[Widget] = [self]
+            for selector in self.INTERACTION_STYLED_DESCENDANTS:
+                nodes.extend(self.query(selector))
+            try:
+                self.app.stylesheet.update_nodes(nodes, animate=True)
+            except NoActiveAppError:
+                pass
         self._sync_raw_cli_state()
+
+    def has_sendable_payload(self) -> bool:
+        """Return whether a Send now would carry anything: Send's readiness input.
+
+        TASK-33620.15.22: the one rule for both of Send's sync sites (this
+        composer's resync and the screen's sync), so whichever runs last
+        agrees with the other. Draft text counts. With an empty draft only a
+        staged item the send gate would send counts, asked live of the
+        screen: the label may still show an image a Send has already taken,
+        and the gate refuses every other staged kind unsent.
+
+        Returns:
+            True when the draft has text or the screen reports a staged item
+            the send gate sends on its own; False with no provider installed.
+        """
+        if self.draft_text().strip():
+            return True
+        provider = self._sendable_attachment_provider
+        return provider is not None and bool(provider())
 
     def _sync_current_action_state(self) -> None:
         """Refresh action buttons from the current draft and cached run/save state."""
         self.sync_action_state(
-            # A staged attachment is sendable payload on its own (the screen
-            # passes the same OR at its own sync site) -- without it, a
-            # keystroke-side resync would flip Send back to disabled and
-            # flash the "type a message" reason while an image waits staged.
-            has_draft=bool(self.draft_text().strip())
-            or self._pending_attachment_label is not None,
+            has_draft=self.has_sendable_payload(),
             run_active=self._run_active,
             stop_available=self._stop_available,
             can_save_chatbook=self._can_save_chatbook,
@@ -2149,46 +2261,32 @@ class ConsoleComposerBar(Horizontal):
             # draft keeps its floor; below a legible budget the strip hides
             # entirely (the Send tooltip still carries the reason).
             cap = self._send_reason_width_cap()
-            if cap > 0:
-                strip.styles.display = "block"
-                strip.remove_class(*(name for name in strip.classes if name.startswith("w-")))
-                strip.set_styles(width=None)
-                strip.add_class("w-auto")
-                strip.styles.min_width = 0
-                strip.styles.max_width = cap
-                strip.remove_class(*(name for name in strip.classes if name.startswith("h-")))
-                strip.set_styles(height=None)
-                strip.add_class("h-1")
-                strip.styles.min_height = 1
-            else:
-                strip.styles.display = "none"
-                strip.remove_class(*(name for name in strip.classes if name.startswith("w-")))
-                strip.set_styles(width=None)
-                strip.add_class("w-0")
-                strip.styles.min_width = 0
-                strip.styles.max_width = 0
-                strip.remove_class(*(name for name in strip.classes if name.startswith("h-")))
-                strip.set_styles(height=None)
-                strip.add_class("h-0")
-                strip.styles.min_height = 0
         else:
             if strip.content != Content(""):
                 strip.update(Content(""))
-            strip.styles.display = "none"
-            strip.remove_class(*(name for name in strip.classes if name.startswith("w-")))
+            cap = 0
+        visible = cap > 0
+        # Replace owned size classes atomically: unchanged guidance must not
+        # remove/re-add the same classes and synchronously restyle the node.
+        classes = {name for name in strip.classes if not name.startswith(("w-", "h-"))}
+        classes.update(("w-auto", "h-1") if visible else ("w-0", "h-0"))
+        # Clearing a scalar style requests a whole-screen layout even when no
+        # inline rule is set, and this runs on every 0.2 s run tick
+        # (TASK-33620.15.7): clear only rules that exist. Each reset is a
+        # literal None so ADR-161's style inventory reads it as a reset.
+        if strip.styles.inline.has_rule("width"):
             strip.set_styles(width=None)
-            strip.add_class("w-0")
-            strip.styles.min_width = 0
-            strip.styles.max_width = 0
-            strip.remove_class(*(name for name in strip.classes if name.startswith("h-")))
+        if strip.styles.inline.has_rule("height"):
             strip.set_styles(height=None)
-            strip.add_class("h-0")
-            strip.styles.min_height = 0
-        if self._voice_full_width_preparing:
-            # The exact executor-wait copy and unchanged Mic/Send budget fill
-            # the row. Keep this redundant guidance cached but out of layout
-            # until the next ordinary voice-status repaint restores it.
-            strip.styles.display = "none"
+        strip.set_classes(classes)
+        strip.styles.min_width = 0
+        strip.styles.max_width = cap
+        strip.styles.min_height = 1 if visible else 0
+        # Executor-wait copy owns the row during full-width preparation. Keep
+        # guidance cached but out of layout until ordinary voice paint returns.
+        strip.styles.display = (
+            "block" if visible and not self._voice_full_width_preparing else "none"
+        )
 
     def _send_price_is_available(self) -> bool:
         """Answer the cheap "is there a price to show?" question.
@@ -2310,6 +2408,18 @@ class ConsoleComposerBar(Horizontal):
                 event's node. Accepted to match Textual's handler signature.
         """
         self._refresh_send_price_for_pointer()
+
+    def show_send_acknowledged(self, label: str, reason: str) -> None:
+        """Make Send read ``label`` and refuse with ``reason`` (TASK-33620.5).
+
+        The first frame of an acknowledged Enter, painted before its admission
+        runs; every other cached action fact is kept, and the next screen sync
+        derives the same label from the prompt-queue presentation.
+        """
+        self._send_label = label
+        self._send_blocked = True
+        self._queue_blocked_reason = reason
+        self._sync_current_action_state()
 
     def sync_action_state(
         self,
@@ -2458,12 +2568,19 @@ class ConsoleComposerBar(Horizontal):
             send_button.tooltip = self.SEND_READY_TOOLTIP
         else:
             send_button.tooltip = "Type a message to send."
-        send_button.set_class(send_ready, "console-action-primary")
-        send_button.set_class(not send_ready, "console-action-subdued")
-        send_button.set_class(not send_ready, "console-action-disabled")
-        send_button.set_class(send_ready, "console-send-ready")
-        send_button.set_class(not has_draft, "console-send-inactive")
-        send_button.set_class(effective_send_blocked, "console-send-blocked")
+        # TASK-33620.15.8: one restyle for the six readiness classes; six
+        # `set_class` calls restyled the button once per changed class, on
+        # every readiness flip (a Send's acceptance, the first keystroke).
+        send_button.update_classes(
+            {
+                "console-action-primary": send_ready,
+                "console-action-subdued": not send_ready,
+                "console-action-disabled": not send_ready,
+                "console-send-ready": send_ready,
+                "console-send-inactive": not has_draft,
+                "console-send-blocked": effective_send_blocked,
+            }
+        )
         # TASK-33625.1: a queue state arrives as `queue_blocked_reason`, never
         # as setup copy, so it cannot become a link into the setup wizard.
         self.set_class(
@@ -2553,6 +2670,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             state: Current one-shot dictation lifecycle state.
         """
+        _load_console_voice_states()  # TASK-22504
         entering_recording = (
             state == "recording" and self._dictation_state != "recording"
         )
@@ -2572,17 +2690,17 @@ class ConsoleComposerBar(Horizontal):
         except NoMatches:
             return
         labels = {
-            # CN-01 (TASK-2154.13): one verb family for the whole lifecycle --
-            # the feature is "Dictate" (idle), it is working ("Dictate…",
-            # starting or transcribing -- the tooltip and voice chip decode
-            # which phase), and it is capturing ("Dictating"). Supersedes the
-            # TX-07 (TASK-2154.12) "Text…" busy word, which had replaced the
-            # jargon "STT…" but still read as a third name for one feature.
-            # The recording label also drops its old "●" marker: the red
+            # CN-01 (TASK-2154.13): one verb family for the lifecycle -- the
+            # feature is "Dictate" (idle), working ("Dictate…", transcribing),
+            # capturing ("Dictating"). TASK-33626.1: "starting" (a speech-model
+            # load that can run for minutes) reads "Cancel", because a press
+            # cancels it and a tooltip-only "press to cancel" went unseen; the
+            # chip beside it says what is loading. TX-07's "Text…" busy word is
+            # gone. The recording label also drops its old "●" marker: the red
             # variant and the chip's ◉ timer carry liveness, and "●" means
             # agent-running (CN-05).
             "idle": "Dictate",
-            "starting": "Dictate…",
+            "starting": "Cancel",
             "recording": "Dictating",
             "transcribing": "Dictate…",
         }
@@ -2693,6 +2811,7 @@ class ConsoleComposerBar(Horizontal):
                 outside the `starting` lifecycle state, so a notice that drains
                 late cannot repaint a chip that has moved on.
         """
+        _load_console_voice_states()  # TASK-22504
         if self._dictation_state != "starting":
             return
         self._voice_preparing_message = text
@@ -2707,6 +2826,7 @@ class ConsoleComposerBar(Horizontal):
                 partial that drains after the capture already ended cannot
                 resurrect the chip.
         """
+        _load_console_voice_states()  # TASK-22504
         if self._dictation_state != "recording":
             return
         self._voice_partial = text
@@ -2739,6 +2859,7 @@ class ConsoleComposerBar(Horizontal):
                 no-op) outside the `recording` lifecycle state, the same
                 guard `set_voice_partial` uses.
         """
+        _load_console_voice_states()  # TASK-22504
         if self._dictation_state != "recording":
             return
         self._voice_segment_transcribing = transcribing
@@ -2757,6 +2878,7 @@ class ConsoleComposerBar(Horizontal):
         tick already queued for this frame can still land) cannot repaint a
         chip that has already collapsed.
         """
+        _load_console_voice_states()  # TASK-22504
         if self._dictation_state != "recording":
             return
         self._voice_elapsed_seconds += 1
@@ -4086,7 +4208,7 @@ class ConsoleComposerBar(Horizontal):
         # stacks and leaves the accepted text in place).
         self.restore_undo_history(banked)
 
-    def load_draft(self, text: str) -> None:
+    def load_draft(self, text: str, *, defer_action_state: bool = False) -> None:
         """Replace the native Console draft with literal text.
 
         The caret lands at the end of the restored draft.
@@ -4105,6 +4227,12 @@ class ConsoleComposerBar(Horizontal):
 
         Args:
             text: Draft payload to show and send literally.
+            defer_action_state: Restyle the action row (Send's readiness, its
+                reason strip) in the composer's next callback instead of this
+                one. TASK-33620.15.8: a Send's acceptance clears the draft
+                inside run start's longest UI-loop callback, and Send's
+                readiness flip is four restyles there; the draft, its caret
+                and its state classes still change here.
         """
         self._clear_raw_cli_provenance()
         self._advance_draft_generation()
@@ -4118,6 +4246,11 @@ class ConsoleComposerBar(Horizontal):
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
+        if defer_action_state:
+            # Reads the draft and the cached run state when it runs, so a
+            # sync that lands first leaves it nothing to change.
+            self.call_later(self._sync_current_action_state)
+            return
         self._sync_current_action_state()
 
     def capture_draft_for_send(self) -> ConsoleDraftStash | None:
@@ -4196,6 +4329,7 @@ class ConsoleComposerBar(Horizontal):
                 kept.append(replace(segment))
         if remaining:
             return False
+        self._spent_generations.append(stash.generation)
         self._advance_draft_generation()
         self._clear_draft_selection()
         self._segments = kept
@@ -4207,6 +4341,27 @@ class ConsoleComposerBar(Horizontal):
         self._sync_current_action_state()
         self.clear_history()
         return True
+
+    def retire_captured_drafts(self) -> None:
+        """Spend every capture of the shown draft; keep its text as a new one.
+
+        TASK-33620.15.2: a sent draft the commit could not take out must not
+        be sent again by a press captured before it. Both the generation and
+        the edit serial move, so a later press is a new capture and no older
+        capture can pass for a reload of this draft.
+        """
+        self._spent_generations.append(self._draft_generation)
+        self._advance_draft_generation()
+        self._mark_manual_draft_edit()
+
+    def spend_captured_draft(self, stash: ConsoleDraftStash | None) -> None:
+        """Record that a send took ``stash``, whether or not it left."""
+        if stash is not None:
+            self._spent_generations.append(stash.generation)
+
+    def captured_draft_spent(self, stash: ConsoleDraftStash | None) -> bool:
+        """Whether a send already took a capture of ``stash``'s draft."""
+        return stash is not None and stash.generation in self._spent_generations
 
     def stash_draft_for_send(self) -> ConsoleDraftStash | None:
         """Legacy destructive wrapper around capture followed by commit."""
@@ -6195,12 +6350,14 @@ class ConsoleComposerBar(Horizontal):
         # a user looks for it anyway. ✕ stays: it is the only control that
         # is meaningless until something is staged, so it costs nothing at
         # rest and burying it would hide the way to undo a visible thing.
+        # TASK-33620.15.7: every 0.2 s run tick re-applies this label; an
+        # unchanged one must not request a whole-screen reflow.
+        text = escape(resolve_glyph_text(f"📎 {normalized}")) if normalized else ""
+        if indicator.content != text:
+            indicator.update(text)
         if normalized:
-            indicator.update(escape(resolve_glyph_text(f"📎 {normalized}")))
             indicator.styles.display = "block"
-            indicator.remove_class(*(name for name in indicator.classes if name.startswith("w-")))
-            indicator.set_styles(width=None)
-            indicator.add_class("w-auto")
+            _swap_size_class(indicator, "w-", "w-auto")
             indicator.styles.max_width = 28
             clear_button.styles.display = "block"
             self._set_actions_row_width(
@@ -6213,11 +6370,8 @@ class ConsoleComposerBar(Horizontal):
             else:
                 clear_button.tooltip = "Remove the pending attachment."
         else:
-            indicator.update("")
             indicator.styles.display = "none"
-            indicator.remove_class(*(name for name in indicator.classes if name.startswith("w-")))
-            indicator.set_styles(width=None)
-            indicator.add_class("w-0")
+            _swap_size_class(indicator, "w-", "w-0")
             clear_button.styles.display = "none"
             self._set_actions_row_width(
                 actions, self._actions_row_width(attachment_visible=False)
@@ -6339,6 +6493,7 @@ class ConsoleComposerBar(Horizontal):
                 case; it just means the two are not mutually exclusive the
                 way an earlier version of this docstring claimed.
         """
+        _load_console_voice_states()  # TASK-22504
         try:
             chip = self.query_one("#console-voice-status", Static)
         except NoMatches:
@@ -6363,11 +6518,9 @@ class ConsoleComposerBar(Horizontal):
             self._voice_chip_last_width = 0
             self._sync_full_width_voice_presentation(False)
             chip.styles.display = "none"
-            chip.remove_class(*(name for name in chip.classes if name.startswith("w-")))
-            chip.set_styles(width=None)
-            chip.add_class("w-0")
+            _swap_size_class(chip, "w-", "w-0")
             chip.styles.min_width = 0
-            chip.update(Content(""))
+            _clear_static_content(chip)
             return
 
         # TASK-24620 / PR-2230 review f3: PREPARING selects its sizing
@@ -6395,11 +6548,9 @@ class ConsoleComposerBar(Horizontal):
             self._voice_chip_last_width = 0
             self._sync_full_width_voice_presentation(False)
             chip.styles.display = "none"
-            chip.remove_class(*(name for name in chip.classes if name.startswith("w-")))
-            chip.set_styles(width=None)
-            chip.add_class("w-0")
+            _swap_size_class(chip, "w-", "w-0")
             chip.styles.min_width = 0
-            chip.update(Content(""))
+            _clear_static_content(chip)
             return
 
         if state == "listening":
@@ -6868,3 +7019,25 @@ class ConsoleComposerBar(Horizontal):
             review_button.styles.line_pad = 0
             review_button.can_focus = False
             yield review_button
+
+
+# Capture the directly skipped callbacks while their defining widget loads.
+_IDLE_VOICE_CALLBACKS = tuple(
+    (
+        name,
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+    )
+    for name in ("sync_dictation_state", "set_voice_status")
+    for function in (getattr(ConsoleComposerBar, name),)
+)
+_IDLE_VOICE_LOADER = (
+    _load_console_voice_states,
+    _load_console_voice_states.__code__,
+    _load_console_voice_states.__defaults__,
+    _load_console_voice_states.__kwdefaults__,
+    tuple((_load_console_voice_states.__kwdefaults__ or {}).items()),
+)

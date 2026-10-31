@@ -1,0 +1,110 @@
+[
+  {
+    "command": [
+      ".venv/bin/python",
+      "tldw_chatbook/css/check_bundle_sync.py"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 1.9,
+    "output_sha256": "f693e0a86ca887da319dc9d5e2d97026e208783e55fb4824f7e5e5a2c568fb5e"
+  },
+  {
+    "command": [
+      ".venv/bin/python",
+      "scripts/check_canvas_mermaid_assets.py"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.19,
+    "output_sha256": "946ad482960841baf0583b8eb17f26fa7b6563b9c356549a3df9213f2bc59af8"
+  },
+  {
+    "command": [
+      ".venv/bin/python",
+      "scripts/check_profile_owned_path_inventory.py"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 18.39,
+    "output_sha256": "2ad6393fb27acf6bd0027ca0a32f4ab5ade51379d70e2826b2d38c9ee641265f"
+  },
+  {
+    "command": [
+      ".venv/bin/python",
+      "scripts/check_persistent_diagnostic_inventory.py"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 41.06,
+    "output_sha256": "7aafb96d43984c35e3753653486788d2bef5363e3ff9db61fae81d7dc1ca60c9"
+  },
+  {
+    "command": [
+      ".venv/bin/python",
+      "scripts/check_backlog_task_ids.py"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 1.0,
+    "output_sha256": "addf752df07e931b9f631b013c8df9b3d59d73bcb22965d76e3c9aceb7e974dc"
+  },
+  {
+    "command": [
+      ".venv/bin/python",
+      "scripts/check_backlog_task_files.py"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.28,
+    "output_sha256": "6e8f9dc60a24aa3d42a68dbaa3ae9962033274a0c493dc6731dc7da5add013af"
+  },
+  {
+    "command": [
+      ".venv/bin/python",
+      "scripts/check_schema_table_allowlist.py"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.32,
+    "output_sha256": "d5d8fa30d19ef62e3d0c11d30ddae83eed29ead7511830da7d8233a7c52591c3"
+  },
+  {
+    "command": [
+      ".venv/bin/python",
+      "scripts/check_index_plan_pins.py"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 1.3,
+    "output_sha256": "42cd79bd30f599dc51a96b856944323b7842ede4e10ff7b037311b417ec8adac"
+  },
+  {
+    "command": [
+      ".venv/bin/python",
+      "scripts/check_textual_worker_contract.py"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 18.52,
+    "output_sha256": "d650ab63c56c6ac3029f1dab841fcd7ffedafa95faa52ad2729805369a9077dd"
+  },
+  {
+    "command": [
+      ".venv/bin/python",
+      "scripts/check_timestamp_writers.py"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 8.38,
+    "output_sha256": "c7d9f8c695e6b6d5ffea7b08b9fdf60bec11ab91f2f79b97b6ead504b948b102"
+  },
+  {
+    "command": [
+      ".venv/bin/python",
+      "scripts/check_markup_interpolation.py"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 8.23,
+    "output_sha256": "f29d9eb03ebe1ee656306ba2fe68a5cf8e075eef0a0bed6fe3cd0f7f75e48cf6"
+  },
+  {
+    "command": [
+      ".venv/bin/python",
+      "scripts/check_ui_pr_gate_census.py"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 3.58,
+    "output_sha256": "37804d2383af795e3c925b725c928f13671b33cba67f2f9e765a3015b6f11303"
+  }
+]

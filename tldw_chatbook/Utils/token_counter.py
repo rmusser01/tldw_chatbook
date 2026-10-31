@@ -6,7 +6,10 @@ import re
 import threading
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
-from typing import List, Dict, Any, Union, Optional, Tuple
+from typing import TYPE_CHECKING, List, Dict, Any, Union, Optional, Tuple
+
+if TYPE_CHECKING:
+    from tldw_chatbook.model_capabilities import ModelCapabilities
 
 #
 # 3rd-Party Imports
@@ -494,10 +497,15 @@ def get_table_model_token_limit(model: str, provider: str = "openai") -> int | N
 
 SYSTEM_CONTEXT_WINDOW = 32000
 MAX_CONTEXT_WINDOW = 2**31 - 1
+#: Provider-level fallbacks for models with no catalog/table entry. There is
+#: deliberately no "openai" row (TASK-33940.5): the old 4096 was a GPT-3.5-era
+#: value, and with the shipped 4,096-token response reservation it left zero
+#: input capacity, so a fresh profile could not send with the shipped default
+#: model at all. Unlisted OpenAI models take ADR-052's 32,000-token final
+#: fallback instead, still reported as unverified.
 PROVIDER_CONTEXT_WINDOWS = {
     "anthropic": 200000,
     "google": 30720,
-    "openai": 4096,
     "mistral": 32000,
     "mistralai": 32000,
 }
@@ -525,14 +533,25 @@ class ContextWindowResolution:
 
 
 def resolve_context_window(
-    provider: str, model: str, *, server_tokens: object = None
+    provider: str,
+    model: str,
+    *,
+    server_tokens: object = None,
+    capabilities: "ModelCapabilities | None" = None,
 ) -> ContextWindowResolution:
     """Resolve server, model/API default, then the estimated system default.
+
+    The one context-window answer: Chat settings and Settings ▸ Advanced both
+    read it, and an unverified result is a fallback the UI calls "unknown"
+    (TASK-33007 #12).
 
     Args:
         provider: Provider or API family used for the fallback catalog.
         model: Selected model identifier.
         server_tokens: Optional serving capacity obtained from metadata.
+        capabilities: The ``ModelCapabilities`` catalog to read; the global
+            one by default. Settings passes its own config without the saved
+            override, to say what is detected beneath it.
 
     Returns:
         The selected capacity with its source and verification status.
@@ -545,7 +564,7 @@ def resolve_context_window(
     provider = provider.lower().strip()
     try:
         window = positive_window(
-            get_model_capabilities()
+            (capabilities if capabilities is not None else get_model_capabilities())
             .get_model_capabilities(provider, model)
             .get("context_window")
         )
@@ -557,7 +576,9 @@ def resolve_context_window(
         return ContextWindowResolution(window, "model catalog", True)
     if provider == "openrouter" and "/" in model:
         upstream, upstream_model = model.split("/", 1)
-        return resolve_context_window(upstream, upstream_model)
+        return resolve_context_window(
+            upstream, upstream_model, capabilities=capabilities
+        )
     window = PROVIDER_CONTEXT_WINDOWS.get(provider)
     if window is not None:
         return ContextWindowResolution(window, "provider fallback", False)

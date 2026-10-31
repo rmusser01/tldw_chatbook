@@ -1,7 +1,7 @@
 ---
 id: TASK-474
 title: 'Onboard the prompt-engineering metaprompt to the Internal Prompts registry'
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-07-22 22:10'
 labels:
@@ -38,3 +38,10 @@ caller", not "re-point an existing one".
 - [ ] #2 generate_prompt() resolves it via the registry
 - [ ] #3 Its placeholder/token contract is captured so edits cannot break generate_prompt()
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: WON'T DO** — evidence verified against origin/dev (a3c47c6c72).
+
+Superseded: Prompt_Management/Prompt_Engineering.py was deleted as unimportable (commit ceeb170bfd, task-32901); no 'metaprompt' references remain anywhere in tldw_chatbook on origin/dev. The module the task proposed to onboard no longer exists.

@@ -335,9 +335,7 @@ async def test_model_install_progress_is_silent_at_idle(fire_log: FireLog) -> No
     async with app.run_test() as pilot:
         await pilot.pause()
         await asyncio.sleep(WINDOW)
-        assert (
-            fire_log.count_for_types(ProgressBar, Bar, LoadingIndicator) == 0
-        )
+        assert fire_log.count_for_types(ProgressBar, Bar, LoadingIndicator) == 0
         bar = app.query_one("#model-install-progress-bar", ProgressBar)
         assert isinstance(bar, PausableProgressBar)
         assert not bar.display

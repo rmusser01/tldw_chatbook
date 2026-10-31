@@ -27,6 +27,10 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
 )
 
 _ROW_CONTROL_ID = "console-conversation-actions-0"
+#: The 'Filter visible titles' input. It precedes the rows in the focus chain
+#: and the tray's rebuild keeps its row mounted (TASK-33622.6), so it is where
+#: Textual's reset sends focus when a focused row control is torn down.
+_FILTER_INPUT_ID = "console-workspace-conversation-search"
 
 
 async def _wait_until(pilot, predicate, *, timeout: float = 5.0) -> bool:
@@ -54,10 +58,12 @@ async def test_a_tray_rebuild_returns_focus_to_the_rebuilt_row(
 ) -> None:
     """A rebuild that removes the focused row control puts focus on its twin.
 
-    ``in-rail``: Textual's reset lands on the Conversations section toggle,
-    where the rail's own focus recovery could also rescue it.
-    ``outside-rail``: the rail's controls in front of the tray are taken out
-    of the focus chain, so the reset lands on a Console header control. The
+    ``in-rail``: Textual's reset lands on the kept 'Filter visible titles'
+    input (TASK-33622.6), where the rail's own focus recovery could also
+    rescue it.
+    ``outside-rail``: the rail's controls in front of the rows -- the kept
+    filter input included -- are taken out of the focus chain, so the reset
+    lands on a Console header control. The
     rail's recovery gives up once focus is outside the rail, so only the
     tray's opt-in can bring focus back -- the live header-Settings case.
     """
@@ -73,6 +79,7 @@ async def test_a_tray_rebuild_returns_focus_to_the_rebuilt_row(
             for control in rail.query(Button):
                 if tray not in control.ancestors:
                     control.can_focus = False
+            screen.query_one(f"#{_FILTER_INPUT_ID}").can_focus = False
         row = screen.query_one(f"#{_ROW_CONTROL_ID}", Button)
         row.focus()
         await pilot.pause()
@@ -90,6 +97,67 @@ async def test_a_tray_rebuild_returns_focus_to_the_rebuilt_row(
         )
         assert focused is not row and focused.is_attached
         assert tray in focused.ancestors
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_rebuild_takes_focus_back_from_the_kept_filter_row(
+    request, monkeypatch
+) -> None:
+    """TASK-33622.6 review: the kept filter row must not keep a row's focus.
+
+    The tray's rebuild keeps its mounted filter row, which precedes the rows
+    in the focus chain, so Textual's reset lands on the filter input when the
+    focused row control is torn down. The tray's restore predicted the reset
+    as if the filter row were removed too, missed it, and left focus there
+    until the rail's slower recovery ran -- a key pressed in that window ('m'
+    for the row menu) was typed into the filter and started a search. The
+    rail's recovery is switched off here so only the tray's restore can act.
+    """
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+    monkeypatch.setattr(
+        ConsoleLeftRail, "_recover_pending_focus", lambda *_args, **_kw: None
+    )
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        screen = pilot.app.screen
+        await pilot.pause(0.5)
+        tray = screen.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        search = screen.query_one(f"#{_FILTER_INPUT_ID}")
+        row = screen.query_one(f"#{_ROW_CONTROL_ID}", Button)
+        row.focus()
+        await pilot.pause()
+        assert pilot.app.focused is row
+
+        landings: list = []
+        set_focus = screen.set_focus
+
+        def recording_set_focus(widget, *args, **kwargs):
+            if tray.recompose_in_flight and not landings:
+                landings.append(widget)
+            return set_focus(widget, *args, **kwargs)
+
+        monkeypatch.setattr(screen, "set_focus", recording_set_focus)
+        tray.refresh(recompose=True)
+        assert await _wait_until(
+            pilot, lambda: not row.is_attached and not tray.recompose_in_flight
+        ), "the tray never rebuilt the row"
+        await pilot.pause(0.3)
+
+        assert search.is_attached, "setup: the rebuild did not keep the filter row"
+        assert landings == [search], (
+            f"setup: Textual's reset landed on {_describe(landings[0])}"
+            if landings
+            else "setup: Textual's reset never moved focus"
+        )
+        focused = pilot.app.focused
+        assert focused is not search, "the kept filter input kept the row's focus"
+        assert focused is not None and focused.id == _ROW_CONTROL_ID, (
+            f"focus was stranded on {_describe(focused)}"
+        )
+        assert focused is not row and focused.is_attached
 
 
 @pytest.mark.asyncio
@@ -420,10 +488,13 @@ async def test_a_rebuild_that_drops_the_focused_chat_keeps_focus_in_the_tray(
             "#console-workspace-context", ConsoleWorkspaceContextTray
         )
         if restorer == "tray":
-            # Only the tray's own controls can take focus inside the rail.
+            # Only the tray's own row controls can take focus inside the rail.
+            # The filter input is the tray's too, but the rebuild keeps its
+            # row (TASK-33622.6), so the reset would land on it -- inside the
+            # rail, where the rail's recovery acts as well.
             rail.can_focus = False
             for other in rail.query("*"):
-                if tray not in other.ancestors:
+                if tray not in other.ancestors or other.id == _FILTER_INPUT_ID:
                     other.can_focus = False
         (control,) = [
             button
@@ -439,12 +510,29 @@ async def test_a_rebuild_that_drops_the_focused_chat_keeps_focus_in_the_tray(
             restorer == "rail"
         ), f"setup: Textual's reset lands on {_describe(reset)}"
 
+        # The prediction above is the code under test; also record where
+        # Textual's reset really landed (the first focus change mid-rebuild).
+        landings: list = []
+        set_focus = app.screen.set_focus
+
+        def recording_set_focus(widget, *args, **kwargs):
+            if tray.recompose_in_flight and not landings:
+                landings.append(widget)
+            return set_focus(widget, *args, **kwargs)
+
+        monkeypatch.setattr(app.screen, "set_focus", recording_set_focus)
         rail.sync_workspace_context(_chats_state(after, **after_kw))
         assert await _wait_until(
             pilot, lambda: not control.is_attached and not tray.recompose_in_flight
         ), "the tray never rebuilt the rows"
         await pilot.pause(0.3)
         await _settle(pilot)
+        assert landings == [reset], (
+            f"setup: Textual's reset landed on {_describe(landings[0])}, "
+            f"not the predicted {_describe(reset)}"
+            if landings
+            else "setup: Textual's reset never moved focus"
+        )
 
         focused = app.focused
         assert focused is not None and focused.is_attached, (

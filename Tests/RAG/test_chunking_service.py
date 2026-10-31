@@ -149,7 +149,9 @@ class TestSemanticChunkingWithoutNltkData:
             state["corpus_present"] = downloadable
 
         monkeypatch.setattr(nltk.tokenize, "sent_tokenize", fake_sent_tokenize)
-        monkeypatch.setattr(chunk_lib, "_download_nltk_tokenizer_corpora", fake_download)
+        monkeypatch.setattr(
+            chunk_lib, "_download_nltk_tokenizer_corpora", fake_download
+        )
         # Reset every latch, and unbind whatever an earlier test left bound --
         # otherwise the module-level `sent_tokenize` could still be a working
         # tokeniser and the assertions would prove nothing.
@@ -264,11 +266,19 @@ def test_all_methods_flat_contract():
     for method in ["words", "sentences", "paragraphs"]:
         chunks = svc.chunk_text(
             "One two three. Four five six. Seven eight nine ten.",
-            chunk_size=4, chunk_overlap=1, method=method,
+            chunk_size=4,
+            chunk_overlap=1,
+            method=method,
         )
         assert chunks
         for c in chunks:
-            assert set(c) >= {"text", "start_char", "end_char", "word_count", "chunk_index"}
+            assert set(c) >= {
+                "text",
+                "start_char",
+                "end_char",
+                "word_count",
+                "chunk_index",
+            }
 
 
 def test_ebook_chapters_no_whitelist():
@@ -279,7 +289,9 @@ def test_ebook_chapters_no_whitelist():
 
 def svc_ebook(text):
     svc = ChunkingService()
-    return svc.chunk_text(text, chunk_size=400, chunk_overlap=0, method="ebook_chapters")
+    return svc.chunk_text(
+        text, chunk_size=400, chunk_overlap=0, method="ebook_chapters"
+    )
 
 
 def test_exceptions_are_aliases_of_the_engine_classes():

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="18.220" timestamp="2026-10-27T10:31:25.412812-07:00" hostname="DESKTOP-BISU2HE"><testcase classname=".test-tmp.textual-after3251.audit-merged.workflows-schedules.test_full_form_admission" name="test_full_forms_keep_both_accepted_saves[overlap]" time="17.649"><failure message="AssertionError: {'calls': [('server-a', {'body': '', 'cron': '0 9 * * *', 'enabled': True, 'run_at': None, ...}), ('server-b', {'body'..., ...}, 'server-b': {'body': '', 'cron': '0 9 * * *', 'enabled': True, 'run_at': None, ...}}, 'exception': 'None', ...}&#10;assert ['A', 'EditedB'] == ['EditedA', 'EditedB']&#10;  &#10;  At index 0 diff: 'A' != 'EditedA'&#10;  Use -v to get more diff">request = &lt;FixtureRequest for &lt;Coroutine test_full_forms_keep_both_accepted_saves[overlap]&gt;&gt;
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/textual-settings-patterns/tldw_tui/.test-tmp/textual-after3251/audit...ws-fullforms-02/pytest/test_full_forms_keep_both_acce1/private-profile-process/pytest/test_full_forms_keep_both_acce0')
+scenario = 'overlap'
+
+    @pytest.mark.parametrize('scenario',['serial','overlap'])
+    @private_profile_test
+    async def test_full_forms_keep_both_accepted_saves(request,tmp_path,scenario):
+        expected_root=Path.cwd().resolve()
+        identities={}
+        for obj in (SchedulesWorkbench, ReminderForm, SchedulingService, ScheduledTasksDB):
+            path=Path(inspect.getfile(obj)).resolve()
+            assert path.is_relative_to(expected_root), str(path)
+            identities[obj.__name__]={'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
+        db=ScheduledTasksDB(tmp_path/'fullforms.db')
+        client=AcceptedClient()
+        ids=seed(db)
+        app=ReminderHost(db,client)
+        observation={}
+        try:
+            async with app.run_test(size=(180,60)) as pilot:
+                screen=SchedulesWorkbench(app_instance=app)
+                await app.push_screen(screen)
+                try:
+                    await settle(app,pilot)
+                    await full_form(app,screen,pilot,ids[0],'EditedA')
+                    await asyncio.wait_for(client.entered.wait(),15)
+                    if scenario=='serial':
+                        client.release.set()
+                        await settle(app,pilot)
+                    await full_form(app,screen,pilot,ids[1],'EditedB')
+                    client.release.set()
+                    await settle(app,pilot)
+                    observation={'scenario':scenario,'module_identity':identities,'calls':client.calls,'controlled_external_effects':client.commits,'cancelled':client.cancelled,'local_titles':[db.get_reminder_task(i)['title'] for i in ids],'queue_titles':[t.title for t in screen._tasks], 'notifications':[n.message for n in app._notifications], 'exception':repr(app._exception)}
+                finally:
+                    client.release.set()
+                    await settle(app,pilot)
+                (OUT/f'observation-{scenario}.json').write_text(json.dumps(observation,indent=2),encoding='utf-8')
+                assert app._exception is None
+&gt;               assert observation['local_titles']==['EditedA','EditedB'], observation
+E               AssertionError: {'calls': [('server-a', {'body': '', 'cron': '0 9 * * *', 'enabled': True, 'run_at': None, ...}), ('server-b', {'body'..., ...}, 'server-b': {'body': '', 'cron': '0 9 * * *', 'enabled': True, 'run_at': None, ...}}, 'exception': 'None', ...}
+E               assert ['A', 'EditedB'] == ['EditedA', 'EditedB']
+E                 
+E                 At index 0 diff: 'A' != 'EditedA'
+E                 Use -v to get more diff
+
+.test-tmp\textual-after3251\audit-merged\workflows-schedules\test_full_form_admission.py:85: AssertionError</failure></testcase></testsuite></testsuites>

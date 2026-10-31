@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleEgressClass
+from tldw_chatbook.Chat.console_provider_endpoints import SAVE_ENDPOINT_ACTION_LABEL
 from tldw_chatbook.Chat.console_provider_gateway import (
     MAX_AUXILIARY_OUTPUT_TOKENS,
     AuxiliaryCompletionRequest,
@@ -73,6 +74,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
 )
 from tldw_chatbook.Utils.sensitive_llm_logging import is_sensitive_llm_request
 from tldw_chatbook.Chat.console_provider_support import (
+    CUSTOM_OPENAI_EXECUTION_KEYS,
     resolve_console_provider_identity,
 )
 from tldw_chatbook.Chat import console_provider_gateway as gateway_module
@@ -105,6 +107,18 @@ from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingEnvelope,
 )
 from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatTurn
+
+
+# Real config/TLS/app consumers retain their collection-selected private profile.
+pytestmark = pytest.mark.bootstrap_profile
+
+
+async def _settle_gateway_metadata(gateway):
+    tasks = tuple(gateway._context_window_refreshes) + tuple(
+        gateway._reasoning_metadata_refreshes.values()
+    )
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
 class _SettlementBoundary:
@@ -1937,6 +1951,11 @@ async def test_real_resolution_pins_provider_continuation_protocol_before_prepar
     resolution = await gateway.resolve_for_send(
         ConsoleProviderSelection(provider=selected_provider)
     )
+    if provider_key == "deepseek" and protocol == "responses":
+        assert not resolution.ready
+        assert "unsupported" in resolution.visible_copy.lower()
+        await gateway.aclose()
+        return
     checkpoint = parse_provider_continuation_json(
         {
             "schema_version": 1,
@@ -2718,6 +2737,8 @@ async def test_resolve_for_send_normalizes_scheme_less_llamacpp_base_url_before_
         ConsoleProviderSelection(provider="llama_cpp", base_url="127.0.0.1:9099/v1")
     )
 
+    await _settle_gateway_metadata(gateway)
+
     assert resolved.ready is True
     assert resolved.base_url == "http://127.0.0.1:9099"
     assert seen_urls == [
@@ -2859,12 +2880,18 @@ async def test_resolve_for_send_all_chat_api_handlers_are_console_supported() ->
             identity.readiness_key,
             {"model": f"{identity.readiness_key}-model"},
         )
-        if identity.readiness_key in PROVIDERS_REQUIRING_API_KEY_KEYS:
+        if (
+            identity.readiness_key in PROVIDERS_REQUIRING_API_KEY_KEYS
+            or identity.execution_key in CUSTOM_OPENAI_EXECUTION_KEYS
+        ):
             settings["api_key"] = f"test-key-for-{identity.readiness_key}"
         # ADR-179: per-account-host providers (databricks) stay blocked on a
         # resolved key alone; the sweep's point is that a fully configured
         # handler IS sendable, so give them their workspace URL too.
-        if identity.readiness_key in PROVIDERS_REQUIRING_BASE_URL_KEYS:
+        if (
+            identity.readiness_key in PROVIDERS_REQUIRING_BASE_URL_KEYS
+            or identity.execution_key in CUSTOM_OPENAI_EXECUTION_KEYS
+        ):
             settings["api_base_url"] = (
                 f"https://{identity.readiness_key}-workspace.example.test"
             )
@@ -2955,7 +2982,7 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
     )
 
     assert resolved.ready is False
-    assert "Save model defaults" in resolved.visible_copy
+    assert SAVE_ENDPOINT_ACTION_LABEL in resolved.visible_copy
     assert "Selected endpoint: http://127.0.0.1:9999/v1" in resolved.visible_copy
     assert "Saved endpoint: http://127.0.0.1:11434" in resolved.visible_copy
     assert "user" not in resolved.visible_copy
@@ -3065,7 +3092,7 @@ async def test_resolve_for_send_preserves_explicit_cloud_url_without_configured_
     assert resolved.readiness_key == "openai"
     assert resolved.execution_key == "openai"
     assert resolved.base_url == "http://127.0.0.1:9999/v1"
-    assert "Save model defaults" not in resolved.visible_copy
+    assert SAVE_ENDPOINT_ACTION_LABEL not in resolved.visible_copy
 
 
 @pytest.mark.asyncio
@@ -3303,7 +3330,7 @@ async def test_resolve_for_send_blocks_malformed_generic_base_url_without_crashi
     )
 
     assert resolved.ready is False
-    assert "Save model defaults" in resolved.visible_copy
+    assert SAVE_ENDPOINT_ACTION_LABEL in resolved.visible_copy
 
 
 @pytest.mark.asyncio
@@ -3719,6 +3746,231 @@ async def test_all_qwencloud_kwargs_paths_forward_pinned_mode_and_base() -> None
             assert "api_base_url" not in primary_kwargs
             assert "api_base_url" not in prepared_kwargs
         assert auxiliary_kwargs["api_base_url"] == base_url
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_key", "display_name"),
+    [
+        ("google", "Google"),
+        ("huggingface", "HuggingFace"),
+    ],
+)
+async def test_console_send_pins_configured_api_settings_base_url(
+    provider_key: str, display_name: str
+) -> None:
+    """TASK-2117: a configured Console endpoint reaches the primary send.
+
+    ``[api_settings.<provider>].api_base_url`` is Console's canonical endpoint
+    setting, but the google/huggingface adapters only read legacy config
+    sections, so before the central pin a configured value was silently
+    ignored while requests went to the default endpoint.
+    """
+
+    configured_base = f"https://{provider_key}-proxy.example.test/v1"
+    calls: list[dict[str, object]] = []
+
+    def fake_chat_api_call(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                provider_key: {
+                    "api_key": f"{provider_key}-test-key",
+                    "api_base_url": configured_base,
+                    "model": f"{provider_key}-model",
+                }
+            }
+        },
+        environ={},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=display_name, streaming=False)
+    )
+    assert resolution.ready, resolution.visible_copy
+    assert resolution.base_url == configured_base
+
+    assert [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "Hello."}]
+        )
+    ] == ["ok"]
+
+    assert calls[0]["api_base_url"] == configured_base
+    assert calls[0]["api_key"] == f"{provider_key}-test-key"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider_key",
+    ["openai", "cohere", "deepseek", "google", "groq", "huggingface", "openrouter"],
+)
+async def test_console_send_pins_configured_base_url_for_every_affected_provider(
+    provider_key: str,
+) -> None:
+    """TASK-2117 AC#2: the previously-masked providers carry the fix too.
+
+    openai/cohere/deepseek/groq/openrouter adapters self-serve the canonical
+    table, but the gateway pin must also carry a session-resolved endpoint so
+    primary sends cannot drift from what resolution computed.
+    """
+
+    configured_base = f"https://{provider_key}-proxy.example.test/v1"
+    calls: list[dict[str, object]] = []
+
+    def fake_chat_api_call(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                provider_key: {
+                    "api_key": f"{provider_key}-test-key",
+                    "api_base_url": configured_base,
+                    "model": f"{provider_key}-model",
+                }
+            }
+        },
+        environ={},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=provider_key, streaming=False)
+    )
+    assert resolution.ready, resolution.visible_copy
+
+    assert [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "Hello."}]
+        )
+    ] == ["ok"]
+
+    assert calls[0]["api_base_url"] == configured_base
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider_key",
+    ["openai", "cohere", "deepseek", "google", "groq", "huggingface", "openrouter"],
+)
+async def test_console_send_leaves_base_url_unpinned_in_default_case(
+    provider_key: str,
+) -> None:
+    """TASK-2117 AC#3: with no api_base_url configured, nothing is pinned.
+
+    The kwarg stays absent so each adapter keeps resolving its own default
+    (including any legacy-section endpoint) exactly as before the fix.
+    """
+
+    calls: list[dict[str, object]] = []
+
+    def fake_chat_api_call(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                provider_key: {
+                    "api_key": f"{provider_key}-test-key",
+                    "model": f"{provider_key}-model",
+                }
+            }
+        },
+        environ={},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=provider_key, streaming=False)
+    )
+    assert resolution.ready, resolution.visible_copy
+    # The resolution still carries the builtin fallback for display purposes;
+    # only the adapter kwarg must stay unset.
+    assert resolution.base_url
+
+    assert [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "Hello."}]
+        )
+    ] == ["ok"]
+
+    assert "api_base_url" not in calls[0]
+
+
+@pytest.mark.asyncio
+async def test_console_send_pins_session_selected_endpoint_for_affected_provider() -> (
+    None
+):
+    """TASK-2117 (TASK-2114 shape): a session endpoint is honored, not dropped."""
+
+    selected_base = "https://google-proxy.example.test/v1"
+    calls: list[dict[str, object]] = []
+
+    def fake_chat_api_call(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "google": {
+                    "api_key": "google-test-key",
+                    "model": "gemini-test",
+                }
+            }
+        },
+        environ={},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="Google",
+            base_url=selected_base,
+            base_url_is_pinned=True,
+            streaming=False,
+        )
+    )
+    assert resolution.ready, resolution.visible_copy
+    assert resolution.base_url == selected_base
+
+    assert [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "Hello."}]
+        )
+    ] == ["ok"]
+
+    assert calls[0]["api_base_url"] == selected_base
+
+
+@pytest.mark.asyncio
+async def test_console_send_base_url_pin_leaves_llamacpp_paths_untouched() -> None:
+    """TASK-2117 AC#6: llama.cpp keeps its separate direct-base_url path."""
+
+    messages = [{"role": "user", "content": "Hello."}]
+    gateway = ConsoleProviderGateway(environ={})
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://127.0.0.1:9099",
+        model="local-model",
+        ready=True,
+        execution_key="llama_cpp",
+        streaming=False,
+    )
+    prepared = gateway.prepare_chat_request(resolution, messages)
+    prepared_kwargs = gateway._chat_api_kwargs_from_prepared(resolution, prepared)
+    assert prepared_kwargs["api_base_url"] == "http://127.0.0.1:9099"
+    assert prepared_kwargs["api_key_resolved"] is True
+    # The plain builder never carried the llama.cpp pin (its sends take the
+    # direct base_url path); the TASK-2117 branch must not change that.
+    assert "api_base_url" not in gateway._chat_api_kwargs(resolution, messages)
 
 
 @pytest.mark.asyncio
@@ -5065,12 +5317,15 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     assert signals.usage_payload is None
     assert signals.completed_usage_payloads == []
     assert signals.usage_payloads() == []
-    preparation_field = next(item for item in signal_fields if item.name == "_trace_preparation")
+    preparation_field = next(
+        item for item in signal_fields if item.name == "_trace_preparation"
+    )
     assert preparation_field.repr is False
     assert preparation_field.init is False
     private_canary = "PRIVATE_ACCEPTED_PREPARATION_REQUEST"
     signals._trace_preparation = gateway_module._TraceAcceptedPreparation(
-        issuer=object(), owner={"active_request": private_canary},
+        issuer=object(),
+        owner={"active_request": private_canary},
         boundary={"frozen_request": private_canary},
     )
     assert private_canary not in repr(signals._trace_preparation)
@@ -5451,7 +5706,7 @@ def test_safe_provider_error_copy_redacts_secret_like_values() -> None:
     assert "user:secret@" not in copy
     assert "hunter2" not in copy
     assert "abc123" not in copy
-    assert "openai" in copy
+    assert "OpenAI" in copy  # TASK-33002.14: the catalog name, on purpose
 
 
 def test_safe_provider_error_copy_classifies_provider_exceptions() -> None:
@@ -5466,7 +5721,7 @@ def test_safe_provider_error_copy_classifies_provider_exceptions() -> None:
 
     for exc, category in cases:
         copy = safe_provider_error_copy("openai", exc)
-        assert f"Provider error from openai: {category}." in copy
+        assert f"Provider error from OpenAI: {category}." in copy
         status_code = getattr(exc, "status_code", None)
         if status_code is not None:
             assert f"Status: {status_code}." in copy
@@ -5477,7 +5732,7 @@ def test_safe_provider_error_copy_classifies_provider_exceptions() -> None:
 def test_safe_provider_error_copy_includes_status_code_when_available() -> None:
     copy = safe_provider_error_copy("openai", ChatProviderError(status_code=503))
 
-    assert copy == "Provider error from openai: provider unavailable. Status: 503."
+    assert copy == "Provider error from OpenAI: provider unavailable. Status: 503."
 
 
 def test_provider_error_diagnostic_omits_credential_provider_and_model() -> None:
@@ -5488,7 +5743,7 @@ def test_provider_error_diagnostic_omits_credential_provider_and_model() -> None
         ChatProviderError("ignored", status_code=400),
     )
     model_copy = gateway_module._provider_error_copy_with_model_recovery(
-        "Provider error from openai: bad request. Status: 400.",
+        "Provider error from OpenAI: bad request. Status: 400.",
         model=credential,
         status_code=400,
     )
@@ -5661,7 +5916,7 @@ async def test_stream_chat_generic_provider_error_raises_sanitized_exception() -
         ]
 
     message = str(exc_info.value)
-    assert message == "Provider error from openai: unexpected provider error."
+    assert message == "Provider error from OpenAI: unexpected provider error."
     assert "sk-1234567890abcdef" not in message
     assert "Bearer" not in message
 
@@ -5687,7 +5942,7 @@ async def test_stream_bad_request_names_model_and_offers_picker_recovery() -> No
         )
     )
 
-    with pytest.raises(ChatProviderError) as exc_info:
+    with pytest.raises(ChatBadRequestError) as exc_info:
         _ = [
             chunk
             async for chunk in gateway.stream_chat(
@@ -5696,8 +5951,10 @@ async def test_stream_bad_request_names_model_and_offers_picker_recovery() -> No
             )
         ]
 
-    message = str(exc_info.value)
-    assert "Provider error from anthropic" in message
+    assert type(exc_info.value) is ChatBadRequestError
+    assert str(exc_info.value) == str(ChatBadRequestError())
+    message = exc_info.value.console_copy
+    assert "Provider error from Anthropic" in message
     assert "claude-3-haiku-20240307" in message
     assert "Confirm the model is still available" in message
     assert "choose another model from the model picker" in message
@@ -5727,7 +5984,7 @@ async def test_stream_chat_generic_sse_error_raises_sanitized_exception() -> Non
         ]
 
     message = str(exc_info.value)
-    assert message == "Provider error from openai: unexpected provider error."
+    assert message == "Provider error from OpenAI: unexpected provider error."
     assert "sk-1234567890abcdef" not in message
     assert "Bearer" not in message
 
@@ -5754,7 +6011,7 @@ async def test_stream_chat_generic_sse_byte_error_raises_sanitized_exception() -
         ]
 
     message = str(exc_info.value)
-    assert message == "Provider error from openai: unexpected provider error."
+    assert message == "Provider error from OpenAI: unexpected provider error."
     assert "sk-1234567890abcdef" not in message
     assert "Bearer" not in message
 
@@ -7415,9 +7672,15 @@ def test_all_primary_custom_kwargs_paths_preserve_explicit_keyless_decision(
         assert kwargs["api_key_resolved"] is True
 
 
-def test_chat_api_kwargs_omits_api_base_url_for_unpinned_provider() -> None:
-    """Providers without an established pin keep their existing kwargs."""
-    resolution = ConsoleProviderResolution(
+def test_chat_api_kwargs_pins_only_meaningful_provider_base_urls() -> None:
+    """TASK-2117: a differing endpoint pins; the builtin default does not.
+
+    Before TASK-2117 a session-resolved proxy endpoint was silently dropped
+    for these providers; forwarding the builtin default, conversely, would
+    shadow each adapter's own fallback resolution, so only a value that
+    differs from the shipped default is pinned.
+    """
+    proxy_resolution = ConsoleProviderResolution(
         provider="openai",
         base_url="https://proxy.example.test/v1",
         model="gpt-4.1",
@@ -7426,12 +7689,20 @@ def test_chat_api_kwargs_omits_api_base_url_for_unpinned_provider() -> None:
         api_key="k",
         streaming=False,
     )
-
     kwargs = ConsoleProviderGateway._chat_api_kwargs(
-        resolution, [{"role": "user", "content": "hi"}]
+        proxy_resolution, [{"role": "user", "content": "hi"}]
     )
+    assert kwargs["api_base_url"] == "https://proxy.example.test/v1"
 
-    assert "api_base_url" not in kwargs
+    builtin_resolution = dataclasses.replace(
+        proxy_resolution, base_url="https://api.openai.com/v1"
+    )
+    assert (
+        "api_base_url"
+        not in ConsoleProviderGateway._chat_api_kwargs(
+            builtin_resolution, [{"role": "user", "content": "hi"}]
+        )
+    )
 
 
 def test_chat_api_kwargs_omits_prompt_caching_for_non_anthropic() -> None:
@@ -7642,7 +7913,16 @@ class _CapturedMistralSession:
 
     def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
         self._calls.append((url, (headers or {}).get("Authorization", "")))
-        return _FakeMistralPostResponse()
+        import requests
+
+        response = requests.Response()
+        response.status_code = 200
+        response.headers["Content-Type"] = "application/json"
+        response._content = b'{"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}'
+        return response
+
+    def close(self):
+        return None
 
 
 class _FakeMistralPostResponse:
@@ -7674,7 +7954,7 @@ class _CapturedCustomSession:
 async def test_console_send_keeps_each_mistral_credential_on_its_own_endpoint(
     monkeypatch,
 ) -> None:
-    from tldw_chatbook.LLM_Calls import LLM_API_Calls
+    from tldw_chatbook.LLM_Calls import hosted_chat, mistral
 
     class RuntimeConfigSnapshotStub:
         def __init__(self, values) -> None:
@@ -7695,13 +7975,20 @@ async def test_console_send_keeps_each_mistral_credential_on_its_own_endpoint(
         }
     }
     calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(hosted_chat, "create_default_session", lambda *a, **k: _CapturedMistralSession(calls),
+        raising=False)
+    monkeypatch.setattr(hosted_chat, "create_pooled_default_session", lambda *a, **k: _CapturedMistralSession(calls),
+        raising=False)
+    # Pooled seam (task-34387): patch BOTH names so either production
+    # session seam is intercepted.
     monkeypatch.setattr(
-        LLM_API_Calls,
-        "create_default_session",
-        lambda: _CapturedMistralSession(calls),
+        hosted_chat,
+        "create_pooled_default_session",
+        lambda *a, **k: _CapturedMistralSession(calls),
+        raising=False,
     )
     monkeypatch.setattr(
-        LLM_API_Calls,
+        mistral,
         "get_runtime_config_snapshot",
         lambda: RuntimeConfigSnapshotStub(config),
     )
@@ -7801,10 +8088,15 @@ async def test_console_send_keeps_custom_endpoint_and_credential_paired(
         legacy_values["api_settings"]["custom"]["api_key"] = "stale-credential"
         legacy_values["custom_openai_api_2"]["api_key"] = "stale-credential"
     calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_default_session", lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False)
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_pooled_default_session", lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False)
     monkeypatch.setattr(
         LLM_API_Calls_Local,
-        "create_default_session",
-        lambda: _CapturedCustomSession(calls),
+        "create_pooled_default_session",
+        lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False,
     )
     monkeypatch.setattr(
         LLM_API_Calls_Local,
@@ -7901,10 +8193,15 @@ async def test_console_keyless_custom_send_never_falls_back_to_legacy_credential
         legacy_values["api_settings"]["custom"]["api_key"] = legacy_credential
         legacy_values["custom_openai_api_2"]["api_key"] = legacy_credential
     calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_default_session", lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False)
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_pooled_default_session", lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False)
     monkeypatch.setattr(
         LLM_API_Calls_Local,
-        "create_default_session",
-        lambda: _CapturedCustomSession(calls),
+        "create_pooled_default_session",
+        lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False,
     )
     monkeypatch.setattr(
         LLM_API_Calls_Local,
@@ -7998,10 +8295,15 @@ async def test_console_persisted_explicit_keyless_ignores_saved_env_and_legacy_k
         },
     }
     calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_default_session", lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False)
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_pooled_default_session", lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False)
     monkeypatch.setattr(
         LLM_API_Calls_Local,
-        "create_default_session",
-        lambda: _CapturedCustomSession(calls),
+        "create_pooled_default_session",
+        lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False,
     )
     monkeypatch.setattr(
         LLM_API_Calls_Local,
@@ -8054,10 +8356,15 @@ def test_custom_adapter_fallback_honors_persisted_explicit_keyless(monkeypatch):
 
     calls: list[tuple[str, str]] = []
     monkeypatch.setenv("CUSTOM_API_KEY", "environment-adapter-canary")
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_default_session", lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False)
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_pooled_default_session", lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False)
     monkeypatch.setattr(
         LLM_API_Calls_Local,
-        "create_default_session",
-        lambda: _CapturedCustomSession(calls),
+        "create_pooled_default_session",
+        lambda *a, **k: _CapturedCustomSession(calls),
+        raising=False,
     )
     monkeypatch.setattr(
         LLM_API_Calls_Local,
@@ -8120,6 +8427,7 @@ async def test_console_persisted_explicit_keyless_llamacpp_sends_no_authorizatio
                 explicit_model="keyless-model",
             )
         )
+        await _settle_gateway_metadata(gateway)
         chunks = [
             chunk
             async for chunk in gateway.stream_chat(
@@ -8135,6 +8443,7 @@ async def test_console_persisted_explicit_keyless_llamacpp_sends_no_authorizatio
     assert chunks == ["ok"]
     assert [(request.method, request.url.path) for request in requests] == [
         ("GET", "/health"),
+        ("GET", "/props"),
         ("GET", "/props"),
         ("POST", "/v1/chat/completions"),
     ]
@@ -8184,6 +8493,7 @@ async def test_console_llamacpp_explicit_stored_source_reaches_probe_and_chat():
                 explicit_model="authenticated-model",
             )
         )
+        await _settle_gateway_metadata(gateway)
         chunks = [
             chunk
             async for chunk in gateway.stream_chat(
@@ -8200,9 +8510,11 @@ async def test_console_llamacpp_explicit_stored_source_reaches_probe_and_chat():
     assert [(request.method, request.url.path) for request in requests] == [
         ("GET", "/health"),
         ("GET", "/props"),
+        ("GET", "/props"),
         ("POST", "/v1/chat/completions"),
     ]
     assert [request.headers.get("Authorization") for request in requests] == [
+        "Bearer stored-llama-request-canary",
         "Bearer stored-llama-request-canary",
         "Bearer stored-llama-request-canary",
         "Bearer stored-llama-request-canary",
@@ -8224,8 +8536,15 @@ async def test_console_send_honors_configured_anthropic_base_url(monkeypatch) ->
     from tldw_chatbook.LLM_Calls import LLM_API_Calls
 
     captured: dict = {}
+    monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedURLSession(captured),
+        raising=False)
+    monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedURLSession(captured),
+        raising=False)
     monkeypatch.setattr(
-        LLM_API_Calls, "create_default_session", lambda: _CapturedURLSession(captured)
+        LLM_API_Calls,
+        "create_pooled_default_session",
+        lambda *a, **k: _CapturedURLSession(captured),
+        raising=False,
     )
 
     gateway = ConsoleProviderGateway(
@@ -8269,8 +8588,15 @@ async def test_console_send_default_anthropic_url_unchanged_when_unconfigured(
     from tldw_chatbook.LLM_Calls import LLM_API_Calls
 
     captured: dict = {}
+    monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedURLSession(captured),
+        raising=False)
+    monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedURLSession(captured),
+        raising=False)
     monkeypatch.setattr(
-        LLM_API_Calls, "create_default_session", lambda: _CapturedURLSession(captured)
+        LLM_API_Calls,
+        "create_pooled_default_session",
+        lambda *a, **k: _CapturedURLSession(captured),
+        raising=False,
     )
 
     gateway = ConsoleProviderGateway(
@@ -8814,6 +9140,64 @@ def _auxiliary_request(**overrides) -> AuxiliaryCompletionRequest:
     return AuxiliaryCompletionRequest(**values)
 
 
+@pytest.mark.asyncio
+async def test_native_helper_has_4096_output_ceiling_and_one_usage_owner():
+    from time import monotonic
+
+    from Tests.Chat.response_rules_fixtures import source
+    from tldw_chatbook.Chat.response_rules.resources import RuleHelperPool
+
+    charged, calls = [], []
+    pool = RuleHelperPool(
+        usage_sink=lambda *entry: charged.append(entry),
+        current=lambda _origin: True,
+        clock=monotonic,
+    )
+    lease = pool.try_acquire(source(), purpose="checking", deadline=monotonic() + 30)
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **kwargs: calls.append(kwargs) or "answer"
+    )
+    await gateway.complete_auxiliary(
+        _auxiliary_request(
+            resolution=_auxiliary_resolution(max_tokens=None), max_output_tokens=8000
+        ),
+        rule_lease=lease,
+    )
+    assert calls[0]["max_tokens"] == 4096
+    assert calls[0]["request_retries"] == 0
+    assert len(charged) == 1 and charged[0][2] is None
+    with pytest.raises(RuntimeError, match="rule_helper_lease_already_used"):
+        await lease.run_sync(lambda: "another", lambda _reply: None)
+
+
+@pytest.mark.asyncio
+async def test_native_helper_rejects_compaction_route_before_adapter_entry():
+    from time import monotonic
+
+    from Tests.Chat.response_rules_fixtures import source
+    from tldw_chatbook.Chat.console_trace_provenance import (
+        ConsoleRequestRoute,
+        TraceProvenanceAlignmentError,
+    )
+    from tldw_chatbook.Chat.response_rules.resources import RuleHelperPool
+
+    calls = []
+    pool = RuleHelperPool(
+        usage_sink=lambda *_args: None, current=lambda _origin: True, clock=monotonic
+    )
+    lease = pool.try_acquire(source(), purpose="checking", deadline=monotonic() + 30)
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **kwargs: calls.append(kwargs) or "answer"
+    )
+    with pytest.raises(TraceProvenanceAlignmentError):
+        await gateway.complete_auxiliary(
+            _auxiliary_request(),
+            route=ConsoleRequestRoute.AUTO_COMPACTION,
+            rule_lease=lease,
+        )
+    assert calls == [] and pool.unsettled_count == 0 and not lease.acceptance_current
+
+
 def test_auxiliary_request_is_frozen_and_copies_nested_input() -> None:
     message = {"role": "user", "content": "BLOCK-CANARY"}
     required = ["rewritten_prompt"]
@@ -9203,6 +9587,7 @@ async def test_auxiliary_adapter_transport_failure_keeps_bounded_category(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_auxiliary_status_less_local_failure_is_a_bad_request_not_an_outage() -> (
     None
 ):
@@ -11795,18 +12180,28 @@ def test_adapter_wire_kwargs_hands_providers_serializable_messages() -> None:
 
 
 @pytest.mark.asyncio
-async def test_custom_endpoint_openai_compatible_resolves_entry_url() -> None:
+@pytest.mark.parametrize(
+    ("console_settings", "execution_key"),
+    [
+        ({}, "custom-hosted"),
+        ({"custom_endpoints_use_engine": False}, "custom-openai-api"),
+    ],
+)
+async def test_custom_endpoint_openai_compatible_resolves_entry_url(
+    console_settings, execution_key
+) -> None:
     """An openai_compatible entry executes as the custom family with the
     entry's URL (ADR-146), never the endpoint-not-saved guard."""
     gateway = ConsoleProviderGateway(
         config_provider=lambda: {
+            "console": console_settings,
             "custom_endpoints": {
                 "paid": {
                     "display_name": "Paid",
                     "family": "openai_compatible",
                     "base_url": "https://api.example.com/v1",
                 }
-            }
+            },
         },
         environ={},
     )
@@ -11821,7 +12216,7 @@ async def test_custom_endpoint_openai_compatible_resolves_entry_url() -> None:
 
     assert resolved.ready is True
     assert resolved.readiness_key == "custom"
-    assert resolved.execution_key == "custom-openai-api"
+    assert resolved.execution_key == execution_key
     # The custom family materializes the chat-completions URL from the
     # entry's base_url (provider endpoint contract), so assert the entry
     # URL flowed rather than exact equality.
@@ -11869,7 +12264,7 @@ async def test_custom_endpoint_declared_env_key_flows_to_resolution(
 
     assert resolved.ready is True
     assert resolved.api_key == "paid-secret"
-    assert resolved.execution_key == "custom-openai-api"
+    assert resolved.execution_key == "custom-hosted"
 
 
 @pytest.mark.asyncio
@@ -11898,11 +12293,13 @@ async def test_custom_endpoint_stored_key_flows_to_resolution() -> None:
 
     assert resolved.ready is True
     assert resolved.api_key == "stored-secret"
-    assert resolved.execution_key == "custom-openai-api"
+    assert resolved.execution_key == "custom-hosted"
 
 
 @pytest.mark.asyncio
-async def test_custom_endpoint_unresolved_declared_key_blocks_with_missing_key_copy() -> None:
+async def test_custom_endpoint_unresolved_declared_key_blocks_with_missing_key_copy() -> (
+    None
+):
     # `environ={}` guarantees PAID_KEY_UNSET is absent even when the host
     # environment happens to define it.
     gateway = ConsoleProviderGateway(
@@ -11973,7 +12370,9 @@ async def test_custom_endpoint_llama_family_declared_key_flows_to_resolution() -
 
 
 @pytest.mark.asyncio
-async def test_custom_endpoint_openai_compatible_entry_url_outranks_stale_session_url() -> None:
+async def test_custom_endpoint_openai_compatible_entry_url_outranks_stale_session_url() -> (
+    None
+):
     """An edited openai_compatible entry re-resolves on send: the session's
     stale pinned URL is not used."""
     gateway = ConsoleProviderGateway(
@@ -12003,9 +12402,12 @@ async def test_custom_endpoint_openai_compatible_entry_url_outranks_stale_sessio
 
 
 @pytest.mark.asyncio
-async def test_custom_endpoint_llama_family_entry_url_outranks_stale_session_url() -> None:
+async def test_custom_endpoint_llama_family_entry_url_outranks_stale_session_url() -> (
+    None
+):
     """An edited llama_cpp entry re-resolves on send: the session's stale
     pinned URL is not used."""
+
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"data": [{"id": "server-model"}]})
 
@@ -12124,11 +12526,13 @@ async def test_custom_endpoint_resolution_carries_raw_selected_provider() -> Non
 
     assert resolved.ready is True
     assert resolved.selected_provider == "custom-ep:paid"
-    assert resolved.execution_key == "custom-openai-api"
+    assert resolved.execution_key == "custom-hosted"
 
 
 @pytest.mark.asyncio
-async def test_custom_endpoint_llama_family_resolution_carries_raw_selected_provider() -> None:
+async def test_custom_endpoint_llama_family_resolution_carries_raw_selected_provider() -> (
+    None
+):
     """The llama-family path flattens provider/execution_key to the family
     but still keeps the raw slug in selected_provider."""
 
@@ -12198,21 +12602,37 @@ async def test_plain_provider_resolution_carries_no_raw_selected_provider() -> N
 @pytest.mark.asyncio
 @pytest.mark.parametrize("family", ["llama_cpp", "openai_compatible"])
 @pytest.mark.parametrize("pinned", [False, True])
-async def test_routed_snapshot_url_pin_preserves_ordinary_registry_edits(family, pinned):
+async def test_routed_snapshot_url_pin_preserves_ordinary_registry_edits(
+    family, pinned
+):
     requests = []
+
     def handler(request):
         requests.append(str(request.url))
         return httpx.Response(200, json={"data": [{"id": "model"}]})
-    config = {"custom_endpoints": {"gpu": {
-        "display_name": "GPU", "family": family,
-        "base_url": "http://new-server:9090", "models": ["model"],
-    }}}
+
+    config = {
+        "custom_endpoints": {
+            "gpu": {
+                "display_name": "GPU",
+                "family": family,
+                "base_url": "http://new-server:9090",
+                "models": ["model"],
+            }
+        }
+    }
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        gateway = ConsoleProviderGateway(http_client=client, config_provider=lambda: config, environ={})
-        resolved = await gateway.resolve_for_send(ConsoleProviderSelection(
-            provider="custom-ep:gpu", explicit_model="model",
-            base_url="http://original-server:8080", base_url_is_pinned=pinned,
-        ))
+        gateway = ConsoleProviderGateway(
+            http_client=client, config_provider=lambda: config, environ={}
+        )
+        resolved = await gateway.resolve_for_send(
+            ConsoleProviderSelection(
+                provider="custom-ep:gpu",
+                explicit_model="model",
+                base_url="http://original-server:8080",
+                base_url_is_pinned=pinned,
+            )
+        )
     assert resolved.ready
     expected = "http://original-server:8080" if pinned else "http://new-server:9090"
     suffix = "/v1/chat/completions" if family == "openai_compatible" else ""
@@ -12227,8 +12647,8 @@ async def test_stream_signal_delegates_retained_provider_work_without_owning_can
     seen = []
     signals = gateway_module.ConsoleProviderStreamSignals()
     assert not signals.register_provider_work(future, close)
-    signals.provider_work_callback = (
-        lambda completion, closer: seen.append((completion, closer)) or True
+    signals.provider_work_callback = lambda completion, closer: (
+        seen.append((completion, closer)) or True
     )
     assert signals.register_provider_work(future, close)
     assert seen == [(future, close)]

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from Tests.Chat.test_console_durable_turn_acceptance import _ready_store
 from Tests.Chat.test_console_first_send_atomicity import _controller
 from Tests.console_provider_doubles import provider_resolution
@@ -146,7 +147,9 @@ class _ClosedTheChat(RuntimeError):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_an_effect_that_fails_while_the_chat_closes_reports_its_own_cause(
+    request: pytest.FixtureRequest,
     tmp_path,
 ) -> None:
     """End-to-end shape of the original bug, on the realistic path.
@@ -172,7 +175,9 @@ async def test_an_effect_that_fails_while_the_chat_closes_reports_its_own_cause(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_closing_the_chat_during_a_successful_effect_does_not_raise(
+    request: pytest.FixtureRequest,
     tmp_path,
 ) -> None:
     """AC1/AC3: close-during-collection on a DURABLE session is not an error.
@@ -195,7 +200,9 @@ async def test_closing_the_chat_during_a_successful_effect_does_not_raise(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_a_failing_release_never_replaces_the_original_failure(
+    request: pytest.FixtureRequest,
     tmp_path,
 ) -> None:
     """The release guard itself, pinned independently of WHY release fails.
@@ -237,8 +244,9 @@ async def test_a_failing_release_never_replaces_the_original_failure(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_resume_after_the_chat_was_closed_does_not_raise(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    request: pytest.FixtureRequest, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """AC1 on the path production actually takes.
 
@@ -272,8 +280,9 @@ async def test_resume_after_the_chat_was_closed_does_not_raise(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_resume_after_close_leaves_no_dangling_continuation(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    request: pytest.FixtureRequest, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Closing must not strand the continuation the resume was meant to clear.
 
@@ -305,8 +314,9 @@ async def test_resume_after_close_leaves_no_dangling_continuation(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_closing_midway_through_the_effect_sequence_does_not_raise(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    request: pytest.FixtureRequest, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Close DURING the sequence -- Qodo's finding #2 on #2123.
 

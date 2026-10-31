@@ -82,15 +82,11 @@ def test_display_index_counts_each_inserted_break_once():
     assert _textual_web_safe_url_display_index(value, first_break - 1) == (
         first_break - 1
     )
-    assert _textual_web_safe_url_display_index(value, first_break) == (
-        first_break + 1
-    )
+    assert _textual_web_safe_url_display_index(value, first_break) == (first_break + 1)
     assert _textual_web_safe_url_display_index(value, second_break) == (
         second_break + 2
     )
-    assert _textual_web_safe_url_display_index(value, len(value)) == (
-        len(value) + 2
-    )
+    assert _textual_web_safe_url_display_index(value, len(value)) == (len(value) + 2)
 
 
 def test_zero_width_break_occupies_zero_cells():

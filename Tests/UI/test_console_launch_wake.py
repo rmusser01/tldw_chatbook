@@ -42,6 +42,9 @@ import time
 
 import pytest
 
+# These owners exercise native config participants selected at collection.
+pytestmark = pytest.mark.bootstrap_profile
+
 from Tests.Chat.test_console_fleet_wake import _terminal_subagent_run
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
@@ -88,9 +91,7 @@ async def _quiet(pilot, predicate, seconds: float = 2.0) -> bool:
     return not predicate()
 
 
-def _launch_app(
-    tmp_path, *, tree=None, gateway_reply=LAUNCH_REPLY, real_service=False
-):
+def _launch_app(tmp_path, *, tree=None, gateway_reply=LAUNCH_REPLY, real_service=False):
     """A SECOND process over the same durable state, Console never opened.
 
     `default_tab="library"` is what keeps Console out of it: the real
@@ -243,7 +244,9 @@ async def test_a_launch_delivers_a_wake_owed_from_a_previous_process(tmp_path):
             "the child's result never reached the supervisor"
         )
         seeded_user = rows[0][2]
-        assert any(seeded_user in str(entry.get("content") or "") for entry in payload), (
+        assert any(
+            seeded_user in str(entry.get("content") or "") for entry in payload
+        ), (
             "the launch-hydrated session carried NO prior history -- the "
             "supervisor was woken with no idea what it had been doing: "
             f"{[(e.get('role'), str(e.get('content'))[:32]) for e in payload]}"
@@ -271,7 +274,9 @@ async def test_a_launch_delivers_a_wake_owed_from_a_previous_process(tmp_path):
             for m in store.messages_for_session(session.id)
             if getattr(m.metadata, "origin", "") == "agent_wake"
         ]
-        assert len(notices) == 1, f"expected one machine-origin notice, got {len(notices)}"
+        assert len(notices) == 1, (
+            f"expected one machine-origin notice, got {len(notices)}"
+        )
         assert notices[0].role is ConsoleMessageRole.SYSTEM
 
         assert await _settle(
@@ -296,7 +301,9 @@ async def test_a_launch_delivers_a_wake_owed_from_a_previous_process(tmp_path):
         )
 
         # (4) no USER row was added.
-        assert senders.count("user") == 1, f"the launch wake persisted a USER row: {senders}"
+        assert senders.count("user") == 1, (
+            f"the launch wake persisted a USER row: {senders}"
+        )
         store_user_rows = [
             m
             for m in store.messages_for_session(session.id)
@@ -343,10 +350,16 @@ async def test_a_second_launch_does_not_re_announce_a_delivered_wake(tmp_path):
         assert await _settle(pilot, lambda: bool(gateway1.payloads)), (
             "precondition: the first launch must deliver"
         )
-    assert marks1.has_mark(conversation_id, FLEET_UNSEEN), (
-        "precondition: the unwatched delivery must KEEP the mark, which is "
-        "exactly what makes the second launch a real test"
-    )
+        assert await _settle(
+            pilot,
+            lambda: (
+                not app1.console_runtime.chat_controller.fleet_wake.delivering_conversation_ids()
+            ),
+        )
+        assert marks1.has_mark(conversation_id, FLEET_UNSEEN)
+    # Shutdown may clear the view mark; seed it again to prove that attention
+    # alone cannot replay a result whose exact delivery receipt already exists.
+    marks1.set_mark(conversation_id, FLEET_UNSEEN)
 
     app2, _marks2, gateway2 = _launch_app(tmp_path, real_service=True)
     async with app2.run_test(size=(120, 40)) as pilot:
@@ -378,7 +391,8 @@ async def test_a_second_launch_does_not_re_announce_a_delivered_wake(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_launch_into_console_delivers_without_stealing_the_active_tab(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """The OTHER launch shape, and the shipped default: `default_tab` is
     Console, so the startup screen IS a `ChatScreen` with its own fresh
@@ -424,6 +438,12 @@ async def test_a_launch_into_console_delivers_without_stealing_the_active_tab(
         assert store.active_session_id == landed_on, (
             "the launch wake moved the user off the tab they landed on: "
             f"{landed_on} -> {store.active_session_id}"
+        )
+        assert await _settle(
+            pilot,
+            lambda: (
+                not app.console_runtime.chat_controller.fleet_wake.delivering_conversation_ids()
+            ),
         )
         assert marks.has_mark(conversation_id, FLEET_UNSEEN), (
             "the wake landed in a tab the user was not viewing, so the ◈ mark "
@@ -537,9 +557,8 @@ async def test_a_launch_with_no_marks_constructs_nothing_and_reads_once(tmp_path
             )
             await pilot.pause(0.2)
             _assert_console_never_mounted(app)
-            assert calls == [ConversationLocalMarksService.FLEET_UNSEEN], (
-                "a launch with no marks must cost exactly one indexed mark "
-                f"listing; got {calls}"
+            assert calls == [], (
+                "durable wake discovery must not treat attention marks as authority"
             )
             runtime = app.console_runtime
             assert runtime.chat_store is None, "a launch with no marks built a store"
@@ -653,8 +672,7 @@ async def test_a_crash_killed_child_swept_to_error_wakes_nobody_at_launch(tmp_pa
         )
         _assert_console_never_mounted(app)
         assert app.console_runtime.chat_controller is None, (
-            "an unmarked owed row still built the whole Console runtime at "
-            "launch"
+            "an unmarked owed row still built the whole Console runtime at launch"
         )
 
 
@@ -762,7 +780,9 @@ async def test_a_mark_with_nothing_owed_is_left_alone_at_launch(tmp_path):
     clear it -- the user has still not seen that result."""
     app0 = _build_test_app("library")
     marks0 = _attach_real_dbs(app0, tmp_path)
-    app0.chachanotes_db.add_conversation({"id": "conv-seen-later", "title": "Delivered"})
+    app0.chachanotes_db.add_conversation(
+        {"id": "conv-seen-later", "title": "Delivered"}
+    )
     marks0.set_mark("conv-seen-later", FLEET_UNSEEN)
 
     app, marks, gateway = _launch_app(
@@ -785,9 +805,11 @@ async def test_a_mark_with_nothing_owed_is_left_alone_at_launch(tmp_path):
             "loses the only pointer they had to a result they never saw"
         )
         store = app.console_runtime.chat_store
-        opened = [] if store is None else [
-            s.persisted_conversation_id for s in store.sessions()
-        ]
+        opened = (
+            []
+            if store is None
+            else [s.persisted_conversation_id for s in store.sessions()]
+        )
         assert "conv-seen-later" not in opened, (
             "the launch hydrated a session for a conversation owing nothing -- "
             "the user opens Console to an unexplained tab, and the work was "

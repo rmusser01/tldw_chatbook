@@ -1,0 +1,22 @@
+{
+  "fix_base": "d3b2ade44b49afc96f78c592ac271e3231472b27",
+  "owned_paths": [
+    "tldw_chatbook/DB/automatic_work.py",
+    "Tests/DB/test_automatic_chat_starts.py"
+  ],
+  "sha256": {
+    "tldw_chatbook/DB/automatic_work.py": "53e3cc87df9d6029aa34076b2456a9333a041caac8ed558342c88bb797ba6f1c",
+    "Tests/DB/test_automatic_chat_starts.py": "7055d0addda58c916d3a3f68f96e6b57ebb5c2de03f343c7dc842012c1ff2b6a"
+  },
+  "aggregate_sha256": "d08dba9dffa091cfe01a2cea1a25ec8cf5ecc884c942d995e8d59a685ee6d1c1",
+  "original_test_functions_unchanged": 20,
+  "other_eight_source_test_paths_unchanged": true,
+  "self_review": [
+    "Recovery captures foreign exact records before durable transaction exit.",
+    "Cleanup runs only after successful commit and removes only unchanged entry identities.",
+    "Registry lock covers only snapshot or conditional dictionary mutation, no SQLite I/O.",
+    "Fresh records at new keys and same keys survive old cleanup.",
+    "Known/unknown-root overlap, current-owner uncertainty, charge/no replay, sibling denial and sequential owner recovery exercised.",
+    "Test worker uses operation-owned DB connection; release/join and peer cleanup are in finally paths."
+  ]
+}

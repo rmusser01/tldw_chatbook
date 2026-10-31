@@ -11,6 +11,7 @@ import pytest
 from textual.containers import Vertical
 from textual.widgets import Button, Input
 
+from tldw_chatbook.Chat.console_conversation_activation import ConsoleActivationPhase
 from tldw_chatbook.Chat.console_switcher_state import SwitcherMode
 from tldw_chatbook.UI.Console_Modules import conversation_token_preparation, workspace
 from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
@@ -132,6 +133,7 @@ async def test_warm_open_scope_error_is_nonfatal_but_activation_failures_restore
             store=store, switch_session=switch
         ),
         _capture_console_draft_switch_snapshot=lambda: None,
+        _bind_composer_after_switch=lambda: None,
         _set_active_workspace_for_console_session=lambda _id: None,
         _refresh_console_effective_scope_and_sync=refresh,
         _sync_console_chat_core_state=lambda: None,
@@ -172,6 +174,8 @@ async def test_queued_reconciliation_does_not_allocate_coroutine_before_start():
         _authority_token="token",
         _active_projection_generation=1,
         _activation_in_flight=False,
+        _activation_phase=ConsoleActivationPhase.IDLE,
+        _activation_interrupted_by_quit=False,
         _mode=SwitcherMode.HISTORY,
         query_one=lambda *_args: SimpleNamespace(value="Exact"),
         run_worker=lambda work, **_kwargs: queued.append(work),

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from html import escape as html_escape
 from pathlib import PurePath
-from typing import Any, Literal, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional, Sequence
 
 from rich.cells import cell_len
 
@@ -31,6 +32,9 @@ from tldw_chatbook.RAG_Search.local_citation_capture import (
 )
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsReadiness
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL = "Review approval"
@@ -242,6 +246,8 @@ def _mcp_inspector_row(
 #: presentation's vocabulary). While a run owns the slot the reason strip
 #: names these states instead of blaming provider setup or saying "Send".
 SEND_LABEL_PREPARING = "Preparing..."
+#: TASK-33620.5: an Enter acknowledged on screen before its admission ran.
+SEND_LABEL_SENDING = "Sending..."
 SEND_LABEL_QUEUE_FULL = "Queue full"
 SEND_LABEL_QUEUE = "Queue"
 
@@ -254,6 +260,46 @@ SEND_LABEL_QUEUE = "Queue"
 QUEUE_REASON_PREPARING = "Queue opens once this turn is accepted"
 QUEUE_REASON_FULL = "Queue full — manage it to make room"
 QUEUE_REASON_RUN_HOLD = "Wait for the current run to finish"
+
+
+def console_setup_blocked_reason(readiness: ConsoleSettingsReadiness) -> str:
+    """Return the native composer's setup-specific send blocker copy.
+
+    ``ChatScreen._console_setup_blocked_reason`` returns this for the active
+    session's readiness; `build_console_disabled_reason` below turns it into
+    the reason strip's "Send blocked — ..." copy.
+
+    Args:
+        readiness: The active Console session's settings readiness.
+
+    Returns:
+        An empty string when the readiness can send, or while an active run
+        owns admission; otherwise one sentence naming the setup step.
+    """
+    if readiness.operability == "ready_to_send":
+        return ""
+    if readiness.recovery_action == "wait_for_active_run":
+        # The prompt-queue presentation owns active-run admission: it
+        # blocks while a turn is preparing, then enables Queue once the
+        # provider has accepted it. Settings readiness still blocks
+        # mutations during the run, but must not override that composer
+        # lifecycle with a second, permanently-blocked gate.
+        return ""
+    if readiness.recovery_action == "select_model":
+        return "Choose a model in Chat settings before sending."
+    if readiness.recovery_action == "configure_credential":
+        if readiness.subscription_status == "pending":
+            return "Checking Claude subscription credential."
+        if readiness.subscription_status in {"missing", "expired"}:
+            return "Log in with Claude Code to refresh the subscription credential."
+        if readiness.blocker == "credential_rejected":  # TASK-33005.7
+            return "API key rejected. Update it in Settings > Providers & Models."
+        return "Add API key in Settings > Providers & Models before sending."
+    if readiness.recovery_action == "save_endpoint":
+        return "Save provider endpoint in Chat settings before sending."
+    if readiness.recovery_action == "retry_connection":
+        return "Provider unreachable. Retry connection before sending."
+    return "Finish provider setup before sending."
 
 
 def build_console_disabled_reason(
@@ -331,10 +377,12 @@ def build_console_disabled_reason(
         # Settings > Providers & Models before sending."), so a naive
         # "model" substring match swallowed the missing-key state and
         # named the wrong blocker.
+        if "key rejected" in setup_reason_lower:  # TASK-33005.7: never "add"
+            return "Send blocked — key rejected; update the API key"
         if "api key" in setup_reason_lower:
             return "Send blocked — add an API key to continue"
         if "endpoint" in setup_reason_lower:
-            return "Send blocked — configure the endpoint to continue"
+            return "Send blocked — save the endpoint to continue"
         if "model" in setup_reason_lower:
             return "Send blocked — choose a model to continue"
         if (
@@ -707,9 +755,11 @@ class ConsoleLibraryPolicyDisplayState:
             chip_label = "Library: blocked · policy unavailable"
             source_status = "Unavailable — using Never and Blocked"
         else:
+            # TASK-34100.5 AC#9: say what is off (the agent's Library access),
+            # not "blocked" -- the normal default read as an error on arrival.
             chip_label = (
                 f"Library · Auto {'on' if automatic else 'off'} · "
-                f"Agent {'allowed' if allowed else 'blocked'}"
+                f"Agent access {'on' if allowed else 'off'}"
             )
             source_status = {
                 "durable": "Saved on this device · not synced",
@@ -1396,6 +1446,24 @@ class ConsoleRetrievalScopeState:
 
 
 @dataclass(frozen=True)
+class _ConsoleInspectorPendingInputs:
+    provider: str
+    model: str
+    sources: str
+    tools: int
+    live_work_title: str
+
+    def recipe(self, approvals: int, scope_item_count: int | None) -> str:
+        value = (
+            f"{self.provider} / {self.model} / sources {self.sources} / "
+            f"tools {self.tools} / approvals {approvals}"
+        )
+        if scope_item_count is not None and scope_item_count > 0:
+            value = f"{value} / scope {scope_item_count} items"
+        return value
+
+
+@dataclass(frozen=True)
 class ConsoleInspectorState:
     """Display state for Console run/readiness inspection."""
 
@@ -1419,16 +1487,143 @@ class ConsoleInspectorState:
     #: transcript that said the run had failed.
     run_failed: bool = False
     run_failure_reason: str = ""
+    #: TASK-33621.2: why the viewed chat's accepted turn is stuck unsent
+    #: (paused for trace recovery); empty when no turn is blocked.
+    run_blocked_reason: str = ""
     staged_source_count: int = 0
     pending_approval_count: int = 0
     scope_item_count: int | None = None
     ephemeral: bool = False
+
+    _pending_inputs: _ConsoleInspectorPendingInputs | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    # A current pending observation has no complete readiness or recipe authority.
+    pending_only: bool = False
+
+    @classmethod
+    def from_pending_facts(
+        cls, approval_count: int, pending_copy: str
+    ) -> ConsoleInspectorState:
+        """Show only fresh pending facts; unrelated display fields stay unknown."""
+        if (
+            type(approval_count) is not int  # hostile metaclass equality must not run.
+            or approval_count < 0
+            or type(pending_copy) is not str  # no metaclass equality dispatch.
+        ):
+            raise ValueError("invalid_pending_display_facts")
+        if pending_copy not in (
+            "",
+            "Waiting for your approval",
+            "Waiting for your answer",
+            "Waiting for your confirmation",
+        ):
+            raise ValueError("invalid_pending_display_copy")
+        live = (
+            "Waiting for your approval"
+            if approval_count
+            else pending_copy or "Refreshing…"
+        )
+        unknown = "Refreshing…"
+        rows = (
+            ConsoleDisplayRow(
+                "Run recipe",
+                f"{unknown} / {unknown} / sources {unknown} / tools {unknown} / approvals {approval_count} / scope {unknown}",
+                status="running",
+            ),
+            ConsoleDisplayRow(
+                "Live work",
+                live,
+                status="blocked" if approval_count or pending_copy else "running",
+            ),
+            ConsoleDisplayRow(
+                "Approvals",
+                f"{approval_count} pending",
+                status="blocked" if approval_count else "running",
+            ),
+            *(
+                ConsoleDisplayRow(label, unknown, status="running")
+                for label in (
+                    "Provider",
+                    "Retrieval",
+                    "Tools",
+                    "MCP",
+                    "Evidence",
+                    "Authority",
+                    "Artifacts",
+                    "Workspace",
+                    "Selected conversation",
+                )
+            ),
+        )
+        return cls(
+            rows=rows,
+            actions=(
+                ConsoleInspectorAction(
+                    widget_id=CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
+                    label="Review",
+                    enabled=bool(approval_count or pending_copy),
+                    disabled_reason="No decision is pending.",
+                ),
+            ),
+            has_pending_approval=approval_count > 0,
+            pending_approval_count=approval_count,
+            pending_only=True,
+        )
+
+    def with_pending_facts(
+        self, approval_count: int, pending_copy: str
+    ) -> ConsoleInspectorState | None:
+        """Replace only current in-memory pending display facts in this base."""
+        if self.pending_only:
+            return None
+        inputs = self._pending_inputs
+        if type(inputs) is not _ConsoleInspectorPendingInputs or type(
+            inputs.live_work_title
+        ) not in (str,):
+            return None
+        count = coerce_non_negative_int(approval_count)
+        live = (
+            "Waiting for your approval"
+            if count > 0
+            else _clean(pending_copy, "")
+            or ("Generating…" if self.run_active else inputs.live_work_title)
+        )
+        rows = tuple(
+            replace(row, value=inputs.recipe(count, self.scope_item_count))
+            if row.label == "Run recipe"
+            else replace(row, value=live)
+            if row.label == "Live work"
+            else replace(
+                row,
+                value=f"{count} pending",
+                status="blocked" if count > 0 else "ready",
+            )
+            if row.label == "Approvals"
+            else row
+            for row in self.rows
+        )
+        actions = tuple(
+            replace(action, enabled=count > 0)
+            if action.widget_id == CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID
+            else action
+            for action in self.actions
+        )
+        return replace(
+            self,
+            rows=rows,
+            actions=actions,
+            has_pending_approval=count > 0,
+            pending_approval_count=count,
+        )
 
     @classmethod
     def from_values(
         cls,
         *,
         live_work_title: Any = None,
+        pending_interrupt_copy: str = "",
         provider_label: Any = None,
         model_label: Any = None,
         provider_ready: bool = True,
@@ -1450,6 +1645,7 @@ class ConsoleInspectorState:
         # in flight. Defaults preserve every existing caller.
         run_failed: bool = False,
         run_failure_reason: str = "",
+        run_blocked_reason: str = "",
         ephemeral: bool = False,
         change_review_available: bool = False,
         staged_source_count: int = 0,
@@ -1466,6 +1662,8 @@ class ConsoleInspectorState:
                 "Generating…" -- and ignored while ``approval_count`` is
                 non-zero, which reads "Waiting for your approval" instead
                 (task-32345: outranks ``run_active`` too).
+            pending_interrupt_copy: Waiting copy derived from the session's
+                registered interrupt kinds, ahead of active generation copy.
             provider_label: Active provider name for the run-recipe line.
             model_label: Active model name for the run-recipe line.
             provider_ready: Whether the provider can be sent to. ``False``
@@ -1498,6 +1696,8 @@ class ConsoleInspectorState:
                 (TASK-24602).
             run_failure_reason: Visible copy for that failure, surfaced on
                 the pinned authority line.
+            run_blocked_reason: Why an accepted turn is stuck unsent, or ""
+                (TASK-33621.2).
             ephemeral: Whether this is a temporary conversation, which
                 blocks the Save Chatbook action.
             change_review_available: Whether change tracking has anything to
@@ -1530,31 +1730,33 @@ class ConsoleInspectorState:
         # "Tools: 4 ready". That is the third instance of this divergence:
         # TASK-1843 (see the `Tools` row's own comment) already fixed it on
         # the status chip and then on the row, and missed the recipe line.
-        run_recipe = (
-            f"{provider_value} / {model_value} / sources {source_summary} / "
-            f"tools {effective_tool_count} / approvals {normalized_approval_count}"
+        stock_title = live_work_title is None or type(live_work_title) in (str,)
+        recipe_inputs = _ConsoleInspectorPendingInputs(
+            provider_value,
+            model_value,
+            source_summary,
+            effective_tool_count,
+            _clean(live_work_title, "No active work")
+            if stock_title
+            else "No active work",
         )
-        # task-9: an active conversation RAG retrieval scope surfaces on the
-        # run recipe line ("... / scope N items"). ``None`` (unscoped, the
-        # overwhelming common case) leaves the line unchanged; a scope with
-        # zero items never reaches here (see ``ConsoleRetrievalScopeState``).
-        if scope_item_count is not None and scope_item_count > 0:
-            run_recipe = f"{run_recipe} / scope {scope_item_count} items"
+        # A customized title keeps the original complete-render coercion, but
+        # is never retained for another call after that checked body retires.
+        pending_inputs = recipe_inputs if stock_title else None
+        run_recipe = recipe_inputs.recipe(normalized_approval_count, scope_item_count)
         rows = [
             ConsoleDisplayRow("Run recipe", run_recipe),
             ConsoleDisplayRow(
                 "Live work",
-                # task-32345: a pending approval outranks everything below
-                # -- it is a fact about the USER (a card is waiting on
-                # them), more current than "a generation is in flight".
-                # TASK-347: else a running generation shows "Generating…";
-                # else the pending Library-RAG launch title, else no
-                # active work.
+                # Session-owned decisions outrank generation and launch copy.
+                # Approval has priority over questions and confirmations.
                 "Waiting for your approval"
                 if normalized_approval_count > 0
-                else "Generating…"
-                if run_active
-                else _clean(live_work_title, "No active work"),
+                else _clean(pending_interrupt_copy, "") or (
+                    "Generating…"
+                    if run_active
+                    else _clean(live_work_title, "No active work")
+                ),
             ),
             ConsoleDisplayRow(
                 "Provider",
@@ -1642,8 +1844,10 @@ class ConsoleInspectorState:
             run_active=run_active,
             run_failed=run_failed,
             run_failure_reason=_clean(run_failure_reason, ""),
+            run_blocked_reason=_clean(run_blocked_reason, ""),
             staged_source_count=coerce_non_negative_int(staged_source_count),
             pending_approval_count=normalized_approval_count,
+            _pending_inputs=pending_inputs,
             scope_item_count=scope_item_count,
             ephemeral=ephemeral,
         )
@@ -2327,3 +2531,94 @@ def format_diff_feedback_disclosure(notes: Sequence[dict]) -> str:
             location = f"{note['path']} {note['hunk_header']}"
         lines.append(f'📝 Diff feedback attached — {location}: "{note["note"]}"')
     return "\n".join(lines)
+
+
+_CONSOLE_PENDING_MODEL_SOURCES = tuple(
+    (
+        function,
+        function.__code__,
+        function.__globals__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for function in (
+        ConsoleInspectorState.with_pending_facts,
+        _ConsoleInspectorPendingInputs.recipe,
+        _clean,
+        coerce_non_negative_int,
+        ConsoleInspectorState.from_pending_facts.__func__,
+        ConsoleInspectorState.__init__,
+        ConsoleDisplayRow.__init__,
+        ConsoleInspectorAction.__init__,
+        ConsoleInspectorState.__setattr__,
+        ConsoleInspectorState.__delattr__,
+        ConsoleDisplayRow.__setattr__,
+        ConsoleDisplayRow.__delattr__,
+        ConsoleInspectorAction.__setattr__,
+        ConsoleInspectorAction.__delattr__,
+    )
+)
+
+_CONSOLE_PENDING_MODEL_SLOTS = (
+    (
+        ConsoleInspectorState,
+        "with_pending_facts",
+        ConsoleInspectorState.with_pending_facts,
+    ),
+    (_ConsoleInspectorPendingInputs, "recipe", _ConsoleInspectorPendingInputs.recipe),
+    (
+        ConsoleInspectorState,
+        "from_pending_facts",
+        vars(ConsoleInspectorState)["from_pending_facts"],
+    ),
+    (ConsoleInspectorState, "__init__", ConsoleInspectorState.__init__),
+    (ConsoleDisplayRow, "__init__", ConsoleDisplayRow.__init__),
+    (ConsoleInspectorAction, "__init__", ConsoleInspectorAction.__init__),
+    (ConsoleInspectorState, "__dict__", vars(ConsoleInspectorState)["__dict__"]),
+    (ConsoleInspectorState, "pending_only", False),
+    (ConsoleInspectorState, "_pending_inputs", None),
+    (
+        _ConsoleInspectorPendingInputs,
+        "__dict__",
+        vars(_ConsoleInspectorPendingInputs)["__dict__"],
+    ),
+)
+
+_CONSOLE_PENDING_MODEL_CLASSES = tuple(
+    (name, globals()[name])
+    for name in (
+        "ConsoleInspectorState",
+        "ConsoleDisplayRow",
+        "ConsoleInspectorAction",
+        "_ConsoleInspectorPendingInputs",
+    )
+)
+
+_CONSOLE_PENDING_MODEL_ABSENT_FIELD = object()
+_CONSOLE_PENDING_MODEL_CONSTRUCTION = tuple(
+    (
+        owner,
+        owner.__bases__,
+        tuple(
+            (
+                name,
+                inspect.getattr_static(
+                    owner, name, _CONSOLE_PENDING_MODEL_ABSENT_FIELD
+                ),
+            )
+            for name in (
+                "__new__",
+                "__setattr__",
+                "__delattr__",
+                "__getattribute__",
+                "__dict__",
+                "__slots__",
+                *owner.__dataclass_fields__,
+            )
+        ),
+    )
+    for owner in (ConsoleInspectorState, ConsoleDisplayRow, ConsoleInspectorAction)
+)

@@ -1,0 +1,2097 @@
+{
+  "Tests/LLM_Calls/test_doc_derived_presets.py": {
+    "versions": {
+      "reviewed": {
+        "sha256": "99d39039a74b567e1818ba4010c9e02548f6402302a478052f066f9bdeab0950",
+        "formatted_sha256": "e152a168adacbfc2fee6c74973153b4e1a063dbb16e5a77a08e6cb0b193e9b89",
+        "lines": 586,
+        "formatted_lines": 648,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "EXISTING_ENGINE_KEYS = (\"databricks\", \"together\", \"fireworks\", \"cerebras\", \"custom-hosted\")\n",
+            "new": "EXISTING_ENGINE_KEYS = (\n    \"databricks\",\n    \"together\",\n    \"fireworks\",\n    \"cerebras\",\n    \"custom-hosted\",\n)\n"
+          },
+          {
+            "old": "        monkeypatch.setattr(hosted_provider_engine, \"owned_json_post\", lambda **_kw: records)\n",
+            "new": "        monkeypatch.setattr(\n            hosted_provider_engine, \"owned_json_post\", lambda **_kw: records\n        )\n"
+          },
+          {
+            "old": "        monkeypatch.setattr(hosted_provider_engine, \"owned_json_post\", lambda **_kw: body)\n",
+            "new": "        monkeypatch.setattr(\n            hosted_provider_engine, \"owned_json_post\", lambda **_kw: body\n        )\n"
+          },
+          {
+            "old": "def _body(*, top: dict[str, Any] | None = None, choice: dict[str, Any] | None = None,\n          message: dict[str, Any] | None = None, finish: str = \"stop\") -> dict[str, Any]:\n",
+            "new": "def _body(\n    *,\n    top: dict[str, Any] | None = None,\n    choice: dict[str, Any] | None = None,\n    message: dict[str, Any] | None = None,\n    finish: str = \"stop\",\n) -> dict[str, Any]:\n"
+          },
+          {
+            "old": "def _chunk(delta: dict[str, Any], *, finish: str | None = None,\n           usage: dict[str, Any] | None = None) -> str:\n",
+            "new": "def _chunk(\n    delta: dict[str, Any],\n    *,\n    finish: str | None = None,\n    usage: dict[str, Any] | None = None,\n) -> str:\n"
+          },
+          {
+            "old": "\n",
+            "new": ""
+          },
+          {
+            "old": "    assert supports_openai_compatible_model_discovery(identity, EXPECTED[\"minimax\"][\"base_url\"]) is False\n",
+            "new": "    assert (\n        supports_openai_compatible_model_discovery(\n            identity, EXPECTED[\"minimax\"][\"base_url\"]\n        )\n        is False\n    )\n"
+          },
+          {
+            "old": "        record, resolution=_resolution(record, streaming=True),\n        messages_payload=messages, streaming=True,\n",
+            "new": "        record,\n        resolution=_resolution(record, streaming=True),\n        messages_payload=messages,\n        streaming=True,\n"
+          },
+          {
+            "old": "        record, resolution=_resolution(record, streaming=False),\n        messages_payload=messages, streaming=False,\n",
+            "new": "        record,\n        resolution=_resolution(record, streaming=False),\n        messages_payload=messages,\n        streaming=False,\n"
+          },
+          {
+            "old": "        record, resolution=_resolution(record, streaming=False),\n        messages_payload=[{\"role\": \"user\", \"content\": \"hi\"}], streaming=False,\n",
+            "new": "        record,\n        resolution=_resolution(record, streaming=False),\n        messages_payload=[{\"role\": \"user\", \"content\": \"hi\"}],\n        streaming=False,\n"
+          },
+          {
+            "old": "        message={\"reasoning_content\": \"thinking\", \"name\": \"MiniMax AI\", \"audio_content\": \"\"},\n",
+            "new": "        message={\n            \"reasoning_content\": \"thinking\",\n            \"name\": \"MiniMax AI\",\n            \"audio_content\": \"\",\n        },\n"
+          },
+          {
+            "old": "def test_documented_response_shape_parses(key: str, monkeypatch: pytest.MonkeyPatch) -> None:\n",
+            "new": "def test_documented_response_shape_parses(\n    key: str, monkeypatch: pytest.MonkeyPatch\n) -> None:\n"
+          },
+          {
+            "old": "_MINIMAX_ERROR = {\"status_code\": 1002, \"status_msg\": \"rate limit: prompt text echoed here\"}\n",
+            "new": "_MINIMAX_ERROR = {\n    \"status_code\": 1002,\n    \"status_msg\": \"rate limit: prompt text echoed here\",\n}\n"
+          },
+          {
+            "old": "        monkeypatch, RECORDS_BY_KEY[\"minimax\"], stream_events=[json.dumps(event), \"[DONE]\"]\n",
+            "new": "        monkeypatch,\n        RECORDS_BY_KEY[\"minimax\"],\n        stream_events=[json.dumps(event), \"[DONE]\"],\n"
+          },
+          {
+            "old": "@pytest.mark.parametrize(\"envelope\", [\"oops\", {\"status_code\": \"0\"}, {\"status_code\": True}])\n",
+            "new": "@pytest.mark.parametrize(\n    \"envelope\", [\"oops\", {\"status_code\": \"0\"}, {\"status_code\": True}]\n)\n"
+          },
+          {
+            "old": "        _replay(monkeypatch, RECORDS_BY_KEY[\"minimax\"], body=_body(top={\"base_resp\": envelope}))\n",
+            "new": "        _replay(\n            monkeypatch,\n            RECORDS_BY_KEY[\"minimax\"],\n            body=_body(top={\"base_resp\": envelope}),\n        )\n"
+          },
+          {
+            "old": "        json.dumps({\"id\": \"chatcmpl-1\", \"object\": \"chat.completion.chunk\",\n                    \"created\": 1, \"model\": \"doc-model\", \"choices\": [], \"usage\": _USAGE}),\n",
+            "new": "        json.dumps(\n            {\n                \"id\": \"chatcmpl-1\",\n                \"object\": \"chat.completion.chunk\",\n                \"created\": 1,\n                \"model\": \"doc-model\",\n                \"choices\": [],\n                \"usage\": _USAGE,\n            }\n        ),\n"
+          },
+          {
+            "old": "    events = [_chunk({\"role\": \"assistant\", \"content\": \"ok\"}), _chunk({}, finish=\"stop\"), \"[DONE]\"]\n",
+            "new": "    events = [\n        _chunk({\"role\": \"assistant\", \"content\": \"ok\"}),\n        _chunk({}, finish=\"stop\"),\n        \"[DONE]\",\n    ]\n"
+          },
+          {
+            "old": "    events = [_chunk({\"role\": \"assistant\", \"content\": \"ok\"}), _chunk({}, finish=\"stop\"), \"[DONE]\"]\n",
+            "new": "    events = [\n        _chunk({\"role\": \"assistant\", \"content\": \"ok\"}),\n        _chunk({}, finish=\"stop\"),\n        \"[DONE]\",\n    ]\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/LLM_Calls/test_doc_derived_presets.py",
+          "-"
+        ]
+      },
+      "incoming": {
+        "sha256": "dbb658cfdcbe71dbc3f4c76a7fe2a3c8da56e8826c3211f4c58dbd6bbef7dec0",
+        "formatted_sha256": "10f872b41434e4487e0f0f702166ef6826cd0aefc54a2189d86fabaf12e3be1f",
+        "lines": 590,
+        "formatted_lines": 652,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "EXISTING_ENGINE_KEYS = (\"databricks\", \"together\", \"fireworks\", \"cerebras\", \"custom-hosted\")\n",
+            "new": "EXISTING_ENGINE_KEYS = (\n    \"databricks\",\n    \"together\",\n    \"fireworks\",\n    \"cerebras\",\n    \"custom-hosted\",\n)\n"
+          },
+          {
+            "old": "        monkeypatch.setattr(hosted_provider_engine, \"owned_json_post\", lambda **_kw: records)\n",
+            "new": "        monkeypatch.setattr(\n            hosted_provider_engine, \"owned_json_post\", lambda **_kw: records\n        )\n"
+          },
+          {
+            "old": "        monkeypatch.setattr(hosted_provider_engine, \"owned_json_post\", lambda **_kw: body)\n",
+            "new": "        monkeypatch.setattr(\n            hosted_provider_engine, \"owned_json_post\", lambda **_kw: body\n        )\n"
+          },
+          {
+            "old": "def _body(*, top: dict[str, Any] | None = None, choice: dict[str, Any] | None = None,\n          message: dict[str, Any] | None = None, finish: str = \"stop\") -> dict[str, Any]:\n",
+            "new": "def _body(\n    *,\n    top: dict[str, Any] | None = None,\n    choice: dict[str, Any] | None = None,\n    message: dict[str, Any] | None = None,\n    finish: str = \"stop\",\n) -> dict[str, Any]:\n"
+          },
+          {
+            "old": "def _chunk(delta: dict[str, Any], *, finish: str | None = None,\n           usage: dict[str, Any] | None = None) -> str:\n",
+            "new": "def _chunk(\n    delta: dict[str, Any],\n    *,\n    finish: str | None = None,\n    usage: dict[str, Any] | None = None,\n) -> str:\n"
+          },
+          {
+            "old": "\n",
+            "new": ""
+          },
+          {
+            "old": "    assert supports_openai_compatible_model_discovery(identity, EXPECTED[\"minimax\"][\"base_url\"]) is False\n",
+            "new": "    assert (\n        supports_openai_compatible_model_discovery(\n            identity, EXPECTED[\"minimax\"][\"base_url\"]\n        )\n        is False\n    )\n"
+          },
+          {
+            "old": "        record, resolution=_resolution(record, streaming=True),\n        messages_payload=messages, streaming=True,\n",
+            "new": "        record,\n        resolution=_resolution(record, streaming=True),\n        messages_payload=messages,\n        streaming=True,\n"
+          },
+          {
+            "old": "        record, resolution=_resolution(record, streaming=False),\n        messages_payload=messages, streaming=False,\n",
+            "new": "        record,\n        resolution=_resolution(record, streaming=False),\n        messages_payload=messages,\n        streaming=False,\n"
+          },
+          {
+            "old": "        record, resolution=_resolution(record, streaming=False),\n        messages_payload=[{\"role\": \"user\", \"content\": \"hi\"}], streaming=False,\n",
+            "new": "        record,\n        resolution=_resolution(record, streaming=False),\n        messages_payload=[{\"role\": \"user\", \"content\": \"hi\"}],\n        streaming=False,\n"
+          },
+          {
+            "old": "        message={\"reasoning_content\": \"thinking\", \"name\": \"MiniMax AI\", \"audio_content\": \"\"},\n",
+            "new": "        message={\n            \"reasoning_content\": \"thinking\",\n            \"name\": \"MiniMax AI\",\n            \"audio_content\": \"\",\n        },\n"
+          },
+          {
+            "old": "def test_documented_response_shape_parses(key: str, monkeypatch: pytest.MonkeyPatch) -> None:\n",
+            "new": "def test_documented_response_shape_parses(\n    key: str, monkeypatch: pytest.MonkeyPatch\n) -> None:\n"
+          },
+          {
+            "old": "_MINIMAX_ERROR = {\"status_code\": 1002, \"status_msg\": \"rate limit: prompt text echoed here\"}\n",
+            "new": "_MINIMAX_ERROR = {\n    \"status_code\": 1002,\n    \"status_msg\": \"rate limit: prompt text echoed here\",\n}\n"
+          },
+          {
+            "old": "        monkeypatch, RECORDS_BY_KEY[\"minimax\"], stream_events=[json.dumps(event), \"[DONE]\"]\n",
+            "new": "        monkeypatch,\n        RECORDS_BY_KEY[\"minimax\"],\n        stream_events=[json.dumps(event), \"[DONE]\"],\n"
+          },
+          {
+            "old": "@pytest.mark.parametrize(\"envelope\", [\"oops\", {\"status_code\": \"0\"}, {\"status_code\": True}])\n",
+            "new": "@pytest.mark.parametrize(\n    \"envelope\", [\"oops\", {\"status_code\": \"0\"}, {\"status_code\": True}]\n)\n"
+          },
+          {
+            "old": "        _replay(monkeypatch, RECORDS_BY_KEY[\"minimax\"], body=_body(top={\"base_resp\": envelope}))\n",
+            "new": "        _replay(\n            monkeypatch,\n            RECORDS_BY_KEY[\"minimax\"],\n            body=_body(top={\"base_resp\": envelope}),\n        )\n"
+          },
+          {
+            "old": "        json.dumps({\"id\": \"chatcmpl-1\", \"object\": \"chat.completion.chunk\",\n                    \"created\": 1, \"model\": \"doc-model\", \"choices\": [], \"usage\": _USAGE}),\n",
+            "new": "        json.dumps(\n            {\n                \"id\": \"chatcmpl-1\",\n                \"object\": \"chat.completion.chunk\",\n                \"created\": 1,\n                \"model\": \"doc-model\",\n                \"choices\": [],\n                \"usage\": _USAGE,\n            }\n        ),\n"
+          },
+          {
+            "old": "    events = [_chunk({\"role\": \"assistant\", \"content\": \"ok\"}), _chunk({}, finish=\"stop\"), \"[DONE]\"]\n",
+            "new": "    events = [\n        _chunk({\"role\": \"assistant\", \"content\": \"ok\"}),\n        _chunk({}, finish=\"stop\"),\n        \"[DONE]\",\n    ]\n"
+          },
+          {
+            "old": "    events = [_chunk({\"role\": \"assistant\", \"content\": \"ok\"}), _chunk({}, finish=\"stop\"), \"[DONE]\"]\n",
+            "new": "    events = [\n        _chunk({\"role\": \"assistant\", \"content\": \"ok\"}),\n        _chunk({}, finish=\"stop\"),\n        \"[DONE]\",\n    ]\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/LLM_Calls/test_doc_derived_presets.py",
+          "-"
+        ]
+      },
+      "final": {
+        "sha256": "dbb658cfdcbe71dbc3f4c76a7fe2a3c8da56e8826c3211f4c58dbd6bbef7dec0",
+        "formatted_sha256": "10f872b41434e4487e0f0f702166ef6826cd0aefc54a2189d86fabaf12e3be1f",
+        "lines": 590,
+        "formatted_lines": 652,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "EXISTING_ENGINE_KEYS = (\"databricks\", \"together\", \"fireworks\", \"cerebras\", \"custom-hosted\")\n",
+            "new": "EXISTING_ENGINE_KEYS = (\n    \"databricks\",\n    \"together\",\n    \"fireworks\",\n    \"cerebras\",\n    \"custom-hosted\",\n)\n"
+          },
+          {
+            "old": "        monkeypatch.setattr(hosted_provider_engine, \"owned_json_post\", lambda **_kw: records)\n",
+            "new": "        monkeypatch.setattr(\n            hosted_provider_engine, \"owned_json_post\", lambda **_kw: records\n        )\n"
+          },
+          {
+            "old": "        monkeypatch.setattr(hosted_provider_engine, \"owned_json_post\", lambda **_kw: body)\n",
+            "new": "        monkeypatch.setattr(\n            hosted_provider_engine, \"owned_json_post\", lambda **_kw: body\n        )\n"
+          },
+          {
+            "old": "def _body(*, top: dict[str, Any] | None = None, choice: dict[str, Any] | None = None,\n          message: dict[str, Any] | None = None, finish: str = \"stop\") -> dict[str, Any]:\n",
+            "new": "def _body(\n    *,\n    top: dict[str, Any] | None = None,\n    choice: dict[str, Any] | None = None,\n    message: dict[str, Any] | None = None,\n    finish: str = \"stop\",\n) -> dict[str, Any]:\n"
+          },
+          {
+            "old": "def _chunk(delta: dict[str, Any], *, finish: str | None = None,\n           usage: dict[str, Any] | None = None) -> str:\n",
+            "new": "def _chunk(\n    delta: dict[str, Any],\n    *,\n    finish: str | None = None,\n    usage: dict[str, Any] | None = None,\n) -> str:\n"
+          },
+          {
+            "old": "\n",
+            "new": ""
+          },
+          {
+            "old": "    assert supports_openai_compatible_model_discovery(identity, EXPECTED[\"minimax\"][\"base_url\"]) is False\n",
+            "new": "    assert (\n        supports_openai_compatible_model_discovery(\n            identity, EXPECTED[\"minimax\"][\"base_url\"]\n        )\n        is False\n    )\n"
+          },
+          {
+            "old": "        record, resolution=_resolution(record, streaming=True),\n        messages_payload=messages, streaming=True,\n",
+            "new": "        record,\n        resolution=_resolution(record, streaming=True),\n        messages_payload=messages,\n        streaming=True,\n"
+          },
+          {
+            "old": "        record, resolution=_resolution(record, streaming=False),\n        messages_payload=messages, streaming=False,\n",
+            "new": "        record,\n        resolution=_resolution(record, streaming=False),\n        messages_payload=messages,\n        streaming=False,\n"
+          },
+          {
+            "old": "        record, resolution=_resolution(record, streaming=False),\n        messages_payload=[{\"role\": \"user\", \"content\": \"hi\"}], streaming=False,\n",
+            "new": "        record,\n        resolution=_resolution(record, streaming=False),\n        messages_payload=[{\"role\": \"user\", \"content\": \"hi\"}],\n        streaming=False,\n"
+          },
+          {
+            "old": "        message={\"reasoning_content\": \"thinking\", \"name\": \"MiniMax AI\", \"audio_content\": \"\"},\n",
+            "new": "        message={\n            \"reasoning_content\": \"thinking\",\n            \"name\": \"MiniMax AI\",\n            \"audio_content\": \"\",\n        },\n"
+          },
+          {
+            "old": "def test_documented_response_shape_parses(key: str, monkeypatch: pytest.MonkeyPatch) -> None:\n",
+            "new": "def test_documented_response_shape_parses(\n    key: str, monkeypatch: pytest.MonkeyPatch\n) -> None:\n"
+          },
+          {
+            "old": "_MINIMAX_ERROR = {\"status_code\": 1002, \"status_msg\": \"rate limit: prompt text echoed here\"}\n",
+            "new": "_MINIMAX_ERROR = {\n    \"status_code\": 1002,\n    \"status_msg\": \"rate limit: prompt text echoed here\",\n}\n"
+          },
+          {
+            "old": "        monkeypatch, RECORDS_BY_KEY[\"minimax\"], stream_events=[json.dumps(event), \"[DONE]\"]\n",
+            "new": "        monkeypatch,\n        RECORDS_BY_KEY[\"minimax\"],\n        stream_events=[json.dumps(event), \"[DONE]\"],\n"
+          },
+          {
+            "old": "@pytest.mark.parametrize(\"envelope\", [\"oops\", {\"status_code\": \"0\"}, {\"status_code\": True}])\n",
+            "new": "@pytest.mark.parametrize(\n    \"envelope\", [\"oops\", {\"status_code\": \"0\"}, {\"status_code\": True}]\n)\n"
+          },
+          {
+            "old": "        _replay(monkeypatch, RECORDS_BY_KEY[\"minimax\"], body=_body(top={\"base_resp\": envelope}))\n",
+            "new": "        _replay(\n            monkeypatch,\n            RECORDS_BY_KEY[\"minimax\"],\n            body=_body(top={\"base_resp\": envelope}),\n        )\n"
+          },
+          {
+            "old": "        json.dumps({\"id\": \"chatcmpl-1\", \"object\": \"chat.completion.chunk\",\n                    \"created\": 1, \"model\": \"doc-model\", \"choices\": [], \"usage\": _USAGE}),\n",
+            "new": "        json.dumps(\n            {\n                \"id\": \"chatcmpl-1\",\n                \"object\": \"chat.completion.chunk\",\n                \"created\": 1,\n                \"model\": \"doc-model\",\n                \"choices\": [],\n                \"usage\": _USAGE,\n            }\n        ),\n"
+          },
+          {
+            "old": "    events = [_chunk({\"role\": \"assistant\", \"content\": \"ok\"}), _chunk({}, finish=\"stop\"), \"[DONE]\"]\n",
+            "new": "    events = [\n        _chunk({\"role\": \"assistant\", \"content\": \"ok\"}),\n        _chunk({}, finish=\"stop\"),\n        \"[DONE]\",\n    ]\n"
+          },
+          {
+            "old": "    events = [_chunk({\"role\": \"assistant\", \"content\": \"ok\"}), _chunk({}, finish=\"stop\"), \"[DONE]\"]\n",
+            "new": "    events = [\n        _chunk({\"role\": \"assistant\", \"content\": \"ok\"}),\n        _chunk({}, finish=\"stop\"),\n        \"[DONE]\",\n    ]\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/LLM_Calls/test_doc_derived_presets.py",
+          "-"
+        ]
+      }
+    },
+    "unattributed_final_edits": []
+  },
+  "Tests/LLM_Calls/test_inference_cloud_presets.py": {
+    "versions": {
+      "reviewed": {
+        "sha256": "62053a3d1c23745ac4e64d694f61620a6da7b900e066430af8ed3467b96f33f4",
+        "formatted_sha256": "609c373304fbc9e91fd7452c751d24c3c63043f5f151b4162d720c51d32b250c",
+        "lines": 179,
+        "formatted_lines": 175,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "        Path(__file__).resolve().parents[2]\n        / \"tldw_chatbook\"\n        / \"provider_registry.py\"\n",
+            "new": "        Path(__file__).resolve().parents[2] / \"tldw_chatbook\" / \"provider_registry.py\"\n"
+          },
+          {
+            "old": "    llm_calls_root = (\n        Path(__file__).resolve().parents[2] / \"tldw_chatbook\" / \"LLM_Calls\"\n    )\n",
+            "new": "    llm_calls_root = Path(__file__).resolve().parents[2] / \"tldw_chatbook\" / \"LLM_Calls\"\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/LLM_Calls/test_inference_cloud_presets.py",
+          "-"
+        ]
+      },
+      "incoming": {
+        "sha256": "6b69ebab239fa0724d79e695ce502321f189af5b82c6f31491a5aedb6cc917bf",
+        "formatted_sha256": "65db3902c0f19d1b441d65555ed98539d38ef27f3bebf3d838593fbff08db887",
+        "lines": 185,
+        "formatted_lines": 181,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "        Path(__file__).resolve().parents[2]\n        / \"tldw_chatbook\"\n        / \"provider_registry.py\"\n",
+            "new": "        Path(__file__).resolve().parents[2] / \"tldw_chatbook\" / \"provider_registry.py\"\n"
+          },
+          {
+            "old": "    llm_calls_root = (\n        Path(__file__).resolve().parents[2] / \"tldw_chatbook\" / \"LLM_Calls\"\n    )\n",
+            "new": "    llm_calls_root = Path(__file__).resolve().parents[2] / \"tldw_chatbook\" / \"LLM_Calls\"\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/LLM_Calls/test_inference_cloud_presets.py",
+          "-"
+        ]
+      },
+      "final": {
+        "sha256": "6b69ebab239fa0724d79e695ce502321f189af5b82c6f31491a5aedb6cc917bf",
+        "formatted_sha256": "65db3902c0f19d1b441d65555ed98539d38ef27f3bebf3d838593fbff08db887",
+        "lines": 185,
+        "formatted_lines": 181,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "        Path(__file__).resolve().parents[2]\n        / \"tldw_chatbook\"\n        / \"provider_registry.py\"\n",
+            "new": "        Path(__file__).resolve().parents[2] / \"tldw_chatbook\" / \"provider_registry.py\"\n"
+          },
+          {
+            "old": "    llm_calls_root = (\n        Path(__file__).resolve().parents[2] / \"tldw_chatbook\" / \"LLM_Calls\"\n    )\n",
+            "new": "    llm_calls_root = Path(__file__).resolve().parents[2] / \"tldw_chatbook\" / \"LLM_Calls\"\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/LLM_Calls/test_inference_cloud_presets.py",
+          "-"
+        ]
+      }
+    },
+    "unattributed_final_edits": []
+  },
+  "Tests/LLM_Calls/test_live_capture_replay.py": {
+    "versions": {
+      "reviewed": {
+        "sha256": "28df63e64a651de44e24bad73a03a2f1f329c5e93273566a0ec4d22fcb8259c7",
+        "formatted_sha256": "a850b1b283d59a841c37c81a4b3930a83a49d33c90c79a8f8c42456c9058a024",
+        "lines": 211,
+        "formatted_lines": 240,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "    monkeypatch.setattr(hosted_provider_engine, \"resolve_hosted_request\", lambda _r, **_k: resolution)\n",
+            "new": "    monkeypatch.setattr(\n        hosted_provider_engine, \"resolve_hosted_request\", lambda _r, **_k: resolution\n    )\n"
+          },
+          {
+            "old": "        records = iter([SSERecord(event=None, data=payload) for payload in stream_events])\n        monkeypatch.setattr(hosted_provider_engine, \"owned_json_post\", lambda **_k: records)\n",
+            "new": "        records = iter(\n            [SSERecord(event=None, data=payload) for payload in stream_events]\n        )\n        monkeypatch.setattr(\n            hosted_provider_engine, \"owned_json_post\", lambda **_k: records\n        )\n"
+          },
+          {
+            "old": "        monkeypatch.setattr(hosted_provider_engine, \"owned_json_post\", lambda **_k: body)\n",
+            "new": "        monkeypatch.setattr(\n            hosted_provider_engine, \"owned_json_post\", lambda **_k: body\n        )\n"
+          },
+          {
+            "old": "    gaps = {level: keys for level, keys in uncovered_keys(record, fixture).items() if keys}\n",
+            "new": "    gaps = {\n        level: keys for level, keys in uncovered_keys(record, fixture).items() if keys\n    }\n"
+          },
+          {
+            "old": "    return json.loads((FIXTURE_DIR / f\"{request.param}.json\").read_text(encoding=\"utf-8\"))\n",
+            "new": "    return json.loads(\n        (FIXTURE_DIR / f\"{request.param}.json\").read_text(encoding=\"utf-8\")\n    )\n"
+          },
+          {
+            "old": "    assert has_usable_round(capture), f\"{capture['server']}: no successful round ({capture['statuses']})\"\n",
+            "new": "    assert has_usable_round(capture), (\n        f\"{capture['server']}: no successful round ({capture['statuses']})\"\n    )\n"
+          },
+          {
+            "old": "@pytest.mark.parametrize(\"round_name, field\", [(\"plain\", \"chat_response\"), (\"tool\", \"tool_call_response\")])\n",
+            "new": "@pytest.mark.parametrize(\n    \"round_name, field\", [(\"plain\", \"chat_response\"), (\"tool\", \"tool_call_response\")]\n)\n"
+          },
+          {
+            "old": "    capture: dict[str, Any], round_name: str, field: str, monkeypatch: pytest.MonkeyPatch\n",
+            "new": "    capture: dict[str, Any],\n    round_name: str,\n    field: str,\n    monkeypatch: pytest.MonkeyPatch,\n"
+          },
+          {
+            "old": "    assert verdict == \"complete\", f\"{capture['server']}: stream cut off before [DONE] -- recapture\"\n",
+            "new": "    assert verdict == \"complete\", (\n        f\"{capture['server']}: stream cut off before [DONE] -- recapture\"\n    )\n"
+          },
+          {
+            "old": "    failed = {\"statuses\": {\"plain\": 401, \"tool\": 401, \"stream\": 401},\n              \"chat_response\": {\"error\": \"x\"}, \"tool_call_response\": {\"error\": \"x\"}, \"stream_events\": [\"x\"]}\n",
+            "new": "    failed = {\n        \"statuses\": {\"plain\": 401, \"tool\": 401, \"stream\": 401},\n        \"chat_response\": {\"error\": \"x\"},\n        \"tool_call_response\": {\"error\": \"x\"},\n        \"stream_events\": [\"x\"],\n    }\n"
+          },
+          {
+            "old": "    assert has_usable_round({**failed, \"statuses\": {\"plain\": 200, \"tool\": 401, \"stream\": 401}}) is True\n\n",
+            "new": "    assert (\n        has_usable_round(\n            {**failed, \"statuses\": {\"plain\": 200, \"tool\": 401, \"stream\": 401}}\n        )\n        is True\n    )\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/LLM_Calls/test_live_capture_replay.py",
+          "-"
+        ]
+      },
+      "incoming": {
+        "sha256": "a009bec348e7dcff7f9872c5ecd8936d049c51f298b78572dc7fd75d125203a4",
+        "formatted_sha256": "48dad2ede713b3c1e91fff9f250199157bfccbbdf916a13a8c4ce794a79b31c1",
+        "lines": 246,
+        "formatted_lines": 279,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "    monkeypatch.setattr(hosted_provider_engine, \"resolve_hosted_request\", lambda _r, **_k: resolution)\n",
+            "new": "    monkeypatch.setattr(\n        hosted_provider_engine, \"resolve_hosted_request\", lambda _r, **_k: resolution\n    )\n"
+          },
+          {
+            "old": "        records = iter([SSERecord(event=None, data=payload) for payload in stream_events])\n        monkeypatch.setattr(hosted_provider_engine, \"owned_json_post\", lambda **_k: records)\n",
+            "new": "        records = iter(\n            [SSERecord(event=None, data=payload) for payload in stream_events]\n        )\n        monkeypatch.setattr(\n            hosted_provider_engine, \"owned_json_post\", lambda **_k: records\n        )\n"
+          },
+          {
+            "old": "        monkeypatch.setattr(hosted_provider_engine, \"owned_json_post\", lambda **_k: body)\n",
+            "new": "        monkeypatch.setattr(\n            hosted_provider_engine, \"owned_json_post\", lambda **_k: body\n        )\n"
+          },
+          {
+            "old": "    gaps = {level: keys for level, keys in uncovered_keys(record, fixture).items() if keys}\n",
+            "new": "    gaps = {\n        level: keys for level, keys in uncovered_keys(record, fixture).items() if keys\n    }\n"
+          },
+          {
+            "old": "    return json.loads((FIXTURE_DIR / f\"{request.param}.json\").read_text(encoding=\"utf-8\"))\n",
+            "new": "    return json.loads(\n        (FIXTURE_DIR / f\"{request.param}.json\").read_text(encoding=\"utf-8\")\n    )\n"
+          },
+          {
+            "old": "    assert has_usable_round(capture), f\"{capture['server']}: no successful round ({capture['statuses']})\"\n",
+            "new": "    assert has_usable_round(capture), (\n        f\"{capture['server']}: no successful round ({capture['statuses']})\"\n    )\n"
+          },
+          {
+            "old": "@pytest.mark.parametrize(\"round_name, field\", [(\"plain\", \"chat_response\"), (\"tool\", \"tool_call_response\")])\n",
+            "new": "@pytest.mark.parametrize(\n    \"round_name, field\", [(\"plain\", \"chat_response\"), (\"tool\", \"tool_call_response\")]\n)\n"
+          },
+          {
+            "old": "    capture: dict[str, Any], round_name: str, field: str, monkeypatch: pytest.MonkeyPatch\n",
+            "new": "    capture: dict[str, Any],\n    round_name: str,\n    field: str,\n    monkeypatch: pytest.MonkeyPatch,\n"
+          },
+          {
+            "old": "    assert verdict == \"complete\", f\"{capture['server']}: stream cut off before [DONE] -- recapture\"\n",
+            "new": "    assert verdict == \"complete\", (\n        f\"{capture['server']}: stream cut off before [DONE] -- recapture\"\n    )\n"
+          },
+          {
+            "old": "async def test_captured_listing_discovers_in_its_recorded_shape(capture: dict[str, Any]) -> None:\n",
+            "new": "async def test_captured_listing_discovers_in_its_recorded_shape(\n    capture: dict[str, Any],\n) -> None:\n"
+          },
+          {
+            "old": "    assert [model.model_id for model in result.models] == [entry[\"id\"] for entry in sample]\n",
+            "new": "    assert [model.model_id for model in result.models] == [\n        entry[\"id\"] for entry in sample\n    ]\n"
+          },
+          {
+            "old": "    failed = {\"statuses\": {\"plain\": 401, \"tool\": 401, \"stream\": 401},\n              \"chat_response\": {\"error\": \"x\"}, \"tool_call_response\": {\"error\": \"x\"}, \"stream_events\": [\"x\"]}\n",
+            "new": "    failed = {\n        \"statuses\": {\"plain\": 401, \"tool\": 401, \"stream\": 401},\n        \"chat_response\": {\"error\": \"x\"},\n        \"tool_call_response\": {\"error\": \"x\"},\n        \"stream_events\": [\"x\"],\n    }\n"
+          },
+          {
+            "old": "    assert has_usable_round({**failed, \"statuses\": {\"plain\": 200, \"tool\": 401, \"stream\": 401}}) is True\n\n",
+            "new": "    assert (\n        has_usable_round(\n            {**failed, \"statuses\": {\"plain\": 200, \"tool\": 401, \"stream\": 401}}\n        )\n        is True\n    )\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/LLM_Calls/test_live_capture_replay.py",
+          "-"
+        ]
+      },
+      "final": {
+        "sha256": "a009bec348e7dcff7f9872c5ecd8936d049c51f298b78572dc7fd75d125203a4",
+        "formatted_sha256": "48dad2ede713b3c1e91fff9f250199157bfccbbdf916a13a8c4ce794a79b31c1",
+        "lines": 246,
+        "formatted_lines": 279,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "    monkeypatch.setattr(hosted_provider_engine, \"resolve_hosted_request\", lambda _r, **_k: resolution)\n",
+            "new": "    monkeypatch.setattr(\n        hosted_provider_engine, \"resolve_hosted_request\", lambda _r, **_k: resolution\n    )\n"
+          },
+          {
+            "old": "        records = iter([SSERecord(event=None, data=payload) for payload in stream_events])\n        monkeypatch.setattr(hosted_provider_engine, \"owned_json_post\", lambda **_k: records)\n",
+            "new": "        records = iter(\n            [SSERecord(event=None, data=payload) for payload in stream_events]\n        )\n        monkeypatch.setattr(\n            hosted_provider_engine, \"owned_json_post\", lambda **_k: records\n        )\n"
+          },
+          {
+            "old": "        monkeypatch.setattr(hosted_provider_engine, \"owned_json_post\", lambda **_k: body)\n",
+            "new": "        monkeypatch.setattr(\n            hosted_provider_engine, \"owned_json_post\", lambda **_k: body\n        )\n"
+          },
+          {
+            "old": "    gaps = {level: keys for level, keys in uncovered_keys(record, fixture).items() if keys}\n",
+            "new": "    gaps = {\n        level: keys for level, keys in uncovered_keys(record, fixture).items() if keys\n    }\n"
+          },
+          {
+            "old": "    return json.loads((FIXTURE_DIR / f\"{request.param}.json\").read_text(encoding=\"utf-8\"))\n",
+            "new": "    return json.loads(\n        (FIXTURE_DIR / f\"{request.param}.json\").read_text(encoding=\"utf-8\")\n    )\n"
+          },
+          {
+            "old": "    assert has_usable_round(capture), f\"{capture['server']}: no successful round ({capture['statuses']})\"\n",
+            "new": "    assert has_usable_round(capture), (\n        f\"{capture['server']}: no successful round ({capture['statuses']})\"\n    )\n"
+          },
+          {
+            "old": "@pytest.mark.parametrize(\"round_name, field\", [(\"plain\", \"chat_response\"), (\"tool\", \"tool_call_response\")])\n",
+            "new": "@pytest.mark.parametrize(\n    \"round_name, field\", [(\"plain\", \"chat_response\"), (\"tool\", \"tool_call_response\")]\n)\n"
+          },
+          {
+            "old": "    capture: dict[str, Any], round_name: str, field: str, monkeypatch: pytest.MonkeyPatch\n",
+            "new": "    capture: dict[str, Any],\n    round_name: str,\n    field: str,\n    monkeypatch: pytest.MonkeyPatch,\n"
+          },
+          {
+            "old": "    assert verdict == \"complete\", f\"{capture['server']}: stream cut off before [DONE] -- recapture\"\n",
+            "new": "    assert verdict == \"complete\", (\n        f\"{capture['server']}: stream cut off before [DONE] -- recapture\"\n    )\n"
+          },
+          {
+            "old": "async def test_captured_listing_discovers_in_its_recorded_shape(capture: dict[str, Any]) -> None:\n",
+            "new": "async def test_captured_listing_discovers_in_its_recorded_shape(\n    capture: dict[str, Any],\n) -> None:\n"
+          },
+          {
+            "old": "    assert [model.model_id for model in result.models] == [entry[\"id\"] for entry in sample]\n",
+            "new": "    assert [model.model_id for model in result.models] == [\n        entry[\"id\"] for entry in sample\n    ]\n"
+          },
+          {
+            "old": "    failed = {\"statuses\": {\"plain\": 401, \"tool\": 401, \"stream\": 401},\n              \"chat_response\": {\"error\": \"x\"}, \"tool_call_response\": {\"error\": \"x\"}, \"stream_events\": [\"x\"]}\n",
+            "new": "    failed = {\n        \"statuses\": {\"plain\": 401, \"tool\": 401, \"stream\": 401},\n        \"chat_response\": {\"error\": \"x\"},\n        \"tool_call_response\": {\"error\": \"x\"},\n        \"stream_events\": [\"x\"],\n    }\n"
+          },
+          {
+            "old": "    assert has_usable_round({**failed, \"statuses\": {\"plain\": 200, \"tool\": 401, \"stream\": 401}}) is True\n\n",
+            "new": "    assert (\n        has_usable_round(\n            {**failed, \"statuses\": {\"plain\": 200, \"tool\": 401, \"stream\": 401}}\n        )\n        is True\n    )\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/LLM_Calls/test_live_capture_replay.py",
+          "-"
+        ]
+      }
+    },
+    "unattributed_final_edits": []
+  },
+  "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py": {
+    "versions": {
+      "reviewed": {
+        "sha256": "ed0f53e5f0914e3c3e6b4b5e4dc3a6d51f1716d08ae5c202f76e0c8bf3963f50",
+        "formatted_sha256": "e49f1bec77a75c7261f11a7f8c25da5cfd36dae667ff1b412c9cb24221abef15",
+        "lines": 1250,
+        "formatted_lines": 1265,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "        (lambda request: httpx.Response(401), \"error\", \"missing_credentials\", \"unauthorized\"),\n        (lambda request: httpx.Response(403), \"error\", \"missing_credentials\", \"forbidden\"),\n        (lambda request: httpx.Response(404), \"unsupported\", \"unsupported_endpoint\", \"http_status\"),\n",
+            "new": "        (\n            lambda request: httpx.Response(401),\n            \"error\",\n            \"missing_credentials\",\n            \"unauthorized\",\n        ),\n        (\n            lambda request: httpx.Response(403),\n            \"error\",\n            \"missing_credentials\",\n            \"forbidden\",\n        ),\n        (\n            lambda request: httpx.Response(404),\n            \"unsupported\",\n            \"unsupported_endpoint\",\n            \"http_status\",\n        ),\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py",
+          "-"
+        ]
+      },
+      "incoming": {
+        "sha256": "d7a2fd78b428ffdfb3cc7f6e83f30108a59dcdb3626bb56a96d82aacd05dadf4",
+        "formatted_sha256": "3441ad8f6fe3aa559fabacfbfc28c28c23c3f3ad99c3c80e3db3c977d87587dc",
+        "lines": 1290,
+        "formatted_lines": 1314,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "@pytest.mark.parametrize(\"body\", [[\"runtime-a\"], [{\"name\": \"no-id\"}], [[{\"id\": \"nested\"}]]])\n",
+            "new": "@pytest.mark.parametrize(\n    \"body\", [[\"runtime-a\"], [{\"name\": \"no-id\"}], [[{\"id\": \"nested\"}]]]\n)\n"
+          },
+          {
+            "old": "        {\"data\": [{\"id\": \"templated\", \"context_length\": 8192,\n                   \"config\": {\"chat_template\": \"x\" * 16_317, \"stop\": [\"</s>\"]}}]},\n",
+            "new": "        {\n            \"data\": [\n                {\n                    \"id\": \"templated\",\n                    \"context_length\": 8192,\n                    \"config\": {\"chat_template\": \"x\" * 16_317, \"stop\": [\"</s>\"]},\n                }\n            ]\n        },\n"
+          },
+          {
+            "old": "        (lambda request: httpx.Response(401), \"error\", \"missing_credentials\", \"unauthorized\"),\n        (lambda request: httpx.Response(403), \"error\", \"missing_credentials\", \"forbidden\"),\n        (lambda request: httpx.Response(404), \"unsupported\", \"unsupported_endpoint\", \"http_status\"),\n",
+            "new": "        (\n            lambda request: httpx.Response(401),\n            \"error\",\n            \"missing_credentials\",\n            \"unauthorized\",\n        ),\n        (\n            lambda request: httpx.Response(403),\n            \"error\",\n            \"missing_credentials\",\n            \"forbidden\",\n        ),\n        (\n            lambda request: httpx.Response(404),\n            \"unsupported\",\n            \"unsupported_endpoint\",\n            \"http_status\",\n        ),\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py",
+          "-"
+        ]
+      },
+      "final": {
+        "sha256": "d7a2fd78b428ffdfb3cc7f6e83f30108a59dcdb3626bb56a96d82aacd05dadf4",
+        "formatted_sha256": "3441ad8f6fe3aa559fabacfbfc28c28c23c3f3ad99c3c80e3db3c977d87587dc",
+        "lines": 1290,
+        "formatted_lines": 1314,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "@pytest.mark.parametrize(\"body\", [[\"runtime-a\"], [{\"name\": \"no-id\"}], [[{\"id\": \"nested\"}]]])\n",
+            "new": "@pytest.mark.parametrize(\n    \"body\", [[\"runtime-a\"], [{\"name\": \"no-id\"}], [[{\"id\": \"nested\"}]]]\n)\n"
+          },
+          {
+            "old": "        {\"data\": [{\"id\": \"templated\", \"context_length\": 8192,\n                   \"config\": {\"chat_template\": \"x\" * 16_317, \"stop\": [\"</s>\"]}}]},\n",
+            "new": "        {\n            \"data\": [\n                {\n                    \"id\": \"templated\",\n                    \"context_length\": 8192,\n                    \"config\": {\"chat_template\": \"x\" * 16_317, \"stop\": [\"</s>\"]},\n                }\n            ]\n        },\n"
+          },
+          {
+            "old": "        (lambda request: httpx.Response(401), \"error\", \"missing_credentials\", \"unauthorized\"),\n        (lambda request: httpx.Response(403), \"error\", \"missing_credentials\", \"forbidden\"),\n        (lambda request: httpx.Response(404), \"unsupported\", \"unsupported_endpoint\", \"http_status\"),\n",
+            "new": "        (\n            lambda request: httpx.Response(401),\n            \"error\",\n            \"missing_credentials\",\n            \"unauthorized\",\n        ),\n        (\n            lambda request: httpx.Response(403),\n            \"error\",\n            \"missing_credentials\",\n            \"forbidden\",\n        ),\n        (\n            lambda request: httpx.Response(404),\n            \"unsupported\",\n            \"unsupported_endpoint\",\n            \"http_status\",\n        ),\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py",
+          "-"
+        ]
+      }
+    },
+    "unattributed_final_edits": []
+  },
+  "Tests/fixtures/cloud_live/capture.py": {
+    "versions": {
+      "reviewed": {
+        "sha256": "c8b1665f80164da69f6f528a34780d54d94e5e4c02a211a92a6667397e0b1948",
+        "formatted_sha256": "d1d52c7e2db4f12c71152f89a138347a4b7a2186fc841c16763f82712fe68824",
+        "lines": 631,
+        "formatted_lines": 751,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "KNOWN_TOP = frozenset({\"id\", \"object\", \"created\", \"model\", \"system_fingerprint\", \"choices\", \"usage\"})\n",
+            "new": "KNOWN_TOP = frozenset(\n    {\"id\", \"object\", \"created\", \"model\", \"system_fingerprint\", \"choices\", \"usage\"}\n)\n"
+          },
+          {
+            "old": "    {\"role\": \"user\", \"content\": \"What is the weather in Tokyo? Use the get_weather tool.\"}\n",
+            "new": "    {\n        \"role\": \"user\",\n        \"content\": \"What is the weather in Tokyo? Use the get_weather tool.\",\n    }\n"
+          },
+          {
+            "old": "_CHEAP = re.compile(r\"mini|flash|small|lite|nano|haiku|turbo|[^0-9](1|3|7|8)b\", re.IGNORECASE)\n",
+            "new": "_CHEAP = re.compile(\n    r\"mini|flash|small|lite|nano|haiku|turbo|[^0-9](1|3|7|8)b\", re.IGNORECASE\n)\n"
+          },
+          {
+            "old": "    match = re.search(rf\"^{re.escape(record.config_key)} = (\\[.*\\])\", source, re.MULTILINE)\n",
+            "new": "    match = re.search(\n        rf\"^{re.escape(record.config_key)} = (\\[.*\\])\", source, re.MULTILINE\n    )\n"
+          },
+          {
+            "old": "    def from_env(cls, record: ProviderRecord, env: dict[str, str]) -> \"CaptureOverrides\":\n",
+            "new": "    def from_env(\n        cls, record: ProviderRecord, env: dict[str, str]\n    ) -> \"CaptureOverrides\":\n"
+          },
+          {
+            "old": "",
+            "new": "\n"
+          },
+          {
+            "old": "        names = ((overrides.api_key_env_var,) if overrides.api_key_env_var else ()) + tuple(\n            record.api_key_env_candidates\n",
+            "new": "        names = (\n            (overrides.api_key_env_var,) if overrides.api_key_env_var else ()\n        ) + tuple(record.api_key_env_candidates)\n        self.key_names = names\n        self._api_key = next(\n            (env[name].strip() for name in names if env.get(name, \"\").strip()), \"\"\n"
+          },
+          {
+            "old": "        self.key_names = names\n        self._api_key = next((env[name].strip() for name in names if env.get(name, \"\").strip()), \"\")\n",
+            "new": ""
+          },
+          {
+            "old": "        if base and record.base_url_suffix and urllib.parse.urlsplit(base).path in (\"\", \"/\"):\n",
+            "new": "        if (\n            base\n            and record.base_url_suffix\n            and urllib.parse.urlsplit(base).path in (\"\", \"/\")\n        ):\n"
+          },
+          {
+            "old": "        return {**auth, \"Content-Type\": \"application/json\", \"User-Agent\": USER_AGENT, **self.headers_extra}\n",
+            "new": "        return {\n            **auth,\n            \"Content-Type\": \"application/json\",\n            \"User-Agent\": USER_AGENT,\n            **self.headers_extra,\n        }\n"
+          },
+          {
+            "old": "    def payload(self, model: str, messages: list[dict[str, Any]], *, stream: bool, tools: bool) -> dict[str, Any]:\n",
+            "new": "    def payload(\n        self, model: str, messages: list[dict[str, Any]], *, stream: bool, tools: bool\n    ) -> dict[str, Any]:\n"
+          },
+          {
+            "old": "        url, data=data, method=\"POST\" if body is not None else \"GET\", headers=target.headers()\n",
+            "new": "        url,\n        data=data,\n        method=\"POST\" if body is not None else \"GET\",\n        headers=target.headers(),\n"
+          },
+          {
+            "old": "            raw, status = response.read().decode(\"utf-8\", errors=\"replace\"), response.status\n",
+            "new": "            raw, status = (\n                response.read().decode(\"utf-8\", errors=\"replace\"),\n                response.status,\n            )\n"
+          },
+          {
+            "old": "        url, data=json.dumps(body).encode(\"utf-8\"), method=\"POST\", headers=target.headers()\n",
+            "new": "        url,\n        data=json.dumps(body).encode(\"utf-8\"),\n        method=\"POST\",\n        headers=target.headers(),\n"
+          },
+          {
+            "old": "                    data_lines.append(line[len(\"data:\"):].lstrip(\" \"))\n",
+            "new": "                    data_lines.append(line[len(\"data:\") :].lstrip(\" \"))\n"
+          },
+          {
+            "old": "def uncovered_keys(record: ProviderRecord, fixture: dict[str, Any]) -> dict[str, list[str]]:\n",
+            "new": "def uncovered_keys(\n    record: ProviderRecord, fixture: dict[str, Any]\n) -> dict[str, list[str]]:\n"
+          },
+          {
+            "old": "        status, listing = _request(target, f\"{target.base_url}/{record.discovery_route}\", None)\n",
+            "new": "        status, listing = _request(\n            target, f\"{target.base_url}/{record.discovery_route}\", None\n        )\n"
+          },
+          {
+            "old": "    chat_status, chat_body = _request(target, url, target.payload(model, PLAIN_MESSAGES, stream=False, tools=False))\n",
+            "new": "    chat_status, chat_body = _request(\n        target, url, target.payload(model, PLAIN_MESSAGES, stream=False, tools=False)\n    )\n"
+          },
+          {
+            "old": "        tool_status, tool_body = _request(target, url, target.payload(model, TOOL_MESSAGES, stream=False, tools=True))\n    stream_status, events = _stream(target, url, target.payload(model, PLAIN_MESSAGES, stream=True, tools=False))\n",
+            "new": "        tool_status, tool_body = _request(\n            target, url, target.payload(model, TOOL_MESSAGES, stream=False, tools=True)\n        )\n    stream_status, events = _stream(\n        target, url, target.payload(model, PLAIN_MESSAGES, stream=True, tools=False)\n    )\n"
+          },
+          {
+            "old": "    print(f\"  plain HTTP {chat_status}  tool HTTP {tool_status}  stream HTTP {stream_status}\"\n          f\" ({len(events)} events, complete: {stream_complete})\")\n",
+            "new": "    print(\n        f\"  plain HTTP {chat_status}  tool HTTP {tool_status}  stream HTTP {stream_status}\"\n        f\" ({len(events)} events, complete: {stream_complete})\"\n    )\n"
+          },
+          {
+            "old": "        print(\"  FAILED: no round succeeded -- no fixture written (check the key, model and URL)\")\n",
+            "new": "        print(\n            \"  FAILED: no round succeeded -- no fixture written (check the key, model and URL)\"\n        )\n"
+          },
+          {
+            "old": "        print(\"  ! the stream was cut off before [DONE]; its replay will fail until recaptured\")\n",
+            "new": "        print(\n            \"  ! the stream was cut off before [DONE]; its replay will fail until recaptured\"\n        )\n"
+          },
+          {
+            "old": "        \"statuses\": {\"plain\": chat_status, \"tool\": tool_status, \"stream\": stream_status},\n",
+            "new": "        \"statuses\": {\n            \"plain\": chat_status,\n            \"tool\": tool_status,\n            \"stream\": stream_status,\n        },\n"
+          },
+          {
+            "old": "            None if listed is None\n",
+            "new": "            None\n            if listed is None\n"
+          },
+          {
+            "old": "    gaps = {level: keys for level, keys in uncovered_keys(record, json.loads(text)).items() if keys}\n    print(f\"  wrote {path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path}\")\n",
+            "new": "    gaps = {\n        level: keys\n        for level, keys in uncovered_keys(record, json.loads(text)).items()\n        if keys\n    }\n    print(\n        f\"  wrote {path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path}\"\n    )\n"
+          },
+          {
+            "old": "PROBE_KEY = \"tldw-probe-invalid-key\"  # deliberately fake: proves how a bad key is answered\n",
+            "new": "PROBE_KEY = (\n    \"tldw-probe-invalid-key\"  # deliberately fake: proves how a bad key is answered\n)\n"
+          },
+          {
+            "old": "def _plain_request(url: str, body: dict[str, Any] | None, headers: dict[str, str], timeout: float) -> dict[str, Any]:\n",
+            "new": "def _plain_request(\n    url: str, body: dict[str, Any] | None, headers: dict[str, str], timeout: float\n) -> dict[str, Any]:\n"
+          },
+          {
+            "old": "    request = urllib.request.Request(url, data=data, method=\"POST\" if body is not None else \"GET\",\n                                     headers={\"Content-Type\": \"application/json\", \"User-Agent\": USER_AGENT, **headers})\n",
+            "new": "    request = urllib.request.Request(\n        url,\n        data=data,\n        method=\"POST\" if body is not None else \"GET\",\n        headers={\n            \"Content-Type\": \"application/json\",\n            \"User-Agent\": USER_AGENT,\n            **headers,\n        },\n    )\n"
+          },
+          {
+            "old": "            raw, status = response.read().decode(\"utf-8\", errors=\"replace\"), response.status\n",
+            "new": "            raw, status = (\n                response.read().decode(\"utf-8\", errors=\"replace\"),\n                response.status,\n            )\n"
+          },
+          {
+            "old": "    base = (os.environ.get(_env_name(record, \"BASE_URL\"), \"\").strip() or record.default_base_url or \"\").rstrip(\"/\")\n",
+            "new": "    base = (\n        os.environ.get(_env_name(record, \"BASE_URL\"), \"\").strip()\n        or record.default_base_url\n        or \"\"\n    ).rstrip(\"/\")\n"
+          },
+          {
+            "old": "        print(f\"[{record.key}] skip: per-account URL (set {_env_name(record, 'BASE_URL')})\")\n",
+            "new": "        print(\n            f\"[{record.key}] skip: per-account URL (set {_env_name(record, 'BASE_URL')})\"\n        )\n"
+          },
+          {
+            "old": "    fake = ({\"api-key\": PROBE_KEY} if record.auth_scheme == \"api_key_header\"\n            else {\"Authorization\": f\"Bearer {PROBE_KEY}\"})\n    listing = _plain_request(f\"{base}/{record.discovery_route or 'models'}\", None, {}, 30.0)\n",
+            "new": "    fake = (\n        {\"api-key\": PROBE_KEY}\n        if record.auth_scheme == \"api_key_header\"\n        else {\"Authorization\": f\"Bearer {PROBE_KEY}\"}\n    )\n    listing = _plain_request(\n        f\"{base}/{record.discovery_route or 'models'}\", None, {}, 30.0\n    )\n"
+          },
+          {
+            "old": "    listed_model = choose_model(Target(record, {}), {\"data\": listed}) if isinstance(listed, list) else None\n",
+            "new": "    listed_model = (\n        choose_model(Target(record, {}), {\"data\": listed})\n        if isinstance(listed, list)\n        else None\n    )\n"
+          },
+          {
+            "old": "    chat_body = {\"model\": model, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}],\n                 record.max_tokens_key or \"max_tokens\": 1}\n",
+            "new": "    chat_body = {\n        \"model\": model,\n        \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}],\n        record.max_tokens_key or \"max_tokens\": 1,\n    }\n"
+          },
+          {
+            "old": "        listing = {\"status\": 200, \"entries\": [\n            {\"id\": entry.get(\"id\")} if isinstance(entry, dict) else entry for entry in listed]}\n",
+            "new": "        listing = {\n            \"status\": 200,\n            \"entries\": [\n                {\"id\": entry.get(\"id\")} if isinstance(entry, dict) else entry\n                for entry in listed\n            ],\n        }\n"
+          },
+          {
+            "old": "        \"base_url\": base if base == (record.default_base_url or \"\").rstrip(\"/\") else PER_ACCOUNT,\n",
+            "new": "        \"base_url\": base\n        if base == (record.default_base_url or \"\").rstrip(\"/\")\n        else PER_ACCOUNT,\n"
+          },
+          {
+            "old": "        \"chat_bad_key\": _plain_request(f\"{base}/chat/completions\", chat_body, fake, 30.0),\n",
+            "new": "        \"chat_bad_key\": _plain_request(\n            f\"{base}/chat/completions\", chat_body, fake, 30.0\n        ),\n"
+          },
+          {
+            "old": "    path.write_text(json.dumps(fixture, indent=2, ensure_ascii=False) + \"\\n\", encoding=\"utf-8\")\n",
+            "new": "    path.write_text(\n        json.dumps(fixture, indent=2, ensure_ascii=False) + \"\\n\", encoding=\"utf-8\"\n    )\n"
+          },
+          {
+            "old": "    print(f\"[{record.key}] listing {listing['status']}{f' ({len(ids)} models)' if ids is not None else ''}\"\n          f\"  no key {fixture['chat_no_key']['status']}  bad key {fixture['chat_bad_key']['status']}\")\n",
+            "new": "    print(\n        f\"[{record.key}] listing {listing['status']}{f' ({len(ids)} models)' if ids is not None else ''}\"\n        f\"  no key {fixture['chat_no_key']['status']}  bad key {fixture['chat_bad_key']['status']}\"\n    )\n"
+          },
+          {
+            "old": "    parser.add_argument(\"providers\", nargs=\"*\", help=\"record keys to capture (default: every available)\")\n",
+            "new": "    parser.add_argument(\n        \"providers\", nargs=\"*\", help=\"record keys to capture (default: every available)\"\n    )\n"
+          },
+          {
+            "old": "    parser.add_argument(\"--list\", action=\"store_true\", help=\"show who would run, and why not\")\n    parser.add_argument(\"--no-auth\", action=\"store_true\",\n                        help=\"probe every preset's shipped URL without a real key (no tokens spent)\")\n",
+            "new": "    parser.add_argument(\n        \"--list\", action=\"store_true\", help=\"show who would run, and why not\"\n    )\n    parser.add_argument(\n        \"--no-auth\",\n        action=\"store_true\",\n        help=\"probe every preset's shipped URL without a real key (no tokens spent)\",\n    )\n"
+          },
+          {
+            "old": "        keys_file = validate_path_simple(args.keys_file, reject_shell_metacharacters=False)\n",
+            "new": "        keys_file = validate_path_simple(\n            args.keys_file, reject_shell_metacharacters=False\n        )\n"
+          },
+          {
+            "old": "    targets = [Target(r, env) for r in records if not args.providers or r.key in args.providers]\n",
+            "new": "    targets = [\n        Target(r, env) for r in records if not args.providers or r.key in args.providers\n    ]\n"
+          },
+          {
+            "old": "            print(f\"[{target.record.key}] {'ready' if reason is None else 'skip: ' + reason}\")\n",
+            "new": "            print(\n                f\"[{target.record.key}] {'ready' if reason is None else 'skip: ' + reason}\"\n            )\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/fixtures/cloud_live/capture.py",
+          "-"
+        ]
+      },
+      "incoming": {
+        "sha256": "6c4fcf50933fbb7ccbc63fc435b06b35b9440b02adaad01182e57c66122d64ea",
+        "formatted_sha256": "d9bd26a52a2b7bdf6855c9759a501d9c6c8122e0a09ce58ccb6a3cad12bc6577",
+        "lines": 640,
+        "formatted_lines": 763,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "KNOWN_TOP = frozenset({\"id\", \"object\", \"created\", \"model\", \"system_fingerprint\", \"choices\", \"usage\"})\n",
+            "new": "KNOWN_TOP = frozenset(\n    {\"id\", \"object\", \"created\", \"model\", \"system_fingerprint\", \"choices\", \"usage\"}\n)\n"
+          },
+          {
+            "old": "    {\"role\": \"user\", \"content\": \"What is the weather in Tokyo? Use the get_weather tool.\"}\n",
+            "new": "    {\n        \"role\": \"user\",\n        \"content\": \"What is the weather in Tokyo? Use the get_weather tool.\",\n    }\n"
+          },
+          {
+            "old": "_CHEAP = re.compile(r\"mini|flash|small|lite|nano|haiku|turbo|[^0-9](1|3|7|8)b\", re.IGNORECASE)\n",
+            "new": "_CHEAP = re.compile(\n    r\"mini|flash|small|lite|nano|haiku|turbo|[^0-9](1|3|7|8)b\", re.IGNORECASE\n)\n"
+          },
+          {
+            "old": "    match = re.search(rf\"^{re.escape(record.config_key)} = (\\[.*\\])\", source, re.MULTILINE)\n",
+            "new": "    match = re.search(\n        rf\"^{re.escape(record.config_key)} = (\\[.*\\])\", source, re.MULTILINE\n    )\n"
+          },
+          {
+            "old": "    def from_env(cls, record: ProviderRecord, env: dict[str, str]) -> \"CaptureOverrides\":\n",
+            "new": "    def from_env(\n        cls, record: ProviderRecord, env: dict[str, str]\n    ) -> \"CaptureOverrides\":\n"
+          },
+          {
+            "old": "",
+            "new": "\n"
+          },
+          {
+            "old": "        names = ((overrides.api_key_env_var,) if overrides.api_key_env_var else ()) + tuple(\n            record.api_key_env_candidates\n",
+            "new": "        names = (\n            (overrides.api_key_env_var,) if overrides.api_key_env_var else ()\n        ) + tuple(record.api_key_env_candidates)\n        self.key_names = names\n        self._api_key = next(\n            (env[name].strip() for name in names if env.get(name, \"\").strip()), \"\"\n"
+          },
+          {
+            "old": "        self.key_names = names\n        self._api_key = next((env[name].strip() for name in names if env.get(name, \"\").strip()), \"\")\n",
+            "new": ""
+          },
+          {
+            "old": "        if base and record.base_url_suffix and urllib.parse.urlsplit(base).path in (\"\", \"/\"):\n",
+            "new": "        if (\n            base\n            and record.base_url_suffix\n            and urllib.parse.urlsplit(base).path in (\"\", \"/\")\n        ):\n"
+          },
+          {
+            "old": "        return {**auth, \"Content-Type\": \"application/json\", \"User-Agent\": USER_AGENT, **self.headers_extra}\n",
+            "new": "        return {\n            **auth,\n            \"Content-Type\": \"application/json\",\n            \"User-Agent\": USER_AGENT,\n            **self.headers_extra,\n        }\n"
+          },
+          {
+            "old": "    def payload(self, model: str, messages: list[dict[str, Any]], *, stream: bool, tools: bool) -> dict[str, Any]:\n",
+            "new": "    def payload(\n        self, model: str, messages: list[dict[str, Any]], *, stream: bool, tools: bool\n    ) -> dict[str, Any]:\n"
+          },
+          {
+            "old": "        url, data=data, method=\"POST\" if body is not None else \"GET\", headers=target.headers()\n",
+            "new": "        url,\n        data=data,\n        method=\"POST\" if body is not None else \"GET\",\n        headers=target.headers(),\n"
+          },
+          {
+            "old": "            raw, status = response.read().decode(\"utf-8\", errors=\"replace\"), response.status\n",
+            "new": "            raw, status = (\n                response.read().decode(\"utf-8\", errors=\"replace\"),\n                response.status,\n            )\n"
+          },
+          {
+            "old": "        url, data=json.dumps(body).encode(\"utf-8\"), method=\"POST\", headers=target.headers()\n",
+            "new": "        url,\n        data=json.dumps(body).encode(\"utf-8\"),\n        method=\"POST\",\n        headers=target.headers(),\n"
+          },
+          {
+            "old": "                    data_lines.append(line[len(\"data:\"):].lstrip(\" \"))\n",
+            "new": "                    data_lines.append(line[len(\"data:\") :].lstrip(\" \"))\n"
+          },
+          {
+            "old": "def uncovered_keys(record: ProviderRecord, fixture: dict[str, Any]) -> dict[str, list[str]]:\n",
+            "new": "def uncovered_keys(\n    record: ProviderRecord, fixture: dict[str, Any]\n) -> dict[str, list[str]]:\n"
+          },
+          {
+            "old": "        status, listing = _request(target, f\"{target.base_url}/{record.discovery_route}\", None)\n",
+            "new": "        status, listing = _request(\n            target, f\"{target.base_url}/{record.discovery_route}\", None\n        )\n"
+          },
+          {
+            "old": "    chat_status, chat_body = _request(target, url, target.payload(model, PLAIN_MESSAGES, stream=False, tools=False))\n",
+            "new": "    chat_status, chat_body = _request(\n        target, url, target.payload(model, PLAIN_MESSAGES, stream=False, tools=False)\n    )\n"
+          },
+          {
+            "old": "        tool_status, tool_body = _request(target, url, target.payload(model, TOOL_MESSAGES, stream=False, tools=True))\n    stream_status, events = _stream(target, url, target.payload(model, PLAIN_MESSAGES, stream=True, tools=False))\n",
+            "new": "        tool_status, tool_body = _request(\n            target, url, target.payload(model, TOOL_MESSAGES, stream=False, tools=True)\n        )\n    stream_status, events = _stream(\n        target, url, target.payload(model, PLAIN_MESSAGES, stream=True, tools=False)\n    )\n"
+          },
+          {
+            "old": "    print(f\"  plain HTTP {chat_status}  tool HTTP {tool_status}  stream HTTP {stream_status}\"\n          f\" ({len(events)} events, complete: {stream_complete})\")\n",
+            "new": "    print(\n        f\"  plain HTTP {chat_status}  tool HTTP {tool_status}  stream HTTP {stream_status}\"\n        f\" ({len(events)} events, complete: {stream_complete})\"\n    )\n"
+          },
+          {
+            "old": "        print(\"  FAILED: no round succeeded -- no fixture written (check the key, model and URL)\")\n",
+            "new": "        print(\n            \"  FAILED: no round succeeded -- no fixture written (check the key, model and URL)\"\n        )\n"
+          },
+          {
+            "old": "        print(\"  ! the stream was cut off before [DONE]; its replay will fail until recaptured\")\n",
+            "new": "        print(\n            \"  ! the stream was cut off before [DONE]; its replay will fail until recaptured\"\n        )\n"
+          },
+          {
+            "old": "        \"statuses\": {\"plain\": chat_status, \"tool\": tool_status, \"stream\": stream_status},\n",
+            "new": "        \"statuses\": {\n            \"plain\": chat_status,\n            \"tool\": tool_status,\n            \"stream\": stream_status,\n        },\n"
+          },
+          {
+            "old": "            None if listed is None\n            else {\"count\": len(listed), \"envelope\": isinstance(listing, dict),\n                  \"sample\": listed[:MAX_LISTED_MODELS]}\n",
+            "new": "            None\n            if listed is None\n            else {\n                \"count\": len(listed),\n                \"envelope\": isinstance(listing, dict),\n                \"sample\": listed[:MAX_LISTED_MODELS],\n            }\n"
+          },
+          {
+            "old": "    gaps = {level: keys for level, keys in uncovered_keys(record, json.loads(text)).items() if keys}\n    print(f\"  wrote {path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path}\")\n",
+            "new": "    gaps = {\n        level: keys\n        for level, keys in uncovered_keys(record, json.loads(text)).items()\n        if keys\n    }\n    print(\n        f\"  wrote {path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path}\"\n    )\n"
+          },
+          {
+            "old": "PROBE_KEY = \"tldw-probe-invalid-key\"  # deliberately fake: proves how a bad key is answered\n",
+            "new": "PROBE_KEY = (\n    \"tldw-probe-invalid-key\"  # deliberately fake: proves how a bad key is answered\n)\n"
+          },
+          {
+            "old": "def _plain_request(url: str, body: dict[str, Any] | None, headers: dict[str, str], timeout: float) -> dict[str, Any]:\n",
+            "new": "def _plain_request(\n    url: str, body: dict[str, Any] | None, headers: dict[str, str], timeout: float\n) -> dict[str, Any]:\n"
+          },
+          {
+            "old": "    request = urllib.request.Request(url, data=data, method=\"POST\" if body is not None else \"GET\",\n                                     headers={\"Content-Type\": \"application/json\", \"User-Agent\": USER_AGENT, **headers})\n",
+            "new": "    request = urllib.request.Request(\n        url,\n        data=data,\n        method=\"POST\" if body is not None else \"GET\",\n        headers={\n            \"Content-Type\": \"application/json\",\n            \"User-Agent\": USER_AGENT,\n            **headers,\n        },\n    )\n"
+          },
+          {
+            "old": "            raw, status = response.read().decode(\"utf-8\", errors=\"replace\"), response.status\n",
+            "new": "            raw, status = (\n                response.read().decode(\"utf-8\", errors=\"replace\"),\n                response.status,\n            )\n"
+          },
+          {
+            "old": "    base = (os.environ.get(_env_name(record, \"BASE_URL\"), \"\").strip() or record.default_base_url or \"\").rstrip(\"/\")\n",
+            "new": "    base = (\n        os.environ.get(_env_name(record, \"BASE_URL\"), \"\").strip()\n        or record.default_base_url\n        or \"\"\n    ).rstrip(\"/\")\n"
+          },
+          {
+            "old": "        print(f\"[{record.key}] skip: per-account URL (set {_env_name(record, 'BASE_URL')})\")\n",
+            "new": "        print(\n            f\"[{record.key}] skip: per-account URL (set {_env_name(record, 'BASE_URL')})\"\n        )\n"
+          },
+          {
+            "old": "    fake = ({\"api-key\": PROBE_KEY} if record.auth_scheme == \"api_key_header\"\n            else {\"Authorization\": f\"Bearer {PROBE_KEY}\"})\n    listing = _plain_request(f\"{base}/{record.discovery_route or 'models'}\", None, {}, 30.0)\n",
+            "new": "    fake = (\n        {\"api-key\": PROBE_KEY}\n        if record.auth_scheme == \"api_key_header\"\n        else {\"Authorization\": f\"Bearer {PROBE_KEY}\"}\n    )\n    listing = _plain_request(\n        f\"{base}/{record.discovery_route or 'models'}\", None, {}, 30.0\n    )\n"
+          },
+          {
+            "old": "    listed_model = choose_model(Target(record, {}), {\"data\": listed}) if isinstance(listed, list) else None\n",
+            "new": "    listed_model = (\n        choose_model(Target(record, {}), {\"data\": listed})\n        if isinstance(listed, list)\n        else None\n    )\n"
+          },
+          {
+            "old": "    chat_body = {\"model\": model, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}],\n                 record.max_tokens_key or \"max_tokens\": 1}\n",
+            "new": "    chat_body = {\n        \"model\": model,\n        \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}],\n        record.max_tokens_key or \"max_tokens\": 1,\n    }\n"
+          },
+          {
+            "old": "        listing = {\"status\": 200, \"entries\": [\n            {\"id\": entry.get(\"id\")} if isinstance(entry, dict) else entry for entry in listed]}\n",
+            "new": "        listing = {\n            \"status\": 200,\n            \"entries\": [\n                {\"id\": entry.get(\"id\")} if isinstance(entry, dict) else entry\n                for entry in listed\n            ],\n        }\n"
+          },
+          {
+            "old": "        \"base_url\": base if base == (record.default_base_url or \"\").rstrip(\"/\") else PER_ACCOUNT,\n",
+            "new": "        \"base_url\": base\n        if base == (record.default_base_url or \"\").rstrip(\"/\")\n        else PER_ACCOUNT,\n"
+          },
+          {
+            "old": "        \"chat_bad_key\": _plain_request(f\"{base}/chat/completions\", chat_body, fake, 30.0),\n",
+            "new": "        \"chat_bad_key\": _plain_request(\n            f\"{base}/chat/completions\", chat_body, fake, 30.0\n        ),\n"
+          },
+          {
+            "old": "    path.write_text(json.dumps(fixture, indent=2, ensure_ascii=False) + \"\\n\", encoding=\"utf-8\")\n",
+            "new": "    path.write_text(\n        json.dumps(fixture, indent=2, ensure_ascii=False) + \"\\n\", encoding=\"utf-8\"\n    )\n"
+          },
+          {
+            "old": "    print(f\"[{record.key}] listing {listing['status']}{f' ({len(ids)} models)' if ids is not None else ''}\"\n          f\"  no key {fixture['chat_no_key']['status']}  bad key {fixture['chat_bad_key']['status']}\")\n",
+            "new": "    print(\n        f\"[{record.key}] listing {listing['status']}{f' ({len(ids)} models)' if ids is not None else ''}\"\n        f\"  no key {fixture['chat_no_key']['status']}  bad key {fixture['chat_bad_key']['status']}\"\n    )\n"
+          },
+          {
+            "old": "    parser.add_argument(\"providers\", nargs=\"*\", help=\"record keys to capture (default: every available)\")\n",
+            "new": "    parser.add_argument(\n        \"providers\", nargs=\"*\", help=\"record keys to capture (default: every available)\"\n    )\n"
+          },
+          {
+            "old": "    parser.add_argument(\"--list\", action=\"store_true\", help=\"show who would run, and why not\")\n    parser.add_argument(\"--no-auth\", action=\"store_true\",\n                        help=\"probe every preset's shipped URL without a real key (no tokens spent)\")\n",
+            "new": "    parser.add_argument(\n        \"--list\", action=\"store_true\", help=\"show who would run, and why not\"\n    )\n    parser.add_argument(\n        \"--no-auth\",\n        action=\"store_true\",\n        help=\"probe every preset's shipped URL without a real key (no tokens spent)\",\n    )\n"
+          },
+          {
+            "old": "        keys_file = validate_path_simple(args.keys_file, reject_shell_metacharacters=False)\n",
+            "new": "        keys_file = validate_path_simple(\n            args.keys_file, reject_shell_metacharacters=False\n        )\n"
+          },
+          {
+            "old": "    targets = [Target(r, env) for r in records if not args.providers or r.key in args.providers]\n",
+            "new": "    targets = [\n        Target(r, env) for r in records if not args.providers or r.key in args.providers\n    ]\n"
+          },
+          {
+            "old": "            print(f\"[{target.record.key}] {'ready' if reason is None else 'skip: ' + reason}\")\n",
+            "new": "            print(\n                f\"[{target.record.key}] {'ready' if reason is None else 'skip: ' + reason}\"\n            )\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/fixtures/cloud_live/capture.py",
+          "-"
+        ]
+      },
+      "final": {
+        "sha256": "6c4fcf50933fbb7ccbc63fc435b06b35b9440b02adaad01182e57c66122d64ea",
+        "formatted_sha256": "d9bd26a52a2b7bdf6855c9759a501d9c6c8122e0a09ce58ccb6a3cad12bc6577",
+        "lines": 640,
+        "formatted_lines": 763,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "KNOWN_TOP = frozenset({\"id\", \"object\", \"created\", \"model\", \"system_fingerprint\", \"choices\", \"usage\"})\n",
+            "new": "KNOWN_TOP = frozenset(\n    {\"id\", \"object\", \"created\", \"model\", \"system_fingerprint\", \"choices\", \"usage\"}\n)\n"
+          },
+          {
+            "old": "    {\"role\": \"user\", \"content\": \"What is the weather in Tokyo? Use the get_weather tool.\"}\n",
+            "new": "    {\n        \"role\": \"user\",\n        \"content\": \"What is the weather in Tokyo? Use the get_weather tool.\",\n    }\n"
+          },
+          {
+            "old": "_CHEAP = re.compile(r\"mini|flash|small|lite|nano|haiku|turbo|[^0-9](1|3|7|8)b\", re.IGNORECASE)\n",
+            "new": "_CHEAP = re.compile(\n    r\"mini|flash|small|lite|nano|haiku|turbo|[^0-9](1|3|7|8)b\", re.IGNORECASE\n)\n"
+          },
+          {
+            "old": "    match = re.search(rf\"^{re.escape(record.config_key)} = (\\[.*\\])\", source, re.MULTILINE)\n",
+            "new": "    match = re.search(\n        rf\"^{re.escape(record.config_key)} = (\\[.*\\])\", source, re.MULTILINE\n    )\n"
+          },
+          {
+            "old": "    def from_env(cls, record: ProviderRecord, env: dict[str, str]) -> \"CaptureOverrides\":\n",
+            "new": "    def from_env(\n        cls, record: ProviderRecord, env: dict[str, str]\n    ) -> \"CaptureOverrides\":\n"
+          },
+          {
+            "old": "",
+            "new": "\n"
+          },
+          {
+            "old": "        names = ((overrides.api_key_env_var,) if overrides.api_key_env_var else ()) + tuple(\n            record.api_key_env_candidates\n",
+            "new": "        names = (\n            (overrides.api_key_env_var,) if overrides.api_key_env_var else ()\n        ) + tuple(record.api_key_env_candidates)\n        self.key_names = names\n        self._api_key = next(\n            (env[name].strip() for name in names if env.get(name, \"\").strip()), \"\"\n"
+          },
+          {
+            "old": "        self.key_names = names\n        self._api_key = next((env[name].strip() for name in names if env.get(name, \"\").strip()), \"\")\n",
+            "new": ""
+          },
+          {
+            "old": "        if base and record.base_url_suffix and urllib.parse.urlsplit(base).path in (\"\", \"/\"):\n",
+            "new": "        if (\n            base\n            and record.base_url_suffix\n            and urllib.parse.urlsplit(base).path in (\"\", \"/\")\n        ):\n"
+          },
+          {
+            "old": "        return {**auth, \"Content-Type\": \"application/json\", \"User-Agent\": USER_AGENT, **self.headers_extra}\n",
+            "new": "        return {\n            **auth,\n            \"Content-Type\": \"application/json\",\n            \"User-Agent\": USER_AGENT,\n            **self.headers_extra,\n        }\n"
+          },
+          {
+            "old": "    def payload(self, model: str, messages: list[dict[str, Any]], *, stream: bool, tools: bool) -> dict[str, Any]:\n",
+            "new": "    def payload(\n        self, model: str, messages: list[dict[str, Any]], *, stream: bool, tools: bool\n    ) -> dict[str, Any]:\n"
+          },
+          {
+            "old": "        url, data=data, method=\"POST\" if body is not None else \"GET\", headers=target.headers()\n",
+            "new": "        url,\n        data=data,\n        method=\"POST\" if body is not None else \"GET\",\n        headers=target.headers(),\n"
+          },
+          {
+            "old": "            raw, status = response.read().decode(\"utf-8\", errors=\"replace\"), response.status\n",
+            "new": "            raw, status = (\n                response.read().decode(\"utf-8\", errors=\"replace\"),\n                response.status,\n            )\n"
+          },
+          {
+            "old": "        url, data=json.dumps(body).encode(\"utf-8\"), method=\"POST\", headers=target.headers()\n",
+            "new": "        url,\n        data=json.dumps(body).encode(\"utf-8\"),\n        method=\"POST\",\n        headers=target.headers(),\n"
+          },
+          {
+            "old": "                    data_lines.append(line[len(\"data:\"):].lstrip(\" \"))\n",
+            "new": "                    data_lines.append(line[len(\"data:\") :].lstrip(\" \"))\n"
+          },
+          {
+            "old": "def uncovered_keys(record: ProviderRecord, fixture: dict[str, Any]) -> dict[str, list[str]]:\n",
+            "new": "def uncovered_keys(\n    record: ProviderRecord, fixture: dict[str, Any]\n) -> dict[str, list[str]]:\n"
+          },
+          {
+            "old": "        status, listing = _request(target, f\"{target.base_url}/{record.discovery_route}\", None)\n",
+            "new": "        status, listing = _request(\n            target, f\"{target.base_url}/{record.discovery_route}\", None\n        )\n"
+          },
+          {
+            "old": "    chat_status, chat_body = _request(target, url, target.payload(model, PLAIN_MESSAGES, stream=False, tools=False))\n",
+            "new": "    chat_status, chat_body = _request(\n        target, url, target.payload(model, PLAIN_MESSAGES, stream=False, tools=False)\n    )\n"
+          },
+          {
+            "old": "        tool_status, tool_body = _request(target, url, target.payload(model, TOOL_MESSAGES, stream=False, tools=True))\n    stream_status, events = _stream(target, url, target.payload(model, PLAIN_MESSAGES, stream=True, tools=False))\n",
+            "new": "        tool_status, tool_body = _request(\n            target, url, target.payload(model, TOOL_MESSAGES, stream=False, tools=True)\n        )\n    stream_status, events = _stream(\n        target, url, target.payload(model, PLAIN_MESSAGES, stream=True, tools=False)\n    )\n"
+          },
+          {
+            "old": "    print(f\"  plain HTTP {chat_status}  tool HTTP {tool_status}  stream HTTP {stream_status}\"\n          f\" ({len(events)} events, complete: {stream_complete})\")\n",
+            "new": "    print(\n        f\"  plain HTTP {chat_status}  tool HTTP {tool_status}  stream HTTP {stream_status}\"\n        f\" ({len(events)} events, complete: {stream_complete})\"\n    )\n"
+          },
+          {
+            "old": "        print(\"  FAILED: no round succeeded -- no fixture written (check the key, model and URL)\")\n",
+            "new": "        print(\n            \"  FAILED: no round succeeded -- no fixture written (check the key, model and URL)\"\n        )\n"
+          },
+          {
+            "old": "        print(\"  ! the stream was cut off before [DONE]; its replay will fail until recaptured\")\n",
+            "new": "        print(\n            \"  ! the stream was cut off before [DONE]; its replay will fail until recaptured\"\n        )\n"
+          },
+          {
+            "old": "        \"statuses\": {\"plain\": chat_status, \"tool\": tool_status, \"stream\": stream_status},\n",
+            "new": "        \"statuses\": {\n            \"plain\": chat_status,\n            \"tool\": tool_status,\n            \"stream\": stream_status,\n        },\n"
+          },
+          {
+            "old": "            None if listed is None\n            else {\"count\": len(listed), \"envelope\": isinstance(listing, dict),\n                  \"sample\": listed[:MAX_LISTED_MODELS]}\n",
+            "new": "            None\n            if listed is None\n            else {\n                \"count\": len(listed),\n                \"envelope\": isinstance(listing, dict),\n                \"sample\": listed[:MAX_LISTED_MODELS],\n            }\n"
+          },
+          {
+            "old": "    gaps = {level: keys for level, keys in uncovered_keys(record, json.loads(text)).items() if keys}\n    print(f\"  wrote {path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path}\")\n",
+            "new": "    gaps = {\n        level: keys\n        for level, keys in uncovered_keys(record, json.loads(text)).items()\n        if keys\n    }\n    print(\n        f\"  wrote {path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path}\"\n    )\n"
+          },
+          {
+            "old": "PROBE_KEY = \"tldw-probe-invalid-key\"  # deliberately fake: proves how a bad key is answered\n",
+            "new": "PROBE_KEY = (\n    \"tldw-probe-invalid-key\"  # deliberately fake: proves how a bad key is answered\n)\n"
+          },
+          {
+            "old": "def _plain_request(url: str, body: dict[str, Any] | None, headers: dict[str, str], timeout: float) -> dict[str, Any]:\n",
+            "new": "def _plain_request(\n    url: str, body: dict[str, Any] | None, headers: dict[str, str], timeout: float\n) -> dict[str, Any]:\n"
+          },
+          {
+            "old": "    request = urllib.request.Request(url, data=data, method=\"POST\" if body is not None else \"GET\",\n                                     headers={\"Content-Type\": \"application/json\", \"User-Agent\": USER_AGENT, **headers})\n",
+            "new": "    request = urllib.request.Request(\n        url,\n        data=data,\n        method=\"POST\" if body is not None else \"GET\",\n        headers={\n            \"Content-Type\": \"application/json\",\n            \"User-Agent\": USER_AGENT,\n            **headers,\n        },\n    )\n"
+          },
+          {
+            "old": "            raw, status = response.read().decode(\"utf-8\", errors=\"replace\"), response.status\n",
+            "new": "            raw, status = (\n                response.read().decode(\"utf-8\", errors=\"replace\"),\n                response.status,\n            )\n"
+          },
+          {
+            "old": "    base = (os.environ.get(_env_name(record, \"BASE_URL\"), \"\").strip() or record.default_base_url or \"\").rstrip(\"/\")\n",
+            "new": "    base = (\n        os.environ.get(_env_name(record, \"BASE_URL\"), \"\").strip()\n        or record.default_base_url\n        or \"\"\n    ).rstrip(\"/\")\n"
+          },
+          {
+            "old": "        print(f\"[{record.key}] skip: per-account URL (set {_env_name(record, 'BASE_URL')})\")\n",
+            "new": "        print(\n            f\"[{record.key}] skip: per-account URL (set {_env_name(record, 'BASE_URL')})\"\n        )\n"
+          },
+          {
+            "old": "    fake = ({\"api-key\": PROBE_KEY} if record.auth_scheme == \"api_key_header\"\n            else {\"Authorization\": f\"Bearer {PROBE_KEY}\"})\n    listing = _plain_request(f\"{base}/{record.discovery_route or 'models'}\", None, {}, 30.0)\n",
+            "new": "    fake = (\n        {\"api-key\": PROBE_KEY}\n        if record.auth_scheme == \"api_key_header\"\n        else {\"Authorization\": f\"Bearer {PROBE_KEY}\"}\n    )\n    listing = _plain_request(\n        f\"{base}/{record.discovery_route or 'models'}\", None, {}, 30.0\n    )\n"
+          },
+          {
+            "old": "    listed_model = choose_model(Target(record, {}), {\"data\": listed}) if isinstance(listed, list) else None\n",
+            "new": "    listed_model = (\n        choose_model(Target(record, {}), {\"data\": listed})\n        if isinstance(listed, list)\n        else None\n    )\n"
+          },
+          {
+            "old": "    chat_body = {\"model\": model, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}],\n                 record.max_tokens_key or \"max_tokens\": 1}\n",
+            "new": "    chat_body = {\n        \"model\": model,\n        \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}],\n        record.max_tokens_key or \"max_tokens\": 1,\n    }\n"
+          },
+          {
+            "old": "        listing = {\"status\": 200, \"entries\": [\n            {\"id\": entry.get(\"id\")} if isinstance(entry, dict) else entry for entry in listed]}\n",
+            "new": "        listing = {\n            \"status\": 200,\n            \"entries\": [\n                {\"id\": entry.get(\"id\")} if isinstance(entry, dict) else entry\n                for entry in listed\n            ],\n        }\n"
+          },
+          {
+            "old": "        \"base_url\": base if base == (record.default_base_url or \"\").rstrip(\"/\") else PER_ACCOUNT,\n",
+            "new": "        \"base_url\": base\n        if base == (record.default_base_url or \"\").rstrip(\"/\")\n        else PER_ACCOUNT,\n"
+          },
+          {
+            "old": "        \"chat_bad_key\": _plain_request(f\"{base}/chat/completions\", chat_body, fake, 30.0),\n",
+            "new": "        \"chat_bad_key\": _plain_request(\n            f\"{base}/chat/completions\", chat_body, fake, 30.0\n        ),\n"
+          },
+          {
+            "old": "    path.write_text(json.dumps(fixture, indent=2, ensure_ascii=False) + \"\\n\", encoding=\"utf-8\")\n",
+            "new": "    path.write_text(\n        json.dumps(fixture, indent=2, ensure_ascii=False) + \"\\n\", encoding=\"utf-8\"\n    )\n"
+          },
+          {
+            "old": "    print(f\"[{record.key}] listing {listing['status']}{f' ({len(ids)} models)' if ids is not None else ''}\"\n          f\"  no key {fixture['chat_no_key']['status']}  bad key {fixture['chat_bad_key']['status']}\")\n",
+            "new": "    print(\n        f\"[{record.key}] listing {listing['status']}{f' ({len(ids)} models)' if ids is not None else ''}\"\n        f\"  no key {fixture['chat_no_key']['status']}  bad key {fixture['chat_bad_key']['status']}\"\n    )\n"
+          },
+          {
+            "old": "    parser.add_argument(\"providers\", nargs=\"*\", help=\"record keys to capture (default: every available)\")\n",
+            "new": "    parser.add_argument(\n        \"providers\", nargs=\"*\", help=\"record keys to capture (default: every available)\"\n    )\n"
+          },
+          {
+            "old": "    parser.add_argument(\"--list\", action=\"store_true\", help=\"show who would run, and why not\")\n    parser.add_argument(\"--no-auth\", action=\"store_true\",\n                        help=\"probe every preset's shipped URL without a real key (no tokens spent)\")\n",
+            "new": "    parser.add_argument(\n        \"--list\", action=\"store_true\", help=\"show who would run, and why not\"\n    )\n    parser.add_argument(\n        \"--no-auth\",\n        action=\"store_true\",\n        help=\"probe every preset's shipped URL without a real key (no tokens spent)\",\n    )\n"
+          },
+          {
+            "old": "        keys_file = validate_path_simple(args.keys_file, reject_shell_metacharacters=False)\n",
+            "new": "        keys_file = validate_path_simple(\n            args.keys_file, reject_shell_metacharacters=False\n        )\n"
+          },
+          {
+            "old": "    targets = [Target(r, env) for r in records if not args.providers or r.key in args.providers]\n",
+            "new": "    targets = [\n        Target(r, env) for r in records if not args.providers or r.key in args.providers\n    ]\n"
+          },
+          {
+            "old": "            print(f\"[{target.record.key}] {'ready' if reason is None else 'skip: ' + reason}\")\n",
+            "new": "            print(\n                f\"[{target.record.key}] {'ready' if reason is None else 'skip: ' + reason}\"\n            )\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/fixtures/cloud_live/capture.py",
+          "-"
+        ]
+      }
+    },
+    "unattributed_final_edits": []
+  },
+  "tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py": {
+    "versions": {
+      "reviewed": {
+        "sha256": "effbe30b122ed5c7a0bb2e8f04d37da3904f8cc79001394127b140be3688210e",
+        "formatted_sha256": "effbe30b122ed5c7a0bb2e8f04d37da3904f8cc79001394127b140be3688210e",
+        "lines": 978,
+        "formatted_lines": 978,
+        "ast_identical": true,
+        "edits": [],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py",
+          "-"
+        ]
+      },
+      "incoming": {
+        "sha256": "05bca4e400557b148cf2da08ab1a6eb70d2593548caf78fe9f29a4dc5b5d580c",
+        "formatted_sha256": "147e9a6114d73ee361b17fe94c306944a1c31ea64271253db4644704fd9fc625",
+        "lines": 987,
+        "formatted_lines": 990,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "            if type(nested_value) is str and len(nested_value) > MODEL_METADATA_MAX_VALUE_CHARS:\n",
+            "new": "            if (\n                type(nested_value) is str\n                and len(nested_value) > MODEL_METADATA_MAX_VALUE_CHARS\n            ):\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py",
+          "-"
+        ]
+      },
+      "final": {
+        "sha256": "05bca4e400557b148cf2da08ab1a6eb70d2593548caf78fe9f29a4dc5b5d580c",
+        "formatted_sha256": "147e9a6114d73ee361b17fe94c306944a1c31ea64271253db4644704fd9fc625",
+        "lines": 987,
+        "formatted_lines": 990,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "            if type(nested_value) is str and len(nested_value) > MODEL_METADATA_MAX_VALUE_CHARS:\n",
+            "new": "            if (\n                type(nested_value) is str\n                and len(nested_value) > MODEL_METADATA_MAX_VALUE_CHARS\n            ):\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py",
+          "-"
+        ]
+      }
+    },
+    "unattributed_final_edits": []
+  },
+  "tldw_chatbook/provider_registry.py": {
+    "versions": {
+      "reviewed": {
+        "sha256": "b9b61786c7d4b631a412111b1adc73dac18ee56ac44ea816cadf66d0c61a077e",
+        "formatted_sha256": "49ce4883171411349bff0caa8c8d13a02093da7b5711c226f4e2f236f7db7aee",
+        "lines": 1736,
+        "formatted_lines": 1891,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "",
+            "new": "\n"
+          },
+          {
+            "old": "    native_tools=True,      # confirmed (or honestly disabled) at live gate (Task 14)\n    reasoning_effort=False, # gateway model support varies; enable per-model later\n",
+            "new": "    native_tools=True,  # confirmed (or honestly disabled) at live gate (Task 14)\n    reasoning_effort=False,  # gateway model support varies; enable per-model later\n"
+          },
+          {
+            "old": "    pricing_seeds={},       # gateway pricing is workspace/model-config dependent\n",
+            "new": "    pricing_seeds={},  # gateway pricing is workspace/model-config dependent\n"
+          },
+          {
+            "old": "    pricing_seeds={},       # per-model pricing lands with the catalog\n",
+            "new": "    pricing_seeds={},  # per-model pricing lands with the catalog\n"
+          },
+          {
+            "old": "    base_url_suffix=None,   # the default URL is already complete\n",
+            "new": "    base_url_suffix=None,  # the default URL is already complete\n"
+          },
+          {
+            "old": "    finish_terminal=frozenset({\"stop\", \"tool_calls\", \"length\", \"repetition_truncation\"}),\n",
+            "new": "    finish_terminal=frozenset(\n        {\"stop\", \"tool_calls\", \"length\", \"repetition_truncation\"}\n    ),\n"
+          },
+          {
+            "old": "    finish_terminal=frozenset({\"stop\", \"tool_calls\", \"length\", \"repetition_truncation\"}),\n",
+            "new": "    finish_terminal=frozenset(\n        {\"stop\", \"tool_calls\", \"length\", \"repetition_truncation\"}\n    ),\n"
+          },
+          {
+            "old": "        {\"prompt_filter_results\", \"obfuscation\", \"service_tier\", \"latency_checkpoint\", \"routing\"}\n",
+            "new": "        {\n            \"prompt_filter_results\",\n            \"obfuscation\",\n            \"service_tier\",\n            \"latency_checkpoint\",\n            \"routing\",\n        }\n"
+          },
+          {
+            "old": "    choice_allowances=frozenset({\"content_filter_results\", \"content_filter_result\", \"logprobs\"}),\n",
+            "new": "    choice_allowances=frozenset(\n        {\"content_filter_results\", \"content_filter_result\", \"logprobs\"}\n    ),\n"
+          },
+          {
+            "old": "    key=\"openai\", config_key=\"OpenAI\", display_name=\"OpenAI\", classification=_CLOUD,\n",
+            "new": "    key=\"openai\",\n    config_key=\"OpenAI\",\n    display_name=\"OpenAI\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=True, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=True,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"anthropic\", config_key=\"Anthropic\", display_name=\"Anthropic\", classification=_CLOUD,\n",
+            "new": "    key=\"anthropic\",\n    config_key=\"Anthropic\",\n    display_name=\"Anthropic\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"cohere\", config_key=\"Cohere\", display_name=\"Cohere\", classification=_CLOUD,\n",
+            "new": "    key=\"cohere\",\n    config_key=\"Cohere\",\n    display_name=\"Cohere\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=False,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=False,\n"
+          },
+          {
+            "old": "    key=\"groq\", config_key=\"Groq\", display_name=\"Groq\", classification=_CLOUD,\n",
+            "new": "    key=\"groq\",\n    config_key=\"Groq\",\n    display_name=\"Groq\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=False,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=False,\n"
+          },
+          {
+            "old": "    key=\"openrouter\", config_key=\"OpenRouter\", display_name=\"OpenRouter\", classification=_CLOUD,\n",
+            "new": "    key=\"openrouter\",\n    config_key=\"OpenRouter\",\n    display_name=\"OpenRouter\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"deepseek\", config_key=\"DeepSeek\", display_name=\"DeepSeek\", classification=_CLOUD,\n",
+            "new": "    key=\"deepseek\",\n    config_key=\"DeepSeek\",\n    display_name=\"DeepSeek\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=False,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=False,\n"
+          },
+          {
+            "old": "    key=\"mistral\", config_key=\"MistralAI\", display_name=\"Mistral\", classification=_CLOUD,\n",
+            "new": "    key=\"mistral\",\n    config_key=\"MistralAI\",\n    display_name=\"Mistral\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"google\", config_key=\"Google\", display_name=\"Google\", classification=_CLOUD,\n",
+            "new": "    key=\"google\",\n    config_key=\"Google\",\n    display_name=\"Google\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=False,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=False,\n"
+          },
+          {
+            "old": "    key=\"huggingface\", config_key=\"HuggingFace\", display_name=\"Hugging Face\", classification=_CLOUD,\n",
+            "new": "    key=\"huggingface\",\n    config_key=\"HuggingFace\",\n    display_name=\"Hugging Face\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=False, reasoning_effort=False, auto_refresh=False,\n",
+            "new": "    native_tools=False,\n    reasoning_effort=False,\n    auto_refresh=False,\n"
+          },
+          {
+            "old": "    key=\"moonshot\", config_key=\"Moonshot\", display_name=\"Moonshot\", classification=_CLOUD,\n",
+            "new": "    key=\"moonshot\",\n    config_key=\"Moonshot\",\n    display_name=\"Moonshot\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=True, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=True,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"zai\", config_key=\"ZAI\", display_name=\"Z.ai\", classification=_CLOUD,\n",
+            "new": "    key=\"zai\",\n    config_key=\"ZAI\",\n    display_name=\"Z.ai\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=True, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=True,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"qwencloud\", config_key=\"QwenCloud\", display_name=\"QwenCloud\", classification=_CLOUD,\n",
+            "new": "    key=\"qwencloud\",\n    config_key=\"QwenCloud\",\n    display_name=\"QwenCloud\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=True, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=True,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"llama_cpp\", config_key=\"Llama_cpp\", display_name=\"llama.cpp\", classification=_LOCAL,\n",
+            "new": "    key=\"llama_cpp\",\n    config_key=\"Llama_cpp\",\n    display_name=\"llama.cpp\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"koboldcpp\", config_key=\"koboldcpp\", display_name=\"Koboldcpp\", classification=_LOCAL,\n",
+            "new": "    key=\"koboldcpp\",\n    config_key=\"koboldcpp\",\n    display_name=\"Koboldcpp\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"oobabooga\", config_key=\"Oobabooga\", display_name=\"Oobabooga\", classification=_LOCAL,\n",
+            "new": "    key=\"oobabooga\",\n    config_key=\"Oobabooga\",\n    display_name=\"Oobabooga\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"tabbyapi\", config_key=\"TabbyAPI\", display_name=\"Tabbyapi\", classification=_LOCAL,\n",
+            "new": "    key=\"tabbyapi\",\n    config_key=\"TabbyAPI\",\n    display_name=\"Tabbyapi\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"vllm\", config_key=\"vLLM\", display_name=\"vLLM\", classification=_LOCAL,\n",
+            "new": "    key=\"vllm\",\n    config_key=\"vLLM\",\n    display_name=\"vLLM\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"ollama\", config_key=\"Ollama\", display_name=\"Ollama\", classification=_LOCAL,\n",
+            "new": "    key=\"ollama\",\n    config_key=\"Ollama\",\n    display_name=\"Ollama\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"aphrodite\", config_key=\"Aphrodite\", display_name=\"Aphrodite\", classification=_LOCAL,\n",
+            "new": "    key=\"aphrodite\",\n    config_key=\"Aphrodite\",\n    display_name=\"Aphrodite\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"local-llm\", config_key=\"local-llm\", display_name=\"Local Llm\", classification=_LOCAL,\n",
+            "new": "    key=\"local-llm\",\n    config_key=\"local-llm\",\n    display_name=\"Local Llm\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"custom-openai-api\", config_key=\"Custom\", display_name=\"Custom OpenAI\", classification=_LOCAL,\n",
+            "new": "    key=\"custom-openai-api\",\n    config_key=\"Custom\",\n    display_name=\"Custom OpenAI\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"custom-openai-api-2\", config_key=\"Custom_2\", display_name=\"Custom OpenAI 2\", classification=_LOCAL,\n",
+            "new": "    key=\"custom-openai-api-2\",\n    config_key=\"Custom_2\",\n    display_name=\"Custom OpenAI 2\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"mlx_lm\", config_key=\"local_mlx_lm\", display_name=\"MLX LM\", classification=_LOCAL,\n",
+            "new": "    key=\"mlx_lm\",\n    config_key=\"local_mlx_lm\",\n    display_name=\"MLX LM\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    OPENAI, ANTHROPIC, COHERE, GROQ, OPENROUTER, DEEPSEEK, MISTRAL, GOOGLE,\n    HUGGINGFACE, MOONSHOT, ZAI, QWENCLOUD, DATABRICKS,\n    TOGETHER, FIREWORKS, CEREBRAS, CUSTOM_HOSTED,\n    SAMBANOVA, NVIDIA, DEEPINFRA, NEBIUS, NOVITA, MINIMAX,\n    MIMO, TOKENHUB, BYTEPLUS, STEPFUN,\n    VERCEL, ZENMUX, KILO, SILICONFLOW, BASETEN, GMI, OLLAMA_CLOUD,\n    UPSTAGE, ARCEE, QIANFAN, NOUS, VENICE, META,\n    AZURE, WANDB, CLOUDFLARE, OPENCODE_ZEN, COMMANDCODE,\n    LLAMA_CPP, KOBOLDCPP, OOABOOGA, TABBYAPI, VLLM, OLLAMA, APHRODITE,\n    LOCAL_LLM, CUSTOM_OPENAI_API, CUSTOM_OPENAI_API_2, MLX_LM,\n",
+            "new": "    OPENAI,\n    ANTHROPIC,\n    COHERE,\n    GROQ,\n    OPENROUTER,\n    DEEPSEEK,\n    MISTRAL,\n    GOOGLE,\n    HUGGINGFACE,\n    MOONSHOT,\n    ZAI,\n    QWENCLOUD,\n    DATABRICKS,\n    TOGETHER,\n    FIREWORKS,\n    CEREBRAS,\n    CUSTOM_HOSTED,\n    SAMBANOVA,\n    NVIDIA,\n    DEEPINFRA,\n    NEBIUS,\n    NOVITA,\n    MINIMAX,\n    MIMO,\n    TOKENHUB,\n    BYTEPLUS,\n    STEPFUN,\n    VERCEL,\n    ZENMUX,\n    KILO,\n    SILICONFLOW,\n    BASETEN,\n    GMI,\n    OLLAMA_CLOUD,\n    UPSTAGE,\n    ARCEE,\n    QIANFAN,\n    NOUS,\n    VENICE,\n    META,\n    AZURE,\n    WANDB,\n    CLOUDFLARE,\n    OPENCODE_ZEN,\n    COMMANDCODE,\n    LLAMA_CPP,\n    KOBOLDCPP,\n    OOABOOGA,\n    TABBYAPI,\n    VLLM,\n    OLLAMA,\n    APHRODITE,\n    LOCAL_LLM,\n    CUSTOM_OPENAI_API,\n    CUSTOM_OPENAI_API_2,\n    MLX_LM,\n"
+          },
+          {
+            "old": "RECORDS_BY_KEY: dict[str, ProviderRecord] = {record.key: record for record in ALL_RECORDS}\n",
+            "new": "RECORDS_BY_KEY: dict[str, ProviderRecord] = {\n    record.key: record for record in ALL_RECORDS\n}\n"
+          },
+          {
+            "old": "",
+            "new": "\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/provider_registry.py",
+          "-"
+        ]
+      },
+      "incoming": {
+        "sha256": "3b0ad68a3a56489126a63dfb22dce8e0453e1a36503e1e20c7074ac2e6d9cb80",
+        "formatted_sha256": "16fc1c67c89d19f32e7e6b3406d6d0ac74066db94c0cc3506799b3b95323321c",
+        "lines": 1744,
+        "formatted_lines": 1899,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "",
+            "new": "\n"
+          },
+          {
+            "old": "    native_tools=True,      # confirmed (or honestly disabled) at live gate (Task 14)\n    reasoning_effort=False, # gateway model support varies; enable per-model later\n",
+            "new": "    native_tools=True,  # confirmed (or honestly disabled) at live gate (Task 14)\n    reasoning_effort=False,  # gateway model support varies; enable per-model later\n"
+          },
+          {
+            "old": "    pricing_seeds={},       # gateway pricing is workspace/model-config dependent\n",
+            "new": "    pricing_seeds={},  # gateway pricing is workspace/model-config dependent\n"
+          },
+          {
+            "old": "    pricing_seeds={},       # per-model pricing lands with the catalog\n",
+            "new": "    pricing_seeds={},  # per-model pricing lands with the catalog\n"
+          },
+          {
+            "old": "    base_url_suffix=None,   # the default URL is already complete\n",
+            "new": "    base_url_suffix=None,  # the default URL is already complete\n"
+          },
+          {
+            "old": "    finish_terminal=frozenset({\"stop\", \"tool_calls\", \"length\", \"repetition_truncation\"}),\n",
+            "new": "    finish_terminal=frozenset(\n        {\"stop\", \"tool_calls\", \"length\", \"repetition_truncation\"}\n    ),\n"
+          },
+          {
+            "old": "    finish_terminal=frozenset({\"stop\", \"tool_calls\", \"length\", \"repetition_truncation\"}),\n",
+            "new": "    finish_terminal=frozenset(\n        {\"stop\", \"tool_calls\", \"length\", \"repetition_truncation\"}\n    ),\n"
+          },
+          {
+            "old": "        {\"prompt_filter_results\", \"obfuscation\", \"service_tier\", \"latency_checkpoint\", \"routing\"}\n",
+            "new": "        {\n            \"prompt_filter_results\",\n            \"obfuscation\",\n            \"service_tier\",\n            \"latency_checkpoint\",\n            \"routing\",\n        }\n"
+          },
+          {
+            "old": "    choice_allowances=frozenset({\"content_filter_results\", \"content_filter_result\", \"logprobs\"}),\n",
+            "new": "    choice_allowances=frozenset(\n        {\"content_filter_results\", \"content_filter_result\", \"logprobs\"}\n    ),\n"
+          },
+          {
+            "old": "    key=\"openai\", config_key=\"OpenAI\", display_name=\"OpenAI\", classification=_CLOUD,\n",
+            "new": "    key=\"openai\",\n    config_key=\"OpenAI\",\n    display_name=\"OpenAI\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=True, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=True,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"anthropic\", config_key=\"Anthropic\", display_name=\"Anthropic\", classification=_CLOUD,\n",
+            "new": "    key=\"anthropic\",\n    config_key=\"Anthropic\",\n    display_name=\"Anthropic\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"cohere\", config_key=\"Cohere\", display_name=\"Cohere\", classification=_CLOUD,\n",
+            "new": "    key=\"cohere\",\n    config_key=\"Cohere\",\n    display_name=\"Cohere\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=False,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=False,\n"
+          },
+          {
+            "old": "    key=\"groq\", config_key=\"Groq\", display_name=\"Groq\", classification=_CLOUD,\n",
+            "new": "    key=\"groq\",\n    config_key=\"Groq\",\n    display_name=\"Groq\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=False,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=False,\n"
+          },
+          {
+            "old": "    key=\"openrouter\", config_key=\"OpenRouter\", display_name=\"OpenRouter\", classification=_CLOUD,\n",
+            "new": "    key=\"openrouter\",\n    config_key=\"OpenRouter\",\n    display_name=\"OpenRouter\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"deepseek\", config_key=\"DeepSeek\", display_name=\"DeepSeek\", classification=_CLOUD,\n",
+            "new": "    key=\"deepseek\",\n    config_key=\"DeepSeek\",\n    display_name=\"DeepSeek\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=False,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=False,\n"
+          },
+          {
+            "old": "    key=\"mistral\", config_key=\"MistralAI\", display_name=\"Mistral\", classification=_CLOUD,\n",
+            "new": "    key=\"mistral\",\n    config_key=\"MistralAI\",\n    display_name=\"Mistral\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"google\", config_key=\"Google\", display_name=\"Google\", classification=_CLOUD,\n",
+            "new": "    key=\"google\",\n    config_key=\"Google\",\n    display_name=\"Google\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=False,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=False,\n"
+          },
+          {
+            "old": "    key=\"huggingface\", config_key=\"HuggingFace\", display_name=\"Hugging Face\", classification=_CLOUD,\n",
+            "new": "    key=\"huggingface\",\n    config_key=\"HuggingFace\",\n    display_name=\"Hugging Face\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=False, reasoning_effort=False, auto_refresh=False,\n",
+            "new": "    native_tools=False,\n    reasoning_effort=False,\n    auto_refresh=False,\n"
+          },
+          {
+            "old": "    key=\"moonshot\", config_key=\"Moonshot\", display_name=\"Moonshot\", classification=_CLOUD,\n",
+            "new": "    key=\"moonshot\",\n    config_key=\"Moonshot\",\n    display_name=\"Moonshot\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=True, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=True,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"zai\", config_key=\"ZAI\", display_name=\"Z.ai\", classification=_CLOUD,\n",
+            "new": "    key=\"zai\",\n    config_key=\"ZAI\",\n    display_name=\"Z.ai\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=True, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=True,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"qwencloud\", config_key=\"QwenCloud\", display_name=\"QwenCloud\", classification=_CLOUD,\n",
+            "new": "    key=\"qwencloud\",\n    config_key=\"QwenCloud\",\n    display_name=\"QwenCloud\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=True, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=True,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"llama_cpp\", config_key=\"Llama_cpp\", display_name=\"llama.cpp\", classification=_LOCAL,\n",
+            "new": "    key=\"llama_cpp\",\n    config_key=\"Llama_cpp\",\n    display_name=\"llama.cpp\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"koboldcpp\", config_key=\"koboldcpp\", display_name=\"Koboldcpp\", classification=_LOCAL,\n",
+            "new": "    key=\"koboldcpp\",\n    config_key=\"koboldcpp\",\n    display_name=\"Koboldcpp\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"oobabooga\", config_key=\"Oobabooga\", display_name=\"Oobabooga\", classification=_LOCAL,\n",
+            "new": "    key=\"oobabooga\",\n    config_key=\"Oobabooga\",\n    display_name=\"Oobabooga\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"tabbyapi\", config_key=\"TabbyAPI\", display_name=\"Tabbyapi\", classification=_LOCAL,\n",
+            "new": "    key=\"tabbyapi\",\n    config_key=\"TabbyAPI\",\n    display_name=\"Tabbyapi\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"vllm\", config_key=\"vLLM\", display_name=\"vLLM\", classification=_LOCAL,\n",
+            "new": "    key=\"vllm\",\n    config_key=\"vLLM\",\n    display_name=\"vLLM\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"ollama\", config_key=\"Ollama\", display_name=\"Ollama\", classification=_LOCAL,\n",
+            "new": "    key=\"ollama\",\n    config_key=\"Ollama\",\n    display_name=\"Ollama\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"aphrodite\", config_key=\"Aphrodite\", display_name=\"Aphrodite\", classification=_LOCAL,\n",
+            "new": "    key=\"aphrodite\",\n    config_key=\"Aphrodite\",\n    display_name=\"Aphrodite\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"local-llm\", config_key=\"local-llm\", display_name=\"Local Llm\", classification=_LOCAL,\n",
+            "new": "    key=\"local-llm\",\n    config_key=\"local-llm\",\n    display_name=\"Local Llm\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"custom-openai-api\", config_key=\"Custom\", display_name=\"Custom OpenAI\", classification=_LOCAL,\n",
+            "new": "    key=\"custom-openai-api\",\n    config_key=\"Custom\",\n    display_name=\"Custom OpenAI\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"custom-openai-api-2\", config_key=\"Custom_2\", display_name=\"Custom OpenAI 2\", classification=_LOCAL,\n",
+            "new": "    key=\"custom-openai-api-2\",\n    config_key=\"Custom_2\",\n    display_name=\"Custom OpenAI 2\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"mlx_lm\", config_key=\"local_mlx_lm\", display_name=\"MLX LM\", classification=_LOCAL,\n",
+            "new": "    key=\"mlx_lm\",\n    config_key=\"local_mlx_lm\",\n    display_name=\"MLX LM\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    OPENAI, ANTHROPIC, COHERE, GROQ, OPENROUTER, DEEPSEEK, MISTRAL, GOOGLE,\n    HUGGINGFACE, MOONSHOT, ZAI, QWENCLOUD, DATABRICKS,\n    TOGETHER, FIREWORKS, CEREBRAS, CUSTOM_HOSTED,\n    SAMBANOVA, NVIDIA, DEEPINFRA, NEBIUS, NOVITA, MINIMAX,\n    MIMO, TOKENHUB, BYTEPLUS, STEPFUN,\n    VERCEL, ZENMUX, KILO, SILICONFLOW, BASETEN, GMI, OLLAMA_CLOUD,\n    UPSTAGE, ARCEE, QIANFAN, NOUS, VENICE, META,\n    AZURE, WANDB, CLOUDFLARE, OPENCODE_ZEN, COMMANDCODE,\n    LLAMA_CPP, KOBOLDCPP, OOABOOGA, TABBYAPI, VLLM, OLLAMA, APHRODITE,\n    LOCAL_LLM, CUSTOM_OPENAI_API, CUSTOM_OPENAI_API_2, MLX_LM,\n",
+            "new": "    OPENAI,\n    ANTHROPIC,\n    COHERE,\n    GROQ,\n    OPENROUTER,\n    DEEPSEEK,\n    MISTRAL,\n    GOOGLE,\n    HUGGINGFACE,\n    MOONSHOT,\n    ZAI,\n    QWENCLOUD,\n    DATABRICKS,\n    TOGETHER,\n    FIREWORKS,\n    CEREBRAS,\n    CUSTOM_HOSTED,\n    SAMBANOVA,\n    NVIDIA,\n    DEEPINFRA,\n    NEBIUS,\n    NOVITA,\n    MINIMAX,\n    MIMO,\n    TOKENHUB,\n    BYTEPLUS,\n    STEPFUN,\n    VERCEL,\n    ZENMUX,\n    KILO,\n    SILICONFLOW,\n    BASETEN,\n    GMI,\n    OLLAMA_CLOUD,\n    UPSTAGE,\n    ARCEE,\n    QIANFAN,\n    NOUS,\n    VENICE,\n    META,\n    AZURE,\n    WANDB,\n    CLOUDFLARE,\n    OPENCODE_ZEN,\n    COMMANDCODE,\n    LLAMA_CPP,\n    KOBOLDCPP,\n    OOABOOGA,\n    TABBYAPI,\n    VLLM,\n    OLLAMA,\n    APHRODITE,\n    LOCAL_LLM,\n    CUSTOM_OPENAI_API,\n    CUSTOM_OPENAI_API_2,\n    MLX_LM,\n"
+          },
+          {
+            "old": "RECORDS_BY_KEY: dict[str, ProviderRecord] = {record.key: record for record in ALL_RECORDS}\n",
+            "new": "RECORDS_BY_KEY: dict[str, ProviderRecord] = {\n    record.key: record for record in ALL_RECORDS\n}\n"
+          },
+          {
+            "old": "",
+            "new": "\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/provider_registry.py",
+          "-"
+        ]
+      },
+      "final": {
+        "sha256": "3b0ad68a3a56489126a63dfb22dce8e0453e1a36503e1e20c7074ac2e6d9cb80",
+        "formatted_sha256": "16fc1c67c89d19f32e7e6b3406d6d0ac74066db94c0cc3506799b3b95323321c",
+        "lines": 1744,
+        "formatted_lines": 1899,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "",
+            "new": "\n"
+          },
+          {
+            "old": "    native_tools=True,      # confirmed (or honestly disabled) at live gate (Task 14)\n    reasoning_effort=False, # gateway model support varies; enable per-model later\n",
+            "new": "    native_tools=True,  # confirmed (or honestly disabled) at live gate (Task 14)\n    reasoning_effort=False,  # gateway model support varies; enable per-model later\n"
+          },
+          {
+            "old": "    pricing_seeds={},       # gateway pricing is workspace/model-config dependent\n",
+            "new": "    pricing_seeds={},  # gateway pricing is workspace/model-config dependent\n"
+          },
+          {
+            "old": "    pricing_seeds={},       # per-model pricing lands with the catalog\n",
+            "new": "    pricing_seeds={},  # per-model pricing lands with the catalog\n"
+          },
+          {
+            "old": "    base_url_suffix=None,   # the default URL is already complete\n",
+            "new": "    base_url_suffix=None,  # the default URL is already complete\n"
+          },
+          {
+            "old": "    finish_terminal=frozenset({\"stop\", \"tool_calls\", \"length\", \"repetition_truncation\"}),\n",
+            "new": "    finish_terminal=frozenset(\n        {\"stop\", \"tool_calls\", \"length\", \"repetition_truncation\"}\n    ),\n"
+          },
+          {
+            "old": "    finish_terminal=frozenset({\"stop\", \"tool_calls\", \"length\", \"repetition_truncation\"}),\n",
+            "new": "    finish_terminal=frozenset(\n        {\"stop\", \"tool_calls\", \"length\", \"repetition_truncation\"}\n    ),\n"
+          },
+          {
+            "old": "        {\"prompt_filter_results\", \"obfuscation\", \"service_tier\", \"latency_checkpoint\", \"routing\"}\n",
+            "new": "        {\n            \"prompt_filter_results\",\n            \"obfuscation\",\n            \"service_tier\",\n            \"latency_checkpoint\",\n            \"routing\",\n        }\n"
+          },
+          {
+            "old": "    choice_allowances=frozenset({\"content_filter_results\", \"content_filter_result\", \"logprobs\"}),\n",
+            "new": "    choice_allowances=frozenset(\n        {\"content_filter_results\", \"content_filter_result\", \"logprobs\"}\n    ),\n"
+          },
+          {
+            "old": "    key=\"openai\", config_key=\"OpenAI\", display_name=\"OpenAI\", classification=_CLOUD,\n",
+            "new": "    key=\"openai\",\n    config_key=\"OpenAI\",\n    display_name=\"OpenAI\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=True, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=True,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"anthropic\", config_key=\"Anthropic\", display_name=\"Anthropic\", classification=_CLOUD,\n",
+            "new": "    key=\"anthropic\",\n    config_key=\"Anthropic\",\n    display_name=\"Anthropic\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"cohere\", config_key=\"Cohere\", display_name=\"Cohere\", classification=_CLOUD,\n",
+            "new": "    key=\"cohere\",\n    config_key=\"Cohere\",\n    display_name=\"Cohere\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=False,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=False,\n"
+          },
+          {
+            "old": "    key=\"groq\", config_key=\"Groq\", display_name=\"Groq\", classification=_CLOUD,\n",
+            "new": "    key=\"groq\",\n    config_key=\"Groq\",\n    display_name=\"Groq\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=False,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=False,\n"
+          },
+          {
+            "old": "    key=\"openrouter\", config_key=\"OpenRouter\", display_name=\"OpenRouter\", classification=_CLOUD,\n",
+            "new": "    key=\"openrouter\",\n    config_key=\"OpenRouter\",\n    display_name=\"OpenRouter\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"deepseek\", config_key=\"DeepSeek\", display_name=\"DeepSeek\", classification=_CLOUD,\n",
+            "new": "    key=\"deepseek\",\n    config_key=\"DeepSeek\",\n    display_name=\"DeepSeek\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=False,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=False,\n"
+          },
+          {
+            "old": "    key=\"mistral\", config_key=\"MistralAI\", display_name=\"Mistral\", classification=_CLOUD,\n",
+            "new": "    key=\"mistral\",\n    config_key=\"MistralAI\",\n    display_name=\"Mistral\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"google\", config_key=\"Google\", display_name=\"Google\", classification=_CLOUD,\n",
+            "new": "    key=\"google\",\n    config_key=\"Google\",\n    display_name=\"Google\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=False, auto_refresh=False,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=False,\n    auto_refresh=False,\n"
+          },
+          {
+            "old": "    key=\"huggingface\", config_key=\"HuggingFace\", display_name=\"Hugging Face\", classification=_CLOUD,\n",
+            "new": "    key=\"huggingface\",\n    config_key=\"HuggingFace\",\n    display_name=\"Hugging Face\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=False, reasoning_effort=False, auto_refresh=False,\n",
+            "new": "    native_tools=False,\n    reasoning_effort=False,\n    auto_refresh=False,\n"
+          },
+          {
+            "old": "    key=\"moonshot\", config_key=\"Moonshot\", display_name=\"Moonshot\", classification=_CLOUD,\n",
+            "new": "    key=\"moonshot\",\n    config_key=\"Moonshot\",\n    display_name=\"Moonshot\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=True, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=True,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"zai\", config_key=\"ZAI\", display_name=\"Z.ai\", classification=_CLOUD,\n",
+            "new": "    key=\"zai\",\n    config_key=\"ZAI\",\n    display_name=\"Z.ai\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=True, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=True,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"qwencloud\", config_key=\"QwenCloud\", display_name=\"QwenCloud\", classification=_CLOUD,\n",
+            "new": "    key=\"qwencloud\",\n    config_key=\"QwenCloud\",\n    display_name=\"QwenCloud\",\n    classification=_CLOUD,\n"
+          },
+          {
+            "old": "    native_tools=True, reasoning_effort=True, auto_refresh=True,\n",
+            "new": "    native_tools=True,\n    reasoning_effort=True,\n    auto_refresh=True,\n"
+          },
+          {
+            "old": "    key=\"llama_cpp\", config_key=\"Llama_cpp\", display_name=\"llama.cpp\", classification=_LOCAL,\n",
+            "new": "    key=\"llama_cpp\",\n    config_key=\"Llama_cpp\",\n    display_name=\"llama.cpp\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"koboldcpp\", config_key=\"koboldcpp\", display_name=\"Koboldcpp\", classification=_LOCAL,\n",
+            "new": "    key=\"koboldcpp\",\n    config_key=\"koboldcpp\",\n    display_name=\"Koboldcpp\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"oobabooga\", config_key=\"Oobabooga\", display_name=\"Oobabooga\", classification=_LOCAL,\n",
+            "new": "    key=\"oobabooga\",\n    config_key=\"Oobabooga\",\n    display_name=\"Oobabooga\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"tabbyapi\", config_key=\"TabbyAPI\", display_name=\"Tabbyapi\", classification=_LOCAL,\n",
+            "new": "    key=\"tabbyapi\",\n    config_key=\"TabbyAPI\",\n    display_name=\"Tabbyapi\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"vllm\", config_key=\"vLLM\", display_name=\"vLLM\", classification=_LOCAL,\n",
+            "new": "    key=\"vllm\",\n    config_key=\"vLLM\",\n    display_name=\"vLLM\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"ollama\", config_key=\"Ollama\", display_name=\"Ollama\", classification=_LOCAL,\n",
+            "new": "    key=\"ollama\",\n    config_key=\"Ollama\",\n    display_name=\"Ollama\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"aphrodite\", config_key=\"Aphrodite\", display_name=\"Aphrodite\", classification=_LOCAL,\n",
+            "new": "    key=\"aphrodite\",\n    config_key=\"Aphrodite\",\n    display_name=\"Aphrodite\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"local-llm\", config_key=\"local-llm\", display_name=\"Local Llm\", classification=_LOCAL,\n",
+            "new": "    key=\"local-llm\",\n    config_key=\"local-llm\",\n    display_name=\"Local Llm\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"custom-openai-api\", config_key=\"Custom\", display_name=\"Custom OpenAI\", classification=_LOCAL,\n",
+            "new": "    key=\"custom-openai-api\",\n    config_key=\"Custom\",\n    display_name=\"Custom OpenAI\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"custom-openai-api-2\", config_key=\"Custom_2\", display_name=\"Custom OpenAI 2\", classification=_LOCAL,\n",
+            "new": "    key=\"custom-openai-api-2\",\n    config_key=\"Custom_2\",\n    display_name=\"Custom OpenAI 2\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    key=\"mlx_lm\", config_key=\"local_mlx_lm\", display_name=\"MLX LM\", classification=_LOCAL,\n",
+            "new": "    key=\"mlx_lm\",\n    config_key=\"local_mlx_lm\",\n    display_name=\"MLX LM\",\n    classification=_LOCAL,\n"
+          },
+          {
+            "old": "    OPENAI, ANTHROPIC, COHERE, GROQ, OPENROUTER, DEEPSEEK, MISTRAL, GOOGLE,\n    HUGGINGFACE, MOONSHOT, ZAI, QWENCLOUD, DATABRICKS,\n    TOGETHER, FIREWORKS, CEREBRAS, CUSTOM_HOSTED,\n    SAMBANOVA, NVIDIA, DEEPINFRA, NEBIUS, NOVITA, MINIMAX,\n    MIMO, TOKENHUB, BYTEPLUS, STEPFUN,\n    VERCEL, ZENMUX, KILO, SILICONFLOW, BASETEN, GMI, OLLAMA_CLOUD,\n    UPSTAGE, ARCEE, QIANFAN, NOUS, VENICE, META,\n    AZURE, WANDB, CLOUDFLARE, OPENCODE_ZEN, COMMANDCODE,\n    LLAMA_CPP, KOBOLDCPP, OOABOOGA, TABBYAPI, VLLM, OLLAMA, APHRODITE,\n    LOCAL_LLM, CUSTOM_OPENAI_API, CUSTOM_OPENAI_API_2, MLX_LM,\n",
+            "new": "    OPENAI,\n    ANTHROPIC,\n    COHERE,\n    GROQ,\n    OPENROUTER,\n    DEEPSEEK,\n    MISTRAL,\n    GOOGLE,\n    HUGGINGFACE,\n    MOONSHOT,\n    ZAI,\n    QWENCLOUD,\n    DATABRICKS,\n    TOGETHER,\n    FIREWORKS,\n    CEREBRAS,\n    CUSTOM_HOSTED,\n    SAMBANOVA,\n    NVIDIA,\n    DEEPINFRA,\n    NEBIUS,\n    NOVITA,\n    MINIMAX,\n    MIMO,\n    TOKENHUB,\n    BYTEPLUS,\n    STEPFUN,\n    VERCEL,\n    ZENMUX,\n    KILO,\n    SILICONFLOW,\n    BASETEN,\n    GMI,\n    OLLAMA_CLOUD,\n    UPSTAGE,\n    ARCEE,\n    QIANFAN,\n    NOUS,\n    VENICE,\n    META,\n    AZURE,\n    WANDB,\n    CLOUDFLARE,\n    OPENCODE_ZEN,\n    COMMANDCODE,\n    LLAMA_CPP,\n    KOBOLDCPP,\n    OOABOOGA,\n    TABBYAPI,\n    VLLM,\n    OLLAMA,\n    APHRODITE,\n    LOCAL_LLM,\n    CUSTOM_OPENAI_API,\n    CUSTOM_OPENAI_API_2,\n    MLX_LM,\n"
+          },
+          {
+            "old": "RECORDS_BY_KEY: dict[str, ProviderRecord] = {record.key: record for record in ALL_RECORDS}\n",
+            "new": "RECORDS_BY_KEY: dict[str, ProviderRecord] = {\n    record.key: record for record in ALL_RECORDS\n}\n"
+          },
+          {
+            "old": "",
+            "new": "\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/provider_registry.py",
+          "-"
+        ]
+      }
+    },
+    "unattributed_final_edits": []
+  },
+  "Tests/UI/test_console_runtime_ownership.py": {
+    "versions": {
+      "reviewed": {
+        "sha256": "91c7698d342e412bf8796575c7a72b4a2fe42985bc8ff1169a98018694619521",
+        "formatted_sha256": "f9656bf8a66e868a9151745b0a5be615fd521c423058ac0c60d1629f2a735fa6",
+        "lines": 3566,
+        "formatted_lines": 3578,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "                decision_ids.append(decision_id),\n                first_presented.set(),\n",
+            "new": "                (\n                    decision_ids.append(decision_id),\n                    first_presented.set(),\n                )\n                and True\n"
+          },
+          {
+            "old": "            and True\n",
+            "new": ""
+          },
+          {
+            "old": "                decision_ids.append(decision_id),\n                second_presented.set(),\n",
+            "new": "                (\n                    decision_ids.append(decision_id),\n                    second_presented.set(),\n                )\n                and True\n"
+          },
+          {
+            "old": "            and True\n",
+            "new": ""
+          },
+          {
+            "old": "async def test_project_binding_selection_closes_when_owning_session_closes(\n):\n",
+            "new": "async def test_project_binding_selection_closes_when_owning_session_closes():\n"
+          },
+          {
+            "old": "                decision_ids.append(decision_id),\n                first_projected.set(),\n",
+            "new": "                (\n                    decision_ids.append(decision_id),\n                    first_projected.set(),\n                )\n                and True\n"
+          },
+          {
+            "old": "            and True\n",
+            "new": ""
+          },
+          {
+            "old": "                decision_ids.append(decision_id),\n                second_projected.set(),\n",
+            "new": "                (\n                    decision_ids.append(decision_id),\n                    second_projected.set(),\n                )\n                and True\n"
+          },
+          {
+            "old": "            and True\n",
+            "new": ""
+          },
+          {
+            "old": "                decision_ids.append(decision_id),\n                projected.set(),\n            )\n            and True,\n",
+            "new": "                (\n                    decision_ids.append(decision_id),\n                    projected.set(),\n                )\n                and True\n            ),\n"
+          },
+          {
+            "old": "                projections.append((decision_id, options[0].binding_id)),\n                projected.set(),\n            )\n            and True,\n",
+            "new": "                (\n                    projections.append((decision_id, options[0].binding_id)),\n                    projected.set(),\n                )\n                and True\n            ),\n"
+          },
+          {
+            "old": "",
+            "new": "\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/UI/test_console_runtime_ownership.py",
+          "-"
+        ]
+      },
+      "incoming": {
+        "sha256": "4637fe5e608569da5d64746b90887c68b7d2e35919bffc594c4e65b25280bd61",
+        "formatted_sha256": "49e0c371d13e9d15b185c46f853145b891625e1d93b73846f3f5b3462a5b43c9",
+        "lines": 2933,
+        "formatted_lines": 2945,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "                decision_ids.append(decision_id),\n                first_presented.set(),\n",
+            "new": "                (\n                    decision_ids.append(decision_id),\n                    first_presented.set(),\n                )\n                and True\n"
+          },
+          {
+            "old": "            and True\n",
+            "new": ""
+          },
+          {
+            "old": "                decision_ids.append(decision_id),\n                second_presented.set(),\n",
+            "new": "                (\n                    decision_ids.append(decision_id),\n                    second_presented.set(),\n                )\n                and True\n"
+          },
+          {
+            "old": "            and True\n",
+            "new": ""
+          },
+          {
+            "old": "async def test_project_binding_selection_closes_when_owning_session_closes(\n):\n",
+            "new": "async def test_project_binding_selection_closes_when_owning_session_closes():\n"
+          },
+          {
+            "old": "                decision_ids.append(decision_id),\n                first_projected.set(),\n",
+            "new": "                (\n                    decision_ids.append(decision_id),\n                    first_projected.set(),\n                )\n                and True\n"
+          },
+          {
+            "old": "            and True\n",
+            "new": ""
+          },
+          {
+            "old": "                decision_ids.append(decision_id),\n                second_projected.set(),\n",
+            "new": "                (\n                    decision_ids.append(decision_id),\n                    second_projected.set(),\n                )\n                and True\n"
+          },
+          {
+            "old": "            and True\n",
+            "new": ""
+          },
+          {
+            "old": "                decision_ids.append(decision_id),\n                projected.set(),\n            )\n            and True,\n",
+            "new": "                (\n                    decision_ids.append(decision_id),\n                    projected.set(),\n                )\n                and True\n            ),\n"
+          },
+          {
+            "old": "                projections.append((decision_id, options[0].binding_id)),\n                projected.set(),\n            )\n            and True,\n",
+            "new": "                (\n                    projections.append((decision_id, options[0].binding_id)),\n                    projected.set(),\n                )\n                and True\n            ),\n"
+          },
+          {
+            "old": "",
+            "new": "\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/UI/test_console_runtime_ownership.py",
+          "-"
+        ]
+      },
+      "final": {
+        "sha256": "48bfe2f95a6fad7b9be0920e210b894ba8ccb8264267fb08762867a81ca98932",
+        "formatted_sha256": "e13f7a098c7156843f1e9c098285f3ab7c2f22a983fddc1bdfe5362ba89cc7e2",
+        "lines": 3568,
+        "formatted_lines": 3580,
+        "ast_identical": true,
+        "edits": [
+          {
+            "old": "                decision_ids.append(decision_id),\n                first_presented.set(),\n",
+            "new": "                (\n                    decision_ids.append(decision_id),\n                    first_presented.set(),\n                )\n                and True\n"
+          },
+          {
+            "old": "            and True\n",
+            "new": ""
+          },
+          {
+            "old": "                decision_ids.append(decision_id),\n                second_presented.set(),\n",
+            "new": "                (\n                    decision_ids.append(decision_id),\n                    second_presented.set(),\n                )\n                and True\n"
+          },
+          {
+            "old": "            and True\n",
+            "new": ""
+          },
+          {
+            "old": "async def test_project_binding_selection_closes_when_owning_session_closes(\n):\n",
+            "new": "async def test_project_binding_selection_closes_when_owning_session_closes():\n"
+          },
+          {
+            "old": "                decision_ids.append(decision_id),\n                first_projected.set(),\n",
+            "new": "                (\n                    decision_ids.append(decision_id),\n                    first_projected.set(),\n                )\n                and True\n"
+          },
+          {
+            "old": "            and True\n",
+            "new": ""
+          },
+          {
+            "old": "                decision_ids.append(decision_id),\n                second_projected.set(),\n",
+            "new": "                (\n                    decision_ids.append(decision_id),\n                    second_projected.set(),\n                )\n                and True\n"
+          },
+          {
+            "old": "            and True\n",
+            "new": ""
+          },
+          {
+            "old": "                decision_ids.append(decision_id),\n                projected.set(),\n            )\n            and True,\n",
+            "new": "                (\n                    decision_ids.append(decision_id),\n                    projected.set(),\n                )\n                and True\n            ),\n"
+          },
+          {
+            "old": "                projections.append((decision_id, options[0].binding_id)),\n                projected.set(),\n            )\n            and True,\n",
+            "new": "                (\n                    projections.append((decision_id, options[0].binding_id)),\n                    projected.set(),\n                )\n                and True\n            ),\n"
+          },
+          {
+            "old": "",
+            "new": "\n"
+          }
+        ],
+        "argv": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+          "format",
+          "--stdin-filename",
+          "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/UI/test_console_runtime_ownership.py",
+          "-"
+        ]
+      }
+    },
+    "unattributed_final_edits": []
+  }
+}

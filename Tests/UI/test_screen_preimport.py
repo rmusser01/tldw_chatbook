@@ -38,6 +38,9 @@ from dataclasses import replace
 
 import pytest
 
+# Real app construction retains the admitted collection-time private profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 from tldw_chatbook.UI.Navigation import screen_registry
 from tldw_chatbook.UI.Navigation.screen_registry import (
     ScreenRoute,
@@ -415,6 +418,8 @@ async def test_screen_preimport_scheduled_only_after_ui_ready_flips(monkeypatch)
     monkeypatch.setenv("TLDW_SCREEN_PREIMPORT", "0")  # only the ordering matters here
     app = _build_test_app()
 
+    app._cli_no_splash = True  # compose() runs after the factory patches end.
+
     ui_ready_at_call_time: list[bool] = []
     real_schedule = type(app)._schedule_screen_preimport
 
@@ -425,6 +430,7 @@ async def test_screen_preimport_scheduled_only_after_ui_ready_flips(monkeypatch)
     monkeypatch.setattr(type(app), "_schedule_screen_preimport", spy_schedule)
 
     async with app.run_test(size=(120, 36)) as pilot:
+        assert app.splash_screen_active is False
         await _wait_until(
             lambda: ui_ready_at_call_time, pause=pilot.pause, timeout_seconds=5.0
         )
@@ -465,7 +471,9 @@ def test_screen_preimport_route_order_excludes_alias_shadowed_routes():
     ordered_ids = {route.screen_name for route in app._screen_preimport_route_order()}
 
     shadowed_ids = set(registered_screen_aliases())
-    assert shadowed_ids, "sanity: the alias table must be non-empty for this test to mean anything"
+    assert shadowed_ids, (
+        "sanity: the alias table must be non-empty for this test to mean anything"
+    )
     assert not (ordered_ids & shadowed_ids), (
         f"pre-import scheduled alias-shadowed (unreachable) route ids: "
         f"{ordered_ids & shadowed_ids}"

@@ -1,0 +1,15 @@
+{
+  "head": "06cfe2f6a30236dcd8f81893ebf49bc3d0b78036",
+  "run_id": 37244353688,
+  "job_id": 111559166890,
+  "conclusion": "failure",
+  "raw_private_log_sha256": "ef22e32034e8449505bac2b82cef2a00f20383de5f9b062b840a25a34bdc7968",
+  "raw_private_log_bytes": 80297,
+  "raw_not_for_export": true,
+  "summary_lines": [
+    "2026-10-05T00:45:43.4747138Z =========================== short test summary info ============================",
+    "2026-10-05T00:53:53.4018177Z =========================== short test summary info ============================",
+    "2026-10-05T00:53:53.4021711Z FAILED Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target - AssertionError: assert (False)",
+    "2026-10-05T00:53:53.4023973Z ======= 1 failed, 221 passed, 1 xfailed, 5 warnings in 483.86s (0:08:03) ======="
+  ]
+}

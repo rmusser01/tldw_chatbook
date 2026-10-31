@@ -1,0 +1,30 @@
+........................................................................ [ 39%]
+........................................................................ [ 79%]
+.....................................                                    [100%]
+============================= slowest 25 durations =============================
+12.15s call     Tests/Chat/test_console_compaction_live_session.py::test_live_edit_to_the_latest_exchange_lifts_the_pause[edited-micro-tick-send]
+10.69s call     Tests/Chat/test_console_compaction_live_session.py::test_live_edit_to_the_latest_exchange_lifts_the_pause[edited-compact-now-send]
+10.39s call     Tests/Chat/test_console_compaction_live_session.py::test_live_failure_is_not_rebilled_until_the_policy_changes[automatic-2400]
+10.29s call     Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compaction_records_reason_and_discloses_spend
+9.50s call     Tests/Chat/test_console_compaction_live_session.py::test_live_recovery_fallback_keeps_only_the_preflight_blocks_own_copy
+9.46s call     Tests/Chat/test_console_compaction_live_session.py::test_live_failed_automatic_compaction_under_omit_is_disclosed_once
+9.41s call     Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compact_now_pauses_automatic_compaction
+9.40s call     Tests/Chat/test_console_compaction_live_session.py::test_live_compact_now_retries_once_after_an_automatic_failure
+9.34s call     Tests/Chat/test_console_compaction_live_session.py::test_live_edit_to_the_latest_exchange_lifts_the_pause[unchanged-micro-tick-send]
+8.98s call     Tests/Chat/test_console_chat_start.py::test_native_start_child_and_wake_share_original_allowance[generation]
+8.86s call     Tests/Chat/test_console_compaction_live_session.py::test_live_compact_now_beside_an_unsent_turn_keeps_its_retry_paused
+8.77s call     Tests/Chat/test_console_compaction_live_session.py::test_live_automatic_compaction_commits_memory_and_the_send_replies
+8.74s call     Tests/Chat/test_console_compaction_live_session.py::test_live_failure_is_not_rebilled_until_the_policy_changes[custom-32000]
+8.31s call     Tests/Chat/test_console_chat_start.py::test_native_start_child_and_wake_share_original_allowance[deadline]
+8.16s call     Tests/Chat/test_console_compaction_live_session.py::test_live_compact_now_beside_an_unsent_turn_keeps_a_fresh_send_paused
+8.13s call     Tests/Chat/test_console_compaction_live_session.py::test_live_failed_auxiliary_compact_now_keeps_the_send_pause
+8.08s call     Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request[/help]
+7.83s call     Tests/Chat/test_console_compaction_live_session.py::test_live_edit_to_the_latest_exchange_lifts_the_pause[unchanged-compact-now-send]
+7.74s call     Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compact_now_pauses_a_continue_under_stop_and_ask[reply-edited]
+7.37s call     Tests/Chat/test_console_runtime_rag_capture_wiring.py::test_runtime_send_without_staged_evidence_never_calls_live_capture
+7.29s call     Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compact_now_pauses_a_continue_of_the_latest_reply
+7.23s call     Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compact_now_pauses_a_continue_under_stop_and_ask[unchanged]
+7.15s call     Tests/Chat/test_console_trace_system_prompt_send.py::test_capture_on_send_with_a_system_prompt_reaches_the_provider
+7.02s call     Tests/Chat/test_console_trace_system_prompt_send.py::test_a_genuine_provenance_failure_is_logged_and_offered_as_a_card
+6.47s call     Tests/Chat/test_console_runtime_rag_capture_wiring.py::test_runtime_send_with_staged_evidence_attaches_and_releases_it[what does it say?]
+181 passed in 527.70s (0:08:47)

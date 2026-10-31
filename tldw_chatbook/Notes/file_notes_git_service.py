@@ -16,6 +16,7 @@ from collections.abc import (
     Callable,
     Collection,
     Generator,
+    Iterable,
     Mapping,
     Sequence,
 )
@@ -468,12 +469,10 @@ class PushPreflightResult:
         ready = self.state == "review"
         already_published = self.state == "already_published"
         if (
-            self.state
-            not in {"review", "already_published", "blocked", "cancelled"}
+            self.state not in {"review", "already_published", "blocked", "cancelled"}
             or ready != (type(self.handle) is PushReviewHandle)
             or ready != (type(self.review) is PushReviewProjection)
-            or already_published
-            != (type(self.outcome) is PushOutcomeProjection)
+            or already_published != (type(self.outcome) is PushOutcomeProjection)
         ):
             raise ValueError("Invalid push preflight result")
 
@@ -487,12 +486,11 @@ class PushExecutionResult:
 
     def __post_init__(self) -> None:
         outcome_state = (
-            self.outcome.state
-            if type(self.outcome) is PushOutcomeProjection
-            else None
+            self.outcome.state if type(self.outcome) is PushOutcomeProjection else None
         )
         if (
-            self.state not in {
+            self.state
+            not in {
                 "blocked",
                 "cancelled",
                 "already_published",
@@ -500,8 +498,7 @@ class PushExecutionResult:
                 "failed_no_update_observed",
                 "uncertain",
             }
-            or (self.state in {"blocked", "cancelled"})
-            != (self.outcome is None)
+            or (self.state in {"blocked", "cancelled"}) != (self.outcome is None)
             or (
                 self.state not in {"blocked", "cancelled"}
                 and outcome_state != self.state
@@ -662,18 +659,10 @@ class _PrivatePushProofDirectory:
         try:
             file_descriptor = os.open(
                 path,
-                (
-                    os.O_RDWR
-                    | os.O_CREAT
-                    | os.O_EXCL
-                    | os.O_NOFOLLOW
-                    | os.O_CLOEXEC
-                ),
+                (os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC),
                 0o600,
             )
-            created_identity = _identity_from_stat_result(
-                os.fstat(file_descriptor)
-            )
+            created_identity = _identity_from_stat_result(os.fstat(file_descriptor))
             os.fchmod(file_descriptor, 0o600)
             view = memoryview(payload)
             while view:
@@ -703,23 +692,14 @@ class _PrivatePushProofDirectory:
     def capture_index(self) -> bool:
         """Pin and seal the exact index emitted by one settled read-tree."""
         path = self._index_path
-        if (
-            self._closed
-            or path is None
-            or path in self._entries
-        ):
+        if self._closed or path is None or path in self._entries:
             return False
         file_descriptor: int | None = None
         safe_identity: FileSystemIdentity | None = None
         try:
             file_descriptor = os.open(
                 path,
-                (
-                    os.O_RDONLY
-                    | os.O_NONBLOCK
-                    | os.O_NOFOLLOW
-                    | os.O_CLOEXEC
-                ),
+                (os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC),
             )
             metadata = os.fstat(file_descriptor)
             if (
@@ -780,13 +760,9 @@ class _PrivatePushProofDirectory:
         if self._closed:
             return False
         try:
-            return (
-                self._private_tree_matches()
-                and all(
-                    self._external_directory_matches(path, snapshot)
-                    for path, snapshot
-                    in self._external_directories.items()
-                )
+            return self._private_tree_matches() and all(
+                self._external_directory_matches(path, snapshot)
+                for path, snapshot in self._external_directories.items()
             )
         except (KeyError, OSError, RuntimeError):
             return False
@@ -813,13 +789,8 @@ class _PrivatePushProofDirectory:
             for path, entry in ordered:
                 if entry.kind != "directory":
                     continue
-                if (
-                    not self._entry_matches(path, entry)
-                    or any(path.iterdir())
-                ):
-                    raise OSError(
-                        "Private proof directory changed before cleanup"
-                    )
+                if not self._entry_matches(path, entry) or any(path.iterdir()):
+                    raise OSError("Private proof directory changed before cleanup")
                 path.rmdir()
             if _path_present(self.root):
                 raise OSError("Private proof root survived cleanup")
@@ -884,10 +855,9 @@ class _PrivatePushProofDirectory:
             )
             try:
                 descriptor_metadata = os.fstat(file_descriptor)
-                if (
-                    _identity_from_stat_result(descriptor_metadata)
-                    != _identity_from_stat_result(metadata)
-                ):
+                if _identity_from_stat_result(
+                    descriptor_metadata
+                ) != _identity_from_stat_result(metadata):
                     raise OSError("Private proof file identity changed")
                 digest = _bounded_file_descriptor_digest(
                     file_descriptor,
@@ -910,18 +880,14 @@ class _PrivatePushProofDirectory:
             metadata.st_dev != self._repository_device
             or metadata.st_uid != os.geteuid()
             or stat.S_IMODE(metadata.st_mode) != required_mode
-            or (
-                kind == "directory"
-                and not stat.S_ISDIR(metadata.st_mode)
-            )
+            or (kind == "directory" and not stat.S_ISDIR(metadata.st_mode))
             or (
                 kind == "file"
                 and (
                     not stat.S_ISREG(metadata.st_mode)
                     or metadata.st_nlink != 1
                     or metadata.st_size < 0
-                    or metadata.st_size
-                    > _LOCAL_PUSH_PROOF_FILE_LIMIT_BYTES
+                    or metadata.st_size > _LOCAL_PUSH_PROOF_FILE_LIMIT_BYTES
                     or digest is None
                 )
             )
@@ -1002,10 +968,7 @@ class _PrivatePushProofDirectory:
         path: Path,
         snapshot: _ExternalProofDirectory,
     ) -> bool:
-        return (
-            _PrivatePushProofDirectory._capture_external_directory(path)
-            == snapshot
-        )
+        return _PrivatePushProofDirectory._capture_external_directory(path) == snapshot
 
     @staticmethod
     def _unlink_exact_file(
@@ -1034,8 +997,7 @@ class _PrivatePushProofDirectory:
             return False
         return (
             parent.resolve(strict=True) == parent
-            and _identity_from_stat_result(path_metadata)
-            == self._parent_identity
+            and _identity_from_stat_result(path_metadata) == self._parent_identity
             and stat.S_ISDIR(path_metadata.st_mode)
             and _hooks_parent_is_safe(
                 parent,
@@ -1707,9 +1669,7 @@ def _update_index_records(
         raw_path = _index_info_path_bytes(path)
         entry = baseline.entry
         if entry is None:
-            baseline_records.append(
-                b"0 " + zero_oid + b"\t" + raw_path + b"\0"
-            )
+            baseline_records.append(b"0 " + zero_oid + b"\t" + raw_path + b"\0")
             continue
         if (
             entry.path != path
@@ -1869,8 +1829,7 @@ class AsyncGitProcessRunner:
     ) -> GitCommandResult:
         """Execute one direct child and preserve all standard streams as bytes."""
         if any(
-            limit is not None and limit < 0
-            for limit in (stdout_limit, stderr_limit)
+            limit is not None and limit < 0 for limit in (stdout_limit, stderr_limit)
         ):
             raise ValueError("Git output limits cannot be negative")
         if self._sealed:
@@ -1905,9 +1864,7 @@ class AsyncGitProcessRunner:
         )
         record.owned_task = run_task
         self._run_tasks.add(run_task)
-        run_task.add_done_callback(
-            lambda task: self._run_task_completed(task, record)
-        )
+        run_task.add_done_callback(lambda task: self._run_task_completed(task, record))
         try:
             result = await asyncio.shield(run_task)
             if result.retained_child is None:
@@ -1936,9 +1893,7 @@ class AsyncGitProcessRunner:
                     result = GitCommandResult(1, b"", b"")
                 if started and result.retained_child is not None:
                     record.exposed = True
-                    raise GitRunCancellationRejected(
-                        result.retained_child
-                    ) from None
+                    raise GitRunCancellationRejected(result.retained_child) from None
                 if result.retained_child is None:
                     self._release_unexposed_record(record)
                 else:
@@ -2079,9 +2034,7 @@ class AsyncGitProcessRunner:
                     )
                 return self._uncertain_result(
                     record,
-                    fallback_stderr=(
-                        b"Git process containment admission failed"
-                    ),
+                    fallback_stderr=(b"Git process containment admission failed"),
                 )
             if not record.owned_process_tree and on_spawn is not None:
                 try:
@@ -2111,9 +2064,7 @@ class AsyncGitProcessRunner:
                 )
             if not record.owned_process_tree:
                 self._publish_admission_outcome(record, started=True)
-            shutdown_waiter = asyncio.create_task(
-                self._shutdown_event.wait()
-            )
+            shutdown_waiter = asyncio.create_task(self._shutdown_event.wait())
             done, _ = await asyncio.wait(
                 {communication, shutdown_waiter},
                 timeout=timeout,
@@ -2125,10 +2076,10 @@ class AsyncGitProcessRunner:
                     if not record.containment_proved:
                         terminated = await self._stop_record(record)
                         settlement = self._read_record(record)
-                        if (
-                            terminated
-                            and settlement.state not in {"alive", "uncertain"}
-                        ):
+                        if terminated and settlement.state not in {
+                            "alive",
+                            "uncertain",
+                        }:
                             return self._result_from_settlement(settlement)
                         return self._uncertain_result(record)
                 settlement = self._read_record(record)
@@ -2173,7 +2124,11 @@ class AsyncGitProcessRunner:
             if record.process is not None:
                 terminated = await self._stop_record(record)
                 communication = record.communication
-                if terminated and communication is not None and not communication.done():
+                if (
+                    terminated
+                    and communication is not None
+                    and not communication.done()
+                ):
                     try:
                         await asyncio.wait_for(
                             asyncio.shield(communication),
@@ -2187,10 +2142,7 @@ class AsyncGitProcessRunner:
         finally:
             if record.process is None:
                 record.ready.set()
-            if (
-                record.owned_process_tree
-                and record.admission_state != "started"
-            ):
+            if record.owned_process_tree and record.admission_state != "started":
                 record.admission_state = "not_started"
             self._publish_admission_outcome(
                 record,
@@ -2275,18 +2227,25 @@ class AsyncGitProcessRunner:
             stdin_writer = asyncio.create_task(
                 self._write_process_stdin(process, stdin)
             )
-            (stdout, stdout_overflow), (
-                stderr,
-                stderr_overflow,
-            ), _ = await asyncio.gather(
+            (
+                (stdout, stdout_overflow),
+                (
+                    stderr,
+                    stderr_overflow,
+                ),
+                _,
+            ) = await asyncio.gather(
                 stdout_reader,
                 stderr_reader,
                 stdin_writer,
             )
         else:
-            (stdout, stdout_overflow), (
-                stderr,
-                stderr_overflow,
+            (
+                (stdout, stdout_overflow),
+                (
+                    stderr,
+                    stderr_overflow,
+                ),
             ) = await asyncio.gather(stdout_reader, stderr_reader)
         await process.wait()
         record.output_overflow = stdout_overflow or stderr_overflow
@@ -2369,10 +2328,7 @@ class AsyncGitProcessRunner:
                 not record.owned_process_tree
                 and record.exposed
                 and record.process is not None
-                and (
-                    record.owned_task is None
-                    or record.owned_task.done()
-                )
+                and (record.owned_task is None or record.owned_task.done())
             )
         )
         self._shutdown_event.set()
@@ -2494,20 +2450,13 @@ class AsyncGitProcessRunner:
         ],
     ) -> bool:
         current = asyncio.current_task()
-        run_tasks = tuple(
-            task
-            for task in self._run_tasks
-            if task is not current
-        )
+        run_tasks = tuple(task for task in self._run_tasks if task is not current)
         run_failed = False
         pending_tasks: set[asyncio.Task[object]] = set()
         if run_tasks:
             done_tasks, pending_tasks = await asyncio.wait(
                 run_tasks,
-                timeout=(
-                    self._terminate_timeout
-                    + (2 * self._kill_timeout)
-                ),
+                timeout=(self._terminate_timeout + (2 * self._kill_timeout)),
             )
             for task in done_tasks:
                 self._run_tasks.discard(task)
@@ -2521,10 +2470,7 @@ class AsyncGitProcessRunner:
         all_children_settled = True
         retained_nonowned = set(retained_nonowned_before_shutdown)
         for record in tuple(self._retained_children.values()):
-            if (
-                not record.owned_process_tree
-                and record.token not in retained_nonowned
-            ):
+            if not record.owned_process_tree and record.token not in retained_nonowned:
                 continue
             if record.released or record.process is None:
                 if not record.released:
@@ -2610,10 +2556,7 @@ class AsyncGitProcessRunner:
             await self._refresh_containment_proof(record, timeout=0.0)
         settlement = self._read_record(record)
         remaining = deadline - loop.time()
-        if (
-            settlement.state not in {"alive", "uncertain"}
-            or remaining <= 0
-        ):
+        if settlement.state not in {"alive", "uncertain"} or remaining <= 0:
             return settlement
         try:
             await asyncio.wait_for(
@@ -2803,10 +2746,15 @@ class AsyncGitProcessRunner:
         stop_requested: bool = False,
         force_stopped: bool = False,
     ) -> GitCommandResult:
-        stopped = stop_requested or settlement.stop_requested or settlement.state in {
-            "stop_requested",
-            "forced_stop",
-        }
+        stopped = (
+            stop_requested
+            or settlement.stop_requested
+            or settlement.state
+            in {
+                "stop_requested",
+                "forced_stop",
+            }
+        )
         return GitCommandResult(
             settlement.returncode,
             settlement.stdout,
@@ -2903,16 +2851,12 @@ class FileNotesGitService:
         status_timeout: float = 5.0,
         push_query_timeout: float = _DEFAULT_PUSH_QUERY_TIMEOUT_SECONDS,
         push_timeout: float = _DEFAULT_PUSH_TIMEOUT_SECONDS,
-        before_push_spawn: (
-            Callable[[], Awaitable[None] | None] | None
-        ) = None,
+        before_push_spawn: (Callable[[], Awaitable[None] | None] | None) = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._owner = owner
         self._runner = runner or AsyncGitProcessRunner()
-        self._environment = dict(
-            os.environ if environment is None else environment
-        )
+        self._environment = dict(os.environ if environment is None else environment)
         self._git_executable = (
             git_executable
             if git_executable is not None
@@ -2921,9 +2865,7 @@ class FileNotesGitService:
         self._discovery_timeout = discovery_timeout
         self._status_timeout = status_timeout
         self._transport_admission = (
-            TransportAdmission()
-            if transport_admission is None
-            else transport_admission
+            TransportAdmission() if transport_admission is None else transport_admission
         )
         if type(self._transport_admission) is not TransportAdmission:
             raise TypeError("Invalid guarded-push transport admission")
@@ -2946,9 +2888,7 @@ class FileNotesGitService:
         self._push_timeout = push_timeout
         self._before_push_spawn = before_push_spawn
         self._clock = clock
-        self._push_destination_policy: (
-            _PushDestinationPolicySnapshot | None
-        ) = None
+        self._push_destination_policy: _PushDestinationPolicySnapshot | None = None
         self._push_authorization: PushAuthorizationHandle | None = None
         self._push_local_proof_cycle: (
             asyncio.Task[PushDestinationPolicyResult] | None
@@ -2960,12 +2900,8 @@ class FileNotesGitService:
         self._push_preflight_waiter: asyncio.Task[PushPreflightResult] | None = None
         self._push_cycle: asyncio.Task[PushExecutionResult] | None = None
         self._push_waiter: asyncio.Task[PushExecutionResult] | None = None
-        self._push_recovery_cycle: (
-            asyncio.Task[PushRecoveryProjection] | None
-        ) = None
-        self._push_recovery_waiter: (
-            asyncio.Task[PushRecoveryProjection] | None
-        ) = None
+        self._push_recovery_cycle: asyncio.Task[PushRecoveryProjection] | None = None
+        self._push_recovery_waiter: asyncio.Task[PushRecoveryProjection] | None = None
         self._push_recovery_settlement_cycle: asyncio.Task[None] | None = None
         self._push_child_started = False
         self._push_child_started_signal: asyncio.Future[bool] | None = None
@@ -2984,13 +2920,16 @@ class FileNotesGitService:
         self._status_cycle: asyncio.Task[SessionGitStatus] | None = None
         self._status_cycle_binding: SessionBinding | None = None
         self._status_waiter: asyncio.Task[SessionGitStatus] | None = None
-        self._pending_status: tuple[
-            SessionBinding,
-            tuple[SequencedSessionChange, ...],
-            RepositoryIdentity,
-            int,
-            int,
-        ] | None = None
+        self._pending_status: (
+            tuple[
+                SessionBinding,
+                tuple[SequencedSessionChange, ...],
+                RepositoryIdentity,
+                int,
+                int,
+            ]
+            | None
+        ) = None
         self._rerun_available = False
         self._status_dirty = False
         self._status_request_generation = 0
@@ -3035,12 +2974,8 @@ class FileNotesGitService:
         """Refuse new operations without sealing existing publication paths."""
         with self._owner._lock:
             if self._owner._maintenance_closed:
-                error = (
-                    GitStatusAdmissionError if status else GitMutationAdmissionError
-                )
-                raise error(
-                    "maintenance_paused", "File Notes maintenance is paused"
-                )
+                error = GitStatusAdmissionError if status else GitMutationAdmissionError
+                raise error("maintenance_paused", "File Notes maintenance is paused")
 
     def _maintenance_ready(self) -> bool:
         """Uncertain children or private recovery bytes keep capture blocked."""
@@ -3119,18 +3054,12 @@ class FileNotesGitService:
                 "operation not permitted",
                 "access is denied",
             )
-            if (
-                "not a git repository" in normalized_diagnostic
-                and not any(
-                    marker in normalized_diagnostic
-                    for marker in safety_markers
-                )
+            if "not a git repository" in normalized_diagnostic and not any(
+                marker in normalized_diagnostic for marker in safety_markers
             ):
                 return DiscoveryResult(
                     "not_repository",
-                    message=(
-                        "Selected File Notes root is not in a Git worktree"
-                    ),
+                    message=("Selected File Notes root is not in a Git worktree"),
                 )
             message = "Git refused repository discovery"
             if diagnostic:
@@ -3171,11 +3100,7 @@ class FileNotesGitService:
         head_result = await self._read_head(root)
         if isinstance(head_result, _HeadReadFailure):
             return DiscoveryResult(
-                (
-                    "unavailable"
-                    if head_result.kind == "unavailable"
-                    else "unsupported"
-                ),
+                ("unavailable" if head_result.kind == "unavailable" else "unsupported"),
                 message=head_result.message,
             )
         return DiscoveryResult(
@@ -3256,12 +3181,17 @@ class FileNotesGitService:
             )
         self._observe_push_rebinding()
         if (
-            self._push_local_proof_cycle is not None
-            and not self._push_local_proof_cycle.done()
-        ) or (
-            self._push_preflight_cycle is not None
-            and not self._push_preflight_cycle.done()
-        ) or self._push_review_snapshots or self._pending_push_contexts:
+            (
+                self._push_local_proof_cycle is not None
+                and not self._push_local_proof_cycle.done()
+            )
+            or (
+                self._push_preflight_cycle is not None
+                and not self._push_preflight_cycle.done()
+            )
+            or self._push_review_snapshots
+            or self._pending_push_contexts
+        ):
             raise GitMutationAdmissionError(
                 "mutation_active",
                 "A guarded push review is already active",
@@ -3285,12 +3215,8 @@ class FileNotesGitService:
         cycle: asyncio.Task[PushDestinationPolicyResult] | None = None
         try:
             loop = asyncio.get_running_loop()
-            cycle = loop.create_task(
-                self._run_push_local_proof_cycle(binding, lease)
-            )
-            waiter = loop.create_task(
-                self._shield_push_local_proof_cycle(cycle)
-            )
+            cycle = loop.create_task(self._run_push_local_proof_cycle(binding, lease))
+            waiter = loop.create_task(self._shield_push_local_proof_cycle(cycle))
         except BaseException:
             if cycle is not None:
                 cycle.cancel()
@@ -3349,9 +3275,7 @@ class FileNotesGitService:
             or binding != self._owner.current_binding()
         ):
             return None
-        authorization = self._owner._authorize_destination_policy(
-            policy.owner_capture
-        )
+        authorization = self._owner._authorize_destination_policy(policy.owner_capture)
         if authorization is None:
             self._push_authorization = None
             return None
@@ -3454,9 +3378,7 @@ class FileNotesGitService:
                     lease,
                 )
             )
-            waiter = loop.create_task(
-                self._shield_push_preflight_cycle(cycle)
-            )
+            waiter = loop.create_task(self._shield_push_preflight_cycle(cycle))
         except BaseException:
             if cycle is not None:
                 cycle.cancel()
@@ -3581,9 +3503,7 @@ class FileNotesGitService:
                 candidate.candidate_oid,
             )
             if observation.state == "candidate":
-                if not self._owner.clear_push_candidate(
-                    policy.candidate_capture
-                ):
+                if not self._owner.clear_push_candidate(policy.candidate_capture):
                     return PushPreflightResult("blocked")
                 return PushPreflightResult(
                     "already_published",
@@ -3652,9 +3572,7 @@ class FileNotesGitService:
                 active_lease.release()
             if not review_retained and not containment_quarantined:
                 if authorization is not None:
-                    self._owner._revoke_destination_authorization(
-                        authorization
-                    )
+                    self._owner._revoke_destination_authorization(authorization)
                 if context is not None:
                     self._close_or_retain_push_context(context)
             if not containment_quarantined:
@@ -3683,15 +3601,9 @@ class FileNotesGitService:
                 or settlement.force_stopped
                 or settlement.state == "contained_uncertain"
             ),
-            stop_requested=(
-                result.stop_requested or settlement.stop_requested
-            ),
-            force_stopped=(
-                result.force_stopped or settlement.force_stopped
-            ),
-            output_overflow=(
-                result.output_overflow or settlement.output_overflow
-            ),
+            stop_requested=(result.stop_requested or settlement.stop_requested),
+            force_stopped=(result.force_stopped or settlement.force_stopped),
+            output_overflow=(result.output_overflow or settlement.output_overflow),
             owned_process_tree=settlement.owned_process_tree,
             containment_proved=settlement.containment_proved,
         )
@@ -3745,9 +3657,7 @@ class FileNotesGitService:
             if settled:
                 release_failed = False
                 try:
-                    released = self._runner.release_retained_child(
-                        retained_child
-                    )
+                    released = self._runner.release_retained_child(retained_child)
                 except Exception:
                     release_failed = True
                     released = False
@@ -3885,9 +3795,7 @@ class FileNotesGitService:
             if snapshot in self._push_review_snapshots.values():
                 self._push_review_snapshots.pop(handle, None)
                 snapshot.review_lease.release()
-            self._owner._revoke_destination_authorization(
-                snapshot.authorization
-            )
+            self._owner._revoke_destination_authorization(snapshot.authorization)
             self._close_or_retain_push_context(snapshot.context)
             raise
         self._push_operation_generation += 1
@@ -3978,14 +3886,10 @@ class FileNotesGitService:
                 )
             except GitRunCancelled as cancellation:
                 if cancellation.retained_child is not None:
-                    await self._drain_push_preflight_child(
-                        cancellation.retained_child
-                    )
+                    await self._drain_push_preflight_child(cancellation.retained_child)
                 else:
                     assert cancellation.result is not None
-                    await self._settle_push_preflight_result(
-                        cancellation.result
-                    )
+                    await self._settle_push_preflight_result(cancellation.result)
                 return PushExecutionResult("cancelled")
             confirmed = await self._settle_push_preflight_result(confirmed)
             observation = self._proved_remote_observation(
@@ -3993,9 +3897,7 @@ class FileNotesGitService:
                 snapshot,
             )
             if observation == "candidate":
-                self._owner.clear_push_candidate(
-                    snapshot.policy.candidate_capture
-                )
+                self._owner.clear_push_candidate(snapshot.policy.candidate_capture)
                 return self._completed_push_result("already_published")
             if observation != "parent":
                 return PushExecutionResult("blocked")
@@ -4056,9 +3958,7 @@ class FileNotesGitService:
                     uncertain_retained = True
                     return self._completed_push_result("uncertain")
                 return PushExecutionResult("blocked")
-            push_descendants_terminal = self._push_descendants_are_terminal(
-                push_result
-            )
+            push_descendants_terminal = self._push_descendants_are_terminal(push_result)
             if not push_descendants_terminal:
                 self._retain_uncertain_push_evidence(
                     snapshot,
@@ -4113,9 +4013,7 @@ class FileNotesGitService:
                 snapshot,
             )
             if state == "succeeded":
-                self._owner.clear_push_candidate(
-                    snapshot.policy.candidate_capture
-                )
+                self._owner.clear_push_candidate(snapshot.policy.candidate_capture)
             elif state == "uncertain":
                 self._retain_uncertain_push_evidence(
                     snapshot,
@@ -4352,9 +4250,7 @@ class FileNotesGitService:
             destination=snapshot.projection.destination,
             parent_oid=recovery_capture.parent_oid,
             candidate_oid=recovery_capture.candidate_oid,
-            repository_trust_generation=(
-                recovery_capture.repository_trust_generation
-            ),
+            repository_trust_generation=(recovery_capture.repository_trust_generation),
             destination_policy_generation=(
                 recovery_capture.destination_policy_generation
             ),
@@ -4402,9 +4298,7 @@ class FileNotesGitService:
             )
         ):
             return False
-        handle = self._owner._authorize_push_recovery(
-            evidence.recovery_capture
-        )
+        handle = self._owner._authorize_push_recovery(evidence.recovery_capture)
         if handle is None:
             return False
         self._uncertain_push = replace(evidence, recovery_handle=handle)
@@ -4606,9 +4500,7 @@ class FileNotesGitService:
                     result = await self._settle_push_preflight_result(
                         cancellation.result
                     )
-                    descendants_terminal = self._push_descendants_are_terminal(
-                        result
-                    )
+                    descendants_terminal = self._push_descendants_are_terminal(result)
             except _PushContainmentUnproved as unproved:
                 retained_child = unproved.retained_child
                 descendants_terminal = False
@@ -4683,8 +4575,7 @@ class FileNotesGitService:
         evidence.mutation_lease.release()
         current = self._uncertain_push
         if current is not None and (
-            current is evidence
-            or current.recovery_capture is evidence.recovery_capture
+            current is evidence or current.recovery_capture is evidence.recovery_capture
         ):
             self._uncertain_push = None
 
@@ -4779,9 +4670,7 @@ class FileNotesGitService:
             if self._push_review_snapshots.get(handle) is not snapshot:
                 continue
             self._push_review_snapshots.pop(handle)
-            self._owner._revoke_destination_authorization(
-                snapshot.authorization
-            )
+            self._owner._revoke_destination_authorization(snapshot.authorization)
             snapshot.review_lease.release()
             self._close_or_retain_push_context(snapshot.context)
             if self._push_destination_policy is snapshot.policy:
@@ -5035,8 +4924,7 @@ class FileNotesGitService:
             if prior is not None:
                 unchanged = (
                     prior.candidate_tree_oid == raw_commit.tree_object_id
-                    and prior.included_paths_fingerprint
-                    == attribute_fingerprint
+                    and prior.included_paths_fingerprint == attribute_fingerprint
                     and prior.configuration.configuration_fingerprint
                     == configuration.configuration_fingerprint
                     and prior.configuration.transport.configured_identity
@@ -5054,23 +4942,17 @@ class FileNotesGitService:
 
             if not proof.cleanup():
                 return None, "blocked"
-            owner_capture = (
-                self._owner._capture_destination_policy_after_fresh_proof(
-                    candidate_capture,
-                    configuration_fingerprint=(
-                        configuration.configuration_fingerprint
-                    ),
-                    network_policy_fingerprint=(
-                        network_configuration.copy_fingerprint
-                    ),
-                    configured_remote_label=configuration.tracking_remote,
-                    configured_destination_identity=(
-                        configuration.transport.configured_identity
-                    ),
-                    destination=configuration.transport.destination,
-                    candidate_tree_oid=raw_commit.tree_object_id,
-                    included_paths_fingerprint=attribute_fingerprint,
-                )
+            owner_capture = self._owner._capture_destination_policy_after_fresh_proof(
+                candidate_capture,
+                configuration_fingerprint=(configuration.configuration_fingerprint),
+                network_policy_fingerprint=(network_configuration.copy_fingerprint),
+                configured_remote_label=configuration.tracking_remote,
+                configured_destination_identity=(
+                    configuration.transport.configured_identity
+                ),
+                destination=configuration.transport.destination,
+                candidate_tree_oid=raw_commit.tree_object_id,
+                included_paths_fingerprint=attribute_fingerprint,
             )
             if owner_capture is None:
                 return None, "stale"
@@ -5111,11 +4993,14 @@ class FileNotesGitService:
         proof: _PrivatePushProofDirectory,
         hooks_directory: Path,
         object_format: Literal["sha1", "sha256"],
-    ) -> tuple[
-        tuple[str, ...],
-        dict[str, str],
-        SourceObjectDirectoryAuthorization,
-    ] | None:
+    ) -> (
+        tuple[
+            tuple[str, ...],
+            dict[str, str],
+            SourceObjectDirectoryAuthorization,
+        ]
+        | None
+    ):
         """Create an isolated exact-tree attribute reader with object-only access."""
         source_objects = Path(repository.git_common_dir) / "objects"
         try:
@@ -5128,23 +5013,17 @@ class FileNotesGitService:
                 source_objects_identity,
             ):
                 return None
-            source_objects_authorization = (
-                _authorize_source_object_directory(
-                    source_objects,
-                    source_objects_identity,
-                    object_format,
-                )
+            source_objects_authorization = _authorize_source_object_directory(
+                source_objects,
+                source_objects_identity,
+                object_format,
             )
             git_dir = proof.create_directory("attribute.git")
-            object_directory = proof.create_directory(
-                "attribute.git/objects"
-            )
+            object_directory = proof.create_directory("attribute.git/objects")
             proof.create_directory("attribute.git/refs")
             worktree = proof.create_directory("attribute-worktree")
             home = proof.create_directory("attribute-home")
-            config_home = proof.create_directory(
-                "attribute-home/.config"
-            )
+            config_home = proof.create_directory("attribute-home/.config")
             proof.create_file(
                 "attribute.git/HEAD",
                 b"ref: refs/heads/isolated\n",
@@ -5198,10 +5077,13 @@ class FileNotesGitService:
         branch_ref: str,
         *,
         proof: _PrivatePushProofDirectory,
-    ) -> tuple[
-        _ResolvedPushConfiguration,
-        NetworkConfigAuthorization,
-    ] | None:
+    ) -> (
+        tuple[
+            _ResolvedPushConfiguration,
+            NetworkConfigAuthorization,
+        ]
+        | None
+    ):
         argv = (
             *prefix,
             "config",
@@ -5248,9 +5130,7 @@ class FileNotesGitService:
             )
             network_configuration = _authorize_network_config_snapshot(
                 second_facts,
-                configuration_fingerprint=(
-                    resolved.configuration_fingerprint
-                ),
+                configuration_fingerprint=(resolved.configuration_fingerprint),
                 destination=resolved.transport.destination,
                 environment=self._environment,
                 repository=repository,
@@ -5287,9 +5167,7 @@ class FileNotesGitService:
             )
         except GitRunCancelled as cancellation:
             if cancellation.result is not None:
-                result = await self._settle_commit_proof_result(
-                    cancellation.result
-                )
+                result = await self._settle_commit_proof_result(cancellation.result)
             else:
                 retained_child = cancellation.retained_child
                 assert retained_child is not None
@@ -5369,13 +5247,9 @@ class FileNotesGitService:
                     "File Notes Git status cannot be coalesced",
                 )
             if self._rerun_available:
-                invalidation_generation = (
-                    admission.invalidation_generation
-                )
+                invalidation_generation = admission.invalidation_generation
                 if invalidation_generation is None:
-                    raise RuntimeError(
-                        "Active status admission omitted its generation"
-                    )
+                    raise RuntimeError("Active status admission omitted its generation")
                 self._status_request_generation += 1
                 self._pending_status = (
                     binding,
@@ -5485,9 +5359,7 @@ class FileNotesGitService:
                     status_cycle,
                 )
             )
-            waiter = self._create_action_task(
-                self._shield_action_cycle(cycle)
-            )
+            waiter = self._create_action_task(self._shield_action_cycle(cycle))
         except BaseException:
             if cycle is not None:
                 cycle.cancel()
@@ -5549,9 +5421,7 @@ class FileNotesGitService:
                     status_cycle,
                 )
             )
-            waiter = self._create_action_task(
-                self._shield_action_cycle(cycle)
-            )
+            waiter = self._create_action_task(self._shield_action_cycle(cycle))
         except BaseException:
             if cycle is not None:
                 cycle.cancel()
@@ -5772,20 +5642,13 @@ class FileNotesGitService:
             return True
 
         cycle = self._commit_cycle
-        if (
-            operation.kind == "commit"
-            and cycle is not None
-            and not cycle.done()
-        ):
+        if operation.kind == "commit" and cycle is not None and not cycle.done():
             if self._commit_child_started:
                 return False
             cycle.cancel()
             return True
 
-        if (
-            operation.kind != "review"
-            or not operation.settled
-        ):
+        if operation.kind != "review" or not operation.settled:
             return False
         matching_tokens = tuple(
             token
@@ -5859,12 +5722,8 @@ class FileNotesGitService:
         cycle: asyncio.Task[CommitOutcome] | None = None
         try:
             loop = asyncio.get_running_loop()
-            cycle = loop.create_task(
-                self._run_commit_recovery_cycle(binding, evidence)
-            )
-            waiter = loop.create_task(
-                self._shield_commit_recovery_cycle(cycle)
-            )
+            cycle = loop.create_task(self._run_commit_recovery_cycle(binding, evidence))
+            waiter = loop.create_task(self._shield_commit_recovery_cycle(cycle))
         except BaseException:
             if cycle is not None:
                 cycle.cancel()
@@ -5921,10 +5780,9 @@ class FileNotesGitService:
         try:
             proof = evidence.proof
             repository = proof.repository
-            if (
-                not self._repository_identity_matches(binding, repository)
-                or not await self._commit_local_state_is_supported(repository)
-            ):
+            if not self._repository_identity_matches(
+                binding, repository
+            ) or not await self._commit_local_state_is_supported(repository):
                 return self._keep_commit_recovery_uncertain(
                     lease,
                     capture,
@@ -6084,8 +5942,7 @@ class FileNotesGitService:
                     )
                     retained_child = None
             child_termination_known = (
-                retained_child is None
-                and child_result.returncode is not None
+                retained_child is None and child_result.returncode is not None
             )
             child_is_natural = (
                 child_termination_known
@@ -6153,8 +6010,7 @@ class FileNotesGitService:
                 termination_known=True,
                 known_normal_returncode=child_result.returncode,
                 can_check_again=(
-                    postflight.repository_matches
-                    and postflight.local_state_supported
+                    postflight.repository_matches and postflight.local_state_supported
                 ),
             )
         except GitRunCancelled as cancellation:
@@ -6167,8 +6023,7 @@ class FileNotesGitService:
             if cancelled_result is not None:
                 retained_child = cancelled_result.retained_child
                 child_termination_known = (
-                    retained_child is None
-                    and cancelled_result.returncode is not None
+                    retained_child is None and cancelled_result.returncode is not None
                 )
                 if (
                     child_termination_known
@@ -6182,9 +6037,7 @@ class FileNotesGitService:
                 retained_child = cancellation.retained_child
             if retained_child is not None and not retained_claimed:
                 try:
-                    retained_claimed = self._runner.claim_retained_child(
-                        retained_child
-                    )
+                    retained_claimed = self._runner.claim_retained_child(retained_child)
                 except (RuntimeError, ValueError):
                     retained_child = None
             if (
@@ -6237,9 +6090,7 @@ class FileNotesGitService:
                 )
             if retained_child is not None and not retained_claimed:
                 try:
-                    retained_claimed = self._runner.claim_retained_child(
-                        retained_child
-                    )
+                    retained_claimed = self._runner.claim_retained_child(retained_child)
                 except Exception:
                     retained_child = None
             if (
@@ -6266,9 +6117,7 @@ class FileNotesGitService:
             evidence = self._uncertain_commit
             if evidence is None or evidence.mutation_lease is not lease:
                 abandoned = (
-                    snapshot.capture
-                    if confirmation is None
-                    else confirmation.capture
+                    snapshot.capture if confirmation is None else confirmation.capture
                 )
                 self._owner._discard_commit_authority(abandoned)
                 lease.release()
@@ -6309,6 +6158,7 @@ class FileNotesGitService:
         ):
             return None
         repository_ownership: dict[int, StagingOwnership] = {}
+        walk_cache = _EndpointWalkCache()
         for group_id, ownership in current.staging_ownership.items():
             group = groups_by_id.get(group_id)
             if group is None:
@@ -6317,6 +6167,7 @@ class FileNotesGitService:
                 root,
                 repository,
                 group,
+                walk_cache,
             )
             if invalid is not None or repository_group is None:
                 return None
@@ -6514,18 +6365,9 @@ class FileNotesGitService:
             postflight.repository_matches
             and postflight.local_state_supported
             and postflight.head == proof.old_head
-            and (
-                postflight.index_signature
-                == proof.complete_proof.index_signature
-            )
-            and (
-                postflight.delta_signature
-                == proof.complete_proof.delta_signature
-            )
-            and (
-                postflight.tree_object_id
-                == proof.complete_proof.expected_tree
-            )
+            and (postflight.index_signature == proof.complete_proof.index_signature)
+            and (postflight.delta_signature == proof.complete_proof.delta_signature)
+            and (postflight.tree_object_id == proof.complete_proof.expected_tree)
         )
 
     async def _publish_successful_commit(
@@ -6578,9 +6420,7 @@ class FileNotesGitService:
         refreshed_status = replace(
             status,
             rows=tuple(
-                row
-                for row in status.rows
-                if row.group_id not in retired_groups
+                row for row in status.rows if row.group_id not in retired_groups
             ),
         )
         if recovery_evidence is not None:
@@ -6785,9 +6625,8 @@ class FileNotesGitService:
             else None
         )
         hooks_directory = evidence.hooks_directory
-        if (
-            hooks_directory is not None
-            and self._remove_hooks_directory(hooks_directory)
+        if hooks_directory is not None and self._remove_hooks_directory(
+            hooks_directory
         ):
             hooks_directory = None
         settled = replace(
@@ -6850,12 +6689,9 @@ class FileNotesGitService:
             current_repository = self._owner.snapshot(
                 current_binding
             ).trusted_repository
-            if (
-                evidence.proof.binding != current_binding
-                or (
-                    current_repository is not None
-                    and current_repository != evidence.proof.repository
-                )
+            if evidence.proof.binding != current_binding or (
+                current_repository is not None
+                and current_repository != evidence.proof.repository
             ):
                 self._orphaned_commit = _OrphanedCommitLifecycle(
                     retained_child=evidence.retained_child,
@@ -6903,9 +6739,8 @@ class FileNotesGitService:
             return
 
         hooks_directory = lifecycle.hooks_directory
-        if (
-            hooks_directory is not None
-            and self._remove_hooks_directory(hooks_directory)
+        if hooks_directory is not None and self._remove_hooks_directory(
+            hooks_directory
         ):
             lifecycle = replace(lifecycle, hooks_directory=None)
             self._orphaned_commit = lifecycle
@@ -6986,8 +6821,7 @@ class FileNotesGitService:
             return _blocked_commit_review("Session staging authority changed.")
         ownership = dict(current.staging_ownership)
         groups_by_id = {
-            group.group_id: group
-            for group in coalesce_session_changes(current.changes)
+            group.group_id: group for group in coalesce_session_changes(current.changes)
         }
         group_sequence_ids = {
             group_id: groups_by_id[group_id].sequence_ids
@@ -6999,32 +6833,29 @@ class FileNotesGitService:
         if any(
             item.repository != repository
             or item.head != head
-            or groups_by_id[group_id].topology_signature
-            != item.topology_signature
+            or groups_by_id[group_id].topology_signature != item.topology_signature
             for group_id, item in ownership.items()
         ):
             return _blocked_commit_review("Session staging authority changed.")
         repository_ownership: dict[int, StagingOwnership] = {}
+        walk_cache = _EndpointWalkCache()
         for group_id, item in ownership.items():
             session_group = groups_by_id[group_id]
             repository_group, invalid = self._map_group(
                 root,
                 repository,
                 session_group,
+                walk_cache,
             )
             if invalid is not None or repository_group is None:
-                return _blocked_commit_review(
-                    "Session staging authority changed."
-                )
+                return _blocked_commit_review("Session staging authority changed.")
             mapped = _map_ownership_topology(
                 item,
                 session_group,
                 repository_group,
             )
             if mapped is None:
-                return _blocked_commit_review(
-                    "Session staging authority changed."
-                )
+                return _blocked_commit_review("Session staging authority changed.")
             repository_ownership[group_id] = mapped
 
         proof = await self._complete_commit_proof(
@@ -7046,9 +6877,7 @@ class FileNotesGitService:
         author, committer = identities
         included_notes: list[CommitIncludedNote] = []
         for group_id in proof.included_group_ids:
-            change_type = _commit_review_change_type(
-                repository_ownership[group_id]
-            )
+            change_type = _commit_review_change_type(repository_ownership[group_id])
             if change_type is None:
                 return _blocked_commit_review(
                     "The complete staged state cannot be classified safely."
@@ -7127,14 +6956,11 @@ class FileNotesGitService:
             if path is None:
                 return False
             resolved.append(path)
-        return (
-            resolved == [
-                Path(repository.worktree_root),
-                Path(repository.git_dir),
-                Path(repository.git_common_dir),
-            ]
-            and self._repository_identity_matches(binding, repository)
-        )
+        return resolved == [
+            Path(repository.worktree_root),
+            Path(repository.git_dir),
+            Path(repository.git_common_dir),
+        ] and self._repository_identity_matches(binding, repository)
 
     async def _commit_local_state_is_supported(
         self,
@@ -7180,9 +7006,7 @@ class FileNotesGitService:
             if heads.is_dir() and any(heads.rglob("*.lock")):
                 return False
             pack_directory = common_dir / "objects" / "pack"
-            if pack_directory.is_dir() and any(
-                pack_directory.glob("*.promisor")
-            ):
+            if pack_directory.is_dir() and any(pack_directory.glob("*.promisor")):
                 return False
             packed_refs = common_dir / "packed-refs"
             if packed_refs.is_file():
@@ -7383,15 +7207,12 @@ class FileNotesGitService:
         try:
             freshness_records = parse_porcelain_v2_z(
                 freshness.stdout,
-                allowed_paths=frozenset(
-                    os.fsdecode(path) for path in freshness_paths
-                ),
+                allowed_paths=frozenset(os.fsdecode(path) for path in freshness_paths),
             )
         except PorcelainV2ParseError:
             return None
         if any(
-            record.kind != "ordinary"
-            or record.worktree_status != "."
+            record.kind != "ordinary" or record.worktree_status != "."
             for record in freshness_records
         ):
             return None
@@ -7444,9 +7265,7 @@ class FileNotesGitService:
             )
         except GitRunCancelled as cancellation:
             if cancellation.result is not None:
-                return await self._settle_commit_proof_result(
-                    cancellation.result
-                )
+                return await self._settle_commit_proof_result(cancellation.result)
             retained_child = cancellation.retained_child
             assert retained_child is not None
             await self._drain_commit_proof_child(retained_child)
@@ -7496,9 +7315,7 @@ class FileNotesGitService:
                 continue
             if settlement.state not in {"alive", "uncertain"}:
                 if not self._runner.release_retained_child(retained_child):
-                    raise RuntimeError(
-                        "Terminal Git proof child could not be released"
-                    )
+                    raise RuntimeError("Terminal Git proof child could not be released")
                 if cancelled:
                     raise asyncio.CancelledError
                 return settlement
@@ -7611,12 +7428,8 @@ class FileNotesGitService:
         """Seal admission and return retained finite service settlement."""
         if self._shutdown_settlement is not None:
             settlement = self._shutdown_settlement
-            if (
-                isinstance(settlement, _ImmediateSettlement)
-                or (
-                    isinstance(settlement, _RetainedSettlement)
-                    and settlement.task.done()
-                )
+            if isinstance(settlement, _ImmediateSettlement) or (
+                isinstance(settlement, _RetainedSettlement) and settlement.task.done()
             ):
                 if self._shutdown_runner_confirmed is True:
                     self._settle_uncertain_commit_shutdown(True)
@@ -7715,12 +7528,8 @@ class FileNotesGitService:
             and (push_preflight_waiter is None or push_preflight_waiter.done())
             and (push_cycle is None or push_cycle.done())
             and (push_waiter is None or push_waiter.done())
-            and (
-                push_recovery_cycle is None or push_recovery_cycle.done()
-            )
-            and (
-                push_recovery_waiter is None or push_recovery_waiter.done()
-            )
+            and (push_recovery_cycle is None or push_recovery_cycle.done())
+            and (push_recovery_waiter is None or push_recovery_waiter.done())
             and (
                 push_recovery_settlement_cycle is None
                 or push_recovery_settlement_cycle.done()
@@ -7730,9 +7539,8 @@ class FileNotesGitService:
                 or isinstance(runner_settlement, _ImmediateSettlement)
             )
         ):
-            runner_confirmed = (
-                runner_settlement is None
-                or bool(runner_settlement.value)
+            runner_confirmed = runner_settlement is None or bool(
+                runner_settlement.value
             )
             self._shutdown_runner_confirmed = runner_confirmed
             self._settle_uncertain_commit_shutdown(runner_confirmed)
@@ -7883,14 +7691,9 @@ class FileNotesGitService:
                 )
         quarantine_cleared = False
         if runner_confirmed and self._unsettled_push_preflight is not None:
-            quarantine_cleared = (
-                await self._settle_unsettled_push_preflight_shutdown()
-            )
+            quarantine_cleared = await self._settle_unsettled_push_preflight_shutdown()
             if quarantine_cleared:
-                if (
-                    push_preflight_cycle is not None
-                    and not push_preflight_cycle.done()
-                ):
+                if push_preflight_cycle is not None and not push_preflight_cycle.done():
                     push_preflight_cycle.cancel()
                 if (
                     push_preflight_waiter is not None
@@ -7898,21 +7701,13 @@ class FileNotesGitService:
                 ):
                     push_preflight_waiter.cancel()
                 self._push_quarantine_requested = False
-        if (
-            runner_confirmed
-            and self._unsettled_push_preflight is None
-            and push_tasks
-        ):
+        if runner_confirmed and self._unsettled_push_preflight is None and push_tasks:
             await asyncio.wait(
                 push_tasks,
                 timeout=_PUSH_QUARANTINE_TRANSFER_TIMEOUT_SECONDS,
             )
-        if (
-            self._unsettled_push_preflight is None
-            and (
-                push_preflight_cycle is None
-                or push_preflight_cycle.done()
-            )
+        if self._unsettled_push_preflight is None and (
+            push_preflight_cycle is None or push_preflight_cycle.done()
         ):
             self._push_quarantine_requested = False
         self._settle_uncertain_commit_shutdown(runner_confirmed)
@@ -7978,9 +7773,7 @@ class FileNotesGitService:
                 return False
             if released is not True:
                 return False
-        self._owner._revoke_destination_authorization(
-            quarantine.authorization
-        )
+        self._owner._revoke_destination_authorization(quarantine.authorization)
         if quarantine.active_lease.release() is not True:
             return False
         self._close_or_retain_push_context(quarantine.context)
@@ -7993,9 +7786,7 @@ class FileNotesGitService:
         if not runner_confirmed:
             return
         for handle, snapshot in tuple(self._push_review_snapshots.items()):
-            self._owner._revoke_destination_authorization(
-                snapshot.authorization
-            )
+            self._owner._revoke_destination_authorization(snapshot.authorization)
             snapshot.review_lease.release()
             self._push_review_snapshots.pop(handle, None)
             self._close_or_retain_push_context(snapshot.context)
@@ -8085,9 +7876,8 @@ class FileNotesGitService:
             evidence = replace(evidence, retained_child=None)
             self._uncertain_commit = evidence
         hooks_directory = evidence.hooks_directory
-        if (
-            hooks_directory is not None
-            and self._remove_hooks_directory(hooks_directory)
+        if hooks_directory is not None and self._remove_hooks_directory(
+            hooks_directory
         ):
             evidence = replace(evidence, hooks_directory=None)
             self._uncertain_commit = evidence
@@ -8126,9 +7916,8 @@ class FileNotesGitService:
             lifecycle = replace(lifecycle, termination_known=True)
             self._orphaned_commit = lifecycle
         hooks_directory = lifecycle.hooks_directory
-        if (
-            hooks_directory is not None
-            and self._remove_hooks_directory(hooks_directory)
+        if hooks_directory is not None and self._remove_hooks_directory(
+            hooks_directory
         ):
             lifecycle = replace(lifecycle, hooks_directory=None)
             self._orphaned_commit = lifecycle
@@ -8219,8 +8008,7 @@ class FileNotesGitService:
             if next_lease is None:
                 self._rerun_available = False
                 message = (
-                    "Git status rerun was suppressed because a mutation "
-                    "was admitted"
+                    "Git status rerun was suppressed because a mutation was admitted"
                 )
                 stale = self._local_status(
                     pending_binding,
@@ -8248,9 +8036,7 @@ class FileNotesGitService:
             if self._status_dirty:
                 self._status_dirty = False
                 dirty_generation = self._status_request_generation
-                message = (
-                    "Newer File Notes changes are known; refresh Git status"
-                )
+                message = "Newer File Notes changes are known; refresh Git status"
                 result = self._local_status(
                     pending_binding,
                     "stale",
@@ -8308,9 +8094,10 @@ class FileNotesGitService:
         *,
         publish_ownership_changes: bool = True,
     ) -> SessionGitStatus:
-        if (
-            self._owner.snapshot(binding).trusted_repository != repository
-            or not await self.revalidate_repository(binding, repository)
+        if self._owner.snapshot(
+            binding
+        ).trusted_repository != repository or not await self.revalidate_repository(
+            binding, repository
         ):
             return self._local_status(
                 binding,
@@ -8346,11 +8133,13 @@ class FileNotesGitService:
         repository_groups: list[SessionChangeGroup] = []
         original_groups: dict[int, SessionChangeGroup] = {}
         invalid_rows: dict[int, SessionGitRow] = {}
+        walk_cache = _EndpointWalkCache()
         for group in groups:
             mapped_group, invalid_row = self._map_group(
                 root,
                 repository,
                 group,
+                walk_cache,
             )
             if invalid_row is not None:
                 invalid_rows[group.group_id] = invalid_row
@@ -8371,11 +8160,7 @@ class FileNotesGitService:
                 self._owner.clear_ownership(binding)
             return self._failed_status(
                 binding,
-                (
-                    "stale"
-                    if raw.state == "uncertain"
-                    else raw.state
-                ),
+                ("stale" if raw.state == "uncertain" else raw.state),
                 repository=repository,
                 head=raw.head,
                 message=raw.message,
@@ -8383,9 +8168,7 @@ class FileNotesGitService:
         head = raw.head
         index_sequence = raw.index_entries
         index_entries = _stage_zero_index(index_sequence)
-        conflicted_paths = {
-            entry.path for entry in index_sequence if entry.stage != 0
-        }
+        conflicted_paths = {entry.path for entry in index_sequence if entry.stage != 0}
         status_records = raw.status_records
 
         ownership_by_id: dict[int, StagingOwnership] = {}
@@ -8406,8 +8189,7 @@ class FileNotesGitService:
                 or mapped_ownership.repository != repository
                 or mapped_ownership.head != head
                 or any(
-                    path in conflicted_paths
-                    or index_entries.get(path) != expected
+                    path in conflicted_paths or index_entries.get(path) != expected
                     for path, expected in mapped_ownership.post_stage_entries.items()
                 )
             ):
@@ -8433,8 +8215,7 @@ class FileNotesGitService:
             for row in classified
         }
         rows = tuple(
-            invalid_rows.get(group.group_id)
-            or classified_by_id[group.group_id]
+            invalid_rows.get(group.group_id) or classified_by_id[group.group_id]
             for group in groups
         )
         return self._local_status(
@@ -8458,11 +8239,7 @@ class FileNotesGitService:
         head_result = await self._read_head(root)
         if isinstance(head_result, _HeadReadFailure):
             return _RawGitInspectionFailure(
-                (
-                    "unavailable"
-                    if head_result.kind == "unavailable"
-                    else "error"
-                ),
+                ("unavailable" if head_result.kind == "unavailable" else "error"),
                 head_result.message,
                 revoke_ownership=True,
             )
@@ -8470,10 +8247,7 @@ class FileNotesGitService:
         retained_ownership = {
             group_id: ownership
             for group_id, ownership in current_ownership.items()
-            if (
-                ownership.repository == repository
-                and ownership.head == head_result
-            )
+            if (ownership.repository == repository and ownership.head == head_result)
         }
         if publish_ownership_changes and len(retained_ownership) != len(
             current_ownership
@@ -8486,11 +8260,7 @@ class FileNotesGitService:
         )
         if not _command_succeeded(index_result):
             return _RawGitInspectionFailure(
-                (
-                    "uncertain"
-                    if index_result.termination_uncertain
-                    else "stale"
-                ),
+                ("uncertain" if index_result.termination_uncertain else "stale"),
                 _command_failure_message(index_result, "Git index read failed"),
                 head=head_result,
                 revoke_ownership=index_result.termination_uncertain,
@@ -8506,16 +8276,13 @@ class FileNotesGitService:
             )
 
         index_by_path = _stage_zero_index(index_entries)
-        conflicted_paths = {
-            entry.path for entry in index_entries if entry.stage != 0
-        }
+        conflicted_paths = {entry.path for entry in index_entries if entry.stage != 0}
         current_ownership = self._owner.snapshot(binding).staging_ownership
         retained_ownership = {
             group_id: ownership
             for group_id, ownership in current_ownership.items()
             if all(
-                path not in conflicted_paths
-                and index_by_path.get(path) == expected
+                path not in conflicted_paths and index_by_path.get(path) == expected
                 for path, expected in ownership.post_stage_entries.items()
             )
         }
@@ -8526,22 +8293,19 @@ class FileNotesGitService:
 
         status_records: tuple[PorcelainRecord, ...] = ()
         repository_paths = tuple(
-            os.fsencode(path)
-            for group in groups
-            for path in group.endpoints
+            os.fsencode(path) for group in groups for path in group.endpoints
         )
         if repository_paths:
+            endpoint_index = _build_endpoint_overlap_index(
+                path for group in groups for path in group.endpoints
+            )
             allowed_paths = frozenset(
                 {
-                    *(path for group in groups for path in group.endpoints),
+                    *endpoint_index.exact,
                     *(
                         entry.path
                         for entry in index_entries
-                        if any(
-                            _paths_overlap(entry.path, endpoint)
-                            for group in groups
-                            for endpoint in group.endpoints
-                        )
+                        if endpoint_index.overlaps(entry.path)
                     ),
                 }
             )
@@ -8554,11 +8318,7 @@ class FileNotesGitService:
             )
             if not _command_succeeded(status_result):
                 return _RawGitInspectionFailure(
-                    (
-                        "uncertain"
-                        if status_result.termination_uncertain
-                        else "stale"
-                    ),
+                    ("uncertain" if status_result.termination_uncertain else "stale"),
                     _command_failure_message(status_result, "Git status failed"),
                     head=head_result,
                 )
@@ -8613,8 +8373,9 @@ class FileNotesGitService:
         groups = coalesce_session_changes(snapshot.changes)
         repository_groups: dict[int, SessionChangeGroup] = {}
         invalid_rows: dict[int, SessionGitRow] = {}
+        walk_cache = _EndpointWalkCache()
         for group in groups:
-            mapped, invalid = self._map_group(root, repository, group)
+            mapped, invalid = self._map_group(root, repository, group, walk_cache)
             if invalid is not None:
                 invalid_rows[group.group_id] = invalid
             else:
@@ -8711,11 +8472,13 @@ class FileNotesGitService:
         groups = coalesce_session_changes(snapshot.changes)
         repository_groups: dict[int, SessionChangeGroup] = {}
         invalid_rows: dict[int, SessionGitRow] = {}
+        walk_cache = _EndpointWalkCache()
         for group in groups:
             mapped, invalid = self._map_group_for_unstage(
                 root,
                 repository,
                 group,
+                walk_cache,
             )
             if invalid is not None:
                 invalid_rows[group.group_id] = invalid
@@ -8793,6 +8556,19 @@ class FileNotesGitService:
         affected_paths: dict[int, tuple[str, ...]] = {}
         groups_by_id = {group.group_id: group for group in inspection.groups}
         ownership_revoked = False
+        all_repository_groups = tuple(inspection.repository_groups.values())
+        bulk_ambiguous_ids = _ambiguous_group_ids(
+            all_repository_groups,
+            inspection.status_records,
+        )
+        bulk_mutation_paths = _bulk_effective_mutation_paths(
+            all_repository_groups,
+            inspection.status_records,
+        )
+        endpoint_paths_by_id = {
+            group_id: frozenset(group.endpoints)
+            for group_id, group in inspection.repository_groups.items()
+        }
 
         for group_id in requested:
             group = groups_by_id.get(group_id)
@@ -8810,22 +8586,24 @@ class FileNotesGitService:
                     current_owned,
                     inspection,
                     repository_group,
+                    endpoint_paths=endpoint_paths_by_id[group_id],
                 )
                 eligible = (
                     owned_matches
-                    and row.state
-                    in {"owned_newer_edits", "owned_topology_changed"}
+                    and row.state in {"owned_newer_edits", "owned_topology_changed"}
                     and row.stage_action == "stage_update"
                 )
                 owned_clean = (
-                    owned_matches
-                    and row.state == "owned"
-                    and row.stage_action is None
+                    owned_matches and row.state == "owned" and row.stage_action is None
                 )
             effective = stage_pathspecs(
                 repository_group,
                 inspection.status_records,
-                groups=tuple(inspection.repository_groups.values()),
+                groups=all_repository_groups,
+                ambiguous_group_ids=bulk_ambiguous_ids,
+                effective_mutation_paths=bulk_mutation_paths[
+                    repository_group.group_id
+                ],
             )
             if not eligible:
                 if owned_clean:
@@ -8884,11 +8662,13 @@ class FileNotesGitService:
         root = self._safe_root(binding)
         endpoint_safety_changed = root is None
         if root is not None:
+            walk_cache = _EndpointWalkCache()
             for group_id in staged:
                 remapped, invalid = self._map_group(
                     root,
                     inspection.repository,
                     groups_by_id[group_id],
+                    walk_cache,
                 )
                 if (
                     invalid is not None
@@ -8950,9 +8730,7 @@ class FileNotesGitService:
         post_head, post_index = postflight
         latest_groups = {
             group.group_id: group
-            for group in coalesce_session_changes(
-                self._owner.snapshot(binding).changes
-            )
+            for group in coalesce_session_changes(self._owner.snapshot(binding).changes)
         }
         if post_head != inspection.head or any(
             latest_groups.get(group_id) is None
@@ -8995,8 +8773,7 @@ class FileNotesGitService:
                 paths.update(previous.post_stage_entries)
             post_entries = {path: post_index.get(path) for path in paths}
             if any(
-                entry is not None
-                and (entry.stage != 0 or entry.semantic_flags)
+                entry is not None and (entry.stage != 0 or entry.semantic_flags)
                 for entry in post_entries.values()
             ):
                 self._owner.clear_ownership(binding)
@@ -9060,7 +8837,10 @@ class FileNotesGitService:
         ownership: StagingOwnership,
         inspection: _StageInspection,
         group: SessionChangeGroup,
+        endpoint_paths: Collection[str] | None = None,
     ) -> bool:
+        if endpoint_paths is None:
+            endpoint_paths = frozenset(group.endpoints)
         if (
             ownership.repository != inspection.repository
             or ownership.head != inspection.head
@@ -9075,7 +8855,7 @@ class FileNotesGitService:
             path not in ownership.post_stage_entries
             for record in inspection.status_records
             for path in _staged_record_paths(record)
-            if path in group.endpoints
+            if path in endpoint_paths
         )
 
     async def _read_stage_postflight(
@@ -9153,6 +8933,10 @@ class FileNotesGitService:
         """Restore only exact saved baselines for valid selected ownership."""
         snapshot = self._owner.snapshot(binding)
         groups_by_id = {group.group_id: group for group in inspection.groups}
+        endpoint_paths_by_id = {
+            group_id: frozenset(group.endpoints)
+            for group_id, group in inspection.repository_groups.items()
+        }
         valid: list[int] = []
         blocked: list[int] = []
         revoked: list[int] = []
@@ -9177,15 +8961,12 @@ class FileNotesGitService:
                 group,
                 repository_group,
             )
-            if (
-                mapped is None
-                or owned.topology_signature != group.topology_signature
-            ):
+            if mapped is None or owned.topology_signature != group.topology_signature:
                 blocked.append(group_id)
                 continue
             if any(
                 entry.stage != 0
-                and entry.path in repository_group.endpoints
+                and entry.path in endpoint_paths_by_id[group_id]
                 for entry in inspection.index_sequence
             ):
                 blocked.append(group_id)
@@ -9201,14 +8982,11 @@ class FileNotesGitService:
                 blocked.append(group_id)
                 revoked.append(group_id)
                 continue
-            if (
-                not row.unstage_eligible
-                or not unstage_group_is_closed(
-                    repository_group,
-                    mapped.original_baselines,
-                    inspection.index_entries,
-                    mapped,
-                )
+            if not row.unstage_eligible or not unstage_group_is_closed(
+                repository_group,
+                mapped.original_baselines,
+                inspection.index_entries,
+                mapped,
             ):
                 blocked.append(group_id)
                 continue
@@ -9219,10 +8997,7 @@ class FileNotesGitService:
         if revoked and not self._owner.publish_unstage_result(
             binding,
             inspection.repository,
-            {
-                group_id: snapshot.staging_ownership[group_id]
-                for group_id in revoked
-            },
+            {group_id: snapshot.staging_ownership[group_id] for group_id in revoked},
             revoked,
         ):
             return GitActionResult(
@@ -9279,7 +9054,10 @@ class FileNotesGitService:
             inspection.repository,
         )
         if isinstance(postflight, GitActionResult):
-            if self._owner.snapshot(binding).trusted_repository == inspection.repository:
+            if (
+                self._owner.snapshot(binding).trusted_repository
+                == inspection.repository
+            ):
                 self._owner.publish_unstage_result(
                     binding,
                     inspection.repository,
@@ -9295,9 +9073,7 @@ class FileNotesGitService:
         post_head, post_index = postflight
         latest_groups = {
             group.group_id: group
-            for group in coalesce_session_changes(
-                self._owner.snapshot(binding).changes
-            )
+            for group in coalesce_session_changes(self._owner.snapshot(binding).changes)
         }
         verified = (
             _command_succeeded(result)
@@ -9482,8 +9258,7 @@ class FileNotesGitService:
             binding = self._owner.current_binding()
             if (
                 binding is not None
-                and self._owner.snapshot(binding).trusted_repository
-                == repository
+                and self._owner.snapshot(binding).trusted_repository == repository
             ):
                 self._owner.clear_ownership(binding)
         return result
@@ -9493,13 +9268,16 @@ class FileNotesGitService:
         notes_root: Path,
         repository: RepositoryIdentity,
         group: SessionChangeGroup,
+        walk_cache: _EndpointWalkCache | None = None,
     ) -> tuple[SessionChangeGroup | None, SessionGitRow | None]:
         mapping: dict[str, str] = {}
+        worktree_root = Path(repository.worktree_root)
         for endpoint in group.endpoints:
             mapped, problem = _map_session_endpoint(
                 notes_root,
-                Path(repository.worktree_root),
+                worktree_root,
                 endpoint,
+                walk_cache,
             )
             if problem == "nested_repository":
                 return None, SessionGitRow(
@@ -9539,6 +9317,7 @@ class FileNotesGitService:
         notes_root: Path,
         repository: RepositoryIdentity,
         group: SessionChangeGroup,
+        walk_cache: _EndpointWalkCache | None = None,
     ) -> tuple[SessionChangeGroup | None, SessionGitRow | None]:
         """Map safe endpoint text without rejecting owned replacements."""
         worktree_root = Path(repository.worktree_root)
@@ -9565,18 +9344,48 @@ class FileNotesGitService:
                     "unsupported",
                     disabled_reason="Unsafe File Notes path",
                 )
-            for depth in range(1, len(components) + 1):
-                boundary = notes_root.joinpath(*components[:depth])
-                try:
-                    boundary_stat = boundary.stat(follow_symlinks=False)
-                except (FileNotFoundError, NotADirectoryError):
+            for depth in range(1, len(components)):
+                outcome = _endpoint_parent_outcome(
+                    notes_root,
+                    components[:depth],
+                    "/".join(components[:depth]),
+                    walk_cache,
+                )
+                if outcome in {
+                    "missing",
+                    "safe_directory",
+                    "not_a_directory",
+                }:
                     continue
-                except OSError:
+                if outcome == "unsafe_path":
                     return None, SessionGitRow(
                         group,
                         "unsupported",
                         disabled_reason="Unsafe File Notes path",
                     )
+                if outcome == "unsafe_nested_boundary":
+                    return None, SessionGitRow(
+                        group,
+                        "unsupported",
+                        disabled_reason="Unsafe nested repository boundary",
+                    )
+                return None, SessionGitRow(
+                    group,
+                    "nested_repository",
+                    disabled_reason="Nested repository unsupported",
+                )
+            boundary = notes_root.joinpath(*components)
+            try:
+                boundary_stat = boundary.stat(follow_symlinks=False)
+            except (FileNotFoundError, NotADirectoryError):
+                boundary_stat = None
+            except OSError:
+                return None, SessionGitRow(
+                    group,
+                    "unsupported",
+                    disabled_reason="Unsafe File Notes path",
+                )
+            if boundary_stat is not None:
                 if stat.S_ISLNK(boundary_stat.st_mode):
                     return None, SessionGitRow(
                         group,
@@ -9705,10 +9514,7 @@ class FileNotesGitService:
             canonical = root.resolve(strict=True)
         except (OSError, RuntimeError):
             return None
-        if (
-            not stat.S_ISDIR(root_stat.st_mode)
-            or canonical != root
-        ):
+        if not stat.S_ISDIR(root_stat.st_mode) or canonical != root:
             return None
         return canonical
 
@@ -9911,9 +9717,7 @@ class FileNotesGitService:
                 timeout=self._discovery_timeout,
             )
         except OSError as error:
-            diagnostic = sanitize_git_stderr(
-                str(error).encode("utf-8", "replace")
-            )
+            diagnostic = sanitize_git_stderr(str(error).encode("utf-8", "replace"))
             message = "Git HEAD process could not start"
             if diagnostic:
                 message = f"{message}: {diagnostic}"
@@ -9991,10 +9795,7 @@ def _parse_candidate_paths(payload: bytes) -> tuple[bytes, ...] | None:
         if (
             not path
             or path.startswith(b"/")
-            or any(
-                component in {b"", b".", b"..", b".git"}
-                for component in components
-            )
+            or any(component in {b"", b".", b"..", b".git"} for component in components)
         ):
             return None
     return paths
@@ -10131,20 +9932,14 @@ def _classify_unknown_config_scope(
             canonical_candidate = candidate.resolve(strict=True)
         except (OSError, RuntimeError):
             continue
-        if (
-            canonical_candidate == candidate
-            and canonical_origin == canonical_candidate
-        ):
+        if canonical_candidate == candidate and canonical_origin == canonical_candidate:
             return scope
     for candidate in _known_global_config_paths(environment):
         try:
             canonical_candidate = candidate.resolve(strict=True)
         except (OSError, RuntimeError):
             continue
-        if (
-            canonical_candidate == candidate
-            and canonical_origin == canonical_candidate
-        ):
+        if canonical_candidate == candidate and canonical_origin == canonical_candidate:
             return "global"
     if (
         canonical_origin in _known_system_config_paths()
@@ -10180,10 +9975,7 @@ def _known_system_config_paths() -> frozenset[Path]:
             Path("/opt/homebrew/etc/gitconfig"),
             Path("/usr/share/git-core/gitconfig"),
             Path("/usr/lib/git-core/gitconfig"),
-            Path(
-                "/Library/Developer/CommandLineTools/usr/share/"
-                "git-core/gitconfig"
-            ),
+            Path("/Library/Developer/CommandLineTools/usr/share/git-core/gitconfig"),
             Path(
                 "/Applications/Xcode.app/Contents/Developer/usr/share/"
                 "git-core/gitconfig"
@@ -10199,9 +9991,7 @@ def _is_root_protected_system_config(path: Path) -> bool:
     try:
         for component in (path, *path.parents):
             metadata = component.stat(follow_symlinks=False)
-            if metadata.st_uid != 0 or metadata.st_mode & (
-                stat.S_IWGRP | stat.S_IWOTH
-            ):
+            if metadata.st_uid != 0 or metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
                 return False
     except OSError:
         return False
@@ -10251,8 +10041,8 @@ def _create_private_push_proof_directory(
     """Create one identity-pinned proof root under an already-safe parent."""
     if not _private_push_proof_apis_available():
         raise OSError("Private push proof safety requires POSIX descriptor APIs")
-    for worktree, parent, repository_device in (
-        _iter_safe_private_directory_parents(repository)
+    for worktree, parent, repository_device in _iter_safe_private_directory_parents(
+        repository
     ):
         proof: _PrivatePushProofDirectory | None = None
         root: Path | None = None
@@ -10264,10 +10054,7 @@ def _create_private_push_proof_directory(
                     dir=str(parent),
                 )
             )
-            if (
-                root.parent != parent
-                or root.is_relative_to(worktree)
-            ):
+            if root.parent != parent or root.is_relative_to(worktree):
                 raise OSError("Private proof root location is unsafe")
             root.chmod(0o700)
             proof = _PrivatePushProofDirectory(
@@ -10295,9 +10082,8 @@ def _private_push_proof_apis_available() -> bool:
         "fchmod",
         "pread",
     )
-    return (
-        _private_hooks_posix_ownership_apis_available()
-        and all(hasattr(os, attribute) for attribute in required_attributes)
+    return _private_hooks_posix_ownership_apis_available() and all(
+        hasattr(os, attribute) for attribute in required_attributes
     )
 
 
@@ -10316,10 +10102,7 @@ def _bounded_file_descriptor_digest(
     expected_size: int,
 ) -> bytes | None:
     """Hash exactly one bounded pinned file without changing its offset."""
-    if (
-        expected_size < 0
-        or expected_size > _LOCAL_PUSH_PROOF_FILE_LIMIT_BYTES
-    ):
+    if expected_size < 0 or expected_size > _LOCAL_PUSH_PROOF_FILE_LIMIT_BYTES:
         return None
     digest = hashlib.sha256()
     offset = 0
@@ -10348,8 +10131,8 @@ def _create_private_hooks_directory(
     """Create and verify one empty owner-only hooks directory outside the repo."""
     if not _private_hooks_posix_ownership_apis_available():
         raise OSError("Private hooks safety requires POSIX ownership APIs")
-    for worktree, parent, repository_device in (
-        _iter_safe_private_directory_parents(repository)
+    for worktree, parent, repository_device in _iter_safe_private_directory_parents(
+        repository
     ):
         directory: Path | None = None
         try:
@@ -10377,10 +10160,7 @@ def _create_private_hooks_directory(
                 return directory
         except (OSError, RuntimeError):
             pass
-        if (
-            directory is not None
-            and _remove_private_hooks_directory(directory)
-        ):
+        if directory is not None and _remove_private_hooks_directory(directory):
             pending_cleanup.discard(directory)
     raise OSError("Unable to create a private hooks directory")
 
@@ -10388,8 +10168,7 @@ def _create_private_hooks_directory(
 def _private_hooks_posix_ownership_apis_available() -> bool:
     """Return whether private-hooks ownership checks can run safely."""
     return os.name == "posix" and all(
-        hasattr(os, attribute)
-        for attribute in ("geteuid", "getegid", "getgroups")
+        hasattr(os, attribute) for attribute in ("geteuid", "getegid", "getgroups")
     )
 
 
@@ -10512,10 +10291,7 @@ def _commit_worktree_config_is_enabled(payload: bytes) -> bool:
     for record in payload[:-1].split(b"\0"):
         raw_key, raw_value = record.split(b"\n", 1)
         if raw_key.decode("ascii").lower() == "extensions.worktreeconfig":
-            enabled = (
-                raw_value.strip().lower()
-                not in _DISABLED_GIT_BOOLEAN_VALUES
-            )
+            enabled = raw_value.strip().lower() not in _DISABLED_GIT_BOOLEAN_VALUES
     return enabled
 
 
@@ -10526,8 +10302,7 @@ def _commit_index_semantics_are_supported(payload: bytes) -> bool:
     if not payload.endswith(b"\0"):
         return False
     return all(
-        len(record) >= 2 and record[:2] == b"H "
-        for record in payload[:-1].split(b"\0")
+        len(record) >= 2 and record[:2] == b"H " for record in payload[:-1].split(b"\0")
     )
 
 
@@ -10560,14 +10335,14 @@ def _expected_owned_delta(
             if old_entry == new_entry:
                 continue
             if (
-                (old_entry is not None and not _proof_index_entry_is_supported(
+                old_entry is not None
+                and not _proof_index_entry_is_supported(
                     path,
                     old_entry,
-                ))
-                or (
-                    new_entry is not None
-                    and not _proof_index_entry_is_supported(path, new_entry)
                 )
+            ) or (
+                new_entry is not None
+                and not _proof_index_entry_is_supported(path, new_entry)
             ):
                 return {}
             raw_path = os.fsencode(path)
@@ -10621,10 +10396,7 @@ def _proof_index_entry_is_supported(path: str, entry: IndexEntry) -> bool:
         and len(entry.mode) == 6
         and all(character in "01234567" for character in entry.mode)
         and len(entry.object_id) in {40, 64}
-        and all(
-            character in "0123456789abcdefABCDEF"
-            for character in entry.object_id
-        )
+        and all(character in "0123456789abcdefABCDEF" for character in entry.object_id)
         and any(character != "0" for character in entry.object_id)
     )
 
@@ -10713,16 +10485,82 @@ def _filesystem_identity(path: Path) -> FileSystemIdentity:
     )
 
 
+_EndpointParentOutcome = Literal[
+    "missing",
+    "safe_directory",
+    "not_a_directory",
+    "unsafe_path",
+    "unsafe_nested_boundary",
+    "nested_repository",
+]
+
+
+@dataclass(slots=True)
+class _EndpointWalkCache:
+    """One inspection pass's memo of endpoint parent-directory outcomes.
+
+    Sibling endpoints share parent directories, so caching one outcome per
+    parent prefix turns the per-endpoint stat walk into one stat walk per
+    distinct parent directory. The cache is threaded explicitly through the
+    pass; nothing is retained between inspections.
+    """
+
+    parent_outcomes: dict[str, _EndpointParentOutcome] = field(
+        default_factory=dict
+    )
+
+
+def _inspect_endpoint_parent(
+    notes_root: Path,
+    components: Sequence[str],
+) -> _EndpointParentOutcome:
+    """Classify one endpoint parent directory's stat and .git boundary."""
+    parent = notes_root.joinpath(*components)
+    try:
+        parent_stat = parent.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return "missing"
+    except NotADirectoryError:
+        return "not_a_directory"
+    except OSError:
+        return "unsafe_path"
+    if stat.S_ISLNK(parent_stat.st_mode):
+        return "unsafe_path"
+    if not stat.S_ISDIR(parent_stat.st_mode):
+        return "not_a_directory"
+    git_boundary = parent / ".git"
+    try:
+        git_boundary.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return "safe_directory"
+    except OSError:
+        return "unsafe_nested_boundary"
+    return "nested_repository"
+
+
+def _endpoint_parent_outcome(
+    notes_root: Path,
+    components: Sequence[str],
+    outcome_key: str,
+    walk_cache: _EndpointWalkCache | None,
+) -> _EndpointParentOutcome:
+    """Return the cached parent outcome for one prefix, walking on a miss."""
+    if walk_cache is None:
+        return _inspect_endpoint_parent(notes_root, components)
+    outcome = walk_cache.parent_outcomes.get(outcome_key)
+    if outcome is None:
+        outcome = _inspect_endpoint_parent(notes_root, components)
+        walk_cache.parent_outcomes[outcome_key] = outcome
+    return outcome
+
+
 def _map_session_endpoint(
     notes_root: Path,
     worktree_root: Path,
     relative_path: str,
+    walk_cache: _EndpointWalkCache | None = None,
 ) -> tuple[str | None, str | None]:
-    if (
-        not relative_path
-        or relative_path.startswith("/")
-        or "\0" in relative_path
-    ):
+    if not relative_path or relative_path.startswith("/") or "\0" in relative_path:
         return None, "Unsafe File Notes path"
     components = relative_path.split("/")
     if any(component in {"", ".", ".."} for component in components):
@@ -10732,27 +10570,19 @@ def _map_session_endpoint(
 
     candidate = notes_root.joinpath(*components)
     for depth in range(1, len(components)):
-        parent = notes_root.joinpath(*components[:depth])
-        try:
-            parent_stat = parent.stat(follow_symlinks=False)
-        except FileNotFoundError:
+        outcome = _endpoint_parent_outcome(
+            notes_root,
+            components[:depth],
+            "/".join(components[:depth]),
+            walk_cache,
+        )
+        if outcome in {"missing", "safe_directory"}:
             continue
-        except OSError:
+        if outcome in {"unsafe_path", "not_a_directory"}:
             return None, "Unsafe File Notes path"
-        if (
-            stat.S_ISLNK(parent_stat.st_mode)
-            or not stat.S_ISDIR(parent_stat.st_mode)
-        ):
-            return None, "Unsafe File Notes path"
-        git_boundary = parent / ".git"
-        try:
-            git_boundary.stat(follow_symlinks=False)
-        except FileNotFoundError:
-            pass
-        except OSError:
+        if outcome == "unsafe_nested_boundary":
             return None, "Unsafe nested repository boundary"
-        else:
-            return None, "nested_repository"
+        return None, "nested_repository"
 
     try:
         resolved_candidate = candidate.resolve(strict=False)
@@ -10878,32 +10708,20 @@ def parse_index_entries_z(payload: bytes) -> tuple[IndexEntry, ...]:
         if len(raw_entry) < 3 or raw_entry[1:2] != b" ":
             raise GitIndexParseError("Git index entry lacks a semantic tag")
         raw_tag = raw_entry[:1]
-        if not (
-            raw_tag.isalpha()
-            or raw_tag == b"?"
-        ):
+        if not (raw_tag.isalpha() or raw_tag == b"?"):
             raise GitIndexParseError("Git index semantic tag is unsupported")
         try:
             metadata, raw_path = raw_entry[2:].split(b"\t", 1)
         except ValueError as error:
-            raise GitIndexParseError(
-                "Git index entry lacks a path boundary"
-            ) from error
+            raise GitIndexParseError("Git index entry lacks a path boundary") from error
         fields = metadata.split(b" ")
         if len(fields) != 3:
             raise GitIndexParseError("Git index entry metadata is malformed")
         raw_mode, raw_object_id, raw_stage = fields
-        if (
-            len(raw_mode) != 6
-            or any(byte not in b"01234567" for byte in raw_mode)
-        ):
+        if len(raw_mode) != 6 or any(byte not in b"01234567" for byte in raw_mode):
             raise GitIndexParseError("Git index mode is malformed")
-        if (
-            len(raw_object_id) not in {40, 64}
-            or any(
-                byte not in b"0123456789abcdefABCDEF"
-                for byte in raw_object_id
-            )
+        if len(raw_object_id) not in {40, 64} or any(
+            byte not in b"0123456789abcdefABCDEF" for byte in raw_object_id
         ):
             raise GitIndexParseError("Git index object ID is malformed")
         if raw_stage not in {b"0", b"1", b"2", b"3"}:
@@ -10920,9 +10738,7 @@ def parse_index_entries_z(payload: bytes) -> tuple[IndexEntry, ...]:
         stage = int(raw_stage)
         identity = path, stage
         if identity in identities:
-            raise GitIndexParseError(
-                "Git index contains a duplicate path and stage"
-            )
+            raise GitIndexParseError("Git index contains a duplicate path and stage")
         identities.add(identity)
         tag = raw_tag.decode("ascii")
         flags: list[str] = []
@@ -11016,12 +10832,12 @@ def compute_stage_closure(
 ) -> frozenset[str]:
     """Return literal endpoints plus tracked index ancestors/descendants."""
     closure = set(endpoints)
-    for endpoint in endpoints:
-        closure.update(
-            path
-            for path in index_entries
-            if _paths_overlap(endpoint, path)
-        )
+    endpoint_index = _build_endpoint_overlap_index(endpoints)
+    closure.update(
+        path
+        for path in index_entries
+        if endpoint_index.overlaps(path)
+    )
     return frozenset(closure)
 
 
@@ -11031,14 +10847,16 @@ def compute_unstage_closure(
 ) -> frozenset[str]:
     """Return paths an exact baseline restoration may replace in the index."""
     closure = set(baselines)
-    for path, baseline in baselines.items():
-        if baseline.entry is None:
-            continue
-        closure.update(
-            current_path
-            for current_path in current_index_entries
-            if _paths_overlap(path, current_path)
-        )
+    baseline_index = _build_endpoint_overlap_index(
+        path
+        for path, baseline in baselines.items()
+        if baseline.entry is not None
+    )
+    closure.update(
+        current_path
+        for current_path in current_index_entries
+        if baseline_index.overlaps(current_path)
+    )
     return frozenset(closure)
 
 
@@ -11082,15 +10900,27 @@ def stage_pathspecs(
     status_records: Sequence[PorcelainRecord],
     *,
     groups: Sequence[SessionChangeGroup],
+    ambiguous_group_ids: frozenset[int] | None = None,
+    effective_mutation_paths: frozenset[str] | None = None,
 ) -> tuple[bytes, ...]:
-    """Encode only effective endpoints, omitting absent transient lineage."""
-    if group.group_id in _ambiguous_group_ids(groups, status_records):
+    """Encode only effective endpoints, omitting absent transient lineage.
+
+    Bulk callers pass the per-operation ambiguity and mutation-path sets so a
+    many-group stage does not recompute the shared sets once per group.
+    """
+    if ambiguous_group_ids is None:
+        ambiguous_group_ids = _ambiguous_group_ids(groups, status_records)
+    if group.group_id in ambiguous_group_ids:
         return ()
-    changed_paths = _effective_mutation_paths(group, status_records)
+    if effective_mutation_paths is None:
+        effective_mutation_paths = _effective_mutation_paths(
+            group,
+            status_records,
+        )
     return tuple(
         os.fsencode(path)
         for path in group.endpoints
-        if path in changed_paths
+        if path in effective_mutation_paths
     )
 
 
@@ -11160,24 +10990,29 @@ def classify_session_rows(
     global_records = tuple(
         record for record in status_records if record.path is None
     )
+    group_positions_by_path: dict[str, set[int]] = {}
+    for position, group in enumerate(groups):
+        for path in group.endpoints:
+            group_positions_by_path.setdefault(path, set()).add(position)
+    records_by_group: list[list[PorcelainRecord]] = [[] for _ in groups]
+    for record in status_records:
+        touched_positions = group_positions_by_path.get(
+            record.path, frozenset()
+        ) | group_positions_by_path.get(record.original_path, frozenset())
+        for position in touched_positions:
+            records_by_group[position].append(record)
+    entries_by_group: list[list[IndexEntry]] = [[] for _ in groups]
+    for entry in flattened_entries:
+        for position in group_positions_by_path.get(entry.path, ()):
+            entries_by_group[position].append(entry)
     ambiguous_groups = _ambiguous_group_ids(groups, status_records)
     rows: list[SessionGitRow] = []
-    for group in groups:
-        records = global_records + tuple(
-            record
-            for record in status_records
-            if _record_touches_group(record, group)
-        )
-        entries = tuple(
-            entry
-            for entry in flattened_entries
-            if entry.path in group.endpoints
-        )
+    for position, group in enumerate(groups):
         rows.append(
             _classify_group(
                 group,
-                records,
-                entries,
+                global_records + tuple(records_by_group[position]),
+                entries_by_group[position],
                 entries_by_path,
                 ownership.get(group.group_id),
                 group.group_id in ambiguous_groups,
@@ -11200,14 +11035,8 @@ def _parse_ordinary(
         index_status=index_status,
         worktree_status=worktree_status,
         submodule=_decode_ascii(fields[2], "submodule state"),
-        modes=tuple(
-            _decode_ascii(field, "file mode")
-            for field in fields[3:6]
-        ),
-        object_ids=tuple(
-            _decode_ascii(field, "object ID")
-            for field in fields[6:8]
-        ),
+        modes=tuple(_decode_ascii(field, "file mode") for field in fields[3:6]),
+        object_ids=tuple(_decode_ascii(field, "object ID") for field in fields[6:8]),
     )
 
 
@@ -11226,14 +11055,8 @@ def _parse_rename(
         index_status=index_status,
         worktree_status=worktree_status,
         submodule=_decode_ascii(fields[2], "submodule state"),
-        modes=tuple(
-            _decode_ascii(field, "file mode")
-            for field in fields[3:6]
-        ),
-        object_ids=tuple(
-            _decode_ascii(field, "object ID")
-            for field in fields[6:8]
-        ),
+        modes=tuple(_decode_ascii(field, "file mode") for field in fields[3:6]),
+        object_ids=tuple(_decode_ascii(field, "object ID") for field in fields[6:8]),
         original_path=original_path,
         score=_decode_ascii(fields[8], "rename score"),
     )
@@ -11253,14 +11076,8 @@ def _parse_unmerged(
         index_status=index_status,
         worktree_status=worktree_status,
         submodule=_decode_ascii(fields[2], "submodule state"),
-        modes=tuple(
-            _decode_ascii(field, "file mode")
-            for field in fields[3:7]
-        ),
-        object_ids=tuple(
-            _decode_ascii(field, "object ID")
-            for field in fields[7:10]
-        ),
+        modes=tuple(_decode_ascii(field, "file mode") for field in fields[3:7]),
+        object_ids=tuple(_decode_ascii(field, "object ID") for field in fields[7:10]),
     )
 
 
@@ -11303,9 +11120,7 @@ def _decode_ascii(value: bytes, label: str) -> str:
     try:
         return value.decode("ascii")
     except UnicodeDecodeError as error:
-        raise PorcelainV2ParseError(
-            f"Porcelain-v2 {label} is not ASCII"
-        ) from error
+        raise PorcelainV2ParseError(f"Porcelain-v2 {label} is not ASCII") from error
 
 
 def _paths_overlap(first: str, second: str) -> bool:
@@ -11316,14 +11131,52 @@ def _paths_overlap(first: str, second: str) -> bool:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _EndpointOverlapIndex:
+    """Prebuilt endpoint membership for prefix-directory overlap lookups.
+
+    ``_paths_overlap`` treats two paths as overlapping when they are equal or
+    one is a directory ancestor of the other. Indexing each endpoint plus its
+    ancestor directories once turns every per-path query into a bounded number
+    of set lookups instead of a scan over every endpoint of every group.
+    """
+
+    exact: frozenset[str]
+    ancestor_directories: frozenset[str]
+
+    def overlaps(self, path: str) -> bool:
+        """Return whether ``path`` overlaps any indexed endpoint."""
+        if path in self.exact or path in self.ancestor_directories:
+            return True
+        parts = path.split("/")
+        return any(
+            "/".join(parts[:depth]) in self.exact
+            for depth in range(1, len(parts))
+        )
+
+
+def _build_endpoint_overlap_index(
+    endpoints: Iterable[str],
+) -> _EndpointOverlapIndex:
+    """Index endpoints and their ancestor directories for overlap queries."""
+    exact: set[str] = set()
+    ancestor_directories: set[str] = set()
+    for endpoint in endpoints:
+        exact.add(endpoint)
+        parts = endpoint.split("/")
+        for depth in range(1, len(parts)):
+            ancestor_directories.add("/".join(parts[:depth]))
+    return _EndpointOverlapIndex(
+        frozenset(exact),
+        frozenset(ancestor_directories),
+    )
+
+
 def _record_touches_group(
     record: PorcelainRecord,
     group: SessionChangeGroup,
 ) -> bool:
-    return (
-        record.path in group.endpoints
-        or record.original_path in group.endpoints
-    )
+    return record.path in group.endpoints or record.original_path in group.endpoints
 
 
 def _classify_group(
@@ -11365,9 +11218,8 @@ def _classify_group(
             "nested_repository",
             disabled_reason="Nested repository unsupported",
         )
-    if (
-        any(record.kind == "unmerged" for record in records)
-        or any(entry.stage != 0 for entry in entries)
+    if any(record.kind == "unmerged" for record in records) or any(
+        entry.stage != 0 for entry in entries
     ):
         return SessionGitRow(
             group,
@@ -11399,8 +11251,7 @@ def _classify_group(
         for record in records
     )
     staged = any(
-        record.kind in {"ordinary", "rename"}
-        and record.index_status != "."
+        record.kind in {"ordinary", "rename"} and record.index_status != "."
         for record in records
     )
 
@@ -11461,15 +11312,10 @@ def _classify_group(
 
 
 def _staged_record_paths(record: PorcelainRecord) -> tuple[str, ...]:
-    if (
-        record.kind not in {"ordinary", "rename"}
-        or record.index_status == "."
-    ):
+    if record.kind not in {"ordinary", "rename"} or record.index_status == ".":
         return ()
     return tuple(
-        path
-        for path in (record.path, record.original_path)
-        if path is not None
+        path for path in (record.path, record.original_path) if path is not None
     )
 
 
@@ -11479,12 +11325,8 @@ def _effective_mutation_paths(
 ) -> frozenset[str]:
     paths: set[str] = set()
     for record in status_records:
-        if (
-            not _record_touches_group(record, group)
-            or (
-                record.kind != "untracked"
-                and record.worktree_status == "."
-            )
+        if not _record_touches_group(record, group) or (
+            record.kind != "untracked" and record.worktree_status == "."
         ):
             continue
         for path in (record.path, record.original_path):
@@ -11493,14 +11335,52 @@ def _effective_mutation_paths(
     return frozenset(paths)
 
 
+def _bulk_effective_mutation_paths(
+    groups: Sequence[SessionChangeGroup],
+    status_records: Sequence[PorcelainRecord],
+) -> dict[int, frozenset[str]]:
+    """Compute every group's effective mutation paths in one record pass."""
+    groups_by_path: dict[str, set[int]] = {}
+    for group in groups:
+        for path in group.endpoints:
+            groups_by_path.setdefault(path, set()).add(group.group_id)
+    paths_by_group: dict[int, set[str]] = {
+        group.group_id: set() for group in groups
+    }
+    for record in status_records:
+        if (
+            record.kind != "untracked"
+            and record.worktree_status == "."
+        ):
+            continue
+        for path in (record.path, record.original_path):
+            for group_id in groups_by_path.get(path, ()):
+                paths_by_group[group_id].add(path)
+    return {
+        group_id: frozenset(paths)
+        for group_id, paths in paths_by_group.items()
+    }
+
+
 def _ambiguous_group_ids(
     groups: Sequence[SessionChangeGroup],
     status_records: Sequence[PorcelainRecord],
 ) -> frozenset[int]:
-    path_groups: dict[str, set[int]] = {}
+    groups_by_path: dict[str, set[int]] = {}
     for group in groups:
-        for path in _effective_mutation_paths(group, status_records):
-            path_groups.setdefault(path, set()).add(group.group_id)
+        for path in group.endpoints:
+            groups_by_path.setdefault(path, set()).add(group.group_id)
+    path_groups: dict[str, set[int]] = {}
+    for record in status_records:
+        if (
+            record.kind != "untracked"
+            and record.worktree_status == "."
+        ):
+            continue
+        for path in (record.path, record.original_path):
+            claimed = groups_by_path.get(path)
+            if claimed:
+                path_groups.setdefault(path, set()).update(claimed)
     return frozenset(
         group_id
         for group_ids in path_groups.values()
@@ -11512,15 +11392,8 @@ def _ambiguous_group_ids(
 def _unsupported_semantic_reason(
     entries: Sequence[IndexEntry],
 ) -> str | None:
-    reasons = {
-        flag
-        for entry in entries
-        for flag in entry.semantic_flags
-    }
-    if any(
-        entry.object_id and set(entry.object_id) == {"0"}
-        for entry in entries
-    ):
+    reasons = {flag for entry in entries for flag in entry.semantic_flags}
+    if any(entry.object_id and set(entry.object_id) == {"0"} for entry in entries):
         reasons.add("intent-to-add")
     if not reasons:
         return None

@@ -15,16 +15,26 @@ through ``DreamsDB.connection()`` -- the documented single-statement read
 seam -- because Phase 1's ``DreamsDB`` ships no ``list_recent_collections``
 method and Task 6 may not modify the DB layer. It is one SELECT, read-only,
 and off-thread friendly like everything else here.
+
+Phase 2 Task 5 adds two reads on the same terms: ``list_tracked_updates``
+(the Tracked group's rows, derived from ``list_tracked_items`` plus each
+question item's latest run) and the ``tracked`` flag on story rows whose id
+is an ACTIVE tracked origin (one parameterized SELECT through the same
+``connection()`` seam, folded into this module's single read hop).
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any
 
 #: List-label truncation for story headlines (the full ``title`` column
 #: survives on the row for Task 7's modal; only the list label is capped).
 LABEL_MAX_LENGTH = 60
+
+#: How many tracked updates the Artifacts "Tracked" group surfaces.
+TRACKED_UPDATES_LIMIT = 5
 
 
 def list_recent_dreams(dreams_db: Any, *, limit: int = 10) -> list[dict[str, Any]]:
@@ -43,20 +53,23 @@ def list_recent_dreams(dreams_db: Any, *, limit: int = 10) -> list[dict[str, Any
 
     Returns:
         One dict per story: every ``dream_stories`` column plus
-        ``collection_date`` and ``label``; failed collections instead (or
-        additionally) contribute
+        ``collection_date``, ``label``, and ``tracked`` (True when an
+        ACTIVE tracked item names this story as its origin); failed
+        collections instead (or additionally) contribute
         ``{"label": f"Cycle {date}: failed", "status": "failed",
         "kind": "unknown", "collection_date": date, "synthetic": True}``.
     """
     from tldw_chatbook.DB.Dreams_DB import clamp_limit
 
     limit = clamp_limit(limit)
+    tracked_origins = _active_tracked_origins(dreams_db)
     stories_by_date: dict[str, list[dict[str, Any]]] = {}
     for story in dreams_db.list_recent_stories(limit=limit):
         shaped = dict(story)
         collection_date = str(story["local_date"])
         shaped["collection_date"] = collection_date
         shaped["label"] = _label(story)
+        shaped["tracked"] = int(story["id"]) in tracked_origins
         stories_by_date.setdefault(collection_date, []).append(shaped)
 
     rows: list[dict[str, Any]] = []
@@ -81,6 +94,71 @@ def list_recent_dreams(dreams_db: Any, *, limit: int = 10) -> list[dict[str, Any
     return rows[:limit]
 
 
+def list_tracked_updates(
+    dreams_db: Any, *, limit: int = TRACKED_UPDATES_LIMIT
+) -> list[dict[str, Any]]:
+    """Active tracked items as Tracked-group rows, changed-first.
+
+    Question items carry ``last_run_status`` from their latest run (any
+    status; ``None`` when the item has never been checked). Page items
+    always carry ``None`` -- their dispositions live in the Subscriptions
+    DB and surface through the Watchlists notifications pane, which the
+    label's ``(alerts → Watchlists)`` pointer says out loud.
+
+    Ordering: rows whose latest run is ``changed`` first, then
+    ``event_date`` ascending (``None`` last), then ``created_at``
+    descending (the stable sort rides ``list_tracked_items``' order).
+
+    Args:
+        dreams_db: The single ``DreamsDB`` instance.
+        limit: Maximum rows returned.
+
+    Returns:
+        Rows shaped ``{id: tracked_item_id, label, mechanism, intent,
+        status, last_checked, last_run_status, event_date, held,
+        synthetic: False}``. ``held`` is ``None`` for a running watch, or
+        the reason its page source was left disabled when Dreams was
+        switched back on (see ``track_service.set_tracking_suspended``).
+    """
+    from tldw_chatbook.DB.Dreams_DB import clamp_limit
+
+    limit = clamp_limit(limit)
+    rows: list[dict[str, Any]] = []
+    for item in dreams_db.list_tracked_items("active"):
+        mechanism = str(item.get("mechanism") or "")
+        last_run_status: str | None = None
+        if mechanism == "question":
+            runs = dreams_db.list_recent_track_runs(int(item["id"]), limit=1)
+            last_run_status = str(runs[0]["status"]) if runs else None
+        label = f"Tracking: {item.get('query_template') or 'page'}"
+        if mechanism == "page":
+            label += " (alerts → Watchlists)"
+        rows.append(
+            {
+                "id": int(item["id"]),
+                "label": label,
+                "mechanism": mechanism,
+                "intent": str(item.get("intent") or ""),
+                "status": str(item.get("status") or ""),
+                "last_checked": item.get("last_checked"),
+                "last_run_status": last_run_status,
+                "event_date": item.get("event_date"),
+                "held": _held_reason(item),
+                "synthetic": False,
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            # A changed latest run outranks every date consideration.
+            0 if row["last_run_status"] == "changed" else 1,
+            # event_date ascending, undated items last.
+            1 if row["event_date"] is None else 0,
+            str(row["event_date"] or ""),
+        )
+    )
+    return rows[:limit]
+
+
 def format_dream_row(story: Mapping[str, Any]) -> str:
     """One list-row label: ``"> Dream: <label>"`` plus the kept badge.
 
@@ -99,6 +177,50 @@ def format_dream_row(story: Mapping[str, Any]) -> str:
     return label
 
 
+def format_tracked_row(update: Mapping[str, Any]) -> str:
+    """One Tracked-group row label, with the surfaced run status.
+
+    Same idiom as :func:`format_dream_row` (the Reports/Dreams rows):
+    ``"> Tracked: <label>"`` plus ``" · <last_run_status>"`` when the item
+    has a run to show -- a ``changed`` disposition is the group's headline,
+    so it rides the row.
+
+    Args:
+        update: One ``list_tracked_updates`` row.
+
+    Returns:
+        The row's display text (render it literally, never as markup).
+    """
+    label = f"> Tracked: {update.get('label', '')}"
+    if update.get("last_run_status"):
+        label += f" · {update['last_run_status']}"
+    held = update.get("held")
+    if held:
+        # The watch is listed but its page is not being checked: say so,
+        # and why, where the user looks at their watches.
+        label += " · paused: " + (
+            "page address could not be resolved" if held == "dns_failure"
+            else "page address is not a public web address")
+    return label
+
+
+def _held_reason(item: Mapping[str, Any]) -> str | None:
+    """Why a tracked item's page source is being held disabled, or None.
+
+    Read off the wrapper's suspension record (the track service owns its
+    shape; this module only needs the ``held`` reason and stays free of
+    that module's import chain). Anything unreadable is "not held".
+    """
+    try:
+        record = json.loads(item.get("suspension") or "null")
+    except ValueError:
+        return None
+    if not isinstance(record, dict):
+        return None
+    held = record.get("held")
+    return str(held) if held else None
+
+
 def _label(story: Mapping[str, Any]) -> str:
     return str(story.get("title") or "")[:LABEL_MAX_LENGTH]
 
@@ -111,3 +233,23 @@ def _recent_collections(dreams_db: Any, limit: int) -> list[dict[str, Any]]:
             (limit,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def _active_tracked_origins(dreams_db: Any) -> set[int]:
+    """Story ids named as origins by ACTIVE tracked items.
+
+    One parameterized SELECT through the ``connection()`` seam; retired or
+    paused items do not badge their origin story. Callers fold this into
+    the same read hop as the stories themselves.
+    """
+    with dreams_db.connection() as conn:
+        rows = conn.execute(
+            "SELECT origin_story_id FROM dream_tracked_items"
+            " WHERE status = 'active'",
+            (),
+        ).fetchall()
+    return {
+        int(row["origin_story_id"])
+        for row in rows
+        if row["origin_story_id"] is not None
+    }

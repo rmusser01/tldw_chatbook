@@ -1,9 +1,10 @@
 ---
 id: TASK-399.3
 title: A2 Project search and reconcile file notes
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-07-23 14:23'
+updated_date: '2026-10-04'
 labels:
   - notes
   - search
@@ -39,3 +40,17 @@ Own confirmed read-only root activation and provide a scalable, repairable read 
 - [ ] #11 Watcher storms, overflow, Git bulk changes, unreadable/offline transitions, queue bounds, and polling CPU gates pass.
 - [ ] #12 The activation entry point, persistent monitoring, and Files-source publication remain behind the default-off A release gate until A4 validates A0-A4 together.
 <!-- AC:END -->
+
+## Closeout 2026-10-04
+
+Closed superseded, not implemented as written. The read-model substance landed
+under ADR-029: scan, polling reconcile, filename/body FTS projection, and the
+editing-session checkpoint/reservation machinery ship in
+`tldw_chatbook/Notes/file_notes_service.py` /
+`tldw_chatbook/Notes/file_notes_replica.py` (TASK-969, PR #992). ADR-029
+explicitly rejected the watcher-fed event pipeline, coordinator/lease
+election, and the watchdog/perf-gate contract specified above — polling
+reconcile is the accepted shipped design, so the surviving intent is
+deliberately not worth separate tasks.
+
+Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).

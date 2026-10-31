@@ -46,7 +46,7 @@ built-in Default workspace is intentionally absent from the Tree; **Switch**
 is the route to it. **RAG** narrows retrieval to the active workspace's
 items — see [Context & RAG](context-and-rag.md).
 
-**Conversations section** (left rail). A separate **Search conversations**
+**Conversations section** (left rail). A separate **Filter visible titles**
 box with **Clear**, a **New conversation** button, and a flat list containing
 only Default-workspace and unassigned conversations. A conversation assigned
 to a named workspace appears under that workspace in the Tree instead, never
@@ -98,6 +98,15 @@ saved local character
 conversations and never sends titles or transcript text to a network service.
 Each search result keeps its title, character name, and Local/age metadata
 on separate lines so the metadata remains readable in the narrow rail.
+While a reply is running, the section checks saved character chats for
+changes about once a second (a different open chat or character is picked up
+at once), and it catches up as soon as the reply ends. When one of these
+checks finds new or changed saved chats, the list usually updates in place
+without first showing "Refreshing local character chats…". While the section
+is collapsed, those checks still run but the hidden list is not redrawn;
+expanding the section shows the latest result straight away. **Retry** reloads
+directly and shows "Refreshing local character chats…" while it works, or
+"Searching local character chats…" when a Context search is active.
 When a Context search is active, **Continue search in Character chats** opens
 that same validated query in Ctrl+K's complete local Character-chat results.
 Enter or double-click opens an exact saved conversation in its Console tab;
@@ -119,15 +128,30 @@ On a local-only setup the server lines collapse into one line:
 
 | Control | What it does |
 |---|---|
-| "New tab" (strip or control bar) / Ctrl+T | Opens a fresh chat tab |
-| Click a tab | Switches to it; a second click on the active tab opens "Rename Chat Tab" |
+| "New tab" (strip or control bar) / Ctrl+T | Opens a fresh chat tab, with its own empty draft in the composer straight away |
+| Click a tab | Switches to it at once, even while another tab's agent is running: the tab lights up and its own draft is in the composer before anything else repaints, and the composer keeps the keyboard, so you can type straight away. A second click on the active tab opens "Rename Chat Tab" |
 | Middle-click a tab | Closes it, exactly like its "✕", without switching to it first |
-| "✕" on a tab | Closes it at once when nothing would be lost — a saved, idle chat or a blank tab. If closing would discard something (unsaved messages, an unsent draft, pending attachments, a live agent run, delegated sub-agents, queued prompts), the "Close Console session?" dialog first shows what closing would discard: "Close" closes the tab, "Stay" keeps it |
+| "✕" on a tab | Closes it at once when nothing would be lost — a saved, idle chat or a blank tab. If closing would discard something (unsaved messages, an unsent draft, pending attachments, a live agent run, delegated sub-agents, queued prompts), a dialog naming the tab first shows only what closing would discard or cancel, including pending approvals, questions, chat-creation confirmations, skill confirmations and worktree-merge confirmations: "Close" closes the tab, "Stay" keeps it |
 | Alt+1 … Alt+9 | Jumps straight to tab 1–9 |
 | Marker glyph (● ◆ ✓ ✗) | That tab's agent-run status — clears when you visit the tab |
 
+Once a tab starts closing, pending requests to create another chat are declined, and previously confirmed requests cannot start from that tab. A creation still in progress cannot open a new tab after its source closes.
+
 Each tab keeps its own unsent draft: switch tabs mid-thought and the
-half-typed message is still in the composer when you come back.
+half-typed message is still in the composer when you come back. Keys you
+type straight after clicking a tab go into that tab's draft, even if the
+click is still being handled, and never stay behind in the tab you were on
+before you clicked. If you click two tabs in quick succession while the
+Console is still busy switching, text typed after the first of those clicks
+can land in either of the two tabs you clicked, even text typed after the
+second click; it never stays in the tab you started from, it is never lost,
+and each tab keeps its own draft. Clicking a tab, its "✕", "New tab" or
+"Temporary" leaves the keyboard in the composer, so a letter typed next is
+text, not a shortcut. A message is only ever sent to the tab on screen. If
+you press Enter while the composer has not yet caught up with a switch,
+nothing is sent: a "Still switching chats" notice appears and your draft
+stays where it is. **Redirect** is stricter: it only uses the draft of the
+chat whose run it corrects, and otherwise shows the same notice.
 
 ### "Switch Session" (Ctrl+K)
 
@@ -200,10 +224,19 @@ History remain usable.
 
 | Control | What it does |
 |---|---|
-| "Search conversations" + "Clear" | Filters only Default and unassigned conversations; "Clear" resets it without changing Workspaces search |
+| "Filter visible titles" + "Clear" | Filters only Default and unassigned conversations, by **title**. Case is ignored for plain A–Z letters; for accented letters, type the case the title uses. The match count follows the same title rule; when more titles match than the list has room for, it reads "N matches. Showing K of N". It does not look inside messages: use **Search all chats…** or Ctrl+K for that. The box keeps your text, its case and the cursor while results update, so you can keep typing through a search. "Clear" empties it without changing Workspaces search |
 | "New conversation" | Starts a fresh conversation |
 | Conversation row | Click to open it in the Console |
 | "☆" / "★" | Stars or unstars the conversation; starred rows sort first in this same list |
+
+Conversation rows are grouped under **date headers** — Today, Yesterday,
+This week, Older — computed from each chat's last activity, so a long list
+reads chronologically at a glance. A header appears only when a chat in
+that bucket is visible, and the headers stay in place while a search filter
+is active (the list keeps its recency order under a filter, so the buckets
+stay truthful). Because starred rows sort ahead of unstarred ones, a
+starred older chat can pull its date bucket above newer unstarred chats —
+the headers follow the list you see, not the calendar.
 
 ### Workspaces
 
@@ -404,8 +437,9 @@ conversation.
    match — or,
 2. For a named-workspace conversation, search in **Workspaces**, disclose its
    parent if needed, and select the conversation leaf.
-3. For a Default or unassigned conversation, search in **Conversations** and
-   select its flat row.
+3. For a Default or unassigned conversation, filter **Conversations** by its
+   title and select its flat row. (To find it by something said in it, use
+   **Search all chats…** instead.)
 
 **Star a conversation**
 
@@ -503,7 +537,12 @@ in a full accent box.
 - If a tab cannot be closed, it stays open and an error toast names it and
   gives the reason — for example `Couldn't close tab "Weekly notes": The
   close did not finish. Try again in a moment.` A Temporary chat with a
-  pending turn cannot close until you finish or discard that turn.
+  pending turn cannot close until you finish or discard that turn. The dialog
+  closes so you can resolve the pending work. A temporary cleanup failure offers
+  a fresh dialog; another Close click is required to retry.
+  When earlier Close cleanup needs recovery, the tab stays open
+  and shows `Close cleanup needs recovery. Restart the app before closing this
+  tab.` The confirmation flow ends instead of repeatedly asking to retry.
 - If the tab closed but the Console could not finish updating afterwards, a
   warning says so (`Closed tab "Weekly notes", but the Console did not
   finish updating`). Should the closed tab still be drawn, clicking its "✕"
@@ -604,5 +643,12 @@ conversations remain in Library, with the workspace marked archived. This is
 separate from individually archiving a conversation.
 
 Closing a tab removes the open session. Saved history stays in Library; the
-close dialog separately lists unsaved messages, drafts, attachments and live or
-queued work that closing would discard or cancel.
+close dialog names the tab and lists only the consequences that apply: unsaved
+messages, drafts, attachments, live or queued work, and pending human decisions.
+The dialog keeps both actions visible when the terminal is short. Press Shift+Tab
+from **Stay** to focus the scrollable consequences, then use arrows, Home or End
+to read them. Tab returns to **Stay**. Resizing keeps the same controls and decision.
+Closing denies pending tool approvals, cancels unanswered questions and declines
+skill, chat-creation and worktree-merge confirmations, cancelling the owning work
+without affecting other tabs. Declining chat creation creates no chat. Declining
+a merge or discard confirmation performs neither action.

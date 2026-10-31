@@ -42,6 +42,23 @@ reservation or explicitly send that one call with Capture Off. A failure after
 provider dispatch cannot discard the provider result; the Inspector reports an
 incomplete or interrupted trace boundary.
 
+A send whose trace record cannot be saved stops before the provider is
+contacted. The transcript shows a **Trace capture blocked** callout at that
+turn ("Problem: This send's trace record could not be saved." / "Impact: The
+provider was not contacted.") with **Retry capture**, **Send without capture**
+and **Cancel send**. Until you choose one, the header reads **Blocked**, the
+run chip and the Inspector's **Run** line read `Blocked — trace not saved`,
+and a message you send in the meantime is held on the shelf above the
+composer as `Not sent: Last send is blocked; resolve it first` with
+**Restore** (back to the composer) and **Discard**. Chats with a system
+prompt, a character, or a `/generate-image` result capture and send normally.
+
+When the trace record fails *after* the message was saved, the callout stays
+until that send finishes. If **Send without capture** then finds the provider
+not ready, it says so on the callout and leaves the send paused with the same
+three choices; nothing is sent twice, and your Capture Off choice still
+applies when you choose it again once the provider is ready.
+
 If an interrupted tool run leaves a pending response after reopening the
 conversation, **Discard** retains the user message and earlier trace history.
 The next question can use Capture On again when that discarded response has an

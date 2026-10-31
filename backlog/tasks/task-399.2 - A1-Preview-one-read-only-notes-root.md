@@ -1,9 +1,10 @@
 ---
 id: TASK-399.2
 title: A1 Preview one read-only notes root
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-07-23 14:22'
+updated_date: '2026-10-04'
 labels:
   - notes
   - library
@@ -33,3 +34,19 @@ Let users safely evaluate one existing local folder without activating it, chang
 - [ ] #5 A candidate that overlaps a configured legacy folder-sync root in either ancestor/descendant direction is rejected with a concrete remedy.
 - [ ] #6 This task exposes no public Link or Unlink behavior and starts no activation scan, event capture, watcher, worker, or durable root publication; confirmed read-only activation belongs to A2 and remains behind the default-off release gate.
 <!-- AC:END -->
+
+## Closeout 2026-10-04
+
+Closed superseded, not implemented as written. ADR-029 dropped the memory-only
+preview stage by design: folder adoption is scan-on-link
+(`FileNotesService.scan`, `tldw_chatbook/Notes/file_notes_service.py`), the
+Change-folder flow offers cancel/keep-previous-folder semantics
+(`ROOT_CHANGE_CANCELLED_COPY` in
+`tldw_chatbook/Widgets/Library/library_file_notes_workspace.py`), offline or
+unavailable roots are handled through polling reconcile rather than a preview
+collision report, and root confinement is enforced by the root-scoped
+`_safe_path` checks in `file_notes_service.py`. The ADR-021 preview contract —
+persist-nothing evaluation, coordinator election, mutation leases, and the
+default-off A gate — was never implemented.
+
+Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).

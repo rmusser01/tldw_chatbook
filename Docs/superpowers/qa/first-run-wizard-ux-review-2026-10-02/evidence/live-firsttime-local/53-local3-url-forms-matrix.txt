@@ -1,0 +1,36 @@
+http://localhost:18500
+  preview: Chat URL: http://localhost:18500/v1/chat/completions
+  test:    ✓ Reached the server, but your chosen model was not in its list. Pick one on the next step. 
+http://localhost:18500/
+  preview: Chat URL: http://localhost:18500/v1/chat/completions
+  test:    ✓ Reached the server, but your chosen model was not in its list. Pick one on the next step. 
+http://localhost:18500/v1
+  preview: Chat URL: http://localhost:18500/v1/chat/completions
+  test:    ✓ Reached the server, but your chosen model was not in its list. Pick one on the next step. 
+http://localhost:18500/v1/
+  preview: Chat URL: http://localhost:18500/v1/chat/completions
+  test:    ✓ Reached the server, but your chosen model was not in its list. Pick one on the next step. 
+http://localhost:18500/v1/chat/completions
+  preview: Chat URL: http://localhost:18500/v1/chat/completions
+  test:    ✓ Reached the server, but your chosen model was not in its list. Pick one on the next step. 
+127.0.0.1:18500/v1/models
+  preview: Chat URL: http://127.0.0.1:18500/v1/chat/completions
+  test:    ✓ Reached the server, but your chosen model was not in its list. Pick one on the next step. 
+https://localhost:18500
+  preview: Chat URL: https://localhost:18500/v1/chat/completions
+  test:    ✗ Connection error - could not reach the server. Check the endpoint, and that the server is running. 
+http://localhost:18599
+  preview: Chat URL: http://localhost:18599/v1/chat/completions
+  test:    ✗ The connection was refused - nothing is listening at that address. Start the server, or check the endpoint and port. 
+http://localhost:18501
+  preview: Chat URL: http://localhost:18501/v1/chat/completions
+  test:    ✗ The server returned an invalid response - not an OpenAI-compatible model list. Check the endpoint. 
+http://localhost:18502
+  preview: Chat URL: http://localhost:18502/v1/chat/completions
+  test:    ✗ The server returned an invalid response - not an OpenAI-compatible model list. Check the endpoint. 
+localhost
+  preview: Chat URL: http://localhost/v1/chat/completions
+  test:    ✗ The connection was refused - nothing is listening at that address. Start the server, or check the endpoint and port. 
+http://localhost:18500/api
+  preview: Chat URL: http://localhost:18500/api/v1/chat/completions
+  test:    Model listing unavailable; chat endpoint not tested. 

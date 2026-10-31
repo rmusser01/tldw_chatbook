@@ -1,0 +1,82 @@
+{
+  "source_sha256": "6d8ba7ecf1f19dd5e7c2a5a11e9337dd2ce26897140aff6fe4e77b91bfdf1463",
+  "base_pixel_sha256": "7a6509ebc4747717461ce9f0178a68aa12c0039cea06bec0cebbc10c2880fe05",
+  "inputs": {
+    "eyelids": "8e5f5932db3b720dcf8cab06397404765a77fd152953829732671d6e45dea4f3",
+    "small": "f9908a694dcbc3deb200b676a90058c4b2e0a5244d3ef957e1eebd7137a349a3",
+    "open": "994003d6d7f01650adcca9aef36f1f7633f9d1ca2f89951a20db5da360943f29"
+  },
+  "provider_calls": 0,
+  "views": {
+    "wide-overview": {
+      "crop": null,
+      "raster_size": [
+        228,
+        100
+      ],
+      "sha256": "57e5c80ce09a66dd8452cf71aa6dd2c0573ba1835b2bae285f69412220d4ccda",
+      "roles": [
+        [
+          "rest",
+          "small",
+          "open"
+        ],
+        [
+          "blink_rest",
+          "blink_small",
+          "blink_open"
+        ]
+      ]
+    },
+    "wide-mouth": {
+      "crop": [
+        560,
+        440,
+        636,
+        490
+      ],
+      "raster_size": [
+        228,
+        100
+      ],
+      "sha256": "eabef07c70bb5e653512df8dd750261fb6a82dbcb0514d5506fdcd594546ce72",
+      "roles": [
+        [
+          "rest",
+          "small",
+          "open"
+        ],
+        [
+          "blink_rest",
+          "blink_small",
+          "blink_open"
+        ]
+      ]
+    },
+    "narrow-eye": {
+      "crop": [
+        526,
+        330,
+        552,
+        343
+      ],
+      "raster_size": [
+        78,
+        26
+      ],
+      "sha256": "370183a264939ce34049bb1f349f621e8d96b349a594fdfd28bf57e5a020a9b4",
+      "roles": [
+        [
+          "rest",
+          "small",
+          "open"
+        ],
+        [
+          "blink_rest",
+          "blink_small",
+          "blink_open"
+        ]
+      ]
+    }
+  }
+}

@@ -8,6 +8,7 @@ all UI wiring and paste-segment gating.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -15,8 +16,9 @@ from .console_command_grammar import (
     COMMAND_PREFIX,
     SKILLS_COMMAND_NAME,
     ConsoleCommandRegistry,
+    _split_leading_token,
 )
-from .console_skill_resolver import SkillCommandCandidate
+from .console_skill_resolver import MENTION_SIGIL, SkillCommandCandidate, _MENTION_TOKEN
 
 #: Which popup completion context a draft is in (TASK-24416).
 CompletionContext = Literal["command", "skills_arg"]
@@ -32,6 +34,9 @@ _SKILLS_ARG_MODE_PATTERN = re.compile(
 # `ConsoleCommand` carries no description field, so the built-ins get their
 # popup copy here; skill entries use the resolver snapshot descriptions.
 _COMMAND_DESCRIPTIONS: dict[str, str] = {
+    "omfg": "Learn a local response rule from what was wrong with the last answer",
+    "rules": "Review, test and manage Chat, Workspace or profile response rules",
+    "goal": "Review setup for a finite goal run",
     "prompt": "Insert a saved prompt into the composer",
     "system": "Apply a saved system prompt to this session",
     "skills": "List or run a skill",
@@ -187,3 +192,126 @@ def suggestions_for_draft(
         and candidate.name.lower() not in command_names_lower
     )
     return suggestions[:max_results]
+
+
+# ---------------------------------------------------------------------------
+# TASK-18921: usage ranking (display-only; matching and filtering unchanged)
+# ---------------------------------------------------------------------------
+
+
+def suggestion_usage_key(suggestion: CommandSuggestion) -> str | None:
+    """Return the canonical usage key for one suggestion row, or ``None``.
+
+    Command rows (``/<name>``) map to ``command:<name>``; skill rows —
+    whether the command-mode ``/skills <name>`` label or the bare-name
+    skills-arg label — map to ``skill:<name>``. The ``/skills`` command row
+    itself is a command (``command:skills``), distinct from a skill of the
+    same name, which cannot exist (a skill named like a registered command
+    is deduplicated out of the list upstream).
+
+    Keys are lowercase; the counting side lowercases the same way so the
+    two never drift.
+    """
+    label = suggestion.label
+    if label.startswith(COMMAND_PREFIX):
+        token, rest = _split_leading_token(label)
+        name = token[len(COMMAND_PREFIX) :].lower()
+        if not name:
+            return None
+        if name == SKILLS_COMMAND_NAME:
+            first_arg = rest.strip().split()[0].lower() if rest.strip() else ""
+            if first_arg:
+                return f"skill:{first_arg}"
+        return f"command:{name}"
+    name = label.strip().lower()
+    return f"skill:{name}" if name else None
+
+
+def count_suggestion_usage(history_texts: Iterable[str]) -> dict[str, int]:
+    """Mine prompt-history texts into per-key usage counts.
+
+    Counts, per text:
+
+    * A leading ``/<name>`` token counts ``command:<name>`` (case-
+      insensitive). A ``/skills <name>`` draft additionally counts
+      ``skill:<name>`` — one invocation of the skills command is one use of
+      the skill it names.
+    * ``$skill-name`` mentions in ordinary prompts count ``skill:<name>``
+      once per text regardless of how often the same name appears in it.
+
+    Simplifications, deliberate (display-order heuristic, TASK-18921):
+    mentions are scanned without the resolver's markdown code-span masking,
+    so a ``$name`` inside backticks can inflate a count; and unknown
+    ``/words`` force-sent as literal prompts count toward keys no
+    suggestion ever carries, which is harmless. Counts never leave the
+    machine and feed ranking only.
+    """
+    counts: dict[str, int] = {}
+
+    def _bump(key: str) -> None:
+        counts[key] = counts.get(key, 0) + 1
+
+    for text in history_texts:
+        if not text:
+            continue
+        if text.startswith(COMMAND_PREFIX):
+            token, rest = _split_leading_token(text)
+            name = token[len(COMMAND_PREFIX) :].lower()
+            if name:
+                _bump(f"command:{name}")
+                if name == SKILLS_COMMAND_NAME:
+                    first_arg = rest.strip().split()[0].lower() if rest.strip() else ""
+                    if first_arg:
+                        _bump(f"skill:{first_arg}")
+            continue
+        seen_skills: set[str] = set()
+        index = 0
+        while index < len(text):
+            index = text.find(MENTION_SIGIL, index)
+            if index == -1:
+                break
+            match = _MENTION_TOKEN.match(text, index + 1)
+            if match is not None:
+                name = match.group(0).lower()
+                if name and name not in seen_skills:
+                    seen_skills.add(name)
+                    _bump(f"skill:{name}")
+                index = index + 1 + len(match.group(0))
+                continue
+            index += 1
+    return counts
+
+
+def rank_suggestions_by_usage(
+    suggestions: list[CommandSuggestion],
+    usage_counts: Mapping[str, int],
+) -> list[CommandSuggestion]:
+    """Rank a prefix-filtered suggestion set most-used first.
+
+    Ordering contract (TASK-18921 AC#1/#3):
+
+    * With no usage data for ANY row in the set — empty counts, or counts
+      that cover none of the set's keys — the input order is returned
+      unchanged: first-run behavior is byte-identical to today's registry /
+      resolver ordering.
+    * Otherwise rows sort by descending count, tie-broken alphabetically by
+      label (then insert text) so the order is fully deterministic in
+      tests. Zero-count rows keep participating under the same tie-break.
+
+    Matching and filtering are untouched: this runs on the already-filtered
+    list and never adds, drops, or re-matches rows.
+    """
+    if not usage_counts:
+        return list(suggestions)
+    keyed = [(suggestion_usage_key(suggestion), suggestion) for suggestion in suggestions]
+    if not any(
+        key is not None and usage_counts.get(key, 0) > 0 for key, _ in keyed
+    ):
+        return list(suggestions)
+
+    def _sort_key(item: tuple[str | None, CommandSuggestion]):
+        key, suggestion = item
+        count = usage_counts.get(key, 0) if key is not None else 0
+        return (-count, suggestion.label.lower(), suggestion.label, suggestion.insert_text)
+
+    return [suggestion for _, suggestion in sorted(keyed, key=_sort_key)]

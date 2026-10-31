@@ -1,0 +1,14 @@
+"""Run one original node using the existing collection-time profile fixture."""
+
+import sys
+
+import pytest
+
+
+class SelectedBootstrapProfile:
+    def pytest_collection_modifyitems(self, items):
+        assert len(items) == 1
+        items[0].add_marker(pytest.mark.bootstrap_profile)
+
+
+raise SystemExit(pytest.main(sys.argv[1:], plugins=[SelectedBootstrapProfile()]))

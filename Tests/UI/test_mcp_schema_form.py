@@ -311,7 +311,10 @@ def test_parse_schema_unwraps_pydantic_optional_anyof_null():
         "type": "object",
         "properties": {
             "technique_id": {"type": "string"},
-            "limit": {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": None},
+            "limit": {
+                "anyOf": [{"type": "integer"}, {"type": "null"}],
+                "default": None,
+            },
             "status": {"anyOf": [{"enum": ["open", "done"]}, {"type": "null"}]},
         },
     }
@@ -319,7 +322,10 @@ def test_parse_schema_unwraps_pydantic_optional_anyof_null():
     assert fields is not None
     by_name = {f.name: f for f in fields}
     assert by_name["limit"].kind == "integer" and by_name["limit"].required is False
-    assert by_name["status"].kind == "enum" and by_name["status"].choices == ("open", "done")
+    assert by_name["status"].kind == "enum" and by_name["status"].choices == (
+        "open",
+        "done",
+    )
 
 
 def test_parse_schema_unwraps_type_array_nullable():
@@ -329,7 +335,11 @@ def test_parse_schema_unwraps_type_array_nullable():
         "properties": {"note": {"type": ["string", "null"]}},
     }
     fields = parse_schema(schema)
-    assert fields is not None and fields[0].kind == "string" and fields[0].required is False
+    assert (
+        fields is not None
+        and fields[0].kind == "string"
+        and fields[0].required is False
+    )
 
 
 def test_parse_schema_still_raw_for_genuine_multitype_union():
@@ -450,9 +460,7 @@ def test_parse_schema_still_rejects_array_of_enum_items():
     comma-split Input either -- same honesty rule as array-of-objects."""
     nested = {
         "type": "object",
-        "properties": {
-            "modes": {"type": "array", "items": {"enum": ["fast", "slow"]}}
-        },
+        "properties": {"modes": {"type": "array", "items": {"enum": ["fast", "slow"]}}},
         "required": [],
     }
     assert parse_schema(nested) is None
@@ -609,9 +617,7 @@ class StyledSchemaFormApp(ConsolidatedCSSApp):
 
 
 def _painted(checkbox: Checkbox) -> str:
-    return "\n".join(
-        checkbox.render_line(y).text for y in range(checkbox.size.height)
-    )
+    return "\n".join(checkbox.render_line(y).text for y in range(checkbox.size.height))
 
 
 @pytest.mark.asyncio

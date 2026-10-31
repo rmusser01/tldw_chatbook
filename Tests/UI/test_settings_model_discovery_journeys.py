@@ -3,8 +3,9 @@
 import asyncio
 
 import pytest
-from textual.widgets import Button, Input, Select, SelectionList, Static
+from textual.widgets import Button, Input, OptionList, Select, SelectionList, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_settings_configuration_hub import (
     FakeSettingsModelDiscoveryScope,
@@ -19,6 +20,7 @@ from Tests.UI.test_settings_provider_keyboard_journeys import (
     _settle,
     _tab_to,
 )
+from tldw_chatbook.config import get_cli_providers_and_models
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
 MODELS = ("model-alpha", "model-beta")
@@ -93,6 +95,17 @@ async def _open(host, pilot):
     return host.screen
 
 
+async def _open_saved_model_list(host, pilot):
+    """Open Advanced ▸ Saved model list from its title, as a keyboard user does.
+
+    TASK-33007.6, rewritten on purpose: Discover, Save selected, Clear and the
+    discovered list sit in that closed one-row disclosure.
+    """
+    await _tab_to(host, pilot, "#settings-advanced-saved-models CollapsibleTitle")
+    await pilot.press("enter")
+    await _settle(host, pilot)
+
+
 def _list(screen):
     return screen.query_one("#settings-discovered-models-list", SelectionList)
 
@@ -101,21 +114,43 @@ def _status(screen):
     return str(screen.query_one("#settings-model-discovery-status", Static).renderable)
 
 
+async def _picker_rows(host, pilot, screen) -> list[str]:
+    """TASK-33007.3: the rows the Default model picker lists when it opens."""
+    field = screen.query_one("#model-search-picker-input", Input)
+    field.focus()
+    await _settle(host, pilot)
+    results = screen.query_one("#model-search-picker-results", OptionList)
+    rows = [
+        str(results.get_option_at_index(index).prompt)
+        for index in range(results.option_count)
+    ]
+    screen.set_focus(None)
+    await _settle(host, pilot)
+    return rows
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
-async def test_discovery_keyboard_selection_survives_rebuild_and_save(theme, size):
+@private_profile_test
+async def test_discovery_keyboard_selection_survives_rebuild_and_save(
+    request, theme, size
+):
     app, scope = _app_scope()
     host = ProviderSettingsHarness(app, "settings")
     host.theme = theme
     async with host.run_test(size=size) as pilot:
         screen = await _open(host, pilot)
+        # TASK-33007.6, rewritten on purpose: it stays open across the rebuild.
+        await _open_saved_model_list(host, pilot)
         await _tab_to(host, pilot, "#settings-discover-provider-models")
         await pilot.press("enter")
         await _settle(host, pilot)
         assert _list(screen).option_count == 2
         assert not _list(screen).selected
         assert not scope.persist_calls
+        # TASK-33007.3: the listing is offered in the Default model picker.
+        assert {"Served now", *MODELS} <= set(await _picker_rows(host, pilot, screen))
         await _tab_to(host, pilot, "#settings-discovered-models-list")
         await pilot.press("home", "down", "space")
         await _settle(host, pilot)
@@ -131,17 +166,27 @@ async def test_discovery_keyboard_selection_survives_rebuild_and_save(theme, siz
         assert scope.persist_calls == [
             {"mode": "local", "provider": "openai", "model_ids": [MODELS[1]]}
         ]
-        assert app.providers_models == {"OpenAI": [MODELS[1]], "llama_cpp": []}
+        # TASK-35010, rewritten on purpose: the saved lists follow the file
+        # after Save selected; this fake persist writes nothing to it.
+        assert app.providers_models == get_cli_providers_and_models()
         assert screen.query_one("#settings-model-value", Input).value == MODELS[1]
         assert screen._category_has_unsaved_changes(CATEGORY)
         assert app.app_config["chat_defaults"]["model"] == ""
-        assert "Saved 1" in _status(screen)
+        # TASK-35011 (C4 residual), rewritten on purpose: Add to model list's
+        # receipt names the model added, and that s still saves the default
+        # it filled.
+        assert _status(screen) == (
+            f"Added {MODELS[1]} to OpenAI's model list. Default model is now "
+            f"{MODELS[1]}; press s to save it."
+        )
         await _tab_to(host, pilot, "#settings-clear-discovered-provider-models")
         await pilot.press("enter")
         await _settle(host, pilot)
         assert _list(screen).option_count == 0
-        assert screen.query_one("#settings-model-value", Input).suggester is None
-        assert app.providers_models["OpenAI"] == [MODELS[1]]
+        # TASK-33007.3, rewritten on purpose: the typeahead is gone; Clear
+        # drops the unsaved discovered id from the Default model picker.
+        assert MODELS[0] not in await _picker_rows(host, pilot, screen)
+        assert app.providers_models == get_cli_providers_and_models()
         assert "cleared" in _status(screen)
 
 
@@ -194,8 +239,9 @@ async def test_late_discovery_cannot_publish_into_a_changed_form(change, failure
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [False, True])
 @pytest.mark.parametrize("change", ["provider", "endpoint_roundtrip"])
+@private_profile_test
 async def test_late_save_keeps_receipt_and_activation_out_of_a_changed_form(
-    failure, change
+    request, failure, change
 ):
     app, scope = _app_scope(gate="save")
     host = ProviderSettingsHarness(app, "settings")
@@ -224,13 +270,19 @@ async def test_late_save_keeps_receipt_and_activation_out_of_a_changed_form(
         await _settle(host, pilot)
         assert screen.query_one("#settings-model-value", Input).value == expected_model
         assert _status(screen) == expected_status
-        assert app.providers_models["OpenAI"] == ([] if failure else [MODELS[1]])
-        assert app.providers_models["llama_cpp"] == []
+        # TASK-35010, rewritten on purpose: a save that landed re-reads the
+        # file (the fake wrote nothing); a failed one leaves the lists alone.
+        assert app.providers_models == (
+            {"OpenAI": [], "llama_cpp": []}
+            if failure
+            else get_cli_providers_and_models()
+        )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["discover", "save", "clear"])
-async def test_discovery_operations_report_failure_and_allow_retry(operation):
+@private_profile_test
+async def test_discovery_operations_report_failure_and_allow_retry(request, operation):
     app, scope = _app_scope(model="existing-active-model")
     host = ProviderSettingsHarness(app, "settings")
     async with host.run_test(size=(80, 24)) as pilot:
@@ -262,10 +314,13 @@ async def test_discovery_operations_report_failure_and_allow_retry(operation):
             == "existing-active-model"
         )
         if operation == "save":
-            assert app.providers_models["OpenAI"] == [MODELS[1]]
+            # TASK-35010, rewritten on purpose: the lists follow the file.
+            assert app.providers_models == get_cli_providers_and_models()
         elif operation == "clear":
             assert _list(screen).option_count == 0
-            assert screen.query_one("#settings-model-value", Input).suggester is None
+            # TASK-33007.3, rewritten on purpose: no typeahead; the cleared
+            # unsaved id is gone from the Default model picker.
+            assert MODELS[0] not in await _picker_rows(host, pilot, screen)
         else:
             assert _list(screen).option_count == 2
         assert app.app_config["chat_defaults"]["model"] == "existing-active-model"
@@ -350,6 +405,7 @@ async def test_discovered_models_highlight_is_a_readable_bar(theme):
     host.theme = theme
     async with host.run_test(size=(211, 44)) as pilot:
         screen = await _open(host, pilot)
+        await _open_saved_model_list(host, pilot)
         await _tab_to(host, pilot, "#settings-discover-provider-models")
         await pilot.press("enter")
         await _settle(host, pilot)

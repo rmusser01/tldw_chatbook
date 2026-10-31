@@ -29,6 +29,7 @@ be re-examined.
 Usage:
     .venv/bin/python Tests/Chunking/generate_auto_planner_parity_fixtures.py
 """
+
 from __future__ import annotations
 
 import json

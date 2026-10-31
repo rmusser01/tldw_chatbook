@@ -51,7 +51,9 @@ from tldw_chatbook.Third_Party.textual_fspicker.base_dialog import Dialog, Input
 from tldw_chatbook.Third_Party.textual_fspicker.file_dialog import FileFilter
 from tldw_chatbook.Third_Party.textual_fspicker.parts import DirectoryNavigation
 
-_BUNDLED_STYLESHEET = Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+_BUNDLED_STYLESHEET = (
+    Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+)
 
 
 def _export_filters() -> Filters:
@@ -301,9 +303,7 @@ async def test_file_picker_success_results_remain_paths(
         await _wait_for_picker_result(app, pilot)
 
     expected = (
-        [tmp_path]
-        if dialog_type is SelectDirectory
-        else [tmp_path / "chosen.json"]
+        [tmp_path] if dialog_type is SelectDirectory else [tmp_path / "chosen.json"]
     )
     assert app.results == expected
     assert isinstance(app.results[0], Path)

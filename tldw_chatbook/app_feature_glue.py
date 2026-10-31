@@ -592,16 +592,14 @@ class FeatureGlueMixin:
             if refreshed:
                 self.post_message(ModelCatalogRefreshed(providers=refreshed))
             message = format_refresh_notification(report)
-            if message:
-                has_failure = report.disk_write_failed or any(
-                    outcome.status == "failed" or outcome.write_failed
-                    for outcome in report.outcomes
-                )
-                self.notify(
-                    message,
-                    title="Model catalog",
-                    severity="warning" if has_failure else "information",
-                )
+            has_failure = report.disk_write_failed or any(
+                outcome.status == "failed" or outcome.write_failed
+                for outcome in report.outcomes
+            )
+            # TASK-34100.5 AC#11: the pass setup released is news only if it failed.
+            if message and (has_failure or not getattr(self, "_model_catalog_notice_quiet", False)):
+                severity = "warning" if has_failure else "information"
+                self.notify(message, title="Model catalog", severity=severity)
         except Exception as exc:
             # No traceback: the log file sink runs with diagnose=True, which
             # would dump frame locals (potentially API keys) into the log file.
@@ -657,6 +655,7 @@ class FeatureGlueMixin:
             return True
 
         self._startup_model_catalog_refresh_scheduled = True
+        self._model_catalog_notice_quiet = after_setup_completion
         self.run_worker(
             self._refresh_model_catalogs,
             exclusive=True,
@@ -735,6 +734,7 @@ class FeatureGlueMixin:
         exclusive group, so the two paths can never run concurrently.
         """
         self._startup_model_catalog_refresh_scheduled = True
+        self._model_catalog_notice_quiet = True  # setup's own choice (AC#11)
         self.run_worker(
             self._refresh_model_catalogs,
             exclusive=True,

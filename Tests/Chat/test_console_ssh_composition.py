@@ -321,7 +321,7 @@ def test_blocked_remote_and_local_ready_composes_local_only(tmp_path, monkeypatc
 
     # The context note tells the model the remote binding was excluded.
     note = workspace_context_note(
-        "ws", registry=registry, launch_cwd=tmp_path, status_cache=cache
+        "ws", registry=registry, status_cache=cache
     )
     assert "remote binding unreachable — excluded this run" in note
     assert "ssh-b1" in note

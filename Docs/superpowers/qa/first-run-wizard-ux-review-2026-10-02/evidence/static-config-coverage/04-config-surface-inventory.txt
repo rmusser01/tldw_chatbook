@@ -1,0 +1,74 @@
+# Shipped CONFIG_TOML_CONTENT (config.py:3879-6420): top-level tables and leaf-key counts
+  config_schema_version        1
+  general                      7
+  console                     53
+  console_ssh                  7
+  hooks                        1
+  skills                       0
+  tamagotchi                   1
+  appearance                   7
+  acp                          7
+  tldw_api                     2
+  library                     21
+  caching                      3
+  agents                       0
+  splash_screen               10
+  logging                      4
+  metrics                      3
+  database                    13
+  webhooks                     5
+  scheduling                  12
+  media_cleanup                6
+  api_endpoints               11
+  providers                   61
+  model_catalog                6
+  api_settings               516
+  chat_defaults               15
+  chat                        12
+  web_security                 2
+  network                      1
+  image_generation            53
+  character_defaults           7
+  analysis_defaults           12
+  permission_summary           6
+  llm_management               1
+  llamacpp_snapshots           2
+  notes                        6
+  Prompts                      4
+  prompts                      9
+  embedding_config            70
+  rag_citations                1
+  rag                         48
+  rag_search                   4
+  chunking                     1
+  model_capabilities          38
+  tools                        0
+  SearchSettings               0
+  webfetch                     0
+  SearchEngines               21
+  media_processing             5
+  meetings                    18
+  dictation                    2
+  transcription               18
+  diarization                 16
+  local_ingestion              9
+  mcp                         22
+  subscriptions               38
+  github                      20
+  briefings_feed_server        2
+  canvas                       2
+  web_server                  12
+TOTAL top-level tables: 59; TOTAL leaf keys: 1234
+
+# Sections the wizard is ALLOWED to write (first_run_setup_state.WIZARD_OWNED_SECTIONS + api_settings.*):
+   chat_defaults
+   embedding_config
+   first_run
+   general
+   model_catalog
+   notes
+   provider_setup.confirmed
+   splash_screen
+   tools
+   transcription
+  plus [api_settings.<provider>] via provider_setup_persistence, [app_tts] via STTSSettingsSaveEvent (Voice), encryption via enable_config_encryption (Protect)

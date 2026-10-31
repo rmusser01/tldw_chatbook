@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence
 
 from loguru import logger
 
+from ...Chat.console_session_settings import owns_chat_defaults_model
 from ...Chat.provider_readiness import provider_config_key
 from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
@@ -17,8 +18,11 @@ from ...LLM_Provider_Catalog.model_catalog_settings import (
 from ...LLM_Provider_Catalog.model_discovery_contracts import MergedModelEntry
 
 
+#: TASK-35011 (C-M2): saving never resolves capabilities, so the line no
+#: longer says it does. Settings' discovery card and Console's Chat settings
+#: readiness detail both show it.
 MODEL_CAPABILITY_UNKNOWN_WARNING = (
-    "Capabilities unknown until saved or verified; text chat is assumed."
+    "Capabilities unknown for models no catalog lists; text chat is assumed."
 )
 _ENDPOINT_CATALOG_SOURCES = {"persisted_discovered", "runtime_discovered"}
 _ENDPOINT_AUTHORITATIVE_PROVIDER_KEYS = {
@@ -294,9 +298,8 @@ async def resolve_provider_model_options(
         ordered_entries.append(entry)
         merged_by_model_id.pop(model_id, None)
     merged_entries = tuple(ordered_entries)
-    has_endpoint_catalog = (
-        provider_key in _ENDPOINT_AUTHORITATIVE_PROVIDER_KEYS
-        and (snapshot_present is True or has_endpoint_entries)
+    has_endpoint_catalog = provider_key in _ENDPOINT_AUTHORITATIVE_PROVIDER_KEYS and (
+        snapshot_present is True or has_endpoint_entries
     )
     endpoint_entries = tuple(
         entry
@@ -355,6 +358,8 @@ def resolve_effective_provider_model(
 
     Settings drafts win because they are what the user is evaluating before save.
     Console controls win next because they are the active run surface.
+    ``chat_defaults.model`` is the fallback only for ``chat_defaults.provider``
+    itself (ADR-006, TASK-33001.8): another provider gets no model here.
     """
     if not isinstance(persisted_defaults, Mapping):
         raise TypeError("persisted_defaults must be a mapping")
@@ -378,9 +383,11 @@ def resolve_effective_provider_model(
     elif _selected_text(console_model):
         model = console_model
         model_source = "console_session"
-    else:
+    elif owns_chat_defaults_model(provider, persisted_defaults):
         model = configured_model
         model_source = "chat_defaults"
+    else:
+        model, model_source = None, "none"
 
     return EffectiveProviderModel(
         provider=provider,

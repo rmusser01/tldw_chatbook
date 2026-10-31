@@ -1,0 +1,32 @@
+{
+  "all_production_and_shared_fixture_sources_unchanged": true,
+  "five_added_keywords": [
+    "_console_pending_send",
+    "_console_visible_draft_session_id",
+    "_console_visible_send_session_id",
+    "_ui_responsiveness_monitor",
+    "_send_console_message_from_visible_action_observed"
+  ],
+  "rows": [
+    {
+      "added_hunk_format_exact_without_owner_reflow": true,
+      "after_formatter_debt_units": 95,
+      "before_formatter_debt_units": 95,
+      "final_sha256": "b9c3ea4b8b0c35bb4501d36285b03b7b374f7a02466939451fb30fc7d93497e9",
+      "original_metadata_BASE_sha256": "55f07bda160164bd8bebe25c8378b49bdae3b787ef7305768a1e4c9a746cd999",
+      "original_namespace_keys_signatures_bodies_assertions_waits_deadlines_imports_unowned_definitions_exact": true,
+      "path": "Tests/UI/test_console_ask_user_typed_answers.py",
+      "reverse_selected_keywords_and_marker_exact_entire_owner_bytes_and_AST": true
+    },
+    {
+      "added_hunk_format_exact_without_owner_reflow": true,
+      "after_formatter_debt_units": 0,
+      "before_formatter_debt_units": 0,
+      "final_sha256": "a8378c3d429769052198a44c6f9615ac2aeeb9a414deea7ce1013402334975ce",
+      "original_metadata_BASE_sha256": "97f66aae0e241f26eaeea5debd5ae007f85f7362c1a04de7e6c28fab5ab7c9c3",
+      "original_namespace_keys_signatures_bodies_assertions_waits_deadlines_imports_unowned_definitions_exact": true,
+      "path": "Tests/UI/test_personas_workbench.py",
+      "reverse_selected_keywords_and_marker_exact_entire_owner_bytes_and_AST": true
+    }
+  ]
+}

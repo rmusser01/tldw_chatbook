@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-B",
+    "-m",
+    "ruff",
+    "format",
+    "--range",
+    "3130-3170",
+    "Tests/UI/test_console_runtime_ownership.py"
+  ],
+  "returncode": 0,
+  "output": "1 file reformatted\n",
+  "before_sha256": "97fa4eae0fba60c7de03c0dd31b215f13d872a78ed88c674487adf61ecb56a2e",
+  "after_sha256": "5ae9eb10b422574181744d277a2b80a34d94e6aaa53671e0148b2b1157ea032a",
+  "ast_equal": true
+}

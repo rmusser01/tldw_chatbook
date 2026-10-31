@@ -213,7 +213,7 @@ def test_cache_marker_falls_back_to_5m_on_unsupported_or_junk():
             assert _cache_control_marker("claude-opus-5") == {"type": "ephemeral"}
 
 
-@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_pooled_default_session")
 def test_1h_ttl_flows_into_the_payload_and_adds_the_beta_header(mock_session):
     posted = {}
 
@@ -251,7 +251,7 @@ def test_1h_ttl_flows_into_the_payload_and_adds_the_beta_header(mock_session):
     assert "extended-cache-ttl" in beta, "1h markers require the beta opt-in header"
 
 
-@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_pooled_default_session")
 def test_5m_default_adds_no_beta_header(mock_session):
     posted = {}
 
@@ -303,7 +303,7 @@ def test_openai_cache_key_is_a_stable_digest_of_the_prefix():
     assert len(key1) <= 64
 
 
-@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_owned_default_session")
 def test_openai_cache_key_flows_into_payload_when_enabled(mock_session):
     posted = {}
 
@@ -337,7 +337,7 @@ def test_openai_cache_key_flows_into_payload_when_enabled(mock_session):
     assert "stable prefix" not in posted["json"]["prompt_cache_key"]
 
 
-@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_owned_default_session")
 def test_openai_cache_key_absent_by_default(mock_session):
     posted = {}
 
@@ -366,7 +366,7 @@ def test_openai_cache_key_absent_by_default(mock_session):
     assert "prompt_cache_key" not in posted["json"], "AC#6: off by default"
 
 
-@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_owned_default_session")
 def test_openai_cache_key_skipped_for_custom_base_url(mock_session):
     """Review finding 1: a strict OpenAI-compatible server (custom base_url)
     can 400 on an unknown body field and there is no degrade path, so the

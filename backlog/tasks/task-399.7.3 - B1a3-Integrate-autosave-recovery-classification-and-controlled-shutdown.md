@@ -1,9 +1,10 @@
 ---
 id: TASK-399.7.3
 title: B1a3 Integrate autosave recovery classification and controlled shutdown
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-07-23 15:36'
+updated_date: '2026-10-04'
 labels:
   - notes
   - filesystem
@@ -36,3 +37,16 @@ Integrate journaled save with editor persistence, deterministic interrupted-oper
 - [ ] #7 Fault tests cover editor navigation, Library reconstruction, process termination boundaries, recovery corruption or low space, and startup classification while Database Notes remains usable.
 - [ ] #8 This child exposes no writable control or read/write mode transition.
 <!-- AC:END -->
+
+## Closeout 2026-10-04
+
+Closed superseded, not implemented as written. Autosave states, draft
+durability, and reload/compare flows landed in the workbench
+(`tldw_chatbook/Widgets/Library/library_file_notes_workspace.py`; TASK-969,
+PR #992), but the deterministic interrupted-operation recovery classifier,
+recovery-only enumerate/verify/export access, and the app-owned
+controlled-shutdown barrier are ADR-021 machinery that ADR-029 rejected and
+that was never built. The genuine controlled-shutdown concern lives on in
+TASK-19561.
+
+Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).

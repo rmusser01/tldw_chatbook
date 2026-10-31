@@ -976,7 +976,7 @@ leader, retained grandchildren, cancellation during launch/publication and
 refused kill/settlement. Deliberately escaped descendants are outside the group
 guarantee. R47 refuses Windows v2 commands before launch, root reservation or environment
 access, with a fixed `unsupported_platform` outcome and released host reservation.
-Linux POSIX behavior remains explicitly unqualified until its own controls run.
+Linux POSIX behavior was unqualified at H2; the later controlled Linux qualification is recorded in ADR-163 (TASK-37204, 2026-10-28).
 Future Windows support requires a qualified whole-tree terminal-proof backend
 and real controls; legacy hooks remain unchanged. H6/M4 must likewise supply typed MCP outcomes and exact remote/local
 ownership; this command foundation does not infer them.

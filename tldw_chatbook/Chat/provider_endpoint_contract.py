@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import lru_cache
 from ipaddress import ip_address
 from typing import Literal
 from unicodedata import category
@@ -30,6 +31,8 @@ URL_BASED_PROVIDER_KEYS = frozenset(
         "custom_2",
         "koboldcpp",
         "llama_cpp",
+        "strata",
+        "polystrata",
         "local_llamacpp",
         "local_llamafile",
         "local_ollama",
@@ -86,6 +89,10 @@ _UNRESERVED_ASCII = frozenset(
 )
 _MAX_PROVIDER_LENGTH = 128
 _MAX_ENDPOINT_LENGTH = 4096
+#: KoboldAI's native generate route, koboldcpp's template endpoint. It lists
+#: nothing itself; koboldcpp serves its OpenAI-compatible ``/v1/models`` at
+#: the same root (TASK-35010, owner ruling 2026-10-20).
+_KOBOLD_NATIVE_GENERATE = ("api", "v1", "generate")
 _SUFFIXES: tuple[tuple[tuple[str, ...], EndpointForm], ...] = (
     (("v1", "chat", "completions"), "chat_url"),
     (("v1", "models"), "models_url"),
@@ -144,8 +151,31 @@ def connection_probe_availability(
 def resolve_provider_endpoint(
     provider: str, value: object
 ) -> ProviderEndpointResolution:
-    """Interpret one endpoint value without reading config or performing I/O."""
+    """Interpret one endpoint value without reading config or performing I/O.
 
+    TASK-33005.10: memoized. With shared evidence present, every Console
+    readiness build keys its connection, which parsed the endpoint three more
+    times: a warm build went from 10 to 34 us (llama.cpp) and 25 to 53 us
+    (OpenAI), on a path TASK-18909 counted ~400 builds per warm switch. With
+    the memo it is 15 and 31 us. The result is a frozen pure function of two
+    strings. A value that could carry a secret (user info, a query, a
+    fragment) is refused anyway and never kept as a cache key.
+    """
+
+    if (
+        type(provider) is str
+        and type(value) is str
+        and "@" not in value
+        and "?" not in value
+        and "#" not in value
+    ):
+        return _memoized_resolution(provider, value)
+    return _resolve_provider_endpoint(provider, value)
+
+
+def _resolve_provider_endpoint(
+    provider: str, value: object
+) -> ProviderEndpointResolution:
     if not isinstance(provider, str) or len(provider) > _MAX_PROVIDER_LENGTH:
         return _invalid_resolution("", "Provider name is invalid or too long.")
     provider_key = normalize_provider_key_for_contract(provider)
@@ -240,9 +270,14 @@ def resolve_provider_endpoint(
             preset, provider_key, scheme, netloc, canonical_host, segments
         )
 
+    native = _is_kobold_native_generate(provider_key, segments)
     suffix = _terminal_suffix(
-        segments, allow_legacy_local=provider_key in _LLAMA_PROVIDER_KEYS
+        segments[:-3] if native else segments,
+        allow_legacy_local=provider_key in _LLAMA_PROVIDER_KEYS,
     )
+    if native:
+        # Only from a plain root: an API suffix before the route is ambiguous.
+        suffix = (suffix[0], "chat_url") if suffix and suffix[1] == "origin" else None
     if suffix is None:
         return _invalid_resolution(
             provider_key, "Endpoint path has ambiguous API suffixes."
@@ -253,7 +288,8 @@ def resolve_provider_endpoint(
     root = urlunsplit((scheme, netloc, prefix_path, "", ""))
     normalized_path = f"/{'/'.join(segments)}" if segments else ""
     normalized_input = urlunsplit((scheme, netloc, normalized_path, "", ""))
-    chat_url = f"{root}/v1/chat/completions"
+    # A koboldcpp native endpoint is the URL its send posts to: kept whole.
+    chat_url = normalized_input if native else f"{root}/v1/chat/completions"
     models_url = f"{root}/v1/models"
     persisted_endpoint = root if provider_key in _LLAMA_PROVIDER_KEYS else chat_url
     warnings = (
@@ -339,6 +375,34 @@ def _engine_preset_resolution(
             else ()
         ),
     )
+
+
+#: ponytail: 256 entries bounds it; the strings are endpoints, short and few.
+_memoized_resolution = lru_cache(maxsize=256)(_resolve_provider_endpoint)
+
+
+def is_native_generate_route(resolution: ProviderEndpointResolution) -> bool:
+    """Return whether an endpoint resolved as koboldcpp's native generate route.
+
+    Its send URL is the route itself and it lists at its root's
+    ``/v1/models`` (TASK-35010). Model discovery asks here, so Settings and
+    Switch model read the route one way (TASK-35832).
+
+    Args:
+        resolution: A result of :func:`resolve_provider_endpoint`.
+
+    Returns:
+        True only for a valid resolution of that route.
+    """
+    path = urlsplit(resolution.normalized_input).path
+    return not resolution.errors and _is_kobold_native_generate(
+        resolution.provider_key,
+        tuple(segment for segment in path.split("/") if segment),
+    )
+
+
+def _is_kobold_native_generate(provider_key: str, segments: tuple[str, ...]) -> bool:
+    return provider_key == "koboldcpp" and segments[-3:] == _KOBOLD_NATIVE_GENERATE
 
 
 def canonical_connection_identity(

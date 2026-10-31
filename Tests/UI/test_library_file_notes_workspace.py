@@ -1259,7 +1259,6 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
     await workspace.shutdown()
 
 
-
 @pytest.mark.asyncio
 async def test_folder_files_routes_rail_descendants_to_visible_authority(
     tmp_path: Path,
@@ -2453,9 +2452,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
             "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
         )
 
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         assert shell.effective_layout.library_open is True
         assert writes == []
 
@@ -2508,8 +2505,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._notes_state.work_session_phase
-                is NotesWorkSessionPhase.INACTIVE
+                screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
             ),
             message="Explicit Folder identity clear did not reset work session",
         )
@@ -2533,8 +2529,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._notes_state.work_session_phase
-                is NotesWorkSessionPhase.INACTIVE
+                screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
             ),
             message="Admitted Folder root change did not reset work session",
         )
@@ -2569,9 +2564,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
         await screen._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE)
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         assert screen._notes_state.source == "database"
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         assert writes == []
 
         screen.query_one("#library-notes-create-blank", Button).press()
@@ -2591,9 +2584,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
             lambda: screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA,
             message="Deep link did not leave Notes",
         )
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         assert writes == []
 
     await workspace.shutdown()
@@ -2649,9 +2640,7 @@ async def test_notes_authority_round_trip_resets_only_transient_work_session(
             lambda: workspace.initialized and workspace.is_mounted,
             "Folder Files did not mount",
         )
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         assert await workspace.open_path("file.md")
         folder_editor = workspace.query_one("#file-notes-editor", TextArea)
         await _wait_for_condition(
@@ -2668,9 +2657,7 @@ async def test_notes_authority_round_trip_resets_only_transient_work_session(
             lambda: screen._notes_state.source == "database",
             message="Database Notes did not return",
         )
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         assert screen._notes_state.selected_note_id == database_id
         assert screen.query_one("#library-note-body", TextArea) is database_editor
         assert screen._notes_state.reader_preferences == database_preferences
@@ -2682,9 +2669,7 @@ async def test_notes_authority_round_trip_resets_only_transient_work_session(
             lambda: screen._notes_state.source == "files",
             message="Folder Files did not return",
         )
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         assert workspace.current_path == "file.md"
         assert workspace.query_one("#file-notes-editor", TextArea) is folder_editor
         assert screen._notes_state.reader_preferences == database_preferences
@@ -2706,9 +2691,7 @@ async def test_notes_authority_round_trip_resets_only_transient_work_session(
             message="Search destination did not open",
         )
         assert screen._notes_state.source == "files"
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
 
         await screen._open_library_item_by_id("notes", database_id)
         await _wait_for_condition(
@@ -3063,9 +3046,7 @@ def test_header_never_says_git_for_a_non_repository_with_changes() -> None:
         repository_confirmed=False,
     )
 
-    assert channels.authority_git == (
-        "Folder files · Folder: vault · 1 session change"
-    )
+    assert channels.authority_git == ("Folder files · Folder: vault · 1 session change")
     assert "Git" not in channels.authority_git
     plural = resolve_file_note_status_channels(
         root="/notes/vault",
@@ -6713,8 +6694,7 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
             assert database.display is True
             assert files.display is True
             assert (
-                screen.query_one("#library-notes-task-return", Button).display
-                is False
+                screen.query_one("#library-notes-task-return", Button).display is False
             )
             for _ in range(240):
                 if database.has_focus:

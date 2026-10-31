@@ -41,6 +41,7 @@ from ..Library.library_rag_answer_service import (
     ANSWER_STATUS_READY,
     LibraryRagAnswer,
     generate_library_rag_answer,
+    resolve_library_rag_answer_model,
     resolve_library_rag_answer_provider,
 )
 from ..Library.library_rag_score_kinds import library_rag_similarity_input
@@ -118,7 +119,10 @@ def resolve_execution_target(definition_row: dict) -> dict:
     layer falls through to the next one, it never wins by being present):
     definition `input.provider`/`input.model`/`input.max_tokens`, then
     `[scheduling] executor_provider`/`executor_model`/`executor_max_tokens`,
-    then `resolve_library_rag_answer_provider()` for provider/model (there
+    then -- only when NO layer named a provider -- the pair from
+    `resolve_library_rag_answer_provider()`; a provider named without a
+    model takes that provider's OWN remembered model
+    (`resolve_library_rag_answer_model`), never another provider's (there
     is no config-default fallback for `max_tokens`). `max_tokens` defaults
     to `_DEFAULT_MAX_TOKENS` when nothing resolves one, and is always capped
     at `_MAX_TOKENS_CAP`.
@@ -149,12 +153,18 @@ def resolve_execution_target(definition_row: dict) -> dict:
             get_cli_setting("scheduling", "executor_max_tokens", None)
         )
 
-    if provider is None or model is None:
-        fallback_provider, fallback_model = resolve_library_rag_answer_provider()
-        if provider is None:
-            provider = fallback_provider
+    # TASK-34000.21 review round 1: the fallback PAIR is adopted only when no
+    # higher layer named a provider. Once one did, a missing model is THAT
+    # provider's own remembered model -- never the chat-defaults model of a
+    # different provider, which is what `if model is None: model =
+    # fallback_model` quietly became once the Library resolver started
+    # returning a real model (anthropic + gpt-4.1-mini, unattended).
+    if provider is None:
+        provider, fallback_model = resolve_library_rag_answer_provider()
         if model is None:
             model = fallback_model
+    elif model is None:
+        model = resolve_library_rag_answer_model(provider)
 
     if max_tokens is None:
         max_tokens = _DEFAULT_MAX_TOKENS

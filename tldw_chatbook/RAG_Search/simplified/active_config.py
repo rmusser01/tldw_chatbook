@@ -6,6 +6,7 @@ and the ingestion path (get_shared_rag_service) route through it, so ingestion
 and search never use divergent configs for the same active profile.
 See Docs/superpowers/specs/2026-07-21-rag-profile-system-design.md §5.
 """
+
 from __future__ import annotations
 
 import copy
@@ -15,10 +16,17 @@ from typing import Optional, Union
 
 from loguru import logger
 
-from tldw_chatbook.Backup_Recovery.rag_definition_participant import definition_operation
+from tldw_chatbook.Backup_Recovery.rag_definition_participant import (
+    definition_operation,
+)
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
-from .config import RAGConfig, _normalized_type_setting, validate_chroma_persist_directory
+from .config import (
+    RAGConfig,
+    _normalized_type_setting,
+    validate_chroma_persist_directory,
+)
+
 # task-21160: config_profiles imported at use-sites (and TYPE_CHECKING for the
 # annotation) -- the module-level import was one edge of the
 # config_profiles<->simplified circular-import cycle (see
@@ -29,6 +37,7 @@ if TYPE_CHECKING:
     from ..config_profiles import ProfileConfig
 from ..ingestion_indexing import reset_shared_rag_service
 from ..reranker import RerankingConfig
+
 # TASK-21731: the mode vocabulary + its normalizer live in the stdlib-only
 # `RAG_Search/search_modes.py` so `Library/library_local_rag_search_service`
 # (on the app's import path) can read them without executing this module's
@@ -218,9 +227,11 @@ def resolve_active_rag_search_mode() -> str:
     return normalize_rag_search_mode(os.getenv("RAG_SEARCH_MODE") or base)
 
 
-def _apply_env_overrides(config: RAGConfig,
-                         override_embedding_model: Optional[str] = None,
-                         override_persist_dir: Optional[Union[str, Path]] = None) -> RAGConfig:
+def _apply_env_overrides(
+    config: RAGConfig,
+    override_embedding_model: Optional[str] = None,
+    override_persist_dir: Optional[Union[str, Path]] = None,
+) -> RAGConfig:
     """Apply the env / explicit-arg override layer onto `config` in place.
 
     This is the SAME layer RAGConfig.from_settings applied — moved here so both
@@ -240,9 +251,15 @@ def _apply_env_overrides(config: RAGConfig,
         # and is already exception-safe (falls back to "cpu").
         try:
             import torch
-            e.device = ("cuda" if torch.cuda.is_available()
-                        else "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
-                        else "cpu")
+
+            e.device = (
+                "cuda"
+                if torch.cuda.is_available()
+                else "mps"
+                if getattr(torch.backends, "mps", None)
+                and torch.backends.mps.is_available()
+                else "cpu"
+            )
         except ImportError:
             e.device = "cpu"
     else:
@@ -250,7 +267,11 @@ def _apply_env_overrides(config: RAGConfig,
     cache = os.getenv("RAG_EMBEDDING_CACHE_SIZE")
     if cache:
         e.cache_size = int(cache)
-    e.api_key = os.getenv("OPENAI_API_KEY") or get_cli_setting("API", "openai_api_key") or e.api_key
+    e.api_key = (
+        os.getenv("OPENAI_API_KEY")
+        or get_cli_setting("API", "openai_api_key")
+        or e.api_key
+    )
     e.base_url = os.getenv("RAG_EMBEDDING_BASE_URL") or e.base_url
     persist = override_persist_dir or os.getenv("RAG_PERSIST_DIR")
     if persist:
@@ -263,7 +284,9 @@ def _apply_env_overrides(config: RAGConfig,
         # SharedSystemClient per-path client cache one hop earlier than the
         # task-482 fix closed it at. See validate_chroma_persist_directory's
         # docstring.
-        config.vector_store.persist_directory = validate_chroma_persist_directory(persist)
+        config.vector_store.persist_directory = validate_chroma_persist_directory(
+            persist
+        )
     # vector_store.type: resolve_active_rag_config() deep-copies an already-
     # constructed profile's RAGConfig (copy.deepcopy does NOT re-run
     # VectorStoreConfig.__post_init__), so RAG_VECTOR_STORE must be applied
@@ -290,13 +313,17 @@ def _apply_env_overrides(config: RAGConfig,
     )
 
     # Pipeline overrides
-    config.pipeline.default_pipeline = os.getenv("RAG_DEFAULT_PIPELINE") or config.pipeline.default_pipeline
+    config.pipeline.default_pipeline = (
+        os.getenv("RAG_DEFAULT_PIPELINE") or config.pipeline.default_pipeline
+    )
 
     return config
 
 
-def resolve_active_rag_config(override_embedding_model: Optional[str] = None,
-                              override_persist_dir: Optional[Union[str, Path]] = None) -> RAGConfig:
+def resolve_active_rag_config(
+    override_embedding_model: Optional[str] = None,
+    override_persist_dir: Optional[Union[str, Path]] = None,
+) -> RAGConfig:
     """Resolve the single source-of-truth RAG config: active profile + env overlay.
 
     Reads the active-profile pointer, deep-copies that profile's stored
@@ -357,7 +384,11 @@ def set_active_profile(profile_id: str) -> None:
     """
     from ..config_profiles import _slugify
 
-    if not isinstance(profile_id, str) or not profile_id or profile_id != _slugify(profile_id):
+    if (
+        not isinstance(profile_id, str)
+        or not profile_id
+        or profile_id != _slugify(profile_id)
+    ):
         raise ValueError(
             f"set_active_profile: invalid profile_id {profile_id!r}; must be a "
             "non-empty, already-slugified string (see config_profiles._slugify)"
@@ -624,10 +655,14 @@ def ensure_imported_profile() -> Optional[str]:
         legacy = _merge_legacy_query_time_keys(snapshot)
         from ..config_profiles import ProfileConfig
 
-        profile = ProfileConfig(id=_IMPORTED_ID, name="Imported settings",
-                                description="Snapshot of your active RAG profile (plus any RAG_* env "
-                                            "overrides) captured on first run; edit freely.",
-                                profile_type="custom", rag_config=snapshot)
+        profile = ProfileConfig(
+            id=_IMPORTED_ID,
+            name="Imported settings",
+            description="Snapshot of your active RAG profile (plus any RAG_* env "
+            "overrides) captured on first run; edit freely.",
+            profile_type="custom",
+            rag_config=snapshot,
+        )
         if legacy.get("enable_reranking"):
             # Presence, not the mirrored search.enable_reranking flag, is
             # what actually turns reranking on for the live service (see the
@@ -650,5 +685,7 @@ def ensure_imported_profile() -> Optional[str]:
             _mark_first_run_import_done()
         return _IMPORTED_ID
     except Exception as e:
-        logger.warning(f"ensure_imported_profile: first-run import failed, continuing without it: {e}")
+        logger.warning(
+            f"ensure_imported_profile: first-run import failed, continuing without it: {e}"
+        )
         return None

@@ -1,5 +1,7 @@
+import httpx
 import pytest
 
+import tldw_chatbook.tldw_api.client as client_module
 from tldw_chatbook.Audio_Services_Interop.audio_services_scope_service import (
     AudioServicesScopeService,
 )
@@ -10,6 +12,8 @@ from tldw_chatbook.Audio_Services_Interop.server_audio_services_service import (
     ServerAudioServicesService,
 )
 from tldw_chatbook.runtime_policy import PolicyDeniedError
+from tldw_chatbook.tldw_api import TLDWAPIClient
+from tldw_chatbook.UI.destination_recovery import policy_denied_recovery_state
 
 
 class FakeAudioService:
@@ -369,6 +373,47 @@ async def test_audio_services_scope_service_reports_admin_required_for_connected
     assert warm_denial.value.reason_code == "admin_required"
     assert test_denial.value.reason_code == "admin_required"
     assert client.diagnostic_calls == ["stt_health"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("probe", ["get_stt_health", "get_audio_streaming_status"])
+@pytest.mark.parametrize("token", [None, "rejected-test-token"])
+async def test_audio_services_scope_service_reports_auth_required_for_tokenless_probes(
+    monkeypatch,
+    probe,
+    token,
+):
+    """End to end: missing or rejected credentials, a server that answers 401
+    (tldw_server#3058), and both server-mode probes report ``auth_required``."""
+    real_async_client = httpx.AsyncClient
+
+    def _with_mock_transport(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(
+            lambda request: httpx.Response(401, json={"detail": "Not authenticated"})
+        )
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", _with_mock_transport)
+    client = TLDWAPIClient("http://api.test", token=token)
+    scope = AudioServicesScopeService(
+        server_service=ServerAudioServicesService(client=client),
+    )
+
+    try:
+        with pytest.raises(PolicyDeniedError) as denial:
+            await getattr(scope, probe)(mode="server")
+    finally:
+        await client.close()
+
+    assert denial.value.reason_code == "auth_required"
+    recovery = policy_denied_recovery_state(
+        denial.value,
+        unavailable_what="Audio status",
+        stable_selector="#audio-status",
+    )
+    assert recovery.status_label == "Server sign-in required"
+    assert "credentials in Settings" in recovery.next_action
+    assert recovery.authority_owner == "server"
 
 
 @pytest.mark.asyncio

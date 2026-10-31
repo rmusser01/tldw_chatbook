@@ -17,7 +17,12 @@ def test_v8_explicit_none_migration_rolls_back_when_version_write_fails(tmp_path
         connection.execute(
             "ALTER TABLE workspace_records DROP COLUMN assistant_defaults_explicit_none"
         )
-        connection.execute("DELETE FROM schema_version WHERE version = 8")
+        for (name,) in connection.execute(
+            "SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'workspace_binding_authority_%'"
+        ).fetchall():
+            connection.execute(f'DROP TRIGGER "{name}"')
+        connection.execute("DROP TABLE workspace_binding_authority")
+        connection.execute("DELETE FROM schema_version WHERE version >= 8")
         connection.execute("""CREATE TRIGGER refuse_v8 BEFORE INSERT ON schema_version
             WHEN NEW.version = 8 BEGIN SELECT RAISE(ABORT, 'version failure'); END""")
     db.close()
@@ -39,7 +44,7 @@ def test_v8_explicit_none_migration_rolls_back_when_version_write_fails(tmp_path
         )
         connection.execute("DROP TRIGGER refuse_v8")
     upgraded = WorkspaceDB(path)
-    assert upgraded.get_schema_version() == 8
+    assert upgraded.get_schema_version() == 9
     assert (
         LocalWorkspaceRegistryService(upgraded)
         .get_workspace("prior")
@@ -388,7 +393,9 @@ def test_genuine_v2_upgrade_preserves_unrelated_rows_and_accepts_server_target(
         versions = connection.execute(
             "SELECT version FROM schema_version ORDER BY version"
         ).fetchall()
-        assert [row[0] for row in versions] == list(range(1, WorkspaceDB._CURRENT_SCHEMA_VERSION + 1))
+        assert [row[0] for row in versions] == list(
+            range(1, WorkspaceDB._CURRENT_SCHEMA_VERSION + 1)
+        )
         kept = connection.execute(
             "SELECT name, description FROM workspace_records WHERE workspace_id = ?",
             ("local-kept",),
@@ -449,6 +456,15 @@ def test_genuine_v2_upgrade_preserves_unrelated_rows_and_accepts_server_target(
 
 
 def test_workspace_v3_inline_migration_matches_packaged_sql_byte_for_byte() -> None:
+    """task-19565: the kept workspace .sql twins must stay byte-identical.
+
+    WorkspaceDB executes its class constants, not these files; the files are
+    reference copies shipped in the wheel, so each surviving twin is pinned
+    byte-for-byte (v2->v3 here; v3->v4/v4->v5/v5->v6 in their migration
+    tests). The unpinned twins (v1->v2 procedural, v6->v7, v7->v8) were
+    deleted instead -- an unpinned reference is indistinguishable from a
+    stale one.
+    """
     migration_path = (
         Path(__file__).parents[2]
         / "tldw_chatbook/DB/migrations/workspaces_v2_to_v3_research_source_operations.sql"
@@ -486,15 +502,21 @@ def test_genuine_v3_upgrade_adds_payload_free_receipts_and_drops_unverifiable_le
             "path",
             "url",
         }
-        assert connection.execute(
-            "SELECT COUNT(*) FROM workspace_memberships WHERE role = 'note_pending'"
-        ).fetchone()[0] == 0
-        assert connection.execute(
-            """
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM workspace_memberships WHERE role = 'note_pending'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                """
             SELECT role FROM workspace_memberships
             WHERE membership_id = 'legacy-pending'
             """
-        ).fetchone() is None
+            ).fetchone()
+            is None
+        )
     db.close()
 
 
@@ -505,7 +527,9 @@ def test_workspace_v4_inline_migration_matches_packaged_sql_and_rolls_back(
         Path(__file__).parents[2]
         / "tldw_chatbook/DB/migrations/workspaces_v3_to_v4_quick_note_receipts.sql"
     )
-    assert migration_path.read_text(encoding="utf-8") == WorkspaceDB._MIGRATE_V3_TO_V4_SQL
+    assert (
+        migration_path.read_text(encoding="utf-8") == WorkspaceDB._MIGRATE_V3_TO_V4_SQL
+    )
 
     path = tmp_path / "rollback-v3.sqlite"
     _create_genuine_v3_database(path)
@@ -519,13 +543,21 @@ def test_workspace_v4_inline_migration_matches_packaged_sql_and_rolls_back(
         BrokenV4WorkspaceDB(path)
 
     connection = sqlite3.connect(path)
-    assert connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 3
-    assert connection.execute(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='research_quick_note_receipts'"
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT role FROM workspace_memberships WHERE membership_id='legacy-pending'"
-    ).fetchone()[0] == "note_pending"
+    assert (
+        connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 3
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='research_quick_note_receipts'"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT role FROM workspace_memberships WHERE membership_id='legacy-pending'"
+        ).fetchone()[0]
+        == "note_pending"
+    )
     connection.close()
 
 
@@ -542,24 +574,38 @@ def test_early_branch_v4_upgrade_quarantines_only_unsafe_receipts(
         Path(__file__).parents[2]
         / "tldw_chatbook/DB/migrations/workspaces_v4_to_v5_quick_note_receipts.sql"
     )
-    assert migration_path.read_text(encoding="utf-8") == WorkspaceDB._MIGRATE_V4_TO_V5_SQL
+    assert (
+        migration_path.read_text(encoding="utf-8") == WorkspaceDB._MIGRATE_V4_TO_V5_SQL
+    )
     with db.connection() as connection:
-        assert connection.execute(
-            "SELECT 1 FROM research_quick_note_receipts WHERE receipt_id = ?",
-            ("unsafe-early-receipt",),
-        ).fetchone() is None
-        assert connection.execute(
-            "SELECT 1 FROM workspace_memberships WHERE membership_id = ?",
-            ("legacy-pending",),
-        ).fetchone() is not None
-        assert connection.execute(
-            "SELECT 1 FROM workspace_memberships WHERE membership_id = ?",
-            ("legitimate-blank-note",),
-        ).fetchone() is not None
-        assert connection.execute(
-            "SELECT 1 FROM workspace_memberships WHERE membership_id = ?",
-            ("legitimate-blank-prefixed-note",),
-        ).fetchone() is not None
+        assert (
+            connection.execute(
+                "SELECT 1 FROM research_quick_note_receipts WHERE receipt_id = ?",
+                ("unsafe-early-receipt",),
+            ).fetchone()
+            is None
+        )
+        assert (
+            connection.execute(
+                "SELECT 1 FROM workspace_memberships WHERE membership_id = ?",
+                ("legacy-pending",),
+            ).fetchone()
+            is not None
+        )
+        assert (
+            connection.execute(
+                "SELECT 1 FROM workspace_memberships WHERE membership_id = ?",
+                ("legitimate-blank-note",),
+            ).fetchone()
+            is not None
+        )
+        assert (
+            connection.execute(
+                "SELECT 1 FROM workspace_memberships WHERE membership_id = ?",
+                ("legitimate-blank-prefixed-note",),
+            ).fetchone()
+            is not None
+        )
         columns = {
             row[1]
             for row in connection.execute(
@@ -570,7 +616,9 @@ def test_early_branch_v4_upgrade_quarantines_only_unsafe_receipts(
     db.close()
 
 
-def test_workspace_v5_remediation_rolls_back_early_v4_atomically(tmp_path: Path) -> None:
+def test_workspace_v5_remediation_rolls_back_early_v4_atomically(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "early-v4-rollback.sqlite"
     _create_early_branch_v4_database(path)
 
@@ -583,15 +631,23 @@ def test_workspace_v5_remediation_rolls_back_early_v4_atomically(tmp_path: Path)
         BrokenV5WorkspaceDB(path)
 
     connection = sqlite3.connect(path)
-    assert connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 4
-    assert connection.execute(
-        "SELECT 1 FROM research_quick_note_receipts WHERE receipt_id = ?",
-        ("unsafe-early-receipt",),
-    ).fetchone() is not None
-    assert connection.execute(
-        "SELECT role FROM workspace_memberships WHERE membership_id = ?",
-        ("legacy-pending",),
-    ).fetchone()[0] == "note"
+    assert (
+        connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 4
+    )
+    assert (
+        connection.execute(
+            "SELECT 1 FROM research_quick_note_receipts WHERE receipt_id = ?",
+            ("unsafe-early-receipt",),
+        ).fetchone()
+        is not None
+    )
+    assert (
+        connection.execute(
+            "SELECT role FROM workspace_memberships WHERE membership_id = ?",
+            ("legacy-pending",),
+        ).fetchone()[0]
+        == "note"
+    )
     connection.close()
 
 
@@ -602,7 +658,9 @@ def test_workspace_v6_inline_migration_matches_packaged_sql_and_rolls_back(
         Path(__file__).parents[2]
         / "tldw_chatbook/DB/migrations/workspaces_v5_to_v6_quick_note_recovery.sql"
     )
-    assert migration_path.read_text(encoding="utf-8") == WorkspaceDB._MIGRATE_V5_TO_V6_SQL
+    assert (
+        migration_path.read_text(encoding="utf-8") == WorkspaceDB._MIGRATE_V5_TO_V6_SQL
+    )
 
     path = tmp_path / "rollback-v5.sqlite"
     _create_early_branch_v4_database(path)
@@ -619,15 +677,20 @@ def test_workspace_v6_inline_migration_matches_packaged_sql_and_rolls_back(
         BrokenV6WorkspaceDB(path)
 
     connection = sqlite3.connect(path)
-    assert connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 5
+    assert (
+        connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 5
+    )
     assert "abandon_after" not in {
         row[1]
         for row in connection.execute("PRAGMA table_info(research_quick_note_receipts)")
     }
-    assert connection.execute(
-        "SELECT 1 FROM workspace_memberships WHERE membership_id = ?",
-        ("legitimate-blank-prefixed-note",),
-    ).fetchone() is not None
+    assert (
+        connection.execute(
+            "SELECT 1 FROM workspace_memberships WHERE membership_id = ?",
+            ("legitimate-blank-prefixed-note",),
+        ).fetchone()
+        is not None
+    )
     connection.close()
 
 
@@ -696,12 +759,15 @@ def test_v5_receipt_abandonment_uses_exact_instant_across_timestamp_formats(
                 (receipt.receipt_id,),
             ).fetchone()[0]
         assert elapsed_days == pytest.approx(7.0)
-        assert registry.discard_abandoned_quick_note_receipt(
-            receipt.receipt_id,
-            "notes-user",
-            expected_revision=receipt.revision,
-            expected_lease_token=receipt.lease_token,
-        ) is expected_discarded
+        assert (
+            registry.discard_abandoned_quick_note_receipt(
+                receipt.receipt_id,
+                "notes-user",
+                expected_revision=receipt.revision,
+                expected_lease_token=receipt.lease_token,
+            )
+            is expected_discarded
+        )
     finally:
         db.close()
 
@@ -762,8 +828,8 @@ def test_quick_note_receipt_table_rejects_invalid_owner_state_and_version_guards
         with db.transaction() as connection:
             connection.execute(
                 f"""
-                INSERT INTO research_quick_note_receipts ({', '.join(fields)})
-                VALUES ({', '.join('?' for _ in fields)})
+                INSERT INTO research_quick_note_receipts ({", ".join(fields)})
+                VALUES ({", ".join("?" for _ in fields)})
                 """,
                 tuple(values[field] for field in fields),
             )
@@ -835,3 +901,33 @@ def test_operation_table_rejects_invalid_raw_enum_status_and_guard_values(
                 tuple(values[field] for field in fields),
             )
     db.close()
+
+
+def test_v9_authority_witness_migration_rolls_back(tmp_path):
+    path = tmp_path / "witness.sqlite"
+    db = WorkspaceDB(path)
+    assert db.get_schema_version() == 9
+    with db.transaction() as conn:
+        for (name,) in conn.execute(
+            "SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'workspace_binding_authority_%'"
+        ).fetchall():
+            conn.execute(f'DROP TRIGGER "{name}"')
+        conn.execute("DROP TABLE workspace_binding_authority")
+        conn.execute("DELETE FROM schema_version WHERE version=9")
+        conn.execute(
+            "CREATE TRIGGER refuse_v9 BEFORE INSERT ON schema_version WHEN NEW.version=9 BEGIN SELECT RAISE(ABORT, 'version failure'); END"
+        )
+    db.close()
+    with pytest.raises(sqlite3.IntegrityError, match="version failure"):
+        WorkspaceDB(path)
+    with sqlite3.connect(path) as conn:
+        assert (
+            conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 8
+        )
+        assert not conn.execute(
+            "SELECT 1 FROM sqlite_schema WHERE name='workspace_binding_authority'"
+        ).fetchone()
+        conn.execute("DROP TRIGGER refuse_v9")
+    upgraded = WorkspaceDB(path)
+    assert upgraded.get_schema_version() == 9
+    upgraded.close()

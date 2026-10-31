@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+
+
+
+
+
+                 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+                 │  Chat settings · Chat 1 · 1 unsaved edit                                                                                                                                     │
+                 │                                                                                                                                                                              │
+                 │  ● Model and generation  Context and memory                                                                                                                                  │
+                 │ Applies to this chat only · saved with the conversation · defaults live in Settings ▸ Providers & Models (F4)                                                                │
+                 │                         Test connection & list models                                                                                                                        │
+                 │ Tests this endpoint by listing models; this does not test generation.                                                                                                        │
+                 │ 3 models listed                                                                                                                                                              │
+                 │ Ready · reachable 09:52                                                                                                                                                      │
+                 │ A send attempt is permitted with these settings.                                                                                                                             │
+                 │ Credential · Not required                                                                                                                                                  ▂ │
+                 │ Endpoint · Reachable                                                                                                                                                         │
+                 │ Model · Confirmed                                                                                                                                                            │
+                 │ Generation · Not tested                                                                                                                                                      │
+                 │  Test generation                                                                                                                                                             │
+                 │  ▶ Request estimate · 0 / 32,000 tokens (assumed; window unknown)                                                                                                            │
+                 │  ▶ Your name in this chat · User (global default)                                                                                                                            │
+                 │                                                                                                                                                                              │
+                 │ Unavailable: llama.cpp failed its last connection test (connection refused).                                                                                                 │
+                 │                                                                                                                                                                              │
+                 │                                                          Esc close (asks: 1 unsaved)  Use saved defaults   Default for new chats (Ctrl+N)   Apply to this chat (Ctrl+Enter)  │
+                 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+                                                                        │                                                                │
+                                                                        └────────────────────────────────────────────────────────────────┘
+
+                                                                                                                                                     ╭──────────────────────────────────────────────────────────╮
+                                                                                                                                                     │                                                          │
+                                                                                                                                                     │ Connection test succeeded; 3 models listed.              │
+                                                                                                                                                     │                                                          │
+                                                                                                                                                     ╰──────────────────────────────────────────────────────────╯
+
+
+  Ctrl+P palette | Ctrl+Q quit

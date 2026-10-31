@@ -87,7 +87,6 @@ def test_structural_record_and_definition_cap_survive_reopen(tmp_path):
                     "SELECT MAX(version) FROM schema_version"
                 ).fetchone()[0]
                 == AgentRunsDB._CURRENT_SCHEMA_VERSION
-                == 21
             )
     finally:
         reopened.close()

@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                    Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Thesis: chapter 2 structure                                                                            │
+                  Context ◂  │         Chat 1         ✕  Thesis: chapter 2…   ✕    New tab     Temporary                                             │
+   Terminal                  │                                                                                                                       │
+ ──────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                         ✕  │
+ Workspaces             ▸    │  ▊  Sure — point 3 of structuring the literature review, step 19.                                                     │
+ ──────────────────────────  │  ▊                                                                                                                    │
+ Conversations          ▾    │  ▊   1. Restate the goal.                                                                                             │
+     Archive this chat       │  ▊   2. Check the assumption behind it.                                                                               │
+      Archived chats         │  ▊   3. Try the smallest experiment.                                                                                  │
+     Search all chats…       │  ▊                                                                                                                    │
+   Thesis: chapter 2         │  ▊  ┌──────────────────────────────────────────┬───────────────────────────────┬────────────────────────────────┐     │
+   structure                 │  ▊  │ option                                   │ cost                          │ risk                           │     │
+                             │  ▊  ├──────────────────────────────────────────┼───────────────────────────────┼────────────────────────────────┤     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ▊  │ A                                        │ low                           │ high                           │     │
+  ▊  Filter      ▎           │  ▊  ├──────────────────────────────────────────┼───────────────────────────────┼────────────────────────────────┤     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ▊  │ B                                        │ high                          │ low                            │     │
+                             │  ▊  └──────────────────────────────────────────┴───────────────────────────────┴────────────────────────────────┘     │◂ Inspect
+  1 more conversation —      │  ▊                                                                                                                    │
+  search with Ctrl+K         │  ▊                                                                                                                    │
+   New conversation          │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+  Chats                 ▾    │   User                                                                                                                │
+   Chat 1              💬 ▁  │   (20) Follow-up on structuring the literature review: can you go one level deeper on point 4?                        │
+   Thesis: chapter 2…  💬    │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+   Release notes dra…  💬    │  ▊ Assistant                                                                                                          │
+   Refactor the inge…  💬    │  ▊                                                                                                                    │
+   Japanese practice…  💬    │  ▊  Sure — point 4 of structuring the literature review, step 20.                                                     │
+   Kubernetes crashl…  💬  ▁ │  ▊                                                                                                                    │
+ ▼ more — scroll             │  ▊   1. Restate the goal.                                                                                             │
+ ──────────────────────────  │  ▊   2. Check the assumption behind it.                                                                               │
+ Character · No chats   ▸    │  ▊   3. Try the smallest experiment.                                                                               ▆  │
+ ──────────────────────────  │  ▊                                                                                                                    │
+ ▼ Agent · Details           │  ▊                                                                                                                    │
+                             │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model: gpt-4.1-mini     System Prompt: off     Assistant: General     Sources: 0     Ap
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                 Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Ctrl+P · Ctrl+Q

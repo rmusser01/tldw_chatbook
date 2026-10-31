@@ -34,6 +34,8 @@ if TYPE_CHECKING:
 
         def dismiss(self, result: object) -> object: ...
 
+        def call_next(self, callback: Callable[..., object], *args: Any) -> None: ...
+
 
 _safe_request_generation: ContextVar[tuple[int, int] | None] = ContextVar(
     "safe_modal_request_generation", default=None
@@ -245,12 +247,16 @@ class SafeModalDismissMixin:
     _safe_opener_focus_anchor: FocusAnchor | None = None
     _safe_backdrop_event_in_attempt: tuple[float, int, int] | None = None
     _safe_mount_generation = 0
+    #: A close refused only because another screen covered this modal, kept
+    #: with the mount generation it was asked in (TASK-33622.15).
+    _safe_pending_close: tuple[int, object] | None = None
 
     def on_mount(self) -> None:
         """Remember the opener's focused widget for post-dismiss restoration."""
         self._safe_cancel_pending = False
         self._safe_cancel_effect_committed = False
         self._safe_dismiss_committed = False
+        self._safe_pending_close = None
         self._safe_opener_focus_ref = None
         self._safe_opener_focus_id = None
         self._safe_opener_focus_anchor = None
@@ -272,6 +278,7 @@ class SafeModalDismissMixin:
         self._safe_opener_focus_ref = None
         self._safe_opener_focus_id = None
         self._safe_opener_focus_anchor = None
+        self._safe_pending_close = None
 
     async def action_request_safe_cancel(self) -> None:
         """Route Escape to the modal's safe cancellation request."""
@@ -321,9 +328,10 @@ class SafeModalDismissMixin:
         exited the app. Covered, or already popped, it is now refused before
         anything is delivered: the screen above stays, and a periodic caller
         (the video player's time box) simply closes on its next tick on top;
-        a one-shot caller must keep its close for ``ScreenResume`` itself (the
-        video player's failure close does). With no running app, Textual's
-        own path decides, as before.
+        a one-shot caller must keep its close for ``ScreenResume`` -- itself
+        (the video player's failure close does) or through
+        ``dismiss_safe_once_when_on_top``. With no running app, Textual's own
+        path decides, as before.
 
         Args:
             result: The result for the opener's callback.
@@ -374,6 +382,62 @@ class SafeModalDismissMixin:
                 opener_anchor,
             )
         return True
+
+    def dismiss_safe_once_when_on_top(self, result: object) -> bool:
+        """Dismiss now, or as soon as nothing covers this modal (TASK-33622.15).
+
+        For a one-shot close made when an operation finishes -- a fork
+        opened, an export written, a review saved. ``dismiss_safe_once``
+        refuses while another screen covers this modal (ADR-031), and such a
+        caller has no later turn to try again. Ctrl+Q's "Quit while still
+        working?" covers exactly these modals, so an operation finishing
+        under it left the modal open after Wait over finished work, often
+        with Escape still refused. A close refused only because the modal is
+        covered is kept and finished once it is on top again
+        (``on_screen_resume``), so it ends as it would have uncovered. Every
+        other refusal -- already closed, unmounted, a stale request -- stays
+        final.
+
+        Args:
+            result: The result for the opener's callback.
+
+        Returns:
+            True when dismissed now; False when refused or kept for later.
+        """
+        if self.dismiss_safe_once(result):
+            self._safe_pending_close = None
+            return True
+        request_identity = _safe_request_generation.get()
+        if request_identity is not None and request_identity != (
+            id(self),
+            self._safe_mount_generation,
+        ):
+            return False
+        host = cast("_SafeModalHost", self)
+        if (
+            not self._safe_dismiss_committed
+            and host.is_mounted
+            and host.app.screen is not self
+        ):
+            self._safe_pending_close = (self._safe_mount_generation, result)
+        return False
+
+    def on_screen_resume(self) -> None:
+        """Finish a close kept while another screen covered this modal."""
+        if self._safe_pending_close is not None:
+            cast("_SafeModalHost", self).call_next(self._finish_pending_close)
+
+    def _finish_pending_close(self) -> None:
+        pending = self._safe_pending_close
+        if pending is None:
+            return
+        generation, result = pending
+        if generation != self._safe_mount_generation or self._safe_dismiss_committed:
+            self._safe_pending_close = None
+            return
+        if self.dismiss_safe_once(result):
+            self._safe_pending_close = None
+        # Covered again before this ran: keep it for the next resume.
 
     async def on_click(self, event: events.Click) -> None:
         """Request cancellation for a known primary click on the backdrop."""

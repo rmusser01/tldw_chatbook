@@ -104,6 +104,21 @@ def project_console_send_authority(
     owned = classify_inspector_content(state, ownership_policy)
     rows = {entry.row.label: entry.row for entry in owned.rows}
 
+    if owned.pending_only:
+        live = rows.get("Live work")
+        return ConsoleSendAuthorityProjection(
+            where="Refreshing…",
+            scope="Refreshing…",
+            run="Inspector data incomplete"
+            if owned.incomplete
+            else str(live.value)
+            if live
+            else "Refreshing…",
+            sources="Refreshing…",
+            approvals=f"{state.pending_approval_count} pending"
+            + (" · action required" if state.pending_approval_count > 0 else ""),
+        )
+
     workspace_row = rows.get("Workspace")
     workspace = str(workspace_row.value).strip() if workspace_row else "Default"
     workspace = workspace or "Default"
@@ -130,9 +145,7 @@ def project_console_send_authority(
     # snapshots produced before the rename (persisted/replayed state), and
     # losing the lookup would leave Run reading "Ready" while retrieval is
     # blocked -- silently, and in the one line pinned above the fold.
-    source = (
-        rows.get("Retrieval") or rows.get("Sources") or rows.get("RAG/source")
-    )
+    source = rows.get("Retrieval") or rows.get("Sources") or rows.get("RAG/source")
     recovery_required = any(
         rows.get(label) is not None for label in ("Recovery action", "Next action")
     )
@@ -148,6 +161,10 @@ def project_console_send_authority(
         run = "Blocked"
     elif state.run_active:
         run = "Running"
+    elif state.run_blocked_reason:
+        # TASK-33621.2: an accepted turn paused before the provider was
+        # contacted is not "Ready"; the transcript callout holds its actions.
+        run = f"Blocked — {state.run_blocked_reason}"
     elif state.run_failed:
         # TASK-24602. Ordered BELOW everything above it deliberately: a run in
         # flight, a pending approval and a blocked provider all describe what
@@ -280,9 +297,7 @@ class ConsoleSendAuthoritySummary(Static):
         if not self.is_mounted:
             return
         try:
-            heading = self.query_one(
-                f"#{CONSOLE_AUTHORITY_SUMMARY_HEADING_ID}", Static
-            )
+            heading = self.query_one(f"#{CONSOLE_AUTHORITY_SUMMARY_HEADING_ID}", Static)
         except (NoMatches, QueryError):
             pass
         else:
@@ -333,7 +348,14 @@ class ConsoleSendAuthoritySummary(Static):
         self._projection = projection
         for label, attribute, row in rows:
             value = getattr(projection, attribute)
-            row.update(Text(f"{label}: {value}"))
+            copy = Text(f"{label}: {value}")
+            # TASK-33620.15.7: an Inspector snapshot change rarely changes
+            # every fact; an unchanged row must not request a screen layout.
+            # TASK-36012: nor does a changed one. Each fact row's box is fixed
+            # by `_row` and `.console-send-authority-row` (one row tall, full
+            # width, nowrap with an ellipsis), so its copy cannot resize it.
+            if not (isinstance(row.content, Text) and row.content == copy):
+                row.update(copy, layout=False)
         self._sync_compact_tooltip()
         self.recompute_tooltips()
         self.refresh()

@@ -84,37 +84,39 @@ def test_run_status_values_and_terminal_set():
 
 def test_runtime_tool_names():
     assert SPAWN_TOOL_NAME == "spawn_subagent"
-    assert RUNTIME_TOOL_NAMES == {        # ADR-150 chat fork/spawn + dev-baseline completion (fleet message/
-        # worktree constants were in RUNTIME_TOOL_NAMES but unlisted here).
-        REPORT_TO_SUPERVISOR_TOOL_NAME,
-        READ_AGENT_MESSAGES_TOOL_NAME,
-
-        "spawn_subagent",
-        "find_tools",
-        "load_tools",
-        "skill_file",
-        INSTALL_SKILL_TOOL_NAME,
-        # Red on origin/dev itself: the constant is in RUNTIME_TOOL_NAMES on
-        # both sides but neither side's test listed it (baseline breakage,
-        # fixed in the dev-merge of the hermes-parity branch).
-        PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
-        RUN_SKILL_SCRIPT_TOOL_NAME,
-        SEARCH_RUN_LOG_TOOL_NAME,
-        RUN_LOG_STATS_TOOL_NAME,
-        RUN_LOG_SLICE_TOOL_NAME,
-        WAIT_AGENTS_TOOL_NAME,
-        CHECK_AGENTS_TOOL_NAME,
-        SEND_TO_AGENT_TOOL_NAME,
-        # TASK-28238 phase 2 Task 5: merge/discard for a worktree-isolated
-        # child, pinned under the same fleet predicate as the three names
-        # directly above.
-        MERGE_AGENT_WORKTREE_TOOL_NAME,
-        DISCARD_AGENT_WORKTREE_TOOL_NAME,
-        FORK_CHAT_TOOL_NAME,
-        NEW_CHAT_TOOL_NAME,
-        REPORT_TO_SUPERVISOR_TOOL_NAME,
-        READ_AGENT_MESSAGES_TOOL_NAME,
-    }
+    assert (
+        RUNTIME_TOOL_NAMES
+        == {  # ADR-150 chat fork/spawn + dev-baseline completion (fleet message/
+            # worktree constants were in RUNTIME_TOOL_NAMES but unlisted here).
+            REPORT_TO_SUPERVISOR_TOOL_NAME,
+            READ_AGENT_MESSAGES_TOOL_NAME,
+            "spawn_subagent",
+            "find_tools",
+            "load_tools",
+            "skill_file",
+            INSTALL_SKILL_TOOL_NAME,
+            # Red on origin/dev itself: the constant is in RUNTIME_TOOL_NAMES on
+            # both sides but neither side's test listed it (baseline breakage,
+            # fixed in the dev-merge of the hermes-parity branch).
+            PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
+            RUN_SKILL_SCRIPT_TOOL_NAME,
+            SEARCH_RUN_LOG_TOOL_NAME,
+            RUN_LOG_STATS_TOOL_NAME,
+            RUN_LOG_SLICE_TOOL_NAME,
+            WAIT_AGENTS_TOOL_NAME,
+            CHECK_AGENTS_TOOL_NAME,
+            SEND_TO_AGENT_TOOL_NAME,
+            # TASK-28238 phase 2 Task 5: merge/discard for a worktree-isolated
+            # child, pinned under the same fleet predicate as the three names
+            # directly above.
+            MERGE_AGENT_WORKTREE_TOOL_NAME,
+            DISCARD_AGENT_WORKTREE_TOOL_NAME,
+            FORK_CHAT_TOOL_NAME,
+            NEW_CHAT_TOOL_NAME,
+            REPORT_TO_SUPERVISOR_TOOL_NAME,
+            READ_AGENT_MESSAGES_TOOL_NAME,
+        }
+    )
     assert LOOP_DETECTION_N == 3
 
 
@@ -239,18 +241,21 @@ def test_models_construct_and_are_frozen_where_stated():
 
 def test_modelturn_tokens_defaults_zero():
     from tldw_chatbook.Agents.agent_models import ModelTurn
+
     assert ModelTurn(text="hi").tokens == 0
     assert ModelTurn(text="hi", tokens=42).tokens == 42
 
 
 def test_runbudget_max_total_tokens_defaults_zero():
     from tldw_chatbook.Agents.agent_models import RunBudget
+
     assert RunBudget().max_total_tokens == 0
     assert RunBudget(max_total_tokens=5000).max_total_tokens == 5000
 
 
 def test_runoutcome_total_tokens_defaults_zero():
     from tldw_chatbook.Agents.agent_models import RunOutcome, RUN_DONE
+
     assert RunOutcome(RUN_DONE, []).total_tokens == 0
     assert RunOutcome(RUN_DONE, [], total_tokens=123).total_tokens == 123
 
@@ -262,6 +267,7 @@ def test_clamp_child_budget_for_the_turn_scoped_path_preserves_max_total_tokens(
     can never outlive its parent" guarantee. A threaded survivor
     candidate goes through ``contain_child_budget`` instead."""
     from tldw_chatbook.Agents.agent_models import RunBudget, clamp_child_budget
+
     child = RunBudget(max_total_tokens=7000)
     assert clamp_child_budget(child, 10.0).max_total_tokens == 7000
 
@@ -270,6 +276,7 @@ def test_clamp_child_budget_for_the_turn_scoped_path_preserves_max_tool_result_c
     """Turn-scoped/inline spawn path only -- see the sibling test above
     for the full scope note; not a system-wide invariant."""
     from tldw_chatbook.Agents.agent_models import RunBudget, clamp_child_budget
+
     child = RunBudget(max_tool_result_chars=0)
     assert clamp_child_budget(child, 10.0).max_tool_result_chars == 0
 
@@ -279,8 +286,10 @@ def test_clamp_child_budget_for_the_turn_scoped_path_propagates_tool_call_second
     for the full scope note; not a system-wide invariant."""
     parent = RunBudget(max_tool_call_seconds=45.0)
     child = clamp_child_budget(parent, 30.0)
-    assert child.max_tool_call_seconds == 45.0   # taken from the child arg (== parent here)
-    assert child.max_subagents == 0              # existing invariant still holds
+    assert (
+        child.max_tool_call_seconds == 45.0
+    )  # taken from the child arg (== parent here)
+    assert child.max_subagents == 0  # existing invariant still holds
 
 
 # -- contain_child_budget: the THREADED SURVIVOR CANDIDATE path only -----
@@ -361,8 +370,7 @@ def test_contain_child_budget_preserves_max_total_tokens():
 def test_contain_child_budget_preserves_max_tool_result_chars():
     child = RunBudget(max_tool_result_chars=0)
     assert (
-        contain_child_budget(child, max_wall_seconds=900.0).max_tool_result_chars
-        == 0
+        contain_child_budget(child, max_wall_seconds=900.0).max_tool_result_chars == 0
     )
 
 
@@ -586,11 +594,13 @@ def test_definition_provider_and_params_default_empty():
     assert defn.provider == "" and defn.params == ()
     assert validate_agent_definition(defn) == []
 
+
 def test_definition_rejects_unknown_provider():
     defn = AgentDefinition(
         name="reader", instructions="Read files.", provider="not-a-provider"
     )
     assert any("provider" in e for e in validate_agent_definition(defn))
+
 
 def test_definition_accepts_custom_ep_slug_form():
     defn = AgentDefinition(
@@ -598,18 +608,22 @@ def test_definition_accepts_custom_ep_slug_form():
     )
     assert validate_agent_definition(defn) == []
 
+
 def test_definition_rejects_bad_custom_ep_slug():
     defn = AgentDefinition(
         name="reader", instructions="Read files.", provider="custom-ep:BAD SLUG"
     )
     assert validate_agent_definition(defn) != []
 
+
 def test_definition_rejects_unknown_param_key():
     defn = AgentDefinition(
-        name="reader", instructions="Read files.",
+        name="reader",
+        instructions="Read files.",
         params=(("temprature", 0.2),),
     )
     assert any("temprature" in e for e in validate_agent_definition(defn))
+
 
 def test_fingerprint_legacy_shape_unchanged_for_model_only_preset():
     # provider/params enter the fingerprint ONLY when set, so a legacy
@@ -617,12 +631,19 @@ def test_fingerprint_legacy_shape_unchanged_for_model_only_preset():
     # identity persisted on existing run rows stays comparable).
     defn = AgentDefinition(name="reader", instructions="Read files.", model="m1")
     import hashlib, json
-    legacy = hashlib.sha256(json.dumps({
-        "instructions": defn.instructions,
-        "tool_allowlist": sorted(defn.tool_allowlist),
-        "model": defn.model,
-    }, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+    legacy = hashlib.sha256(
+        json.dumps(
+            {
+                "instructions": defn.instructions,
+                "tool_allowlist": sorted(defn.tool_allowlist),
+                "model": defn.model,
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()[:16]
     assert definition_fingerprint(defn) == legacy
+
 
 def test_fingerprint_changes_with_provider():
     base = AgentDefinition(name="reader", instructions="Read files.", model="m1")

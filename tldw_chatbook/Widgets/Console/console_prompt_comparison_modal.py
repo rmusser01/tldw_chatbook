@@ -32,15 +32,16 @@ class ConsolePromptComparisonModal(
         height: 88%;
         max-height: 40;
         min-height: 16;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
     .console-prompt-comparison-label {
         width: 100%;
         height: 1;
-        color: gray;
+        color: $text-muted;
         text-style: bold;
     }
 
@@ -49,8 +50,8 @@ class ConsolePromptComparisonModal(
         width: 100%;
         height: 1fr;
         min-height: 4;
-        border: solid gray;
-        background: black;
+        border: solid $tldw-boundary;
+        background: $surface;
     }
 
     #console-prompt-comparison-actions {

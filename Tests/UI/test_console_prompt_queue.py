@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+import inspect
+import sqlite3
+from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from textual.app import ComposeResult
+from textual.app import App, ComposeResult
 from textual.widgets import Button, TextArea
 
 from Tests.private_profile import private_profile_test
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_models import ConsoleControllerActivity
@@ -20,15 +23,21 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_prompt_queue import (
     MAX_CONSOLE_QUEUE_ENTRIES,
     ConsolePromptQueueRegistry,
+    PromptQueueMode,
     PromptQueuePauseReason,
+    PromptQueueReservation,
+    PromptQueueSnapshot,
     QueueMutationStatus,
+    make_prompt_preview,
 )
 from tldw_chatbook.Chat.console_runtime import (
     ConsoleRuntime,
     ConsoleTurnRecoveryEntry,
 )
 from tldw_chatbook.UI.Console_Modules.prompt_queue import (
+    RECOVERY_TURN_PREVIEW_CELLS,
     ConsolePromptDispatchStatus,
+    ConsolePromptQueuePresentation,
     ConsolePromptQueueRegion,
     ConsolePromptQueueUIController,
     derive_prompt_queue_presentation,
@@ -286,8 +295,254 @@ async def test_recovery_shelf_buttons_pin_the_displayed_turn_id() -> None:
     ]
 
 
+class _PaintedRegionApp(ConsolidatedCSSApp):
+    """The shelf under every app-tier sheet production loads.
+
+    The app bundle's ``Button { border: none }`` is what lets a one-row
+    Button paint its label at all; without it the harness measures nothing.
+    """
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+    def compose(self) -> ComposeResult:
+        yield ConsolePromptQueueRegion(id="queue")
+
+
+def _shelf_snapshot(
+    mode: PromptQueueMode,
+    reason: PromptQueuePauseReason | None = None,
+    *,
+    count: int = 1,
+) -> PromptQueueSnapshot:
+    return PromptQueueSnapshot(
+        session_id="session-a",
+        revision=1,
+        entries=(),
+        waiting_count=count,
+        claimed_count=0,
+        total_count=count,
+        mode=mode,
+        pause_reason=reason,
+        reservation=PromptQueueReservation.HELD,
+        expected_context_epoch=1,
+        closing=False,
+    )
+
+
+def _every_shelf_presentation(derive=derive_prompt_queue_presentation):
+    """The shelf states ``presentation_for`` can project, by button label.
+
+    Built through the production projection with the arguments
+    ``ConsolePromptQueueUIController.presentation_for`` passes, so the labels
+    come from production, not from a copy kept here. Only a new
+    ``PromptQueuePauseReason`` is picked up automatically. A new
+    ``PromptQueueMode`` or a new projection argument needs a row here, and
+    ``test_painted_label_walk_covers_every_shelf_projection_input`` fails
+    until it has one. 'Starting...' and the bare 'Turn failed' are not walked:
+    their buttons carry the same labels as states that are. The failed turn's
+    name uses the production preview budget at its full width, behind a full
+    queue: that summary is the shelf's longest, and the one most likely to
+    push a button off the row.
+    """
+
+    paused = PromptQueueMode.PAUSED
+    failed_name = make_prompt_preview(
+        "Summarise the attached quarterly report in five bullets, then rank "
+        "each risk by impact",
+        cell_budget=RECOVERY_TURN_PREVIEW_CELLS,
+    )
+    yield (
+        "draining",
+        derive(
+            _shelf_snapshot(PromptQueueMode.DRAINING), _activity(accepted=True, count=1)
+        ),
+    )
+    yield (
+        "pause-after-turn",
+        derive(
+            _shelf_snapshot(PromptQueueMode.PAUSE_AFTER_TURN),
+            _activity(accepted=True, count=1),
+        ),
+    )
+    for reason in PromptQueuePauseReason:
+        failed = reason is PromptQueuePauseReason.FAILED
+        # The failed turn's row is also painted at a full queue: 'Queue 10/10'
+        # is one cell wider than 'Queue 1/10', on the longest summary.
+        count = MAX_CONSOLE_QUEUE_ENTRIES if failed else 1
+        yield (
+            f"paused-{reason.value}",
+            derive(
+                _shelf_snapshot(paused, reason, count=count),
+                _activity(count=count, paused=True),
+                failed_turn_preview=failed_name if failed else None,
+            ),
+        )
+    yield (
+        "response-recovery-blocked",
+        derive(
+            _shelf_snapshot(paused, PromptQueuePauseReason.MANUAL),
+            _activity(count=1, paused=True),
+            dispatch_recovery_blocked=True,
+        ),
+    )
+    yield (
+        "unsent-turn-recovery",
+        derive(
+            _shelf_snapshot(PromptQueueMode.DRAINING, count=0),
+            _activity(),
+            turn_recovery_id="turn-a",
+        ),
+    )
+    # TASK-33620.5: an Enter acknowledged as "Sending..." while an earlier
+    # unsent turn still offers recovery -- the one sending state with a shelf.
+    yield (
+        "sending-beside-unsent-turn-recovery",
+        derive(
+            _shelf_snapshot(PromptQueueMode.DRAINING, count=0),
+            _activity(),
+            turn_recovery_id="turn-a",
+            sending=True,
+        ),
+    )
+    # TASK-33621.2: a refused send states the controller's reason. The
+    # second is fitted to the budget left behind a full queue's prefix.
+    for count, refusal in (
+        (0, "Last send is blocked; resolve it first."),
+        (
+            MAX_CONSOLE_QUEUE_ENTRIES,
+            "Another send is still preparing for this conversation.",
+        ),
+    ):
+        yield (
+            f"unsent-turn-refused-queue-{count}",
+            derive(
+                _shelf_snapshot(PromptQueueMode.DRAINING, count=count),
+                _activity(count=count),
+                turn_recovery_id="turn-a",
+                turn_recovery_reason=refusal,
+            ),
+        )
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("size", [(80, 24), (100, 30), (160, 40)])
+@pytest.mark.parametrize(
+    "shelf_width",
+    # The shelf spans the whole Console shell, rails open or not, so its
+    # width is the terminal's. 40/44/46/47 are terminals narrower than the
+    # supported 80 columns: they straddle the 45-47 cells the widest label
+    # pair needed beside a 20-cell summary. Then both sides of the shelf's
+    # own 92-cell narrow threshold, then the widths the mounted Console
+    # gives the shelf at 80/100/120/160/235 terminal columns.
+    [40, 44, 46, 47, 60, 80, 91, 92, 100, 120, 160, 235],
+)
+async def test_every_shelf_button_paints_its_whole_label(shelf_width) -> None:
+    """TASK-33625.4: the controls on the queue shelf never clip their label.
+
+    The Manage slot was a fixed 8 cells; padding 0 1 plus Button's own
+    line-pad 1 left 4 cells, so it painted 'Mana' and 'Rest'. The Pause slot's
+    fixed 15 left 11, so 'Keep draining' wrapped and painted only 'Keep'.
+    The oracle is the painted strip, not the label value or the widget width:
+    each label must be in the button's own rendered line AND in the screen's
+    composited row inside the button's columns, which also catches a button
+    pushed past the shelf's right edge.
+    """
+
+    app = _PaintedRegionApp()
+    async with app.run_test(size=(shelf_width, 10)) as pilot:
+        region = app.query_one("#queue", ConsolePromptQueueRegion)
+        manage = region.query_one("#console-prompt-queue-manage", Button)
+        pause = region.query_one("#console-prompt-queue-pause", Button)
+        for name, presentation in _every_shelf_presentation():
+            assert region.sync_presentation("session-a", presentation)
+            await pilot.pause()
+            assert region.display and region.region.height == 1, name
+            row = app.screen._compositor.render_strips()[region.region.y].text
+            for button in (manage, pause):
+                label = button.label.plain
+                assert label, name
+                own_line = button.render_line(0).text
+                assert own_line.strip() == label, (
+                    f"{name} at {shelf_width}: {button.id} painted "
+                    f"{own_line!r} for label {label!r} in "
+                    f"{button.region.width} cells"
+                )
+                assert button.region.right <= region.region.right, (
+                    f"{name} at {shelf_width}: {button.id} ends at "
+                    f"{button.region.right}, past the shelf's "
+                    f"{region.region.right}; row {row!r}"
+                )
+                assert label in row[button.region.x : button.region.right], (
+                    f"{name} at {shelf_width}: {label!r} is not painted in "
+                    f"{button.id}'s columns; row {row!r}"
+                )
+            assert manage.region.right <= pause.region.x, name
+
+
+def test_painted_label_walk_covers_every_shelf_projection_input() -> None:
+    """TASK-33625.5: the painted-label walk reaches every state the shelf can.
+
+    The walk above is the proof that no shelf state pushes a button off the
+    row, so it only holds if the walk reaches every state. The shelf once had
+    a dispatch-recovery mode, entered only through the projection's
+    ``dispatch_recovery=`` argument. Production never passed that argument
+    and the walk never exercised it. Fed the real 'Response delivery status is
+    unknown on the source device.' copy, it pushed Discard to cell 102 on a
+    92-101 cell shelf. So every queue mode, and every projection argument
+    given a non-default value, must appear in the walk. Every parameter after
+    the snapshot and the activity counts, whatever its kind: a new input
+    added before the ``*`` must be walked too.
+    """
+
+    parameters = list(
+        inspect.signature(derive_prompt_queue_presentation).parameters.values()
+    )
+    assert [parameter.name for parameter in parameters[:2]] == [
+        "snapshot",
+        "activity",
+    ]
+    defaults = {parameter.name: parameter.default for parameter in parameters[2:]}
+    walked_inputs: set[str] = set()
+    walked_modes: set[PromptQueueMode] = set()
+
+    def recording_derive(snapshot, activity, **kwargs):
+        walked_modes.add(snapshot.mode)
+        walked_inputs.update(
+            name for name, value in kwargs.items() if value != defaults[name]
+        )
+        return derive_prompt_queue_presentation(snapshot, activity, **kwargs)
+
+    assert list(_every_shelf_presentation(derive=recording_derive))
+    # composer_collapsed only hides the shelf, so it has no button to paint;
+    # test_region_is_revision_guarded_and_hides_preview_when_collapsed pins it.
+    unwalked = sorted(set(defaults) - walked_inputs - {"composer_collapsed"})
+    assert not unwalked, (
+        "the shelf projection accepts state inputs the painted-label walk "
+        f"never exercises: {unwalked}"
+    )
+    assert walked_modes == set(PromptQueueMode)
+
+
+def test_queue_shelf_has_no_dispatch_recovery_mode() -> None:
+    """Pin that the queue shelf has no dispatch-recovery mode (TASK-33625.5).
+
+    Response recovery is the #console-dispatch-recovery card's job alone. The
+    shelf's copy of it (Retry anyway / Retry response / Unavailable) was
+    unreachable in production, so it is gone. Pin that the projection can
+    neither take a recovery state nor hand the shelf recovery actions. The
+    shelf's own blocked state stays: see
+    test_queue_presentation_cannot_offer_resume_while_dispatch_recovery_blocks.
+    """
+
+    parameters = inspect.signature(derive_prompt_queue_presentation).parameters
+    assert "dispatch_recovery" not in parameters
+    presentation_fields = {
+        field.name for field in dataclass_fields(ConsolePromptQueuePresentation)
+    }
+    assert "recovery_actions" not in presentation_fields
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (100, 30), (120, 40), (160, 40), (235, 52)])
 @private_profile_test
 async def test_mounted_shelf_and_neighboring_composer_fit_terminal(
     request, size
@@ -336,6 +591,15 @@ async def test_mounted_shelf_and_neighboring_composer_fit_terminal(
         assert manage.region.right <= pause.region.x
         assert send.label.plain == "Queue"
         assert send.region.right <= composer.region.right
+        # TASK-33625.4: the painted label, not the widget's width. A fixed
+        # 8-cell Manage painted 'Mana' on the real Console at every width.
+        row = console._compositor.render_strips()[region.region.y].text
+        for button, label in ((manage, "Manage"), (pause, "Pause")):
+            assert button.render_line(0).text.strip() == label, (
+                f"{size}: shelf {region.region.width} cells, {button.id} "
+                f"painted {button.render_line(0).text!r}"
+            )
+            assert label in row[button.region.x : button.region.right], row
 
 
 @pytest.mark.asyncio
@@ -505,6 +769,14 @@ async def test_full_console_manager_mounts_entry_children_before_live_list_inser
 
 class _FakeChatController:
     def __init__(self, *, accepted: bool, preparing: bool = False) -> None:
+        async def no_prepared_start(_session_id):
+            return None
+
+        self._chat_start = SimpleNamespace(
+            is_accepted=lambda _session_id: False,
+            is_prepared=lambda _session_id: False,
+            withdraw_for_manual=no_prepared_start,
+        )
         self.prompt_queue_registry = (
             _registry_with_chain() if accepted else ConsolePromptQueueRegistry()
         )
@@ -1748,3 +2020,46 @@ async def test_shelf_pause_after_shelf_resume_lets_the_queued_turn_finish(
             if message.role is ConsoleMessageRole.ASSISTANT
         ]
         assert [message.status for message in replies] == ["complete", "complete"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["restore", "discard"])
+async def test_recovery_storage_failure_is_nonfatal_and_retains_inputs_in_worker(
+    monkeypatch, operation
+) -> None:
+    runtime, store, entries = _runtime_with_two_recoveries()
+    fake = _FakeChatController(accepted=False)
+    fake.store = store
+    calls = _calls()
+    loaded = []
+    controller = _recovery_ui_controller(runtime, fake, calls, loaded)
+
+    def storage_failure(_entry):
+        raise sqlite3.OperationalError("private-path-and-draft-sentinel")
+
+    monkeypatch.setattr(runtime, "_release_retrieval_pause", storage_failure)
+    app = App()
+    async with app.run_test():
+        worker = app.run_worker(
+            controller.handle_primary_intent(
+                "session-a",
+                action=f"turn-recovery:{operation}:turn-a",
+                expected_revision=0,
+            )
+        )
+        await worker.wait()
+
+    assert runtime.recoveries_for_session("session-a") == entries
+    assert store.session_draft("session-a") == ""
+    assert store.pending_attachments("session-a") == []
+    assert loaded == []
+    assert calls["focused"] == []
+    assert calls["notified"] == [
+        (
+            "That unsent turn could not be restored safely."
+            if operation == "restore"
+            else "That unsent turn could not be discarded safely. Try again.",
+            "warning",
+        )
+    ]
+    assert "private-path-and-draft-sentinel" not in repr(calls["notified"])

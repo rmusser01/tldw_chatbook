@@ -211,9 +211,7 @@ def resolve_ingest_analysis_provider(
             ),
             top_p=_as_float(defaults.get("top_p"), ANALYSIS_DEFAULT_TOP_P),
             min_p=_as_float(defaults.get("min_p"), ANALYSIS_DEFAULT_MIN_P),
-            max_tokens=_as_int(
-                defaults.get("max_tokens"), ANALYSIS_DEFAULT_MAX_TOKENS
-            ),
+            max_tokens=_as_int(defaults.get("max_tokens"), ANALYSIS_DEFAULT_MAX_TOKENS),
             system_prompt=_optional_str(defaults.get("system_prompt"))
             or ANALYSIS_DEFAULT_SYSTEM_PROMPT,
         )

@@ -29,10 +29,12 @@ class RollingSummarizeStrategy(BaseChunkingStrategy):
     3. Maintains continuity between chunks through overlapping summaries
     """
 
-    def __init__(self,
-                 language: str = 'en',
-                 llm_call_func: Optional[Callable] = None,
-                 llm_config: Optional[dict[str, Any]] = None):
+    def __init__(
+        self,
+        language: str = "en",
+        llm_call_func: Optional[Callable] = None,
+        llm_config: Optional[dict[str, Any]] = None,
+    ):
         """
         Initialize rolling summarize strategy.
 
@@ -45,11 +47,7 @@ class RollingSummarizeStrategy(BaseChunkingStrategy):
         self.llm_call_func = llm_call_func
         self.llm_config = llm_config or {}
 
-    def chunk(self,
-              text: str,
-              max_size: int,
-              overlap: int = 0,
-              **options) -> list[str]:
+    def chunk(self, text: str, max_size: int, overlap: int = 0, **options) -> list[str]:
         """
         Chunk text using rolling summarization.
 
@@ -69,9 +67,9 @@ class RollingSummarizeStrategy(BaseChunkingStrategy):
             return []
 
         # Get options
-        summarization_detail = options.get('summarization_detail', 0.5)
-        preserve_structure = options.get('preserve_structure', True)
-        context_window = options.get('context_window', 2)
+        summarization_detail = options.get("summarization_detail", 0.5)
+        preserve_structure = options.get("preserve_structure", True)
+        context_window = options.get("context_window", 2)
 
         segments_with_spans = self._build_segments_with_spans(text, max_size, overlap)
         if not segments_with_spans:
@@ -96,7 +94,7 @@ class RollingSummarizeStrategy(BaseChunkingStrategy):
                 context,
                 summarization_detail,
                 preserve_structure,
-                i == 0  # First segment
+                i == 0,  # First segment
             )
 
             summary = self._call_llm(prompt)
@@ -111,15 +109,15 @@ class RollingSummarizeStrategy(BaseChunkingStrategy):
         import re
 
         # Handle common abbreviations
-        text = re.sub(r'\b(Mr|Mrs|Dr|Ms|Prof|Sr|Jr)\.\s*', r'\1<DOT> ', text)
-        text = re.sub(r'\b(Inc|Ltd|Corp|Co)\.\s*', r'\1<DOT> ', text)
-        text = re.sub(r'\b(i\.e|e\.g|etc|vs|viz)\.\s*', r'\1<DOT> ', text)
+        text = re.sub(r"\b(Mr|Mrs|Dr|Ms|Prof|Sr|Jr)\.\s*", r"\1<DOT> ", text)
+        text = re.sub(r"\b(Inc|Ltd|Corp|Co)\.\s*", r"\1<DOT> ", text)
+        text = re.sub(r"\b(i\.e|e\.g|etc|vs|viz)\.\s*", r"\1<DOT> ", text)
 
         # Split on sentence endings
-        sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text)
+        sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", text)
 
         # Restore dots
-        sentences = [s.replace('<DOT>', '.') for s in sentences]
+        sentences = [s.replace("<DOT>", ".") for s in sentences]
 
         # Filter out empty sentences
         sentences = [s.strip() for s in sentences if s.strip()]
@@ -170,12 +168,14 @@ class RollingSummarizeStrategy(BaseChunkingStrategy):
             segments.append((seg_text, seg_start, seg_end, len(current)))
         return segments
 
-    def _create_summarization_prompt(self,
-                                    segment: str,
-                                    context: str,
-                                    detail_level: float,
-                                    preserve_structure: bool,
-                                    is_first: bool) -> str:
+    def _create_summarization_prompt(
+        self,
+        segment: str,
+        context: str,
+        detail_level: float,
+        preserve_structure: bool,
+        is_first: bool,
+    ) -> str:
         """Create prompt for LLM summarization.
 
         If a custom instruction is defined in Prompts/chunking (key: 'Rolling Summarization'),
@@ -218,9 +218,9 @@ Maintain continuity with the previous context."""
             return summary
 
         # Try to break at sentence boundary
-        first_period = summary.find('. ', 0, 150)
+        first_period = summary.find(". ", 0, 150)
         if first_period > 0:
-            return summary[:first_period + 1]
+            return summary[: first_period + 1]
 
         return summary[:150] + "..."
 
@@ -239,24 +239,27 @@ Maintain continuity with the previous context."""
             # Prepare config for LLM call
             config = self.llm_config.copy()
             snapshot_kwargs = {}
-            if 'app_config' in config:
-                snapshot_kwargs['app_config'] = config['app_config']
-            if 'credentials_resolved' in config:
-                snapshot_kwargs['credentials_resolved'] = config['credentials_resolved']
-            if 'provider_credentials' in config:
-                snapshot_kwargs['provider_credentials'] = config['provider_credentials']
-            if config.get('model'):
-                snapshot_kwargs['model_override'] = config['model']
+            if "app_config" in config:
+                snapshot_kwargs["app_config"] = config["app_config"]
+            if "credentials_resolved" in config:
+                snapshot_kwargs["credentials_resolved"] = config["credentials_resolved"]
+            if "provider_credentials" in config:
+                snapshot_kwargs["provider_credentials"] = config["provider_credentials"]
+            if config.get("model"):
+                snapshot_kwargs["model_override"] = config["model"]
 
             # Use the provided LLM function
             # The analyze function signature: analyze(api_name, input_data, custom_prompt_arg, api_key, system_message, temp, ...)
             result = self.llm_call_func(
-                config.get('api_name', 'openai'),  # api_name
+                config.get("api_name", "openai"),  # api_name
                 prompt,  # input_data
                 None,  # custom_prompt_arg (use None since prompt already contains instructions)
-                config.get('api_key'),  # api_key
-                config.get('system_message', "You are a helpful assistant that creates concise, accurate summaries."),  # system_message
-                config.get('temp', 0.3),  # temp
+                config.get("api_key"),  # api_key
+                config.get(
+                    "system_message",
+                    "You are a helpful assistant that creates concise, accurate summaries.",
+                ),  # system_message
+                config.get("temp", 0.3),  # temp
                 False,  # streaming
                 False,  # recursive_summarization
                 False,  # chunked_summarization
@@ -280,7 +283,9 @@ Maintain continuity with the previous context."""
             or not summary.strip()
             or summary.lstrip().casefold().startswith("error:")
         ):
-            logger.warning("Rolling summarization provider returned an invalid response")
+            logger.warning(
+                "Rolling summarization provider returned an invalid response"
+            )
             raise ProcessingError(
                 "Rolling summarization provider returned an invalid response.",
                 stage="summarization",
@@ -292,18 +297,16 @@ Maintain continuity with the previous context."""
             tracker[LLM_USAGE_SUCCEEDED_KEY] = True
         return summary
 
-    def chunk_with_metadata(self,
-                            text: str,
-                            max_size: int,
-                            overlap: int = 0,
-                            **options) -> list[ChunkResult]:
+    def chunk_with_metadata(
+        self, text: str, max_size: int, overlap: int = 0, **options
+    ) -> list[ChunkResult]:
         """Chunk text and return metadata mapping summaries to source spans."""
         if not self.validate_parameters(text, max_size, overlap):
             return []
 
-        summarization_detail = options.get('summarization_detail', 0.5)
-        preserve_structure = options.get('preserve_structure', True)
-        context_window = options.get('context_window', 2)
+        summarization_detail = options.get("summarization_detail", 0.5)
+        preserve_structure = options.get("preserve_structure", True)
+        context_window = options.get("context_window", 2)
 
         segments_with_spans = self._build_segments_with_spans(text, max_size, overlap)
         if not segments_with_spans:
@@ -313,7 +316,9 @@ Maintain continuity with the previous context."""
         rolling_context: list[str] = []
         total = len(segments_with_spans)
 
-        for i, (segment, seg_start, seg_end, sentence_count) in enumerate(segments_with_spans):
+        for i, (segment, seg_start, seg_end, sentence_count) in enumerate(
+            segments_with_spans
+        ):
             context = ""
             if rolling_context:
                 context_items = rolling_context[-context_window:]
@@ -338,12 +343,12 @@ Maintain continuity with the previous context."""
                 language=self.language,
                 overlap_with_previous=overlap if i > 0 else 0,
                 overlap_with_next=overlap if i < total - 1 else 0,
-                method='rolling_summarize',
+                method="rolling_summarize",
                 options={
-                    'summarization_detail': summarization_detail,
-                    'preserve_structure': preserve_structure,
-                    'context_window': context_window,
-                    'source_span': (int(seg_start), int(seg_end)),
+                    "summarization_detail": summarization_detail,
+                    "preserve_structure": preserve_structure,
+                    "context_window": context_window,
+                    "source_span": (int(seg_start), int(seg_end)),
                 },
             )
             results.append(ChunkResult(text=summary, metadata=metadata))

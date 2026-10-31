@@ -13,12 +13,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from tldw_chatbook.Agents.agent_models import AgentDefinition
+
 # Module-level only because ADR-147 defines Chat/sampling_params.py as the
 # pure, dependency-free leaf shared by presets, registry entries, and this
 # resolver; every other Chat import below stays lazy (inside functions) so
 # agent_service.py remains the only impure Agents module.
 from tldw_chatbook.Chat.sampling_params import (
-    KNOWN_SAMPLING_PARAM_KEYS, params_to_dict, params_to_tuple,
+    KNOWN_SAMPLING_PARAM_KEYS,
+    params_to_dict,
+    params_to_tuple,
 )
 
 DEFAULT_SUBAGENT_DEFAULT_PROVIDER = ""
@@ -131,8 +134,8 @@ class SpawnTarget:
             ``resolved_provider``.
         model: Resolved model (inherit fills the parent's model; routed
             levels fill the provider's configured model or refuse).
-        base_url: Registry endpoint URL for a ``custom-ep:`` target,
-            ``None`` for built-in providers.
+        base_url: Registry endpoint URL for a ``custom-ep:`` target.
+            Preset fallback snapshots also freeze built-in configured/default URLs.
         params: Canonical ``(key, value)`` sampling pairs from the
             six-layer stack — NEVER inherited from the parent.
         source: The resolution level that supplied the provider:
@@ -147,6 +150,7 @@ class SpawnTarget:
     base_url: str | None
     params: tuple[tuple[str, object], ...]
     source: str  # "override" | "preset" | "default" | "inherit"
+    execution_provider: str = ""
 
 
 def allowlist_matches(allowlist: tuple[str, ...], provider: str, model: str) -> bool:
@@ -205,7 +209,8 @@ def _default_readiness(app_config: Mapping[str, Any], provider: str) -> str | No
         _custom_endpoint_missing_key_readiness,
     )
     from tldw_chatbook.Chat.custom_endpoint_registry import (
-        entry_for, family_execution_key,
+        entry_for,
+        family_execution_key,
     )
     from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 
@@ -240,7 +245,8 @@ def resolve_child_params(
         build_default_console_session_settings,
     )
     from tldw_chatbook.Chat.custom_endpoint_registry import (
-        entry_for, split_custom_endpoint_id,
+        entry_for,
+        split_custom_endpoint_id,
     )
 
     entry_params: dict[str, object] = {}
@@ -276,7 +282,8 @@ def resolve_spawn_target(
         supported_console_provider_readiness_keys,
     )
     from tldw_chatbook.Chat.custom_endpoint_registry import (
-        entry_for, split_custom_endpoint_id,
+        entry_for,
+        split_custom_endpoint_id,
     )
     from tldw_chatbook.Chat.provider_readiness import provider_config_key
 
@@ -373,8 +380,142 @@ def resolve_spawn_target(
             raise RoutingError("provider_not_ready", blocked, level=source)
 
     params = resolve_child_params(
-        app_config, provider, model,
-        preset_params=preset.params if preset is not None else ())
+        app_config,
+        provider,
+        model,
+        preset_params=preset.params if preset is not None else (),
+    )
     return SpawnTarget(
-        provider=provider, model=model, base_url=base_url,
-        params=params, source=source)
+        provider=provider, model=model, base_url=base_url, params=params, source=source
+    )
+
+
+def execution_provider_for_target(app_config: Mapping[str, Any], provider: str) -> str:
+    """Keep raw registry identity distinct from the execution family."""
+    from tldw_chatbook.Chat.console_provider_support import (
+        resolve_console_provider_identity,
+    )
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        entry_for,
+        family_execution_key,
+    )
+
+    entry = entry_for(app_config, provider)
+    family = family_execution_key(entry.family) if entry is not None else provider
+    identity = resolve_console_provider_identity(family)
+    if entry is not None:
+        from tldw_chatbook.Chat.console_provider_gateway import (
+            _apply_custom_endpoint_engine_swap,
+        )
+
+        identity = _apply_custom_endpoint_engine_swap(identity, entry, app_config)
+    return identity.execution_key or family
+
+
+def freeze_spawn_target(
+    app_config: Mapping[str, Any],
+    target: SpawnTarget,
+    *,
+    selected_endpoint: str | None = None,
+) -> SpawnTarget:
+    """Freeze execution and its configured/default or owned selected endpoint."""
+    from tldw_chatbook.Chat.console_provider_endpoints import (
+        DEFAULT_LLAMACPP_BASE_URL,
+        effective_provider_endpoint,
+    )
+    from tldw_chatbook.Chat.console_provider_support import (
+        resolve_console_provider_identity,
+    )
+    from tldw_chatbook.config import provider_settings_for_key
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    execution = execution_provider_for_target(app_config, target.provider)
+    base_url = target.base_url or selected_endpoint
+    if base_url is None:
+        identity = resolve_console_provider_identity(execution)
+        if identity.uses_direct_llama_path:
+            # The Console direct path uses this origin when no selection is set.
+            base_url = DEFAULT_LLAMACPP_BASE_URL
+        else:
+            try:
+                settings = provider_settings_for_key(
+                    app_config.get("api_settings"), identity.readiness_key
+                )
+                if execution == "qwencloud":
+                    from tldw_chatbook.LLM_Calls.qwencloud_url import (
+                        normalize_qwencloud_base_url,
+                    )
+
+                    base_url = normalize_qwencloud_base_url(settings.get("api_base_url"))
+                else:
+                    base_url = effective_provider_endpoint(
+                        identity.readiness_key, None, settings
+                    )
+                    record = RECORDS_BY_KEY.get(execution)
+                    if base_url is None and record is not None:
+                        base_url = record.default_base_url
+            except ValueError as exc:
+                raise RoutingError(
+                    "provider_not_ready",
+                    "fallback endpoint settings are invalid",
+                    level=target.source,
+                ) from exc
+    return SpawnTarget(
+        target.provider, target.model, base_url, target.params, target.source, execution
+    )
+
+
+def resolve_preset_fallback_targets(
+    app_config: Mapping[str, Any],
+    preset: AgentDefinition | None,
+    *,
+    primary_provider: str,
+    primary_model: str,
+    readiness: Callable[[Mapping[str, Any], str], str | None] | None = None,
+) -> tuple:
+    """Freeze explicit preset targets before child admission, retaining skips."""
+    from .agent_models import validate_fallback_models
+    from .fallback_chain import FallbackCandidate
+    from .native_tools import provider_supports_native_tools
+
+    if preset is None or not preset.fallback_models:
+        return ()
+    errors = validate_fallback_models(preset.fallback_models)
+    if errors:
+        raise RoutingError("invalid_fallback_models", "; ".join(errors), level="preset")
+    check = readiness or _default_readiness
+    candidates = []
+    for index, (provider, model) in enumerate(preset.fallback_models, start=1):
+        try:
+            # Readiness is recorded separately so unavailable entries remain visible.
+            target = resolve_spawn_target(
+                app_config,
+                parent_provider=primary_provider,
+                parent_model=primary_model,
+                preset=AgentDefinition(
+                    name=preset.name,
+                    instructions=preset.instructions,
+                    provider=provider,
+                    model=model,
+                    params=preset.params,
+                ),
+                routing=AgentsRoutingConfig(),
+                readiness=lambda _cfg, _provider: None,
+            )
+            target = freeze_spawn_target(app_config, target)
+            execution = target.execution_provider
+            try:
+                reason = check(app_config, provider)
+            except Exception as exc:  # noqa: BLE001 - probes only narrow readiness
+                reason = f"readiness check failed ({type(exc).__name__})"
+            native = provider_supports_native_tools(execution)
+            candidates.append(
+                FallbackCandidate(
+                    provider, native, reason is None, reason or "", model, index, target
+                )
+            )
+        except RoutingError as exc:
+            candidates.append(
+                FallbackCandidate(provider, False, False, exc.code, model, index)
+            )
+    return tuple(candidates)

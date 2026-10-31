@@ -1,5 +1,529 @@
 # Lessons: verifying against the real thing
 
+## A margin on a Console transcript row paints a notch that text checks cannot see (TASK-33621.51, 2026-10-29)
+
+**Incident.** The Library outcome line passed two review rounds: every test read
+the compositor's `strip.text`, and the live `.txt` captures showed the line
+correctly placed under its turn. The third review read the `.ansi` capture and
+the PNG instead. The cell left of each line's text was `ESC[2m ESC[49m`, the
+terminal's default background, which showed as a white block in the PNG. The
+line was inset with `margin-left: 1`. `#console-transcript-surface` layers a
+transparent `#console-transcript-background-effect` under the transcript, and a
+margin cell is not painted by the row, so it shows that layer. Switching the
+inset to padding (same text column) removed the notch.
+
+**What to do.** Inset a Console transcript row with padding, not margin. To test
+paint, read each cell's background from the compositor strip
+(`strip.crop(x, x + 1)`, then `segment.style.bgcolor`; `None` is the terminal
+default), not `strip.text`. Live, read the `.ansi` or look at the `.png`. The
+annotations and citation-chip rows also use a left margin; they were not checked
+here.
+
+## A `.txt` capture shows the composer's history ghost text as if it were typed (TASK-33621.51, 2026-10-29)
+
+**Incident.** On the live re-check of the Library outcome line, the second prompt
+was typed as `Project Zephyr launch codename` and the pane text read
+`Project Zephyr launch codename  and launch lead? One short sentence.` (the caret
+cell was blinked off in that capture). It looked like the previous draft had
+survived the send, so the driver cleared the composer with 80 Backspaces and typed
+again; the next capture read `Project Zephyr launch codename▌ and launch lead? …`. The tail is the
+composer's history suggestion (TASK-1364: a render-only suffix of the most recent
+sent prompt with that prefix, drawn `bright_black` after the caret).
+`capture-pane -p` drops the style, so it reads as typed text. Enter sent only the
+typed part: the transcript showed `Project Zephyr launch codename`.
+
+**What to do.** Before deciding the composer holds the wrong draft, look for the
+caret cell (`▌`; it blinks, so one capture may not show it). Text after the caret,
+when you typed at the end, is ghost text. Confirm it in the `.ansi` capture (a
+bright-black run) or by the message the transcript shows after the send, not by
+the `.txt` row.
+
+## A contrast capture taken under an open modal measures the dimmed backdrop (TASK-33626.1, 2026-10-29)
+
+**Incident.** The first live capture of the Console header on the branch measured
+the new "Off" state word at #2F3031 on #151719, 1.36:1, and every other header run
+just as low. Nothing was wrong with the word: on dev 3efe8476ce a `ready`-mode launch
+opens the "Check model lists online?" consent over the Console after the header has
+painted, and a modal's backdrop dims every cell behind it. After Esc the same word
+measured #A7ABAF on #242F38, 5.91:1.
+
+**What to do.** Before measuring anything from a capture, check that the screen you
+are measuring is on top: look at the PNG, or grep the `.txt` for a dialog title.
+Dismiss first-run and catalog dialogs after the app renders, then capture. A uniformly
+low ratio across unrelated widgets points at a backdrop, not at your change.
+
+## A native terminal launched by automation can inherit TERM=dumb (TASK-37173, 2026-10-28)
+
+**Incident.** The Windows resize investigation initially launched its native Logs probe through an executor exporting `TERM=dumb`. Both output streams were real TTYs and `os.get_terminal_size` reported 120x36, but Rich's dumb-terminal fallback initialized Textual at 80x25. That extra starting gap obscured verification of the actual defect: Textual 8.2.8 omitted `ENABLE_WINDOW_INPUT`, so subsequent Windows resize events were discarded. Removing only the automation's `TERM=dumb` override in the QA launcher produced matching 98x42 initial panes. Resizing the same Terminal window to 135x68 left stock Textual at 98x42 while the fixed driver filled 135x68, confirmed visually by the user and by independent OS/app/layout traces in `qa/windows-terminal-resize-2026-10-28/`.
+
+**What to do.** Record terminal environment, actual output TTY status, OS dimensions, and settled widget regions separately. A native process alone does not establish a faithful terminal environment. Remove an automation-only dumb-terminal override in the probe; do not change application layout to compensate for it. When automation cannot target Terminal windows, user-operated resize gestures plus native traces still test the real driver; Pilot does not.
+
+## On a loaded host, one blocking read left on the UI loop still costs 100+ ms: move it, do not just count it (TASK-33620.15.1.6, 2026-10-27)
+
+**Incident.** Each Console Environment refresh made two or three Change
+Review consent reads (one SQLite SELECT each, median 2 ms) on the UI loop.
+The first fix cut that to one read per refresh, which is what the task's
+first criterion asked for. Live at load 36-47 on 14 cores, that one read
+still held a rail open 104.5 ms and two poll ticks 145-146 ms, with only
+2-14 ms of thread CPU: the thread released the GIL for the query and then
+waited to be scheduled again. Moving the read onto a worker took the rail
+open to 0.3 ms and every Environment callback under 8 ms at load 29-41
+(16 rail opens, 10 run completions, 26 polls).
+
+**What to do.** When a UI-loop hold is I/O (a query, a stat, a subprocess
+wait), judge a fix by its worst case on a loaded host, not by how many
+calls it removed: under oversubscription the wait to get the CPU back is
+the cost, and it does not shrink with the count. Move the call off the loop
+when the criterion is a ceiling; keep a read on the loop only where its
+answer is needed before the callback returns (here, the Refresh press's
+acknowledgment), and say so.
+
+## A live driver that types straight after Enter gets every send refused: count provider requests first (TASK-33620.15.24, 2026-10-27)
+
+**Incident.** To land the 30-second scheduler tick on a Console send, the
+driver pressed Enter just before each predicted tick and then typed the next
+prompt at once. Two base launches (10 sends) produced zero provider requests:
+every turn ended `Console runtime turn ended with exception_type=RecoveryRequired`,
+the transcript stayed "No messages yet", and the composer kept the unsent text
+with the new typing appended. The tick numbers from those launches looked
+normal, so nothing on the probe side flagged that the windows held no send at
+all. Three single-launch controls on the same build separated the cause: a 3 s
+pause after Enter reached the provider 4/4, a 12 s pause between typing and
+Enter 3/3, typing straight after Enter 1/5. The earlier pf2 driver waited 9.5 s
+after each Enter and never hit it. Filed as TASK-33620.15.25.
+
+**What to do.** Before you read any timing from a send-driving round, count
+the provider requests (a probe `post` record, or the timing relay's log)
+against the Enters, and treat a mismatch as a broken round. Leave a pause after
+Enter unless typing during the send is what you are measuring.
+
+## A per-round count of long callbacks is mostly boot: count per window around the trigger (TASK-33620.15.1.4, 2026-10-27)
+
+**Incident.** TASK-33620.15.1.4 was filed from live rounds that "still
+logged 11-14 UI-loop callbacks of 100 ms or more per round (up to 666 ms)"
+at Inspect-rail open and run completion, described as MessagePump and
+run_app tasks. Re-measured on origin/dev 3be493413a with the same set-up
+(235x52, haiku, the rail opened mid-reply, four sends per launch, load
+5-8), each launch had 12-13 such callbacks, and 7-10 of them ran before the
+first send: the Console's compose (run_app, 575-705 ms), the ChatScreen and
+composer mounts (MessagePump, 109-370 ms) and deferred start-up work. Only
+1-3 per launch fell within a second of a rail open or 3 s of a completion,
+and those were Textual screen-update timers with a generation-2 pass
+inside, plus the edge focus cue's restyle. The task's one lead, the Next
+Send preview building the turn configuration twice, was not on the
+rail-open path at all: that factory belongs to the Conversation Inspector
+modal (cost chip, Ctrl+Shift+P).
+
+**What to do.** Have the probe record the trigger itself (the key event, a
+run-completion hook) and count long callbacks in a window around each one,
+with boot reported on its own line. Before following a lead, find its
+callers.
+
+## A full shared disk stops every tool call, and the apps you launched keep running (TASK-33620.15.1.4, 2026-10-27)
+
+**Incident.** Mid-round, the host's data volume reached 197 MB free (other
+sessions' 431 worktrees, about 1.2 GB each). Every Bash call then failed
+before it ran (ENOSPC on the harness's own output file), the round's driver
+died on a screenshot write, and its launched app kept running in tmux with
+nobody driving it. Only the Monitor tool still ran commands, which was
+enough to kill the app and measure the disk.
+
+**What to do.** Check `df -m /System/Volumes/Data` before a live round. A
+live arm needs only the package: `git archive <rev> tldw_chatbook | tar -x`
+into a scratch directory under `.worktrees/` is 104 MB against 1.2 GB for a
+worktree, and `launch.sh` runs it the same way (`APP_WT=<dir>`). Precompile
+it (`python -m compileall`, which imports nothing) so its first launch does
+not pay the compile that the other arm's cache already holds.
+
+## Two probe import hooks that each search the rest of `sys.meta_path` recurse into each other (TASK-35961, 2026-10-27)
+
+**Incident.** A live probe for the Console's Character check and poll tick added a `sys.meta_path` finder that, for four Console modules, searched the other finders for the real spec and wrapped its `exec_module`. It ran beside the pf2 kit, whose finder does the same. Each finder called the other for the same module name, and the app died at the splash with `RecursionError` raised in the probe's `find_spec` while `chat_screen` imported (`event=unhandled_exception ... raise_module=p35hooks` in the profile's `tldw_cli_app.log`). The tmux pane closed with the app, so the only trace was that log.
+
+**What to do.** Give a probe's finder a per-name re-entry guard (return None while it is already resolving that name), so a second finder that calls back into it falls through to the real one. When a probed launch's tmux server disappears, read the profile's `tldw_cli_app.log` before relaunching.
+
+## On a quiet host, 4 ms stack samples cannot rank the parts of a 20 ms callback: time the suspects (TASK-33620.15.8, 2026-10-23)
+
+**Incident.** TASK-33620.15.8 was filed from samples taken at load averages of
+78-109, where run start's longest callback ran 160-700 ms wall and collected
+dozens of 4 ms samples. Re-measured at a load of 4-7, the same callback was
+16-23 ms and collected one to three samples, each in a different function
+(`_sync_interaction_classes` 1, `_build_durable_trace_request` 1,
+`default_prompt_history_path` 1): nothing could be ranked. The rebuilt probe
+then wrapped about 30 named methods with `perf_counter`/`thread_time` timers,
+recorded only on the main thread inside a timed callback and keyed by its
+sequence number. Over 17 sends that ranked them at once: of a 19 ms callback,
+the composer's `load_draft("")` took 11-16 ms, `App.update_styles` 13 ms of
+that, and one class change 10 ms, because Textual restyles the node's whole
+26-node subtree for a class two rules use.
+
+**What to do.** Use samples to find suspects and exact timers to rank them.
+Have the probe wrap the suspects on their class from its writer thread once
+each module is imported, record inclusive wall and CPU per call, and report
+them per callback. When a host is quiet and the callbacks are under about
+30 ms, do not attribute from samples alone.
+
+## Two drivers that launch the same tmux names kill each other's apps (TASK-33620.15.8, 2026-10-23)
+
+**Incident.** A paired round was stopped with `pkill -f "rs8/drive.py"`, and a
+new round was started under the same names. The driver had been started as
+`python drive.py ...` from inside `rs8/`, so its command line did not contain
+`rs8/`; the pattern matched nothing and the old driver kept running.
+`launch.sh` kills any tmux server with the name it is given and deletes that
+profile, so each driver's next launch killed the other's apps mid-send. Both
+arms' apps vanished between two log lines, and the driver waited out its
+120 s idle timeout on a dead server. Both rounds had to be discarded.
+
+**What to do.** After stopping a driver, check with `pgrep -fl drive.py` (or
+`ps`) that it is gone before you start another. Give every round its own
+launch-name prefix, so two drivers can never share a tmux server or a
+profile. When an app disappears mid-round, look for another launch of its
+name before suspecting a crash.
+
+## A probe that wraps an identity-checked method measures its fallback (TASK-33620.15.4, 2026-10-23)
+
+**Incident.** A live `sitecustomize` probe timed the Console's settings
+summary by replacing `ConsoleChatController.context_control_inputs` on the
+class with a timing wrapper. `read_context_presentation_inputs` checks that
+method by identity (`_CONTEXT_DISPLAY_CALLBACKS`, captured when the module
+loads). It found a non-original binding and took its fallback: the
+synchronous `context_control_inputs`, run inside the eager start of a
+Textual worker, on the UI loop. The first sampled round showed the global
+context-policy read and storage admission in 31% of the projection's
+samples. The unprobed app does not do this: with the wrapper removed, the
+same read ran on a worker thread. `ChatScreen._build_console_inspector_state`
+is checked the same way (the pending display's readers).
+
+**What to do.** Before a probe replaces a method, search for its name in
+the code's identity tables (`__code__ is`, `_CALLBACKS`, `_methods_current`,
+`_READERS`). Leave those methods alone and time their callers instead, or
+observe them with `threading.setprofile_all_threads` and a code-object
+match, as the suite's tests do. If a profile shows work that the code
+review says runs elsewhere, suspect the probe first.
+
+## A profile reused across launches can carry one arm's history into the next round (TASK-33620.15.14, 2026-10-20)
+
+**Incident.** Paired rounds typed a 29-character prompt 0.5 s after the
+Console's first frame, each arm on its own profile reused from launch to
+launch. The prompt landed in 18 of 22 origin/dev launches and 7 of 22 branch
+launches, which read as a branch regression in first keystrokes. It was not.
+Keys typed before the composer's first focus (the nav bar's Home button holds
+it until an idle-time restore, 0.1-2.5 s after the first frame) are dropped on
+both arms (TASK-33620.15.17), and an arm whose prompt had landed carried a
+restored draft into its later launches while the other did not. On a fresh
+seeded profile per launch the arms matched: 7 of 10 each.
+
+**What to do.** For a boot-time measurement, give every launch a fresh
+profile: write its `config.toml` (with any consent the run needs) into
+`uxrev/profiles/<name>/` and start it with `REUSE=1 launch.sh`, which keeps a
+config it finds. If an arm difference grows round after round, look for state
+the measurement itself leaves behind. And before typing into a just-launched
+Console, wait for the composer to hold focus, or record where the keys went.
+
+## A probe thread that polls `sys.modules` can catch a module mid-import and die unseen (TASK-33620.15.5, 2026-10-19)
+
+**Incident.** The probe-free arm of the run-start latency rounds timed each
+provider call from a `sitecustomize` daemon thread. The thread polled
+`sys.modules.get("requests.sessions")`, then wrapped `Session.send`. In 2 of
+8 launches no timing file appeared at all, although each app's log showed
+`provider_entry` and every reply arrived. Another thread was still executing
+`requests.sessions` when the poll found it, so `mod.Session` raised
+`AttributeError` and the thread died without a word. Once the poll waited
+for the class itself, all 6 later launches recorded. Earlier the same day a
+whole round recorded nothing for a different reason: the output path went in
+as a relative environment variable, and `launch.sh` starts the app in its
+profile directory, so the path resolved there.
+
+**What to do.** In a probe thread, wait for the attribute you will patch
+(`getattr(mod, "Session", None)`), not for the module's key, and write a
+patch failure to the probe's output instead of letting the thread die. Pass
+output paths as absolute paths. Before you analyse a round, count each
+launch's records and rerun the launches that have none. Otherwise the
+analysis silently drops those pairs.
+
+## On a loaded host, count blocking callbacks by thread CPU as well as wall time (TASK-33620.15.3, 2026-10-19)
+
+**Incident.** The idle heap re-freeze was measured live with 16 ABBA-interleaved
+send pairs against origin/dev while other sessions held the 14-core host at a
+load average of 70-100. Every send window (Enter to the provider call) took
+7-20 s, against a median of 1.5 s in the 2026-10-10 profiling round. The
+task's criterion, sends with a UI-loop callback of 100 ms or more, read 16/16
+on both arms by wall time: a runnable thread waited for a core several times
+longer than it ran, so every send crossed the threshold whatever the change
+did. The probe also recorded each callback's `time.thread_time()`. By CPU the
+count was 13/16 on dev against 1/16 on the branch, and the longest callback
+fell from a median of 118 to 69 ms of CPU (fix lower in 14/16 pairs).
+
+**What to do.** Have a live probe record thread CPU next to wall time for every
+callback and collection it times: `time.thread_time()` around `Handle._run`,
+and in the `gc.callbacks` start/stop pair. Report both. When both arms cross
+a wall-clock threshold on every send, the count is saturated and says nothing
+about the change. Interleave the launches (ABBA) so the load drift falls on
+both arms, and do not compare absolute numbers with a round taken at another
+load.
+
+## On a loaded host, judge "longest loop callback" by its thread CPU, not its wall time (TASK-33620.15.6, 2026-10-19)
+
+**Incident.** TASK-33620.15.6's acceptance criteria say the fix must not lengthen the longest UI-loop callback. Its paired live sends ran while other sessions held the host's load average between 50 and 100. The probe recorded wall time for main-thread asyncio callbacks of 10 ms or more. After round 1 (8 sends per arm) the branch looked worse: its longest-callback median was 488 ms against dev's 325, and it lost all 8 pairs. The probe was then changed to also record `time.thread_time()` around each callback, and to label each one with its Textual timer callback, worker name or await chain. That showed callbacks running 5 to 10 times longer in wall time than in CPU. The longest callback was the screen-update timer on both arms, and gen-2 GC dominated it. Over 24 sends with CPU recorded, the longest callback's loop CPU had a mean of 86.6 ms on dev and 86.8 ms on the branch. The wall mean (576 against 643 ms) was set by a few load outliers.
+
+**What to do.** When a live criterion is about loop callbacks, record each callback's thread CPU and an attributable label alongside its wall time. Compare paired arms on CPU before you accept or reject a regression on wall time. Take `uptime` with every round and report it next to the numbers.
+
+## A per-send-window count of timer-driven work measures the host's load too (TASK-33620.15.6, 2026-10-20)
+
+**Incident.** TASK-33620.15.6's AC #2 asked for about 15 SQLite helper starts or fewer per Console send window, about 2 of them from the Character scope check. On 2026-10-19 the paired live rounds ran at load averages of 50 to 100: windows lasted 7.4 s instead of the 1.6 s the task was filed at, and the branch measured 21.2 starts per window, 5.2 of them Character. The task was written up as not meeting #2 and waiting on an owner decision to restate it. The next day, at load averages of 20 to 36, the same code on a rebased head measured 14.4 and 2.2 per window (dev 16.0 and 3.0), over 2.2 s windows. The Character check runs on a 1 s cadence during a run, so its count grows with the window, while the per-send one-shot starts do not.
+
+**What to do.** When a live criterion counts timer-driven work per window, report the window length and the rate per second next to the count, and take `uptime` with every round. If windows are much longer than the length the criterion was written against, re-measure when the host is quieter before calling the criterion unmet or asking for it to be restated.
+
+## Runtime detachment must not reopen late read admission (TASK-34406.28, 2026-10-18)
+
+**Incident.** The browser Quit repair passed74 targeted checks, but two added controls actually drained and detached the runtime during approved cleanup and then triggered cache/flat refresh. Each made two original queries: `runtime is not None and runtime._disposed` became false after detachment while the screen was still running. The final76-case repair retains that check and also reads the same App's existing permanent shutdown flag; one new strict live Enter/response/Quit validation passes without extra shutdown errors.
+
+**What to do.** Test the owner-removal transition as well as disposal. Keep terminal admission closed with an existing longer-lived fence, while preserving ordinary missing-owner dispatch before shutdown and the issued callback's original source/refusal/physical-retirement checks. Do not silence refusal logs to qualify the packet.
+
+## `tmux send-keys M-1` types a character into the composer (TASK-33620.15.2, 2026-10-09)
+
+**Incident.** To switch Console tabs live (Alt+1, Alt+2), `tmux -L <name>
+send-keys M-1` was sent to a launch.sh session. The tab did not change; the
+composer showed "¡". (The recipe already warns that Ctrl+digit cannot be
+sent; Alt+digit cannot be relied on either.) The stray character then had
+to be cleared before the run could start.
+
+**What to do.** Switch tabs by clicking the tab labels with the SGR mouse
+sequences from the recipe. Take the column from the `.txt` capture with a
+character index (Python `str.index`), not awk, which counts the box-drawing
+characters as several bytes. Capture after the switch and check the
+`Conversation | <title>` header before typing.
+
+## A stack sampler that holds frames breaks SQLite commits in the app it samples (TASK-33620.15, 2026-10-05)
+
+**Incident.** To see what worker threads did during a send, a `sitecustomize`
+sampler took `sys._current_frames()` for every thread every 4 ms and built
+each stack's text while it held those frames. Twelve seconds after launch, the
+app's log showed `cannot commit transaction - SQL statements in progress` on
+three threads, plus failed WAL checkpoints, and every send then said "your
+conversation database could not be opened". No other run of the same build
+showed the error. A held frame keeps its locals alive after the function
+returns, including an unfinished cursor, and SQLite refuses to commit while
+that statement is open. Main-thread-only samplers of the same build ran clean.
+
+**What to do.** In a sampler, copy only `f_code` objects (they hold no
+locals) while walking a stack, drop every frame reference before you format
+anything, and sample other threads only when you need them. If the app logs a
+database error that no other run of the build shows, suspect the sampler
+before the code under test.
+
+## A quit that "never exits" is a join: dump threads after Quit and read the main thread first (TASK-33666, 2026-10-10)
+
+**Incident.** TASK-33666 was filed as "the process never exits" after Quit
+during a hung reply. A scratch `sitecustomize` registered
+`faulthandler.register(SIGUSR1, all_threads=True)` (it holds no frames, unlike
+the sampler above), and the app was dumped 8 s and 30 s after confirming Quit.
+The main thread was in `asyncio/runners.py close` → `shutdown_default_executor`;
+a helper thread, `_do_shutdown`, was in `ThreadPoolExecutor.shutdown` → `join`;
+and the joined worker was the reply's run thread, waiting on a provider turn
+whose cancel flag was read only between chunks. The process ended at 120.3 s
+with status 1: the exit watchdog, not the reply.
+
+With vLLM the run thread came back and the process still waited 120.4 s. The
+last line named `asyncio_0(daemon)`, the provider's worker inside `requests`'
+socket read. The model loop's thread is a daemon, so the workers of its
+executor inherit the flag, and `concurrent.futures.thread._python_exit` joins
+them at interpreter exit anyway.
+
+**What to do.** Dump after Quit, not before. The main thread's frame names the
+join: `Runner.close` → `shutdown_default_executor` is a worker of the app
+loop's default executor (`run_worker(thread=True)`, `asyncio.to_thread`);
+`threading._shutdown` → `_python_exit` is a worker of any other executor.
+`daemon=True` does not exempt a `ThreadPoolExecutor` worker from that join;
+only a thread that is not one is skipped. A hang that lasts exactly
+`[general] shutdown_grace_seconds` and ends with status 1 is the watchdog, and
+the pane's last line lists the threads that were still alive.
+
+## A tmux key burst loses typed text, and an empty Input shows its placeholder
+
+**TASK-34100.8, 2026-10-04.** Live-editing the Voice step's Endpoint with
+`send-keys End C-u` immediately followed by `send-keys -l "http://…:8766/tts"`
+left the field "showing" `http://127.0.0.1:8000/tts`. It looked like the
+service switch to Custom had stolen focus or reset the value, and it was
+nearly filed as a bug. Neither was true. With a burst, Textual dispatches the
+bound keys (End, Ctrl+U) after the printable characters it forwards to the
+focused Input. So Ctrl+U ran last and emptied the field. The "value" in
+`capture-pane` was the Input's **placeholder**, which plain-text capture cannot
+tell apart from a value. A bare `App` holding one `Input` reproduces it: post
+`end`, `ctrl+u` and then the characters without yielding, and the result is `''`.
+
+**What to do.** Pause between an editing chord and the text that follows. A
+condition wait for the field to change is enough; a human never types that
+fast. Before calling a field's value wrong from a text capture, check whether
+the shown text equals the Input's placeholder. Use an `-e` (ANSI) capture to
+see its dim placeholder style, or change one character and re-capture.
+
+**TASK-33003.18, 2026-10-10: the keys are reordered, not dropped.** The same
+burst had been filed as a possible app defect. In Chat settings, eight
+Backspaces followed at once by `0.9` left Temperature as `0.`, `0` or empty,
+and Pilot typing never did. One command settles it:
+`tmux send-keys BSpace BSpace 1 2 3` on a field holding `0.7` gave `0.71` in
+27 of 27 live runs. In order it would read `0123`. All five keys arrived; the
+three characters went in first ("0.7123") and the two Backspaces ran after
+them. The cause is Textual's key dispatch (8.2.8), not tmux and not the
+modal. `Input._on_key` inserts a printable key at once. A bound key such as
+Backspace runs only when its Key event has bubbled through every ancestor's
+queue back to `App._on_key`, which checks the bindings; a later key already
+waiting in the app's queue is forwarded first. A bare `App` with one `Input`
+and no project code gives `''` for the same eleven keys posted without
+yielding.
+
+Measured live at 211x44, with a load average between 17 and 67:
+
+| How the eleven keys were sent | Reordered |
+|---|---|
+| One `send-keys` command | 32 of 32 |
+| One command per key, no sleep (7 to 9 ms apart) | 13 of 27 |
+| One command per key, 5 ms or more of sleep | 0 of 102 |
+| The Backspaces in one command, the text in the next | 0 of 35 |
+| The Backspaces, a wait for the empty field, then the text | 0 of 11 |
+
+The task's first report also saw `.9` with keys "paced 100 ms apart". That is
+the same reorder with only the `0` ahead of the last Backspaces, and at this
+head that pacing kept every key in 27 of 27 runs.
+
+A keyboard does not send keys that close together (key repeat is about 30 ms
+a key at its fastest), so on a responsive app this is a rule for the driver.
+It is not only the driver's, though. The reorder needs two keys in the app's
+queue at once, and a UI loop that is blocked while a person types gives it
+that: in the bare app, the five keys posted 100 ms apart gave `0123` in 5 of
+5 runs with the loop free and `0.71` in 5 of 5 with it blocked for 0.7 s. A
+field that "ate" a Backspace during a freeze is this; chase the freeze.
+
+**What to do.** Never put an editing key (Backspace, Delete, End, Home, an
+arrow, Ctrl+U) and the text that follows it in one `send-keys` command.
+Send the editing keys, wait until a capture shows their result, then send
+the text. To tell a reorder from a lost key, send `BSpace BSpace 1 2 3` in
+one command to a field whose value you know: a reorder keeps all three
+characters and deletes the wrong ones.
+
+## A held SQLite lock must be released inside the app's 15 s busy timeout (TASK-33628.5, 2026-10-04)
+
+**Incident.** To see a large Delete's "Deleting N messages…" state live, the
+write was held behind `BEGIN IMMEDIATE` in a separate `sqlite3` session (the
+TASK-33622.15 recipe). The first run held it 23 s while captures, Escape and
+Ctrl+Q were taken one at a time. ChaChaNotes connections open with
+`timeout=15`, so at 16 s the app logged `Console message delete failed:
+OperationalError`. The receipt closed with "Delete could not complete", and
+nothing was deleted. The transaction had rolled back cleanly, but this was
+not the run being verified. The second run scripted every step and committed
+at 3.7 s.
+
+**What to do.** Script the whole held window: take the lock, trigger, capture,
+send the keys and commit, all in one command, and record how long the lock was
+held. Keep the hold well under 15 s. A hold past the timeout tests the failure
+path instead, which is evidence of something else.
+
+## An isolated (`python -I`) worker ignores cwd, so a stale editable install breaks it alone
+
+**TASK-33940, 2026-10-02.** Every Console fs_*/git_* call on the owner's machine failed with
+"Private scratch space is unavailable; the tool was not run." while the app itself started fine.
+The workspace tool worker runs `sys.executable -I -m tldw_chatbook.Tools.workspace_tool_worker`;
+`-I` drops cwd and PYTHONPATH, so it imports the package only through site-packages -- and the
+shared `.venv`'s editable install pointed at a deleted worktree. The app process imported fine
+because it is launched from the repo root. The error copy (since fixed) blamed scratch.
+
+**What to do.** Before a live file-tool run, check `<venv>/bin/python -I -c "import
+tldw_chatbook; print(tldw_chatbook.__file__)"` from OUTSIDE the repo. For a worktree, build the
+worktree its own venv (`uv venv` + `uv pip install -e ".[dev,...]"`) so the worker imports the
+code under test; a shared venv's editable install points at whichever checkout installed it last.
+
+## `tmux kill-server` does not leave a pending dispatch; SIGKILL the app's own pid
+
+**TASK-33625.5, 2026-10-03.** To show the Console's response-recovery card
+live, a turn has to die between acceptance and the reply. Two attempts
+failed before one worked:
+- **The reply had already arrived.** With the review proxy in `stall` mode,
+  a "count to 300" reply streamed in full before the hang. The process was
+  SIGKILLed while **Stop** still showed, but after relaunch the turn came
+  back complete and no card appeared.
+- **The kill never landed.** In `slow` mode (12 s before upstream), the
+  capture with **Stop** showing was taken at 09:00:16, then
+  `tmux kill-server` ran. My `kill -9` guard silently did not fire. The
+  app's log then shows `provider_entry` at 09:00:23 and `reply end` at
+  09:00:37: the process outlived its tmux server by about 20 s and
+  finished the turn.
+- **What worked.** The pid was resolved from the profile's environment
+  (`ps eww -p <pid> | grep profiles/<name>/config.toml`) and SIGKILLed while
+  **Stop** showed. A `kill -0` loop confirmed it was gone. The log ends
+  after `durable_commit` and `reply start`, with no `provider_entry`.
+  Reopening the chat showed "Response delivery status is unknown on the
+  source device." with **Retry anyway** and **Discard**.
+
+**What to do.** Hang the request before upstream, not mid-stream. Kill the
+app by its own pid and confirm it is gone before relaunching. Then read the
+log's last `console_send_stage` phase: it says which recovery state the
+relaunch will show, before you go looking for it.
+
+## A live race control needs proof the race happened, not a fixed sleep (TASK-33622.15, 2026-10-04)
+
+**Incident.** The fix under test: a fork that finishes while Ctrl+Q's "Quit while still working?"
+covers the fork dialog must still close the dialog after Wait. The live recipe held the fork
+commit behind `BEGIN EXCLUSIVE` in `sqlite3`, raised the question, ran `COMMIT`, slept 3 s and
+pressed Wait. The fixed build closed the dialog. The pre-fix control, same script, closed it too,
+which read as "the bug does not reproduce live". The capture taken before Wait showed why: the
+Console beneath was still on the source chat, so on that run the fork opened only after Wait,
+when nothing covered the dialog. Rerun with a longer wait, and with the fork's own toast ("Fork
+created and opened.") captured under the question before Wait, the control left the dialog stuck
+on "Forking..." as the tests predicted.
+
+**What to do.** For a cover-then-finish race, gate each step on on-screen proof that the previous
+one happened, and keep the capture taken just before the deciding key. A control that "passes"
+is only evidence once that capture shows the race was actually entered. (Also: `tmux send-keys`
+treats a `;` argument as its own command separator; send SQL as `-l 'COMMIT\;'`.)
+
+## A dead modal after a send can be the app pump, not tmux (TASK-33622.15, 2026-10-03)
+
+**Incident.** Live-verifying the generated video's Save-to-disk picker, three runs looked like
+the detached-tmux trap below: the `/generate-video` cost confirm (then the capacity choice) ignored
+Tab, Escape and clicks, the process sat idle, and a SIGUSR2 dump showed the main loop in
+`_run_once` and the input thread in `select`. Attaching a client changed nothing, and the MiniMax
+request kept polling in a worker thread. The fault was in the app, not tmux: priority
+**Ctrl+Q** never logged `Application quit initiated`, F1 did nothing, and the same freeze
+reproduced on clean dev. A **mouse** click on Send took a path that left input alive, and the
+choice, the picker and their quit prompts then all worked. The likely mechanism -- the Enter-key
+send awaiting the whole `/generate-video` command, so input queues behind it -- is inferred from
+those symptoms and was **not** confirmed with a stack of the send path.
+
+**What to do.** When a modal goes dead right after a send, press Ctrl+Q and grep the app log
+for `Application quit initiated`. If it is missing, input is probably queued behind the send:
+check `console_send_stage ... status=entered` with no outcome line, and retry with a different
+send path before blaming the harness. Before filing it as yours, reproduce it on the merge base.
+
+## A client timeout does not cancel work on a serialized local inference server
+
+**TASK-32931, 2026-09-27.** Console speech stopped working for ~15 minutes after
+one long reply. The app requests the whole utterance in a single call and gives
+up at its 60s HTTP timeout (`TTS/base_backends.py`, `build_httpx_async_client(
+timeout=60.0)`); the local Qwen3-TTS server needed far longer than that for a
+2099-character message. The abandonment is one-sided: the server has no cancel
+path and holds one global inference lock (`_infer_lock` in its own
+`qwen3_tts_clone_server.py`), so the orphaned generation kept the GPU while
+every later request -- 416 characters, 451 characters, and a five-character
+probe -- queued behind it and timed out in turn. It looked like the whole
+feature was broken; it recovered by itself when the orphan finally finished.
+
+The misleading part is the reporting, not just the wait: the failure surfaces as
+`outcome_code=connection_unavailable` (TASK-15530's reachability copy), because
+`httpx.ReadTimeout` subclasses `RequestError`, while `/health` on the same
+server answered in under a millisecond throughout. A busy-but-alive server and a
+dead port are indistinguishable to the client at that layer.
+
+**What to do.** When a locally-hosted model server serializes inference, treat
+its queue as a shared resource that outlives your request: never abandon a long
+call and assume the resource was freed, and keep requests short enough to finish
+inside the client timeout rather than raising the timeout alone. Measure an
+endpoint's actual throughput before sizing a request against a deadline. Tell
+"hung" from "busy" cheaply: an invalid body returning 400 in 0.4ms while a valid
+one hangs forever localizes the stall to the inference lock rather than the
+process, which is how this was diagnosed. And read the outcome code as a
+symptom, not a diagnosis -- a read timeout on a reachable endpoint is not a
+connectivity failure.
+
 ## CSS overflow alone does not provide keyboard scrolling
 
 **TASK-32879, 2026-09-20.** The restored MCP review made a plain Container
@@ -124,6 +648,22 @@ not evidence that a callback cannot finish. The regression tests in
 `Tests/UI/test_console_context_window_modal.py` hold the old work across the
 navigation boundary before releasing it.
 
+**Recurred, TASK-35010 review, 2026-10-20.** A guard written as `if
+self.is_mounted:` to skip a closed Settings screen never skipped: in Textual
+8.2.8 `_is_mounted` is set on mount and never cleared, so popping a screen
+unmounts and detaches it but leaves `is_mounted` True. The guard was copied
+from `SettingsScreen._raw_config_changed`, whose `is_mounted` check only skips a
+screen not yet mounted (its unmount detaches that callback): a convention in
+the same file had answered a different question, "mounted yet?", not "left the
+stack?". For "has this screen left the stack": a screen that is not installed
+(not a `reusable` route, like Settings) is removed on pop, so `is_attached`
+answers it; an installed screen (the `reusable` routes Home, Chat and Library
+in screen_registry.py) stays attached after a pop, so check
+`screen in app.screen_stack` there. Pin it with a test that
+pops the screen first
+(`test_a_late_advanced_config_save_after_settings_closed_updates_only_the_lists`
+failed with `is_mounted`).
+
 ## A process's No route to host can be an app privacy denial
 
 **TASK-32459, 2026-09-10.** curl and Python sockets to the user-authorized
@@ -217,6 +757,142 @@ A controlled child-mount barrier reproduced it. Gate selector writes on complete
 mounting and replay retained results from the existing mount-ready callback,
 including when the user has already left that pane; queryability alone is not
 readiness. Exact-reference handoffs need the same boundary.
+
+**TASK-34406.7 / PR #3141, 2026-10-16.** Required Console CI crashed a
+workbench Send worker with `NoMatches('#console-trace-save-send')`: the recovery
+card's title existed while its nested action container had not mounted. A real
+child-mount barrier reproduced the same failure on exact merged production
+(3 failed, 1 passed). A pre-mount return alone left all four changed/cleared
+recovery states stale. Queuing one fresh builder read from the owning region's
+Mount handler, after Textual sets `is_mounted`, passed the four controls and
+original failing hook-review journey; mounted missing controls still raise.
+Queryability and a guard alone do not replace a current-state mount replay.
+
+## A card with no detected server may mean discovery never ran: count the server's requests
+
+**TASK-33008.3, 2026-10-04.** The live check of the Get started card's "Use
+detected \<server\>" ran at 211x44 on a scratch profile, with a stub listing
+models on `127.0.0.1:8080`. On four launches, at base `fba5026064` and with the
+task's change, the card never offered the action and the stub logged zero
+requests. The same `discover_local_servers(load_settings())` call in a bare
+interpreter found the stub at once. A scratch launcher that wrapped the call
+showed the cause: the first attempt, made by the card's mount-time worker,
+raised `ProviderReconnectRequired`, caused by
+`RecoveryRequired('raw_operation_provenance_invalid')` from
+`raw_participants._check`; a retry 1.7 s later succeeded. Discovery runs once
+per screen and its `except` logs at debug level, so the refusal reads as "no
+server found". The mounted tests inject `app.console_local_server_discovery`,
+which bypasses the refused function, so they stay green.
+
+**Fixed in the same task (fix round 1, 2026-10-05).** The card's worker now
+runs discovery in its own thread and loop (`asyncio.to_thread(asyncio.run,
+...)`, the switcher probe's pattern). Same scratch profile and stub: before the
+change, zero requests and no action; after it, two `GET /v1/models` and "Use
+detected llama.cpp (127.0.0.1:8080)" focused on the first launch. A guess that
+does NOT reproduce it: setting `raw_participants._local.operation` to a stray
+object — `_runtime_operation` ignores an unregistered operation. The mounted
+real-discovery test passes at both base and head, so the thread is pinned by
+recording the discovery thread, not by a reproduction. The hop moved one
+caller; it did not fix the cause.
+
+**The cause, and why no mounted test saw it (TASK-33641.6, 2026-10-09).** The
+rider guessed a raw scope held across an `await`. There was none. A scratch
+launcher ran discovery on the UI loop again and logged two things: every raw
+scope still open when the loop next ran (none, through boot and minutes of
+idle), and every `_check` made by a task other than the operation's owner
+(exactly one, the discovery worker).
+`run_console_config_sync` (`UI/Console_Modules/config_sync.py`) holds the
+Console's `config` scope while `ChatScreen._sync_console_rail_and_controls`
+renders, and that render reaches `run_worker`. `App.run_async` installs
+`asyncio.eager_task_factory`, so the worker's first step ran inside
+`create_task`, inside the open scope, as a different `asyncio.current_task()`.
+`raw_participants._local` was a plain `threading.local`: the worker found the
+pump task's operation and `_check` refused it. `App.run_test` installs no eager
+factory, so the mounted real-discovery test stayed green. The slot is now kept
+per thread and task (`raw_participants._TaskLocal`) and `_check` is unchanged;
+a task that enters a source or a file other than config while another task of
+its thread is in the middle of it is still refused. The un-hopped launcher then
+found the server on its first launch. A plain `ContextVar` would not have fixed
+it: `create_task` copies the creator's context, and the eager worker read the
+owner's value.
+
+**Letting the second task in turned one refusal into a freeze (TASK-33641.6
+review, 2026-10-10).** Before that change a second task of the thread could not
+enter config at all, so it never reached a lock. After it, a config write from
+a task started under `_config_write_lock` reentered both thread RLocks and then
+slept on the OS file lock in 50 ms steps, on the loop thread. That lock is
+taken on a fresh descriptor, so it is not reentrant, and its holder was the
+thread now sleeping. The first report had passed this because "all 18 holders
+are in `config.py`, which starts no task". The holders are there. The code that
+runs under the lock is not: `locked_hooks_config_snapshot` yields it to
+`Agents/hook_permissions.py` and `Chat/console_runtime.py`, and the
+literal-settings transaction calls its callers' `mutation_builder`,
+`before_replace` and `after_replace`. `_config_write_lock` now refuses a thread
+that is already inside the same file's write transaction. The refusal has to
+come before any operation opens: raised from inside one, it left
+`_CONFIG_PERSISTENCE_ERROR` set to `config_operation_failed` (measured), which
+keeps the config participant from draining until the next successful write.
+
+**"Before any operation opens" held for the lock, not for two of its callers
+(second review, 2026-10-10).** The check was the first line of
+`_config_write_lock`, and the notes said the refusal recorded nothing.
+`read_cli_config_snapshot` and `replace_cli_config_serialized` open an
+operation of their own and then take the lock. For those two the refusal was
+raised inside an entered operation and the flag was set; under a holder that
+does not write (`locked_hooks_config_snapshot`) nothing cleared it. The test
+asserted the claim for `save_setting_to_cli_config` only, the one caller that
+had been read. Both now run the check (`_refuse_config_write_lock_reentry`)
+ahead of their own operation. The decorated one is split into a plain entry
+and a `_guarded` body, because `@guarded` opens the operation before the
+body's first line. The test runs all three calls and counts the operations the
+refused task opened.
+
+**Both file guards were keyed by something other than the lock they stand in
+for (same two reviews).** A second task is refused a file another task of its
+thread is in, because the path lock is reentrant and cannot make it wait. The
+first guard compared source objects, but every object on one file shares the
+lock. The second compared the selected path, but the lock is keyed by the
+resolved path (`/var/...` and `/private/var/...` are one lock) and, for a
+settings source, by its bound root whichever file the scope selects: two
+`EvalConfigLoader` objects, one saving and one exporting, both got in. The
+scope's state now carries the lock's own key and the guard compares that.
+
+**Those two entry points were then given a caller they do not have (third
+review, 2026-10-10).** The round 2 texts called the pair "the Settings raw
+editor's read and save". Only the read is the editor's, and
+`settings_advanced_config.py` runs it through `asyncio.to_thread`, on a worker
+thread that is not inside the write transaction. `replace_cli_config_serialized`
+is reached only through `SettingsConfigAdapter.replace_serialized`, which
+nothing calls, tests included. The editor saves through
+`replace_cli_config_snapshot`, also on a worker thread; that one opens no
+operation ahead of the lock, so the lock's own first line was already early
+enough for it. Neither round 2 refusal can fire from the UI today: the change
+is correct, and defensive. The adapter does wrap both functions; the callers of
+its methods had not been grepped, nor the thread they run on. The wrong label
+then did two things. It told the Capture phase that opening the editor and
+saving once would cover both changed entry points, when that run never calls
+the changed save. And it credited the change with one passing run of an
+intermittent test, `test_console_artifacts_roundtrip.py`, which calls neither
+function (logged: no call in a failing run, none in a passing one).
+
+**What to do.** Count the stub's requests before reading the card: zero means
+discovery did not run, not that nothing answered. A test that injects the
+discovery seam does not cover the real entry point. A guard that compares tasks
+needs a test under `loop.set_task_factory(asyncio.eager_task_factory)`
+(`Tests/Backup_Recovery/test_raw_operation_task_discovery.py`), because only
+then does a task run inside its creator. When a change admits code that used to
+be refused, list every lock that code can now reach, and ask of each whether
+its holder can run while the newcomer waits. Audit a lock by what runs under
+it, not by where it is taken: follow every `yield` and every callback parameter
+out of the module. A check that must run before an operation opens goes ahead
+of each caller's outermost operation: list the callers and mark the ones that
+open one first, decorators included. A guard that stands in for a lock compares
+the lock's own key, not a value that usually equals it. Before writing which
+surface uses a function, follow it to a real call site: grep the callers of its
+wrapper too, and note the thread each one runs on. Send a human gap between
+keys when driving Enter, Enter (`send-keys Enter`, ~150 ms, `send-keys
+Enter`): two keys in one tmux write reach the card before Switch model mounts,
+and the second is dropped.
 
 ## Send synthetic Paste through the app, not directly to TextArea
 
@@ -405,6 +1081,13 @@ Use `TLDW_CONFIG_PATH=<scratch>/config.toml` so the run cannot touch real state 
 the profile-isolation entry below). Ctrl+digit hotkeys cannot be sent through tmux --
 verify those bindings by reading `BINDINGS` in the code instead.
 
+Ctrl+Enter, though, can be sent (TASK-33006.5, 2026-10-03): its kitty-protocol CSI u
+form reaches Textual as `ctrl+enter`: `tmux -L verify send-keys -l $'\e[13;5u'`.
+Chat settings' Apply (Ctrl+Enter) ran from a focused field this way, so the
+advertised key itself was exercised live. Also send typed values with `-l`
+(`send-keys -l "0.9"`): in that run the same text without `-l` left the
+Temperature field empty.
+
 ---
 
 ## A widget fed only by a sync method is blank on the first frame
@@ -466,6 +1149,26 @@ positive. Inspecting the payload confirmed a real `MediaDetailResponse(media_id=
 **What to do.** Assert on **identifying content**, not on the absence of an exception.
 The chain that matters is: real submit → real completion → real reconcile → the
 affordance → *the thing it opens*.
+
+---
+
+## A lasting-sync folder under the harness run dir is refused as "inside Chatbook's own data directory" (TASK-34000.17, 2026-10-22)
+
+**What happened.** The live plan said to write the three Markdown files for Keep a folder
+synced under `$R/runs/<socket>/cwd/sync-folder/`. The configure form accepted the folder,
+but Check changes answered "That folder is inside Chatbook's own data directory. Pick a
+folder outside it, then Check again." and no review ever came: the run dir holds the
+profile's `config.toml` and `data/`, and the rule fences the whole profile tree, not only
+`data_dir`. The first "receipt" capture of the session was that refusal, named as a
+receipt, before the status line was read. Moving the folders to
+`$R/fixtures/<socket>/sync-folder/` (outside every run dir) let the same walk reach
+"3 safe · 0 need attention" and activate. The harness's own `seed_t4_sync_root.py` is not
+a counter-example: it writes its root straight into the state DB, which is why that seeded
+`VSync` root then reads "✕ Blocked · Next: Review settings" in Manage sync folders.
+
+**What to do.** Put any folder a live lasting-sync walk will activate OUTSIDE
+`$R/runs/<socket>/` (a `$R/fixtures/<socket>/` subfolder is fine), and read the
+configure form's status line before trusting a wait that only timed out.
 
 ---
 
@@ -676,6 +1379,16 @@ seam.
 A live credential pasted into a session is a real secret. Keep it in an env var for the
 run; never write it to a config file that could be committed; and before committing,
 confirm `git diff | grep -c "<key-fragment>"` is `0`. Advise rotation afterwards.
+
+**Grep the key's own first characters, never the prefix family (TASK-34000.21,
+2026-10-09).** A `grep -c "sk-"` over an isolated run's app log reported 18 hits and
+was read as a leaked OpenAI key for a full investigation round. All 18 were the
+worktree path: `task-34000-clarify` contains `sk-`. The rule above already says
+"key-fragment" for this reason -- read the first 6-12 characters of the key file into
+a shell variable (`K=$(head -c12 <key-file>)`, never echoed) and count THAT, and when
+a pattern must stand in for the key, shape it like one (`sk-(ant-)?[A-Za-z0-9_-]{20,}`)
+so a path or a task id cannot match. A false positive here costs as much time as a
+real leak, and a check that cries wolf is one that gets skipped next time.
 
 ---
 
@@ -2962,6 +3675,20 @@ and import them by that absolute path. A `NameError` for a symbol you know you
 defined means you are reading a different file, the same way an
 `AttributeError` for a symbol your feature defines means the wrong tree.
 
+**Second incident (TASK-33662, 2026-10-02).** A merge-base tree extracted to
+the generic `scratchpad/base` vanished in the middle of a 25-minute comparison
+run. pytest ended with `FileNotFoundError` on `os.chdir(.../scratchpad/base)`,
+and the other runs died with SIGTERM in the same minute. Files with other
+owners' names (`base_only.txt`, `rerun_head.log`) had appeared beside it. The
+same rule covers whole trees: use a task-named directory (`scratchpad/t33662/base`).
+
+**Third incident (TASK-34100.16, 2026-10-05).** I made the same mistake: I ran
+`rm -rf <scratchpad>/base && mkdir` for a base export. Twenty minutes later
+that directory held a full repo tree that another agent had extracted, while
+my pytest runs were using it. My first `rm -rf` may also have removed a peer's
+tree. Use the task-named path from the first command, not after the first
+collision.
+
 ## A provider can satisfy the response envelope and still ignore the task (2026-09-11)
 
 **What happened.** Live-verifying a new default "Improve My Prompt" optimizer
@@ -3429,6 +4156,23 @@ Preserve the search cursor on programmatic refocus. The two-theme failing test,
 minimal `select_on_focus=False` repair and corrected native captures are retained
 in `Docs/superpowers/qa/2026-09-18-console-appearance/README.md`.
 
+**Recurrence — TASK-33008.2, 2026-10-11.** Switch model opens with a query
+in Find ("<provider> ", kept with its space "for the model id") and its own
+status line says "type its name and an id". Find takes focus on open, the
+query was selected, and the first key replaced the provider's name: the id
+paired with the chat's provider instead, and Enter moved the chat to OpenAI ·
+llama-live-x where SambaNova was meant. No test that opened the list with a
+query pressed a text key (each set `find.value`; the ones that typed opened
+with an empty Find), so it was found on a live look at the guide's new
+sentence. A
+field that opens with text the user is told to type after needs one test
+that presses the keys (`pilot.press(*"gpt-new")`) and asserts the whole value.
+That fix changed the constructor only. The list's own refocus was left: Enter
+on an "… N more" row puts "<provider> " in Find and focuses it, and reached
+from Temperature that focus still selected the name (the next review read it
+from the code). Grep every `.focus()` on the field, and press the keys from a
+state where the field does not already hold focus.
+
 
 ## A CSS route tour can leave a native compiler alive (TASK-32818, 2026-09-18)
 
@@ -3551,6 +4295,12 @@ working directory**. One review agent's export landed a 2.3 MB `trace-export.jso
 the reviewed worktree's root, which then showed up as an untracked file in the review
 branch. Launch the app from a scratch cwd whenever the checkout must stay clean.
 
+## A redirected stdout or stderr leaves the tmux pane blank, not broken (TASK-34000.71, 2026-10-23)
+
+**Incident.** Two isolated launches of `python -m tldw_chatbook` inside `tmux -L p1b-t5-1` painted nothing for 30 s, while the profile's `tldw_cli_app.log` showed an ordinary boot. The first launch redirected stdout to a file (to keep a crash readable); the frames landed in that file, sized 80x24. The second redirected only stderr; the 160x45 frames landed in that file instead. Textual's driver writes the screen to whichever of those streams it is given, so either redirect takes the paint away from the pane and nothing in the pane says why. Two relaunches, about four minutes.
+
+**What to do.** Launch the TUI in tmux with no redirect on either stream. A crash is already readable: the profile's `tldw_cli_app.log` under `get_user_data_dir()` carries the traceback, and `tmux capture-pane` shows Textual's own crash screen. If stdout must go somewhere, read the file as the frame it is before concluding the app is hung.
+
 ## A pytest file outside `Tests/` gets none of `Tests/conftest.py`'s isolation (Console UX review, 2026-09-29)
 
 **Incident.** Two review verifiers wrote scratch probes in the session scratchpad:
@@ -3583,3 +4333,477 @@ fresh handles to archive, hook configuration, run-log selection and fleet histor
 reads. Reusing operation-owned connection retirement fixed the actual workers;
 closing only the main-thread database or collecting Python objects did not.
 The final 105-case run passed without resource warnings or raised FD thresholds.
+
+## A worker cannot keep UI polling responsive when both share its writer lock (TASK-33431, 2026-09-29)
+
+**Incident.** Independent durable-progress review found that clicking Discard
+called SQLite on the UI thread. A mounted test held `BEGIN IMMEDIATE` from a
+separate real connection; the click prevented the heartbeat from running until
+the writer released its 1.2-second hold. Moving SQL into a thread alone would
+still leave the modal timer and navigation counts waiting on the global queue
+lock that protects the transaction. The repair publishes bounded immutable
+observations after commits and leaves every mutation and capability check under
+the authoritative lock. Both open-view and close-during-write cases passed with
+heartbeat/count reads observed while SQLite was still blocked, followed by
+exact selected-ID removal and retention of the other report.
+
+**Practice.** For an off-thread persistence fix, exercise the actual contention
+with another SQLite writer and measure every UI polling path during the wait.
+A launched worker or a responsive click before it enters SQL does not prove the
+UI remains responsive. Read-only observations may show the last committed
+state; they must never become mutation, permission or budget authority.
+
+
+**Native lifecycle follow-up (TASK-33431).** The first repair kept the open
+modal responsive, but a second mounted probe found actual native chat close,
+runtime disposal, and native bridge registration still waited synchronously
+on the same writer lock. Registration also held native identity while waiting,
+so putting that caller in a worker still blocked UI metadata reads. A final
+review probe found replacement registration held the bridge initialization lock
+while draining SQL; disposal still waited on that lock. Seventeen mounted contention
+modes now cover open/closed views, native close, disposal, caller cancellation,
+runtime replacement, real native rebinding, disposal during registration,
+first-fleet and sender binding, live-child cancellation, saved hydration and
+rollback. Immediate
+exact-generation revocation precedes runtime-owned physical cleanup; replacement
+drains outside native identity before loading committed rows. The important
+check is every lifecycle caller of the shared writer lock, including the locks
+it holds while waiting, not just the original button handler.
+
+Whole-store revocation must avoid initialization locks held through physical
+drains as well as queue and identity locks. The final regression waits until
+actual replacement registration has entered that boundary, disposes immediately,
+and proves heartbeat/count/identity reads run before SQLite releases. Delayed
+positive store access must then refuse rather than publish a reopened store.
+
+
+The lock audit also found first-fleet creation and live sender cancellation
+waiting on another chat's SQL while retaining native identity or coordinator
+ownership. Saved hydration still called synchronous preparation on the UI loop,
+and its rollback released the inbox under identity. The mounted matrix now
+holds the actual writer across these entry points and requires heartbeat,
+counts, identity reads and fleet fences before release. Preparation waits
+outside lifecycle locks; binding retries exact ownership; rollback immediately
+revokes and gives physical release to the existing finite worker.
+
+A cancellation-only subprocess then reproduced a different failure: an
+asyncio Task cancelled before its preparation started made a repeated shield
+loop spin forever. The final helper observes the existing worker's concurrent
+receipt, handles terminal cancellation, and retains an already-started leaf
+through caller or asyncio-observer cancellation. Mounted in-flight cancellation
+and bounded pre-start teardown probes verify both sides. A shield is not proof
+of physical ownership; inspect which future owns the work and how a terminal
+cancelled observer settles.
+
+
+**Worker cache follow-up (TASK-33431).** The 247-test affected selection passed
+but its descriptor sentinel reported growth of 282. A focused probe confirmed
+a concrete new path: saved-progress preparation opened a file-backed cache on
+the reused Chat worker, and shutting down the pool plus closing the UI handle
+left that connection registered and usable. Independent mounted probes found
+the same defect in the modal's prepare and discard callbacks; participant
+maintenance could not drain those leftover handles. Fresh/borrowed regressions
+now observe each actual worker entry. The repair reuses the existing finite
+local worker boundary to retire only caches opened by that operation, while
+keeping borrowed worker handles and the UI connection live for their owners.
+Aggregate descriptor counts do not identify ownership. Probe the new worker's
+registered cache after settlement and actual maintenance drain before calling
+a warning inherited; a completed Future does not prove its native handle was
+retired.
+
+
+The complete sink audit found a fourth instance on an actual AgentService child
+thread: spawn, report, wait and done committed a saved report, but joining the
+finished fleet thread and closing the UI database still left one registered
+Chat connection and a failed maintenance drain. Its existing worker guard
+retired AgentRuns/workspace handles, which did not cover the newly introduced
+Chat data owner. The exact runtime report callback now uses the same finite
+local worker boundary. Fresh/borrowed threaded regressions inspect the physical
+child after its report receipt, preserve prior caller ownership and prove drain
+after shutdown. Follow each new SQL sink through its real physical owner; a
+general worker guard only covers the database families it actually retires.
+
+
+## Importing the test bootstrap also installs its socket guard
+
+**TASK-33660, 2026-10-02.** A standalone audio-auth UAT probe reused
+`Tests/conftest.py` for a private client profile. Two connection attempts failed
+even though the owned server listener was reachable: importing that bootstrap
+also installs the socket guard in blocked mode. The initial startup-delay
+explanation was not established. The guard's documented numeric-loopback-only
+mode allowed the four protected GET requests while retaining external socket
+denial; all four produced the expected 401/auth_required recovery state.
+
+Use `loopback_network` for a pytest probe, or the documented guard mode for a
+standalone probe against an owned numeric loopback address. Restore blocked mode
+in `finally` and assert that no blocked attempts were swallowed. Keep failed
+setup attempts out of the passing receipt.
+
+
+## Verify saved settings through the startup reader and a new process
+
+**TASK-32108.2, 2026-10-03.** Chatbook Buddy Apply and in-process navigation
+worked, and TOML contained the saved conversation binding and Static choice.
+Restart retained artwork and geometry but returned Follow to None and motion to
+Dynamic: `_load_settings_uncached` projected `persona_buddy` while omitting
+`buddy_interaction`. Tests that kept the updated `app_config` never crossed that
+reader. A real persisted-settings load and the supported Textual browser restart
+reproduced the loss; adding the copied table projection restored both choices.
+Keep absent-table semantics and parser defaults, and verify the startup reader
+instead of treating a successful writer or cached form as restart evidence.
+
+
+## Wait for Resume presentation before ending UAT; fence queued rebuilds at shutdown
+
+**Incident:** TASK-32108.4 on 2026-10-03 selected the correct saved conversation ID, then the Home UAT exited while ordered Resume still awaited UI refresh/focus. Its application log showed runtime disposal and Home removal before a focus `No screens on stack` error and duplicate IDs in two trays. A held-Resume regression proved runtime shutdown returned while its presentation worker was RUNNING. Draining that worker fixed this gap, but independent review reproduced a queued automatic tray rebuild across actual child removal after the app stopped. Textual's direct test shutdown had not set the exit flag that normal Quit sets, allowing orphan child registration and a second rebuild collision.
+
+Wait for ordered presentation and final modal dismissal, not only selected identity. At shutdown, drain view workers before runtime disposal and close existing Textual mount admission before screen pumps stop. A completed worker alone does not prove its queued widget callbacks are settled. The two production regressions verify these separate boundaries; the discarded initial-mount lock experiment did not establish either repair.
+
+## A gap between tmux frames is not a blocked UI loop until the main thread says so (TASK-34100.1 review, 2026-10-03)
+
+**Incident.** A review of the first-run wizard reported mid-track Nexts that "froze" for
+0.6-1.6 s with no busy line, from `capture-pane` timelines showing no frame between the
+key press and the next step. Choosing Full was a real loop block: synchronous TLS and
+storage setup in the localhost scan, fixed by moving it to a thread. The mid-track cases
+were different. The app was relaunched under a wrapper that sampled the main thread's stack
+every 10 ms and logged busy-line, checkpoint and `show_step` marks
+(`setup-wizard-ux-qa/evidence/g1-r1x-prof/`). At load 60-65 on 14 cores, the main thread
+sat idle in the selector for 85-95% of those windows. The wait was a checkpoint write on a
+worker thread (0.1-1.35 s), and the busy line did show during it. What it could not cover
+was the incoming step's synchronous mount and CSS matching after `show_step`, plus tmux
+receiving the repaint in chunks (one Model step arrived over 2.08-2.15 s). The same Nexts
+headless took 0.15-0.4 s.
+
+**Practice.** Before attributing a no-frame window to blocking work, sample the main
+thread: a `runpy` wrapper that starts a sampler thread and then runs `tldw_chatbook.app`
+needs no repo change and no root, unlike `py-spy` on macOS. Record the load average with
+every timing. Also, in this app a focused `Input` draws a solid `┌─┐` border
+(`components/_forms.tcss`) and an unfocused one the tall `▊▔` border, so read focus from
+that glyph or `capture-pane -e`, not from "the border changed".
+
+## Read the whole screen after a live action, not just the line you added (TASK-34350, 2026-10-04)
+
+**Incident.** TASK-34350 gave a send that cannot fit its model a precise alert:
+"Your message was not sent: gpt-5.6-terra's 32,000-token context window (an
+estimate) is used up by … Max tokens (32,000) … Lower Max tokens …". Controller
+tests pinned the copy exactly and passed. The live run in the real app showed the
+copy correctly, and also, on the same screen, "Response accepted; waiting for
+dispatch." with [Retry response] [Discard] and a composer hint of "Send blocked —
+resolve response recovery first". The alert fired after the turn was accepted,
+and the durable dispatch checkpoint it left behind surfaced as a recovery panel
+that contradicted the alert and blocked the composer. That is the TASK-33621.4
+symptom, reached by a new path. No test looked at anything but the alert's own
+text. The fix moved the refusal before commit, and the live re-run then showed
+the alert alone, with the message in the "Unsent turn needs attention" shelf and
+Restore putting it back in the composer.
+
+The same session's live run also caught a second claim no test had checked: a
+custom 1,500-token budget was described as coming "from an estimated context
+window". It did not.
+
+**What to do.** After each live action, capture the full pane and read every
+surface that can carry state: the transcript rows, the composer hint, the shelf
+above the composer, callouts at the top of the transcript, and the run chip. Ask
+whether any of them contradicts what you just added. When a change adds copy
+that explains a state, grep the capture for the competing copies the app already
+has for nearby states ("waiting for dispatch", "Send blocked", "Unsent turn",
+"Failed"). A test that asserts only your new string cannot see them.
+
+## A no-key probe that passes says nothing about a key-only listing (TASK-34361/34362, 2026-10-04)
+
+**Incident.** The TASK-33640 no-key probes were green for Together: its chat route
+existed and a bad key mapped to "authentication failed". Its model listing answered 401
+without a key, so nothing checked the listing's shape. The first capture with a real key
+found three bugs that had kept Together from working at all:
+- `/v1/models` is a bare JSON array, which discovery rejected;
+- 30 of its 264 models carry a chat template of up to 16 KB, and one oversized field
+  rejected the whole listing;
+- every streamed reply failed on a null `logprobs` key and a missing usage chunk.
+
+Non-streamed replies worked, which is how these hid.
+
+The same day, a public listing hid a bug too. `test_public_listing_parses_through_discovery`
+passed for Vercel, but its no-key fixture keeps only the model ids. The real listing
+failed discovery for every user: seven models' tiered pricing exceeded the 256-item
+metadata bound, and one model's details rejected all 407 (TASK-34363). A fixture that
+stores less than the real response cannot test the parts it dropped.
+
+The same goes for a report that checks fewer levels than the parser does. The Fireworks
+capture printed "uncovered keys: none" and then failed replay: each tool-call object
+carried `index` and `name`, and `uncovered_keys` never looked inside call objects
+(TASK-34364).
+
+**What to do.** Treat a no-key probe as covering only what it actually saw (routes and
+the error mapping), and say so. 15 key-only listings remain unseen as of this entry. When
+a key arrives, run the capture and also run the app's own discovery and a streamed reply
+through the engine against the real API, not just the replay.
+
+## Normal workflow cancellation can leave an always() job queued
+
+**PR3011, 2026-10-04.** The superseded required workflow run37232967293 stayed queued after normal cancellation because its final job uses `if: always()`. The replacement run37237159500 remained pending behind the same concurrency group. After verifying the old run's head differed from the current PR head, GitHub's force-cancel endpoint ended only that obsolete run; the replacement then created its test jobs. Normal cancellation is still the first step. If it leaves an always job queued, verify the exact obsolete run and current head before using the [documented force-cancel endpoint](https://docs.github.com/en/rest/actions/workflow-runs#force-cancel-a-workflow-run). No current gate, policy or peer run was bypassed.
+
+## A fixed recovery issue code hides the exception: record it at `issue_code` (TASK-34100.16, 2026-10-05)
+
+**Incident.** Live-verifying Restore needed a real archive from **Create backup**.
+On fresh isolated profiles every Create ended in "Failed: capturing … Open the
+detailed recovery evidence if the problem continues. (backup_operation_failed)",
+on this branch and on the base build alike. Nothing was logged. By design,
+`Backup_Recovery/recovery_service.py` maps every exception to a fixed code in
+`issue_code()`, so that exception text never reaches a view. A standalone probe
+that called `RecoveryService.start_backup` was no substitute either. Run on a
+copied HOME, it failed with `recovery_scope_uncertain`, because the admission
+registry pins absolute paths. Run in-process, it failed with
+`admission_timeout`, because the probe's own admitted startup lease blocks
+maintenance.
+
+**What worked.** Run the real `tldw-cli` through a small wrapper. The wrapper
+installs a `sys.meta_path` finder that, after
+`tldw_chatbook.Backup_Recovery.recovery_service` executes, wraps `issue_code`
+(and `RecoveryService.issue_code`) to append the traceback to a scratch file.
+It must not import that module before the ADR-126 fence. The wrapped call then
+named the cause: `RecoveryRequired("capture_source_outside_scope")` from
+`storage_admission._discover_capture_inventory`, because the selected config
+path was not inside the admitted roots. Profiles that had already sent a chat
+failed another way, with `admission_timeout` after 60 s.
+
+**Rule.** When a live run ends in a generic recovery code, record the
+exception at `issue_code` in the real app before you guess. Probes outside the
+app hit different fences. Never print the recorded text raw if credentials
+could be in it.
+
+
+## A live test that flips a repo-wide switch must restore it in the same command (TASK-34668, 2026-10-10)
+
+**Incident.** The live test of the merge-queue fix (#3039) needed
+`MERGE_QUEUE=on` for one throwaway PR (#3060). The agent set the variable at
+01:57Z, started a watcher capped at 50 minutes, and planned to set it back to
+`off` in its next turn. The machine slept, the session stalled, and the next
+turn came 23.5 hours later. The queue ran live for that whole day without the
+owner's go-ahead to re-enable it. It rebased and landed seven real PRs and
+evicted three (#3058 on a refused rebase, #3059 and #2882 on flaky tests).
+Four PRs the agent had disarmed "for a few minutes" stayed disarmed for the
+day and lost their place in the line. Nothing was damaged, and the day of
+traffic turned up three real defects (TASK-34788, 34789, 34790), but none of
+that was approved.
+
+**Rule.** Put the restore in the command that runs the test: end the watch
+loop with the command that turns the switch back (or set a `trap ... EXIT`),
+and give the loop a hard deadline. The same goes for anything disarmed,
+disabled or paused "temporarily". A restore that depends on the agent coming
+back is not a restore. Tell the owner the deadline before flipping the switch.
+
+
+## A launcher that seeds a served service with asyncio.run() before serve() drops approvals on a dead loop (TASK-35030, 2026-10-15)
+
+**Incident.** The /m live check (task 35030.6) seeded `MobileChatService`
+state with `asyncio.run(service.create_session(...))` before
+`server.serve()`. `asyncio.run` bound the service's captured `_loop` to a
+loop it then destroyed; `_ensure_started` never rebinds a non-None loop, so
+every approval capture (`loop.call_soon_threadsafe(...)`) marshalled onto
+the dead loop and was silently dropped — the run blocked forever at the
+tool boundary and `/approvals` stayed empty while every test passed.
+
+**Rule.** Seed a served service's state from inside the serving loop (an
+`on_startup` wrapper or the first request), never from a separate
+`asyncio.run()` before `serve()`. A service that captures
+`asyncio.get_running_loop()` once is welded to that loop's lifetime; when a
+live check hangs exactly at a thread→loop handoff with no error anywhere,
+look for a destroyed-loop capture first.
+
+## Live-check HOME under /tmp is refused by private-path hardening — use mktemp -d (TASK-35030, 2026-10-15)
+
+**Incident.** The same /m live check redirected the launcher's `HOME` to a
+directory under `/tmp`. The app's private-path hardening refuses any path
+with a sticky world-writable ancestor, so `/tmp`-located HOMEs (and the user
+data they imply) are rejected outright. Redirecting to `mktemp -d` instead —
+which on macOS resolves under `/var/folders/...`, no sticky world-writable
+parent — passed. A first attempt that only `os.environ.setdefault`-ed HOME
+also leaked probe artifacts into the real `~/.local/share/tldw_cli/` because
+the shell's exported `HOME` won; both the leak and the cleanup by timestamp
+cost a round trip.
+
+**Rule.** For a live check that must isolate user state, export `HOME` to a
+fresh `mktemp -d` directory (never a `/tmp/...` literal path — the sticky
+parent trips private-path validation), and export it in the shell so the
+child cannot inherit the real one. Afterwards, diff the real user data dir
+by mtime to confirm nothing leaked.
+
+**Recurred, S1 live verification (2026-10-20).** A HOME made with `mktemp -d`
+was still refused. The app opened on Backup & Restore with "Recovery required:
+configuration_unavailable", wrote nothing under the scratch HOME, and never
+reached `issue_code` (the issue_code wrapper above logged nothing).
+`mktemp -d` returns `/var/folders/...`, and on macOS `/var` is a symlink to
+`/private/var`. Passing the resolved path instead
+(`os.path.realpath(tempfile.mkdtemp())`, `/private/var/folders/...`) started the
+app normally, with config and data under the scratch HOME. The mechanism is
+not identified. It is not the private-path walk: that follows root-owned
+platform symlinks, and `Utils/private_paths.py::_trusted_symlink` names
+`/var -> private/var` as one. `launcher.startup_preflight` turns any other
+`OSError` (a missing file reads as no config) or `ValueError`/`RuntimeError`
+from `_read_recovery_file` (storage
+admission's `RecoveryRequired` included) into the fixed
+`configuration_unavailable` without calling `issue_code`, which is why the
+wrapper saw nothing. Storage admission's lexical-versus-resolved path checks are
+candidates, untraced. To find it, wrap `_read_recovery_file` inside
+`startup_preflight` the same way, and record the exception. **Rule addition:**
+export HOME as the realpath of the `mktemp -d` directory.
+
+PR3141 connected recovery qualification also exposed two false test waits: waiting on all App workers raised WorkerCancelled for normal exclusive console-sync replacement, and matching a child Static title returned while its recovery-card ancestor was still hidden. Wait on the actual recovery worker and the card display predicate, retaining the original10s/4s bounds and all provider/persistence/screenshot assertions; the corrected three-action journey passed31.80s.
+
+## Canvas UAT needs independent startup, terminal-paint and status-history evidence (TASK-35520–35522, 2026-10-18)
+
+**Incident.** The Canvas native/served startup failure showed `NoMatches` for a
+missing Console rail, but that was a secondary Resize exception after the
+scripted provider omitted the live Console's offline `cached_context_window`
+contract. Five actual partial-subtree tests reproduced the unsafe lookup or
+premature width-band consumption. Guard the entire required subtree before
+consuming the transition, and inspect the original composition failure too;
+reuse the existing ready-provider double rather than suppressing readiness.
+
+The two TLS journeys received and visibly painted `CANVAS_LIVE_REOPENED` while
+`#terminal.textContent` stayed empty: the existing performant xterm renderer uses
+Canvas layers. Observe fresh received terminal content and independent visible
+text-layer paint, excluding cursor/selection changes. Do not switch renderers
+to satisfy a DOM-text assertion. Retaining the collection-admitted profile also
+moved inherited `XDG_DATA_HOME`; child receipts appeared outside the per-stack
+directory the test watched. Give only the freshly spawned test child its owned
+data root; do not retarget the parent's admitted config source.
+
+The timer corpus exposed a separate observer race. A delayed real-browser probe
+proved trusted `execution-started → ready → timer-rate-limit` messages in both
+profiles, with the same nonce, unchanged quotas and zero generated egress. A
+second round trip reading only mutable latest status lost the intermediate
+receipt. Return the retained initial outcome for fresh-page startup assertions,
+while independently requiring the actual terminal failure and disabled scripts;
+if a future caller reuses a page, scope that lookup to its execution identity.
+
+## Classify a superseded navigation result without replaying it (TASK-35552, 2026-10-18)
+
+**Incident.** Once the Canvas UAT harness reached real create/update, one natural
+run permanently disconnected at `api/navigate` even though the child remained
+connected and its selection request succeeded. Parent reconciliation advanced
+the selection epoch while navigation awaited the child; the old-scope completion
+became `503 navigation_unavailable`. A deterministic route test also showed the
+same-revision epoch change could be overwritten with a stale result. Recognize
+the existing stale-selection response only when the same conversation's current
+browser-session object is independently live and available; discard the result
+without replay. Keep revoked, expired, replaced, unavailable and foreign-session
+controls refused, and leave unrelated authority exceptions on their original
+failure paths. A later passing natural run alone did not disprove this race.
+
+
+## Windows pytest needs a private temporary parent (PR3181/3185 replacement, 2026-10-20)
+
+**Incident.** The replacement review initially could not collect targeted tests: the native privacy walker rejected the existing Windows Temp parent as `shared_writable_parent` (mode 0o766). Moving a test profile below that same parent did not fix the ancestor failure. A profile under the managed worktree, whose ancestors were independently verified through `platform_files.os.stat`, collected and passed.
+
+**What worked.** Create an owned test-only parent using `platform_files.os.mkdir(path, 0o700)`, then set `TMP`, `TEMP`, and `TLDW_TEST_CONFIG_ROOT` beneath it before pytest starts. Use separate bootstrap roots for concurrent test processes. Keep the real profile and existing directory ACLs untouched; changing a privacy guard to get collection past this error would discard the condition under test. On Windows the native facade supplies ACL-derived modes and file change times; stdlib stat's creation time does not substitute for ChangeTime in cache invalidation tests.
+
+## A live round can be frozen by the host's own maintenance sleep (TASK-33620.15.1, 2026-10-10)
+
+**Incident.** The config-sync cadence round's paired sends kept stalling for about
+15 minutes between sends (908, 933 and 1,016 s), and one hover poller took 17 minutes
+over a 12 s window. One provider call never finished ("no first token after 90 s"), so
+that app's queue paused and every later send was queued. App Tamer (`autoStopEnabled`)
+was suspected first, and the pollers were moved off the Command Line Tools Python. That
+was not the cause: `pmset -g log` showed the Mac entering "Maintenance Sleep" for about
+976 s at a time, which froze the apps, the proxies and the pollers together. A send
+that straddles one of those sleeps measures the sleep. The previous agent's seven pairs
+from the same host (`uxrev/evidence/bd3/C4/`) had provider calls 3-12 s after Enter and
+two sends with no provider call.
+
+**Practice.** Before a live round, hold a no-idle-sleep assertion for its length
+(`caffeinate -i -s -t <seconds>` in your own tmux server, killed when done; check it with
+`pmset -g assertions`). Run pollers and helpers with the venv interpreter, not
+`/usr/bin/python3`. After the round, check `pmset -g log | grep Sleep` for its window,
+and drop any send that spans a sleep or a hung provider call. Do not average it in.
+
+## A small, consistent live gap is a mechanism until a probe says otherwise (TASK-33620.15.1, 2026-10-20)
+
+**Incident.** The config-sync cadence's first live round on dev 2d071d6d71 showed every
+visible-latency row slightly later on the branch (Agent rail "done" median +180 ms, cost
+chip +136 ms, n=5, pane sampled every 0.25 s). It was written up as "not the cadence"
+because the probe showed every projection near the transition ran. The re-measurement
+at lower load made the gap larger and one-sided: "done" +380 ms and the cost chip
++612 ms in 5 of 5 rounds. A probe that recorded who started each cold historical read
+found the cause in two rounds: the cadence's input read called the Agent rail's
+presentation readers, and at run completion `_console_agent_fleet_rows` started the
+rail's cold historical read before the tick's projection deferred. The read's
+publication (the fleet sync, and an Environment refresh it nudges that holds the UI loop
+0.35-0.77 s) then ran ahead of the deferral's replay. On dev the projection's own replay
+started that read, after the chip and the rail had rendered. Holding those reads during
+the input read made the branch sooner than dev in 5 of 5 rounds.
+
+**Practice.** When a change shows a same-sign difference in every round, however small,
+find the ordering before calling it noise: record when each worker starts and from which
+call chain (a probe that walks `sys._getframe` at the worker's creation), and compare
+the arms' timelines around the transition. A function used as a cheap change detector
+must be read for side effects first; a "reader" that starts a worker moves that worker's
+publication to wherever the detector runs.
+
+
+### CoreAudio finished acknowledgement can precede scheduled output (TASK-36550)
+
+During Console radio portrait qualification on 2026-10-23, real PCM and WAV output
+on MacBook Pro Speakers reported NativeFinished about 24 ms before the final
+outputBufferDacTime interval ended. All fake-device ACK tests had passed; the WAV
+handler could still release its next-sentence/listening completion early. A complete
+known-waveform capture, exact sample-boundary/DAC mapping and terminal-flush trace
+exposed it. Natural drain now requires the native ACK **and** any valid final output
+tail, independently of portrait amplitude analysis; invalid timing keeps ACK fallback.
+Keep an early-ACK future-tail control and a held-close/settle control. Driver timing
+and device-submitted WAVs are not physical-loopback or audible-syllable evidence.
+Evidence: `Docs/superpowers/qa/console-radio-portraits/2026-10-23/qualification.md`.
+
+### A common image reference does not guarantee paired animation frames (TASK-36550)
+
+On 2026-10-24, user review rejected seven ChatGPT reference edits that had passed
+six-slot import and fitted-preview checks: exposure drifted and mouth shapes did
+not match across blink pairs despite each request using the same original. Tiny
+24×24 mosaic previews hid the problem. After explicit local-edit authorization,
+shared mouth/eyelid patches on one original base produced exact paired frames.
+Review a full-resolution labeled 2×3 matrix as well as the actual rail preview;
+role names and six distinct hashes prove neither state correctness nor consistency.
+Assert invariant pixels and paired expression regions when compositing is used.
+Evidence: `Docs/superpowers/qa/console-radio-portraits/2026-10-23/qualification.md`.
+
+### Exact crop data can still be resampled by the final renderer (TASK-36554)
+
+On 2026-10-24, pair-review tests proved the matrix PNG contained exact original RGBA
+crops and retained a one-pixel marker, yet the actual modal compressed them vertically.
+The new caller passed `fit="stretch"` to `mosaic_from_image`; that helper supported
+only contain/cover and silently treated the unknown value as contain. A production-CSS
+capture also exposed numeric pan fields squeezed to zero width by their sibling label.
+A real `native` grid mode, a test that makes any resize fail, visible labeled numeric
+fields and a second capture fixed the complete presentation path. Native rendering
+now explicitly closes only owned conversion/sampling cores; its caller's image survives.
+Check the final renderer and measured controls as well as intermediate image bytes;
+a correct exported raster alone does not prove an in-app detail viewer works.
+Evidence: `Docs/superpowers/qa/portrait-compositing/2026-10-24/`, including the retained
+raw rasters and actual modal screenshots; `Tests/Utils/test_mosaic_render.py`.
+
+## One rendered pixel can visibly move a small portrait (TASK-36699, 2026-10-25)
+
+**Incident.** The seven-character Pocket TTS preview used a ±1px whole-portrait
+idle shift on a 24×24 fallback. The comparison exporter scaled that displacement
+to ±16px in its 384px detail panel. The user rejected the result as pictures
+scrolling up and down; prior static-pair checks and timing review missed this.
+
+**What to do.** Review whole-image registration at the actual fallback resolution
+and at the exported viewing scale. Do not infer that a one-pixel shift is subtle.
+Keep codec portraits stationary; verify native painted pixels equal one of the
+prepared eye/mouth poses. An enlarged detail replay must not add displacement.
+
+## Finer session identities change retention and late-response cleanup (TASK-37143, 2026-10-27)
+
+**Incident.** Fixing two served tabs sharing a login required fresh per-page
+terminal scopes. The existing gateway retained booted sessions for 30 minutes;
+unique page scopes could therefore exhaust its slots after repeated refreshes.
+A capacity-two regression reproduced HTTP 500 on the third page after one closed.
+Review then found that a snapshot awaited before tab closure could recreate the
+already revoked shell. Holding a real child snapshot across closure reproduced a
+stale ready response; holding it across Canvas disable reproduced HTTP 500.
+
+**What to do.** When identity granularity becomes finer, test retirement against
+the actual finite capacity and hold in-flight operations across that retirement.
+Free unreachable session/shell/capability state, and revalidate the captured owner
+and runtime after awaits before publishing a replacement resource.

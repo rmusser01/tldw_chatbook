@@ -152,7 +152,9 @@ def test_cased_reserved_legacy_row_never_candidate():
 
 
 def test_template_tier_selects_positive_score_full_block():
-    db = _store_with([("winner", _classifier_body(media_types=["document"], min_score=0.4))])
+    db = _store_with(
+        [("winner", _classifier_body(media_types=["document"], min_score=0.4))]
+    )
     d = resolve_auto(db, media_type="document", title="t", filename=None, url=None)
     assert d.tier == "template"
     assert d.template is not None
@@ -242,7 +244,9 @@ def test_highest_score_beats_priority():
     low = _classifier_body(priority=99)
     high = _classifier_body(priority=0, extra={"title_regex": "^Doc"})
     db = _store_with([("low", low), ("high", high)])
-    d = resolve_auto(db, media_type="document", title="Doc Title", filename=None, url=None)
+    d = resolve_auto(
+        db, media_type="document", title="Doc Title", filename=None, url=None
+    )
     assert d.template["name"] == "high"
 
 
@@ -261,7 +265,9 @@ def test_regex_only_match_selects():
         [
             (
                 "by_regex",
-                _classifier_body(media_types=[], min_score=None, extra={"filename_regex": r"\.pdf$"}),
+                _classifier_body(
+                    media_types=[], min_score=None, extra={"filename_regex": r"\.pdf$"}
+                ),
             )
         ]
     )
@@ -347,8 +353,12 @@ def test_planner_runs_when_no_template_won(monkeypatch):
     monkeypatch.setattr(
         aus,
         "plan_auto_chunking",
-        lambda **kw: called.append(kw)
-        or aus.AutoChunkingDecision(chunk_options={"method": "sentences"}, chunking_plan={}),
+        lambda **kw: (
+            called.append(kw)
+            or aus.AutoChunkingDecision(
+                chunk_options={"method": "sentences"}, chunking_plan={}
+            )
+        ),
     )
     db = _store_with([])
     d = resolve_auto(db, media_type="document", title="t", filename=None, url=None)
@@ -413,7 +423,9 @@ def test_goal_rides_through_to_planner(monkeypatch):
 
     monkeypatch.setattr(aus, "plan_auto_chunking", fake)
     db = _store_with([])
-    resolve_auto(db, media_type="pdf", title="t", filename=None, url=None, goal="qa_search")
+    resolve_auto(
+        db, media_type="pdf", title="t", filename=None, url=None, goal="qa_search"
+    )
     assert seen["goal"] == "qa_search"
 
 

@@ -197,9 +197,10 @@ async def test_studio_surface_states_scope_and_excludes_every_global_owner() -> 
         assert app.query_one("#studio-tts-reset-btn", Button).label.plain == (
             "Reset to Global"
         )
-        assert str(
-            app.query_one("#studio-tts-voice-tools-heading", Static).render()
-        ) == "Voice tools"
+        assert (
+            str(app.query_one("#studio-tts-voice-tools-heading", Static).render())
+            == "Voice tools"
+        )
         assert app.query_one("#voice-profiles", Button).label.plain == (
             "Voice Profiles"
         )

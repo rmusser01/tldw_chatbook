@@ -2291,6 +2291,37 @@ async def test_explicit_cleanup_action_runs_under_the_root_lease(
 
 
 @pytest.mark.asyncio
+async def test_completed_cleanup_replans_and_a_conflict_is_held_not_stamped_healthy(
+    tmp_path: Path,
+) -> None:
+    """TASK-32633 fix round 2 (review 2, deferred Minor 3): the completed-
+    cleanup branch re-plans instead of publishing ``up_to_date`` unchecked.
+    With both sides changed after the cleanup the root ends held, and no
+    healthy status -- hence no healthy time -- is ever published."""
+
+    store = _store(tmp_path)
+    _pending_operation(store)
+    store.mark_operation_attention("operation-1", "replacement_cleanup_pending")
+    adapter = _Adapter([_input(file_digest=_B, note_digest=_C)])
+    adapter.executor = _PartialCleanupExecutor()
+    owner, _, _ = _owner(store=store, admitted=True, adapter=adapter)
+    await owner.start()
+    published: list[str] = []
+    owner.add_status_listener(lambda snapshot: published.append(snapshot.status))
+
+    root = owner.snapshot().roots[0]
+    assert root.action_id == "operation-1"
+    await owner.resolve_cleanup("root-1", root.action_id)
+
+    assert adapter.executor.cleanup == ["operation-1"]
+    assert adapter.observe_calls == 1, "exactly one re-plan"
+    after = owner.snapshot().roots[0]
+    assert (after.status, after.next_action) == ("needs_attention", "review_changes")
+    assert "up_to_date" not in published
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_cleanup_attention_retains_the_operation_for_review(
     tmp_path: Path,
 ) -> None:
@@ -2305,9 +2336,12 @@ async def test_cleanup_attention_retains_the_operation_for_review(
     await owner.resolve_cleanup("root-1", "operation-1")
 
     root = owner.snapshot().roots[0]
+    # TASK-34000.2 fix round 1: a cleanup still pending is Recovery's to
+    # finish, the same control ``_classify_incomplete_block`` names for this
+    # entry at startup -- not a Review whose check refuses the open entry.
     assert (root.status, root.next_action, root.action_id) == (
         "needs_attention",
-        "review_changes",
+        "resolve_cleanup",
         "operation-1",
     )
     await owner.shutdown()
@@ -2985,6 +3019,69 @@ async def test_failed_sync_now_check_does_not_restart_the_watcher(
     await owner.shutdown()
 
 
+class _LateFailedWatcher(_Watcher):
+    """Runs until released, then dies -- a watcher whose task ends later."""
+
+    async def run(self) -> None:
+        self.events.append("watcher-started")
+        self.started.set()
+        await self.release.wait()
+        raise RuntimeError("forced late watcher failure")
+
+
+@pytest.mark.asyncio
+async def test_a_stale_watcher_done_callback_never_marks_a_live_watcher_failed(
+    tmp_path: Path,
+) -> None:
+    """TASK-34000.50 fix round 1 (review Minor 1).
+
+    ``_start_watcher`` restarts once the old task is done, but the old task's
+    done-callback is queued with ``call_soon`` and can run AFTER the new task
+    exists (a lease landing from ``to_thread`` sits ahead of it in the ready
+    queue). The stale callback then marked the runtime ``failed`` with a live
+    watcher: every row read "Sync stopped" and every hint was refused until
+    Check changes. The ordering here is exact: the old task finishes in the
+    tick ``sleep(0)`` yields to, its callback is queued behind this coroutine,
+    and the restart happens before that callback runs.
+    """
+
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRuntimeOwner
+
+    first = _LateFailedWatcher()
+    replacement = _Watcher()
+    watchers = iter((first, replacement))
+    owner = NotesSyncRuntimeOwner(
+        store=_store(tmp_path),
+        migrate_legacy=lambda: None,
+        coordinator=_Coordinator(),
+        adapter=_Adapter([_input(file_digest=_A, note_digest=_A)]),
+        watcher_factory=lambda _schedule: next(watchers),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+    )
+    await owner.start()
+    await first.started.wait()
+    old_task = owner._watcher_task
+    assert old_task is not None and not old_task.done()
+
+    first.release.set()
+    await asyncio.sleep(0)  # the old task dies in this tick; its callback is queued
+    assert old_task.done()
+    assert owner.snapshot().status == "active", "the callback has not run yet"
+    owner._start_watcher()  # a lease landing now restarts the watcher
+    assert owner._watcher_task is not old_task
+    await replacement.started.wait()
+    await asyncio.sleep(0)  # the stale callback runs now
+    await asyncio.sleep(0)
+
+    assert owner.snapshot().status == "active"
+    assert owner._watcher_running()
+    assert owner.snapshot().roots[0].watching is True
+    assert owner.schedule_hint("root-1") is not None
+    await owner.settle()
+    await owner.shutdown()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("operation_state", "root_status", "expected_action"),
@@ -3122,7 +3219,7 @@ def test_builder_defaults_keep_the_watcher_base_and_cap(tmp_path: Path) -> None:
     watcher = owner._watcher_factory(lambda _root_id: None)
 
     assert watcher._interval == 1.0
-    assert watcher._max_interval == 10.0
+    assert watcher._max_interval == 30.0
 
 
 def _refusing_owner(tmp_path: Path):
@@ -3187,15 +3284,18 @@ async def test_setup_refusal_names_its_reason_and_leaves_no_root_path_residue(
 
 
 @pytest.mark.asyncio
-async def test_root_discovery_refusal_names_its_count_and_dominant_reason(
+async def test_two_read_only_files_are_two_skip_rows_and_the_rest_is_planned(
     tmp_path: Path,
 ) -> None:
-    """TASK-32244: `root_discovery_incomplete` must not hide a per-file reason."""
+    """TASK-34000.16 (owner Q4: every per-file gate is a skip).
 
-    from tldw_chatbook.Notes.notes_sync_runtime import (
-        NotesSyncRootRefused,
-        NotesSyncRootSetup,
-    )
+    Rewritten from TASK-32244's `test_root_discovery_refusal_names_its_count_
+    and_dominant_reason`, which pinned that two read-only files refused the
+    WHOLE root with the dominant reason. The dominant reason now reaches the
+    UI per file, by name: each refused file is one row, the rest is planned.
+    """
+
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRootSetup
 
     vault = tmp_path / "vault"
     vault.mkdir()
@@ -3206,9 +3306,8 @@ async def test_root_discovery_refusal_names_its_count_and_dominant_reason(
         blocked.chmod(0o444)
     owner = _refusing_owner(tmp_path)
     await owner.start()
-
-    with pytest.raises(NotesSyncRootRefused) as raised:
-        await owner.review_setup(
+    try:
+        plan = await owner.review_setup(
             NotesSyncRootSetup(
                 display_name="Vault",
                 canonical_path=str(vault),
@@ -3216,24 +3315,145 @@ async def test_root_discovery_refusal_names_its_count_and_dominant_reason(
                 direction=NotesSyncDirection.BIDIRECTIONAL,
             )
         )
+    finally:
+        await owner.shutdown()
 
-    assert str(raised.value) == "root_discovery_incomplete"
-    assert "2 of 3" in raised.value.detail
-    assert "unsupported_metadata" in raised.value.detail
-    # The dominant gate must reach the caller, not only the detail string:
-    # every per-file gate lands on `root_discovery_incomplete`, and the UI
-    # cannot tell a permission refusal from a newline one without this.
-    assert raised.value.reason_code == "unsupported_metadata"
-    assert owner._root_paths == {}
-    await owner.shutdown()
+    assert sorted((s.relative_path, s.reason_code) for s in plan.item_skips) == [
+        ("locked-one.md", "unsupported_metadata"),
+        ("locked-two.md", "unsupported_metadata"),
+    ]
+    assert [action.kind for action in plan.safe_actions] == [
+        NotesSyncActionKind.CREATE_NOTE
+    ]
+    assert plan.attention == ()
 
 
 @pytest.mark.asyncio
-async def test_root_discovery_refusal_carries_a_non_permission_dominant_reason(
+async def test_a_mixed_newline_file_is_one_named_skip(tmp_path: Path) -> None:
+    """TASK-34000.16: rewritten from TASK-32244's `..._carries_a_non_permission_
+    dominant_reason` -- a newline refusal is that file's row, never a permission
+    sentence and never the folder's refusal."""
+
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRootSetup
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "ok.md").write_text("body", encoding="utf-8")
+    (vault / "mixed.md").write_bytes(b"alpha\r\nbeta\ngamma\n")
+    owner = _refusing_owner(tmp_path)
+    await owner.start()
+    try:
+        plan = await owner.review_setup(
+            NotesSyncRootSetup(
+                display_name="Vault",
+                canonical_path=str(vault),
+                note_scope_id="local_note",
+                direction=NotesSyncDirection.BIDIRECTIONAL,
+            )
+        )
+    finally:
+        await owner.shutdown()
+
+    assert [(s.relative_path, s.reason_code) for s in plan.item_skips] == [
+        ("mixed.md", "mixed_newlines")
+    ]
+    assert [action.kind for action in plan.safe_actions] == [
+        NotesSyncActionKind.CREATE_NOTE
+    ]
+    assert plan.attention == ()
+
+
+@pytest.mark.asyncio
+async def test_a_root_with_one_non_utf8_and_one_mixed_newline_file_plans_the_rest_and_names_both_skips(
     tmp_path: Path,
 ) -> None:
-    """TASK-32244: a newline refusal must not be reported as a permission one."""
+    """TASK-34000.16 AC#1/#5: two bad files are two named rows, not a refused root."""
 
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRootSetup
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "ok.md").write_text("# Fine\n", encoding="utf-8")
+    (vault / "latin1.md").write_bytes(b"caf\xe9\n")
+    (vault / "mixed.md").write_bytes(b"alpha\r\nbeta\ngamma\n")
+    owner = _refusing_owner(tmp_path)
+    await owner.start()
+    try:
+        plan = await owner.review_setup(
+            NotesSyncRootSetup(
+                display_name="Vault",
+                canonical_path=str(vault),
+                note_scope_id="local_note",
+                direction=NotesSyncDirection.BIDIRECTIONAL,
+            )
+        )
+    finally:
+        await owner.shutdown()
+
+    assert sorted((s.relative_path, s.reason_code) for s in plan.item_skips) == [
+        ("latin1.md", "unsupported_encoding"),
+        ("mixed.md", "mixed_newlines"),
+    ]
+    assert [action.kind for action in plan.safe_actions] == [
+        NotesSyncActionKind.CREATE_NOTE
+    ]
+    assert plan.attention == ()
+
+
+@pytest.mark.asyncio
+async def test_a_converted_file_is_picked_up_by_the_next_check_with_a_new_token(
+    tmp_path: Path,
+) -> None:
+    """TASK-34000.16 AC#3: no restart, no Recovery -- the next Check sees it."""
+
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRootSetup
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "ok.md").write_text("# Fine\n", encoding="utf-8")
+    (vault / "latin1.md").write_bytes(b"caf\xe9\n")
+    setup = NotesSyncRootSetup(
+        display_name="Vault",
+        canonical_path=str(vault),
+        note_scope_id="local_note",
+        direction=NotesSyncDirection.BIDIRECTIONAL,
+    )
+    owner = _refusing_owner(tmp_path)
+    await owner.start()
+    try:
+        first = await owner.review_setup(setup)
+        assert [(s.relative_path, s.reason_code) for s in first.item_skips] == [
+            ("latin1.md", "unsupported_encoding")
+        ]
+        (vault / "latin1.md").write_text("café\n", encoding="utf-8")
+        second = await owner.review_setup(setup)
+    finally:
+        await owner.shutdown()
+
+    assert second.item_skips == ()
+    assert [action.kind for action in second.safe_actions] == [
+        NotesSyncActionKind.CREATE_NOTE,
+        NotesSyncActionKind.CREATE_NOTE,
+    ]
+    assert second.observation_token != first.observation_token
+
+
+@pytest.mark.asyncio
+async def test_a_listing_failure_still_refuses_the_whole_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-34000.16: only a failure of the ROOT itself refuses the root.
+
+    A per-file gate is a skip now; a walk that could not list part of the
+    folder still raises, because the plan would otherwise read every unlisted
+    bound file as deleted.
+    """
+
+    from tldw_chatbook.Notes import notes_sync_runtime
+    from tldw_chatbook.Notes.note_import_discovery import (
+        ImportDiscoveryFailure,
+        discover_import_sources,
+    )
     from tldw_chatbook.Notes.notes_sync_runtime import (
         NotesSyncRootRefused,
         NotesSyncRootSetup,
@@ -3242,24 +3462,192 @@ async def test_root_discovery_refusal_carries_a_non_permission_dominant_reason(
     vault = tmp_path / "vault"
     vault.mkdir()
     (vault / "ok.md").write_text("body", encoding="utf-8")
-    (vault / "mixed.md").write_bytes(b"alpha\r\nbeta\ngamma\n")
-    owner = _refusing_owner(tmp_path)
-    await owner.start()
 
-    with pytest.raises(NotesSyncRootRefused) as raised:
-        await owner.review_setup(
-            NotesSyncRootSetup(
-                display_name="Vault",
-                canonical_path=str(vault),
-                note_scope_id="local_note",
-                direction=NotesSyncDirection.BIDIRECTIONAL,
-            )
+    def failing_discovery(*args, **kwargs):
+        real = discover_import_sources(*args, **kwargs)
+        return replace(
+            real,
+            failures=(
+                ImportDiscoveryFailure(
+                    display_path="locked",
+                    reason_code="permission_denied",
+                    user_message="could not list",
+                    source_path=vault / "locked",
+                ),
+            ),
         )
 
+    monkeypatch.setattr(notes_sync_runtime, "discover_import_sources", failing_discovery)
+    owner = _refusing_owner(tmp_path)
+    await owner.start()
+    try:
+        with pytest.raises(NotesSyncRootRefused) as raised:
+            await owner.review_setup(
+                NotesSyncRootSetup(
+                    display_name="Vault",
+                    canonical_path=str(vault),
+                    note_scope_id="local_note",
+                    direction=NotesSyncDirection.BIDIRECTIONAL,
+                )
+            )
+    finally:
+        await owner.shutdown()
+
     assert str(raised.value) == "root_discovery_incomplete"
-    assert raised.value.reason_code == "mixed_newlines"
-    assert "1 of 2" in raised.value.detail
-    await owner.shutdown()
+    assert owner._root_paths == {}
+
+
+_BAD_BYTES = pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        pytest.param(b"caf\xe9\n", "unsupported_encoding", id="latin1"),
+        pytest.param(b"a\r\nb\nc\n", "mixed_newlines", id="mixed-newlines"),
+    ],
+)
+
+
+async def _activate_two_file_vault(tmp_path: Path):
+    """Activate a root holding ok.md and old.md on the real adapter."""
+
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRootSetup
+
+    root_path = tmp_path / "vault"
+    root_path.mkdir()
+    (root_path / "ok.md").write_text("# Ok\n", encoding="utf-8")
+    (root_path / "old.md").write_text("# Old\n", encoding="utf-8")
+    _store(tmp_path)
+    owner, folders, local_notes = _vault_owner(tmp_path)
+    await owner.start()
+    review = await owner.review_setup(
+        NotesSyncRootSetup(
+            display_name="Vault",
+            canonical_path=str(root_path),
+            note_scope_id="local_note",
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+        )
+    )
+    result = await owner.activate_root(review.root_id, review.observation_token)
+    assert result.accepted is True and result.applied_count == 2
+    return root_path, owner, folders, local_notes, review.root_id
+
+
+def _migration_root_with_one_refused_candidate(
+    tmp_path: Path, *, non_candidate_refused: bool = False
+):
+    """A paused ``migration_review_required`` root: a.md fine, b.md mixed newlines.
+
+    ``non_candidate_refused`` adds ``c.md`` (latin-1) with NO binding: a file
+    the folder holds that is not one of the migrated notes' files.
+    """
+
+    import os
+
+    from tldw_chatbook.Notes.notes_sync_runtime import build_notes_sync_runtime_owner
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    store.initialize()
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+    root_path = tmp_path / "legacy"
+    root_path.mkdir()
+    (root_path / "a.md").write_text("alpha", encoding="utf-8")
+    (root_path / "b.md").write_bytes(b"a\r\nb\nc\n")
+    if non_candidate_refused:
+        (root_path / "c.md").write_bytes(b"caf\xe9\n")
+    with PosixNotesSyncFilesystem(root_path) as filesystem:
+        a_file = filesystem.observe("a.md")
+    b_stat = os.stat(root_path / "b.md")
+    root_id = "legacy-root-" + "d" * 40
+    store.create_root(
+        NotesSyncRootRecord(
+            root_id=root_id,
+            note_scope_id="local_note",
+            logical_folder_id=None,
+            canonical_path=str(root_path),
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            state=NotesSyncRootState.PAUSED,
+            last_status_code="migration_review_required",
+        )
+    )
+    store.create_binding(
+        NotesSyncBindingRecord(
+            binding_id="legacy-binding-a-" + "a" * 40,
+            root_id=root_id,
+            note_scope_id="local_note",
+            note_id="note-a",
+            normalized_relative_path="a.md",
+            stable_identity_digest=NotesSyncExecutor.stable_identity_digest(a_file),
+            state=NotesSyncBindingState.CANDIDATE,
+            serialization=a_file.observation.serialization,
+            content_digest=a_file.observation.content_digest,
+            note_version=1,
+        )
+    )
+    store.create_binding(
+        NotesSyncBindingRecord(
+            binding_id="legacy-binding-b-" + "b" * 40,
+            root_id=root_id,
+            note_scope_id="local_note",
+            note_id="note-b",
+            normalized_relative_path="b.md",
+            stable_identity_digest=NotesSyncExecutor.identity_digest(
+                b_stat.st_dev, b_stat.st_ino
+            ),
+            state=NotesSyncBindingState.CANDIDATE,
+            # The profile the FIXED file will carry (LF, final newline).
+            serialization=replace(a_file.observation.serialization, final_newline=True),
+            content_digest=hashlib.sha256(b"a\nb\nc\n").hexdigest(),
+            note_version=1,
+        )
+    )
+    local_notes = _ManyLocalNotes()
+    local_notes.add_note("user-1", "a", "alpha", note_id="note-a")
+    local_notes.add_note("user-1", "b", "a\nb\nc\n", note_id="note-b")
+    folders = _Folders()
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=NotesScopeService(
+            local_notes, None, folder_repository=folders
+        ),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+    return store, root_path, root_id, folders, owner
+
+
+@pytest.mark.asyncio
+async def test_a_refused_file_that_is_not_a_candidate_does_not_hold_a_migration_activation(
+    tmp_path: Path,
+) -> None:
+    """TASK-34000.16 fix round 2 (R2-2 ruling): the block is for the root's OWN
+    notes' files. A refused file with no candidate binding is an ordinary
+    per-file skip -- before and after activation."""
+
+    store, root_path, root_id, folders, owner = _migration_root_with_one_refused_candidate(
+        tmp_path, non_candidate_refused=True
+    )
+    # Fix the candidate's file so only the non-candidate c.md is refused.
+    (root_path / "b.md").write_bytes(b"a\nb\nc\n")
+    await owner.start()
+    try:
+        review = await owner.check_root(root_id)
+        assert [(s.relative_path, s.reason_code) for s in review.item_skips] == [
+            ("c.md", "unsupported_encoding")
+        ]
+        result = await owner.activate_root(root_id, review.observation_token)
+        assert result.accepted is True, result
+        first = await owner.check_root(root_id)
+    finally:
+        await owner.shutdown()
+
+    assert store.get_root(root_id).state is NotesSyncRootState.ACTIVE
+    assert len(folders.created) == 1
+    assert [(s.relative_path, s.reason_code) for s in first.item_skips] == [
+        ("c.md", "unsupported_encoding")
+    ]
+    assert (root_path / "c.md").read_bytes() == b"caf\xe9\n"
 
 
 @pytest.mark.asyncio
@@ -4057,3 +4445,132 @@ async def test_start_failure_records_a_bounded_diagnostic(tmp_path: Path) -> Non
     assert "legacy migration" in logged
     assert "RuntimeError" in logged
     assert "/private/path/leaks/here" not in logged
+
+
+@pytest.mark.asyncio
+async def test_observe_root_rename_match_hashes_each_file_once_per_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        build_notes_sync_runtime_owner,
+    )
+
+    store = _store(tmp_path)
+    root_dir = tmp_path / "root"
+    snapshots = {}
+    for index in range(5):
+        name = f"note-{index}.md"
+        (root_dir / name).write_text(f"body {index}", encoding="utf-8")
+        with PosixNotesSyncFilesystem(root_dir) as filesystem:
+            snapshots[name] = filesystem.observe(name)
+        store.create_binding(
+            NotesSyncBindingRecord(
+                binding_id=f"binding-{index}",
+                root_id="root-1",
+                note_scope_id="local_note",
+                note_id=f"local-{index}",
+                normalized_relative_path=name,
+                stable_identity_digest=(
+                    NotesSyncExecutor.stable_identity_digest(snapshots[name])
+                ),
+                state=NotesSyncBindingState.ACTIVE,
+                serialization=snapshots[name].observation.serialization,
+                content_digest=snapshots[name].observation.content_digest,
+                note_version=1,
+            )
+        )
+    for index in range(5):
+        (root_dir / f"note-{index}.md").rename(root_dir / f"moved-{index}.md")
+    local_notes = _CreatingLocalNotes("old")
+    service = NotesScopeService(local_notes, None, folder_repository=_Folders())
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=service,
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+
+    digest_calls: list[object] = []
+    original_digest = NotesSyncExecutor.stable_identity_digest
+
+    def counting_digest(snapshot: object) -> str:
+        digest_calls.append(snapshot)
+        return original_digest(snapshot)
+
+    monkeypatch.setattr(
+        NotesSyncExecutor,
+        "stable_identity_digest",
+        staticmethod(counting_digest),
+    )
+    request = await owner._adapter.observe_root(store.get_root("root-1"))
+    monkeypatch.undo()
+
+    assert {observation.relative_path for observation in request.bindings} == {
+        f"moved-{index}.md" for index in range(5)
+    }
+    # One digest per discovered file for the shared rename index plus one
+    # per matched binding observation -- not a full rescan per missing
+    # binding (5 x 5 with the old per-binding scan).
+    assert len(digest_calls) < 5 * 5
+    await owner.shutdown()
+
+
+def test_display_path_suffix_matches_path_suffix_for_tricky_names() -> None:
+    from tldw_chatbook.Notes.notes_sync_runtime import _display_path_suffix
+
+    displays = (
+        "root/note.md",
+        "root/note.markdown",
+        "root/note.txt",
+        "root/note.JSON",
+        "root/.hidden",
+        "root/note.",
+        "root/note",
+        "root/archive.tar.md",
+        "root/dir.v2/note.md",
+        "root/note.md/",
+        "root//double.md",
+        "root/deep/leaf.txt",
+        "/",
+        "",
+    )
+
+    for display in displays:
+        assert _display_path_suffix(display) == Path(display).suffix, display
+
+
+def test_discovery_signature_tracks_syncable_entries_only(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Notes.note_import_discovery import (
+        discover_import_sources,
+    )
+    from tldw_chatbook.Notes.note_import_plan_models import ImportBounds
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        _ProductionRuntimeAdapter,
+    )
+
+    bounds = ImportBounds(
+        max_files=100,
+        max_file_bytes=1024 * 1024,
+        max_total_bytes=8 * 1024 * 1024,
+        max_depth=8,
+        max_entries=1_000,
+    )
+    signature = _ProductionRuntimeAdapter._discovery_signature
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "note.md").write_text("body", encoding="utf-8")
+    base = signature(discover_import_sources((root,), bounds))
+
+    assert base == signature(discover_import_sources((root,), bounds))
+
+    (root / "ignored.json").write_text("{}", encoding="utf-8")
+    assert signature(discover_import_sources((root,), bounds)) == base
+
+    (root / "other.md").write_text("other", encoding="utf-8")
+    assert signature(discover_import_sources((root,), bounds)) != base

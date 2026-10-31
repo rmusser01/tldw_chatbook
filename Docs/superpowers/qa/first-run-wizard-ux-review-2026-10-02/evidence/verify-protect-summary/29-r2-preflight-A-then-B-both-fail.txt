@@ -1,0 +1,10 @@
+Configuration password:
+2026-10-02 21:05:14.164 | ERROR    | tldw_chatbook.Utils.config_encryption:decrypt_value:146 - Decryption failed: ValueError
+ATTEMPT 1: reason='configuration_unlock_failed' password_returned=False
+Configuration password:
+2026-10-02 21:05:18.188 | ERROR    | tldw_chatbook.Utils.config_encryption:decrypt_value:146 - Decryption failed: ValueError
+ATTEMPT 2: reason='configuration_unlock_failed' password_returned=False
+Configuration password:
+2026-10-02 21:05:22.232 | ERROR    | tldw_chatbook.Utils.config_encryption:decrypt_value:146 - Decryption failed: ValueError
+ATTEMPT 3: reason='configuration_unlock_failed' password_returned=False
+EXITED:0

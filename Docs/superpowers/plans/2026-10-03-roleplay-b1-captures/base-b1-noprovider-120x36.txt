@@ -1,0 +1,36 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                                                             │
+│ Author the pieces that shape a chat                                                                                  │
+│  Blocked                                                                                                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+Characters — who the AI plays · 28
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                      │
+│ ╭──────────────────────────╮╭────────────────────────────────────────────────────────╮┌────────────────────────────┐ │
+│ │  Library              <  ││           ▸ Try a test chat (nothing saved)            ││                            │ │
+│ │  Search...               ││ Character                                              ││  Inspector             >   │ │
+│ │           New            ││  Name: Ada (Debugging Partner)                         ││ Selected: Ada (Debugging   │ │
+│ │      New Actor Pack      ││                                                        ││ Partner)                   │ │
+│ │          Import          ││  Description: A patient senior engineer who helps      ││ Type: character            │ │
+│ │    Import Actor Pack     ││  you debug by asking questions rather than giving      ││ Validation: OK             │ │
+│ │        Duplicate         ││  answers.                                              ││ Conversations (0)          │ │
+│ │        Sort: Name        ││  Personality: Socratic, calm, precise.                 ││   Search this              │ │
+│ │         Tag: All         ││                                                        ││  No saved conversations.   │ │
+│ │  Ada (Debugging Partn…   ││  First message: What did you expect to happen, and     ││                            │ │
+│ │  A patient senior eng… ▄ ││  what happened instead?                                ││ Readiness                  │ │
+│ │  ARIA-7                  ││  System prompt: Ask one diagnostic question at a       ││ Chat now blocked: openai   │ │
+│ │  A ship AI that has q…   ││  time.                                                 ││ is not ready: Missing API▃ │ │
+│ │  Brother Anselm          ││ Tags: assistant, coding                                ││ key. Set OPENAI_API_KEY    │ │
+│ │  A monastery brewer w…   ││ Alternate greetings: 0                                 ││ or add api_key under       │ │
+│ │  Captain Isolde Varga    ││                                                     ▄  ││ [api_settings.openai].     │ │
+│ │  Captain Isolde Varga…   ││  Voice & Speech                                        ││         Chat now           │ │
+│ │  Chef Auguste            ││  Use global default                              ▼   ▆ ││   Send to Console draft    │ │
+│ │                          ││    Edit     Conversations (0)                          ││                            │ │
+│ ╰──────────────────────────╯╰────────────────────────────────────────────────────────╯└────────────────────────────┘ │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | ctrl+enter Send to Console draft | f6 pane | c/p/d/l mode | F1 · Ctrl+P · Ctrl+Q

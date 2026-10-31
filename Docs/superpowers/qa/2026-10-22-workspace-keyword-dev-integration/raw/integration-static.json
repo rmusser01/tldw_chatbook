@@ -1,0 +1,47 @@
+[
+  {
+    "command": [
+      "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "-m",
+      "ruff",
+      "check",
+      "tldw_chatbook/Workspaces/project_index/service.py",
+      "Tests/Workspaces/test_project_index_service.py",
+      "tldw_chatbook/DB/Workspace_DB.py"
+    ],
+    "exit_code": 1,
+    "output": "integration-static-1.txt"
+  },
+  {
+    "command": [
+      "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "-m",
+      "ruff",
+      "format",
+      "--check",
+      "tldw_chatbook/Workspaces/project_index/service.py",
+      "Tests/Workspaces/test_project_index_service.py"
+    ],
+    "exit_code": 1,
+    "output": "integration-static-2.txt"
+  },
+  {
+    "command": [
+      "git",
+      "-c",
+      "safe.directory=C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui",
+      "diff",
+      "--check"
+    ],
+    "exit_code": 0,
+    "output": "integration-static-3.txt"
+  },
+  {
+    "AST_and_compile": [
+      "tldw_chatbook/Workspaces/project_index/service.py",
+      "Tests/Workspaces/test_project_index_service.py",
+      "tldw_chatbook/DB/Workspace_DB.py"
+    ],
+    "exit_code": 0
+  }
+]

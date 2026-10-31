@@ -471,7 +471,7 @@ class ToolProfilesPanel(Vertical):
                         index,
                         profile,
                         disabled=invalid,
-                        tooltip="Open this profile in MCP Permissions.",
+                        tooltip="Open this profile in Tools & MCP's Permissions.",
                     )
                     yield self._action_button(
                         "Bind",

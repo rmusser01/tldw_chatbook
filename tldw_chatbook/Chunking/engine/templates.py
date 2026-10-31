@@ -16,14 +16,14 @@ from loguru import logger
 from tldw_chatbook.Chunking._shims.testing import is_truthy
 
 # Pre-compiled regex patterns for common operations (performance optimization)
-_RE_MULTI_SPACE = re.compile(r'[ \t]+')
-_RE_CRLF = re.compile(r'\r\n')
+_RE_MULTI_SPACE = re.compile(r"[ \t]+")
+_RE_CRLF = re.compile(r"\r\n")
 
 
 @lru_cache(maxsize=16)
 def _get_linebreak_pattern(max_breaks: int) -> re.Pattern:
     """Get compiled regex for limiting consecutive line breaks (cached)."""
-    return re.compile(r'\n{' + str(max_breaks + 1) + ',}')
+    return re.compile(r"\n{" + str(max_breaks + 1) + ",}")
 
 
 from .chunker import Chunker
@@ -57,6 +57,7 @@ def _coerce_bool_option(value: Any, default: bool = False) -> bool:
 @dataclass
 class TemplateStage:
     """Represents a stage in the chunking pipeline."""
+
     name: str  # 'preprocess', 'chunk', 'postprocess'
     operations: list[dict[str, Any]] = field(default_factory=list)
     enabled: bool = True
@@ -65,6 +66,7 @@ class TemplateStage:
 @dataclass
 class ChunkingTemplate:
     """Defines a complete chunking strategy template."""
+
     name: str
     description: str = ""
     base_method: str = "words"  # Default chunking method
@@ -121,10 +123,9 @@ class TemplateProcessor:
         self._operations[name] = func
         logger.debug(f"Registered operation: {name}")
 
-    def process_template(self,
-                        text: str,
-                        template: ChunkingTemplate,
-                        **options) -> list[dict[str, Any]]:
+    def process_template(
+        self, text: str, template: ChunkingTemplate, **options
+    ) -> list[dict[str, Any]]:
         """
         Process text through a template pipeline.
 
@@ -152,7 +153,9 @@ class TemplateProcessor:
             if stage.name == "preprocess":
                 data = self._run_preprocess_stage(data, stage, final_options)
             elif stage.name == "chunk":
-                data = self._run_chunk_stage(data, stage, final_options, template.base_method)
+                data = self._run_chunk_stage(
+                    data, stage, final_options, template.base_method
+                )
             elif stage.name == "postprocess":
                 data = self._run_postprocess_stage(data, stage, final_options)
             else:
@@ -161,16 +164,15 @@ class TemplateProcessor:
         # Ensure standardized shape: List[Dict{text, metadata}]
         out_chunks: list[dict[str, Any]] = []
         for ch in data.get("chunks", []) or []:
-            if isinstance(ch, dict) and 'text' in ch:
+            if isinstance(ch, dict) and "text" in ch:
                 out_chunks.append(ch)
             elif isinstance(ch, str):
-                out_chunks.append({'text': ch, 'metadata': {}})
+                out_chunks.append({"text": ch, "metadata": {}})
         return out_chunks
 
-    def _run_preprocess_stage(self,
-                             data: dict[str, Any],
-                             stage: TemplateStage,
-                             options: dict[str, Any]) -> dict[str, Any]:
+    def _run_preprocess_stage(
+        self, data: dict[str, Any], stage: TemplateStage, options: dict[str, Any]
+    ) -> dict[str, Any]:
         """Run preprocessing operations on text.
 
         Supports both {"type", "params"} and {"operation", "config"} schemas.
@@ -201,11 +203,13 @@ class TemplateProcessor:
         data["text"] = text
         return data
 
-    def _run_chunk_stage(self,
-                        data: dict[str, Any],
-                        stage: TemplateStage,
-                        options: dict[str, Any],
-                        base_method: str) -> dict[str, Any]:
+    def _run_chunk_stage(
+        self,
+        data: dict[str, Any],
+        stage: TemplateStage,
+        options: dict[str, Any],
+        base_method: str,
+    ) -> dict[str, Any]:
         """Run chunking operation.
 
         Supports both {"method", "params"} and {"method", "config"} schemas.
@@ -217,29 +221,39 @@ class TemplateProcessor:
             chunk_ops = {}
         else:
             if len(stage.operations) > 1:
-                logger.warning("Chunk stage defines multiple operations; only the first will be applied")
+                logger.warning(
+                    "Chunk stage defines multiple operations; only the first will be applied"
+                )
             chunk_ops = stage.operations[0]
         method = chunk_ops.get("method", base_method)
         # Allow runtime override of method (apply-time)
-        if isinstance(options.get('method'), str):
-            method = options['method']  # override template/base method
+        if isinstance(options.get("method"), str):
+            method = options["method"]  # override template/base method
 
         # Options can be top-level or nested under "config"
         nested_cfg = dict(chunk_ops.get("config", {}) or {})
         # max_size and overlap may be provided in either place; prefer explicit top-level first
-        max_size = chunk_ops.get("max_size", nested_cfg.get("max_size", options.get("max_size", 400)))
-        overlap = chunk_ops.get("overlap", nested_cfg.get("overlap", options.get("overlap", 50)))
+        max_size = chunk_ops.get(
+            "max_size", nested_cfg.get("max_size", options.get("max_size", 400))
+        )
+        overlap = chunk_ops.get(
+            "overlap", nested_cfg.get("overlap", options.get("overlap", 50))
+        )
 
         # Additional params may be under "params" or "config"
         extra_params_src = chunk_ops.get("params")
-        extra_params = dict(extra_params_src) if isinstance(extra_params_src, dict) else dict(nested_cfg)
+        extra_params = (
+            dict(extra_params_src)
+            if isinstance(extra_params_src, dict)
+            else dict(nested_cfg)
+        )
         # Determine language override precedence
         language_override = None
         for candidate in (
-            options.get('language'),
-            chunk_ops.get('language') if isinstance(chunk_ops, dict) else None,
-            nested_cfg.get('language'),
-            extra_params.get('language') if isinstance(extra_params, dict) else None,
+            options.get("language"),
+            chunk_ops.get("language") if isinstance(chunk_ops, dict) else None,
+            nested_cfg.get("language"),
+            extra_params.get("language") if isinstance(extra_params, dict) else None,
         ):
             if isinstance(candidate, str) and candidate:
                 language_override = candidate
@@ -248,7 +262,9 @@ class TemplateProcessor:
         if isinstance(extra_params, dict):
             for k in ("max_size", "overlap", "method", "language"):
                 if k in extra_params:
-                    extra_params = {kk: vv for kk, vv in extra_params.items() if kk != k}
+                    extra_params = {
+                        kk: vv for kk, vv in extra_params.items() if kk != k
+                    }
         method_options = dict(extra_params or {})
         for k in ("hierarchical", "hierarchical_template"):
             method_options.pop(k, None)
@@ -258,16 +274,16 @@ class TemplateProcessor:
         hierarchical = False
         hier_template = None
         try:
-            cfg = chunk_ops.get('config', {}) if isinstance(chunk_ops, dict) else {}
+            cfg = chunk_ops.get("config", {}) if isinstance(chunk_ops, dict) else {}
             hierarchical = (
-                _coerce_bool_option(options.get('hierarchical'), False) or
-                _coerce_bool_option(cfg.get('hierarchical'), False) or
-                _coerce_bool_option((extra_params or {}).get('hierarchical'), False)
+                _coerce_bool_option(options.get("hierarchical"), False)
+                or _coerce_bool_option(cfg.get("hierarchical"), False)
+                or _coerce_bool_option((extra_params or {}).get("hierarchical"), False)
             )
             hier_template = (
-                options.get('hierarchical_template') or
-                cfg.get('hierarchical_template') or
-                (extra_params or {}).get('hierarchical_template')
+                options.get("hierarchical_template")
+                or cfg.get("hierarchical_template")
+                or (extra_params or {}).get("hierarchical_template")
             )
         except _TEMPLATE_NONCRITICAL_EXCEPTIONS:
             hierarchical = False
@@ -291,17 +307,19 @@ class TemplateProcessor:
                 max_size=max_size,
                 overlap=overlap,
                 language=language_override,
-                **(extra_params or {})
+                **(extra_params or {}),
             )
             # Normalize to dict structure
-            norm = [{'text': c, 'metadata': {}} if isinstance(c, str) else c for c in (chunks or [])]
+            norm = [
+                {"text": c, "metadata": {}} if isinstance(c, str) else c
+                for c in (chunks or [])
+            ]
             data["chunks"] = norm
         return data
 
-    def _run_postprocess_stage(self,
-                              data: dict[str, Any],
-                              stage: TemplateStage,
-                              options: dict[str, Any]) -> dict[str, Any]:
+    def _run_postprocess_stage(
+        self, data: dict[str, Any], stage: TemplateStage, options: dict[str, Any]
+    ) -> dict[str, Any]:
         """Run postprocessing operations on chunks.
 
         Supports both {"type", "params"} and {"operation", "config"} schemas.
@@ -316,9 +334,9 @@ class TemplateProcessor:
         chunks = data.get("chunks", [])
         # Normalize to a list of strings for postprocessors which operate on text
         texts: list[str] = []
-        for c in (chunks or []):
-            if isinstance(c, dict) and 'text' in c:
-                texts.append(str(c.get('text', '')))
+        for c in chunks or []:
+            if isinstance(c, dict) and "text" in c:
+                texts.append(str(c.get("text", "")))
             else:
                 texts.append(str(c))
 
@@ -345,9 +363,9 @@ class TemplateProcessor:
     def _normalize_whitespace(self, text: str, options: dict[str, Any]) -> str:
         """Normalize whitespace in text."""
         # Replace multiple spaces with single space (using cached pattern)
-        text = _RE_MULTI_SPACE.sub(' ', text)
+        text = _RE_MULTI_SPACE.sub(" ", text)
         # Normalize line breaks (using cached pattern)
-        text = _RE_CRLF.sub('\n', text)
+        text = _RE_CRLF.sub("\n", text)
         # Remove excessive line breaks (coerce provided value to int safely)
         try:
             max_breaks = int(options.get("max_line_breaks", 2))
@@ -355,7 +373,7 @@ class TemplateProcessor:
             max_breaks = 2
         # Use cached compiled pattern for line break normalization
         linebreak_pattern = _get_linebreak_pattern(max_breaks)
-        text = linebreak_pattern.sub('\n' * max_breaks, text)
+        text = linebreak_pattern.sub("\n" * max_breaks, text)
         return text.strip()
 
     def _remove_headers(self, text: str, options: dict[str, Any]) -> str:
@@ -371,21 +389,25 @@ class TemplateProcessor:
                 flags, ferr = _rx_flags("m")  # multiline by default
                 if ferr is not None:
                     flags = re.MULTILINE
-                text = re.sub(pattern, '', text, flags=flags)
+                text = re.sub(pattern, "", text, flags=flags)
             except _TEMPLATE_NONCRITICAL_EXCEPTIONS as e:
-                logger.warning(f"Failed to apply header removal pattern; skipping. Error: {e}")
+                logger.warning(
+                    f"Failed to apply header removal pattern; skipping. Error: {e}"
+                )
         return text
 
     def _extract_sections(self, text: str, options: dict[str, Any]) -> dict[str, Any]:
         """Extract sections from text and store as metadata."""
-        raw_pat = options.get("pattern", r'^#+\s+(.+)$')
-        section_pattern = r'^#+\s+(.+)$'
+        raw_pat = options.get("pattern", r"^#+\s+(.+)$")
+        section_pattern = r"^#+\s+(.+)$"
         try:
             err = _rx_check(raw_pat, max_len=256)
             if not err:
                 section_pattern = str(raw_pat)
             else:
-                logger.warning(f"Unsafe section pattern provided; using default. Reason: {err}")
+                logger.warning(
+                    f"Unsafe section pattern provided; using default. Reason: {err}"
+                )
         except _TEMPLATE_NONCRITICAL_EXCEPTIONS:
             # Fall back to default
             pass
@@ -398,32 +420,28 @@ class TemplateProcessor:
                 except (AttributeError, IndexError):
                     # If no capture group provided, use whole match
                     title = match.group(0)
-                sections.append({
-                    "title": title,
-                    "position": match.start()
-                })
+                sections.append({"title": title, "position": match.start()})
         except _TEMPLATE_NONCRITICAL_EXCEPTIONS as e:
-            logger.warning(f"Section extraction regex failed; returning empty sections. Error: {e}")
+            logger.warning(
+                f"Section extraction regex failed; returning empty sections. Error: {e}"
+            )
 
-        return {
-            "text": text,
-            "metadata": {"sections": sections}
-        }
+        return {"text": text, "metadata": {"sections": sections}}
 
     def _clean_markdown(self, text: str, options: dict[str, Any]) -> str:
         """Clean markdown formatting from text."""
         if options.get("remove_links", False):
             # Remove markdown links but keep text
-            text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+            text = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", text)
 
         if options.get("remove_images", False):
             # Remove markdown images
-            text = re.sub(r'!\[([^\]]*)\]\([^\)]+\)', '', text)
+            text = re.sub(r"!\[([^\]]*)\]\([^\)]+\)", "", text)
 
         if options.get("remove_formatting", False):
             # Remove bold/italic
-            text = re.sub(r'\*{1,2}([^\*]+)\*{1,2}', r'\1', text)
-            text = re.sub(r'_{1,2}([^_]+)_{1,2}', r'\1', text)
+            text = re.sub(r"\*{1,2}([^\*]+)\*{1,2}", r"\1", text)
+            text = re.sub(r"_{1,2}([^_]+)_{1,2}", r"\1", text)
 
         return text
 
@@ -433,19 +451,16 @@ class TemplateProcessor:
         language = "en"  # Default
 
         # Check for common non-English patterns
-        if re.search(r'[\u4e00-\u9fff]', text):
+        if re.search(r"[\u4e00-\u9fff]", text):
             language = "zh"  # Chinese
-        elif re.search(r'[\u3040-\u309f\u30a0-\u30ff]', text):
+        elif re.search(r"[\u3040-\u309f\u30a0-\u30ff]", text):
             language = "ja"  # Japanese
-        elif re.search(r'[\uac00-\ud7af]', text):
+        elif re.search(r"[\uac00-\ud7af]", text):
             language = "ko"  # Korean
-        elif re.search(r'[\u0600-\u06ff]', text):
+        elif re.search(r"[\u0600-\u06ff]", text):
             language = "ar"  # Arabic
 
-        return {
-            "text": text,
-            "metadata": {"detected_language": language}
-        }
+        return {"text": text, "metadata": {"detected_language": language}}
 
     # Built-in postprocessing operations
     def _add_overlap(self, chunks: list[str], options: dict[str, Any]) -> list[str]:
@@ -459,7 +474,7 @@ class TemplateProcessor:
 
             # Add end of previous chunk
             if i > 0 and overlap_size > 0:
-                prev_end = chunks[i-1][-overlap_size:]
+                prev_end = chunks[i - 1][-overlap_size:]
                 if overlap_marker:
                     enhanced_chunk = f"{overlap_marker}\n{prev_end}\n{overlap_marker}\n{enhanced_chunk}"
                 else:
@@ -522,11 +537,7 @@ class TemplateProcessor:
 
         formatted_chunks = []
         for i, chunk in enumerate(chunks):
-            formatted = template_str.format(
-                chunk=chunk,
-                index=i,
-                total=len(chunks)
-            )
+            formatted = template_str.format(chunk=chunk, index=i, total=len(chunks))
             formatted_chunks.append(formatted)
 
         return formatted_chunks
@@ -556,62 +567,111 @@ class TemplateManager:
     def _load_builtin_templates(self):
         """Load built-in template definitions."""
         # Academic paper template
-        self.register_template(ChunkingTemplate(
-            name="academic_paper",
-            description="Template for processing academic papers",
-            base_method="sentences",
-            stages=[
-                TemplateStage("preprocess", [
-                    {"type": "normalize_whitespace", "params": {"max_line_breaks": 2}},
-                    {"type": "extract_sections", "params": {"pattern": r"^#+\s+(.+)$"}},
-                ]),
-                TemplateStage("chunk", [
-                    {"method": "sentences", "max_size": 5, "overlap": 1}
-                ]),
-                TemplateStage("postprocess", [
-                    {"type": "filter_empty", "params": {"min_length": 20}},
-                    {"type": "merge_small", "params": {"min_size": 200}},
-                ])
-            ],
-            default_options={"max_size": 5, "overlap": 1}
-        ))
+        self.register_template(
+            ChunkingTemplate(
+                name="academic_paper",
+                description="Template for processing academic papers",
+                base_method="sentences",
+                stages=[
+                    TemplateStage(
+                        "preprocess",
+                        [
+                            {
+                                "type": "normalize_whitespace",
+                                "params": {"max_line_breaks": 2},
+                            },
+                            {
+                                "type": "extract_sections",
+                                "params": {"pattern": r"^#+\s+(.+)$"},
+                            },
+                        ],
+                    ),
+                    TemplateStage(
+                        "chunk", [{"method": "sentences", "max_size": 5, "overlap": 1}]
+                    ),
+                    TemplateStage(
+                        "postprocess",
+                        [
+                            {"type": "filter_empty", "params": {"min_length": 20}},
+                            {"type": "merge_small", "params": {"min_size": 200}},
+                        ],
+                    ),
+                ],
+                default_options={"max_size": 5, "overlap": 1},
+            )
+        )
 
         # Code documentation template
-        self.register_template(ChunkingTemplate(
-            name="code_documentation",
-            description="Template for processing code documentation",
-            base_method="structure_aware",
-            stages=[
-                TemplateStage("preprocess", [
-                    {"type": "clean_markdown", "params": {"remove_images": True}},
-                ]),
-                TemplateStage("chunk", [
-                    {"method": "structure_aware", "max_size": 500, "overlap": 50,
-                     "params": {"preserve_code_blocks": True, "preserve_headers": True}}
-                ]),
-                TemplateStage("postprocess", [
-                    {"type": "filter_empty", "params": {"min_length": 50}},
-                ])
-            ]
-        ))
+        self.register_template(
+            ChunkingTemplate(
+                name="code_documentation",
+                description="Template for processing code documentation",
+                base_method="structure_aware",
+                stages=[
+                    TemplateStage(
+                        "preprocess",
+                        [
+                            {
+                                "type": "clean_markdown",
+                                "params": {"remove_images": True},
+                            },
+                        ],
+                    ),
+                    TemplateStage(
+                        "chunk",
+                        [
+                            {
+                                "method": "structure_aware",
+                                "max_size": 500,
+                                "overlap": 50,
+                                "params": {
+                                    "preserve_code_blocks": True,
+                                    "preserve_headers": True,
+                                },
+                            }
+                        ],
+                    ),
+                    TemplateStage(
+                        "postprocess",
+                        [
+                            {"type": "filter_empty", "params": {"min_length": 50}},
+                        ],
+                    ),
+                ],
+            )
+        )
 
         # Chat conversation template
-        self.register_template(ChunkingTemplate(
-            name="chat_conversation",
-            description="Template for processing chat conversations",
-            base_method="sentences",
-            stages=[
-                TemplateStage("preprocess", [
-                    {"type": "normalize_whitespace", "params": {"max_line_breaks": 1}},
-                ]),
-                TemplateStage("chunk", [
-                    {"method": "sentences", "max_size": 10, "overlap": 2}
-                ]),
-                TemplateStage("postprocess", [
-                    {"type": "add_overlap", "params": {"size": 100, "marker": "---"}},
-                ])
-            ]
-        ))
+        self.register_template(
+            ChunkingTemplate(
+                name="chat_conversation",
+                description="Template for processing chat conversations",
+                base_method="sentences",
+                stages=[
+                    TemplateStage(
+                        "preprocess",
+                        [
+                            {
+                                "type": "normalize_whitespace",
+                                "params": {"max_line_breaks": 1},
+                            },
+                        ],
+                    ),
+                    TemplateStage(
+                        "chunk", [{"method": "sentences", "max_size": 10, "overlap": 2}]
+                    ),
+                    TemplateStage(
+                        "postprocess",
+                        [
+                            {
+                                "type": "add_overlap",
+                                "params": {"size": 100, "marker": "---"},
+                            },
+                        ],
+                    ),
+                ],
+            )
+        )
 
     def register_template(self, template: ChunkingTemplate):
         """Register a template in the cache."""
@@ -640,7 +700,7 @@ class TemplateManager:
         Supports both the stage-based schema and the simpler
         {preprocessing, chunking, postprocessing} schema used in the DB.
         """
-        with open(path, encoding='utf-8') as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
 
         stages: list[TemplateStage] = []
@@ -648,38 +708,42 @@ class TemplateManager:
         if "stages" in data:
             # Stage-based schema
             for stage_data in data.get("stages", []):
-                stages.append(TemplateStage(
-                    name=stage_data["name"],
-                    operations=stage_data.get("operations", []),
-                    enabled=stage_data.get("enabled", True)
-                ))
+                stages.append(
+                    TemplateStage(
+                        name=stage_data["name"],
+                        operations=stage_data.get("operations", []),
+                        enabled=stage_data.get("enabled", True),
+                    )
+                )
             base_method = data.get("base_method", "words")
             default_options = data.get("default_options", {})
         else:
             # DB/file schema with preprocessing/chunking/postprocessing
-            if 'preprocessing' in data:
-                stages.append(TemplateStage(
-                    name='preprocess',
-                    operations=data.get('preprocessing', []),
-                    enabled=True
-                ))
+            if "preprocessing" in data:
+                stages.append(
+                    TemplateStage(
+                        name="preprocess",
+                        operations=data.get("preprocessing", []),
+                        enabled=True,
+                    )
+                )
 
-            chunk_op = data.get('chunking', {})
-            stages.append(TemplateStage(
-                name='chunk',
-                operations=[chunk_op],
-                enabled=True
-            ))
+            chunk_op = data.get("chunking", {})
+            stages.append(
+                TemplateStage(name="chunk", operations=[chunk_op], enabled=True)
+            )
 
-            if 'postprocessing' in data:
-                stages.append(TemplateStage(
-                    name='postprocess',
-                    operations=data.get('postprocessing', []),
-                    enabled=True
-                ))
+            if "postprocessing" in data:
+                stages.append(
+                    TemplateStage(
+                        name="postprocess",
+                        operations=data.get("postprocessing", []),
+                        enabled=True,
+                    )
+                )
 
-            base_method = chunk_op.get('method', 'words')
-            default_options = chunk_op.get('config', {}) or {}
+            base_method = chunk_op.get("method", "words")
+            default_options = chunk_op.get("config", {}) or {}
 
         template = ChunkingTemplate(
             name=data.get("name", path.stem),
@@ -687,7 +751,7 @@ class TemplateManager:
             base_method=base_method,
             stages=stages,
             default_options=default_options,
-            metadata=data.get("metadata", {"tags": data.get("tags", [])})
+            metadata=data.get("metadata", {"tags": data.get("tags", [])}),
         )
 
         # Cache it
@@ -708,15 +772,15 @@ class TemplateManager:
                 {
                     "name": stage.name,
                     "operations": stage.operations,
-                    "enabled": stage.enabled
+                    "enabled": stage.enabled,
                 }
                 for stage in template.stages
             ],
             "default_options": template.default_options,
-            "metadata": template.metadata
+            "metadata": template.metadata,
         }
 
-        with open(path, 'w', encoding='utf-8') as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
         logger.info(f"Saved template {template.name} to {path}")
@@ -756,25 +820,40 @@ class TemplateManager:
 
 # ---------------- Classifier & Learner (simple heuristics) ----------------
 
+
 class TemplateClassifier:
     """Simple metadata-based classifier for choosing a template."""
 
     @staticmethod
-    def score(template_cfg: dict[str, Any], *, media_type: Optional[str], title: Optional[str], url: Optional[str], filename: Optional[str]) -> float:
+    def score(
+        template_cfg: dict[str, Any],
+        *,
+        media_type: Optional[str],
+        title: Optional[str],
+        url: Optional[str],
+        filename: Optional[str],
+    ) -> float:
         cfg = template_cfg or {}
         # Allow classifier at top-level or under chunking.config
-        classifier = (cfg.get('classifier') or ((cfg.get('chunking') or {}).get('config') or {}).get('classifier')) or {}
+        classifier = (
+            cfg.get("classifier")
+            or ((cfg.get("chunking") or {}).get("config") or {}).get("classifier")
+        ) or {}
         if not isinstance(classifier, dict):
             return 0.0
         score = 0.0
         weight_media, weight_regex = 0.5, 0.5
         # Media type match
-        mts = classifier.get('media_types') or []
+        mts = classifier.get("media_types") or []
         if isinstance(mts, list) and media_type:
             score += weight_media if (media_type in mts) else 0.0
         # Regex matches
         regex_hits = 0
-        for key, text in (('filename_regex', filename), ('title_regex', title), ('url_regex', url)):
+        for key, text in (
+            ("filename_regex", filename),
+            ("title_regex", title),
+            ("url_regex", url),
+        ):
             pat = classifier.get(key)
             if isinstance(pat, str) and pat and text:
                 try:
@@ -788,7 +867,7 @@ class TemplateClassifier:
         score += weight_regex * (regex_hits / 3.0)
         # Clamp with min_score if provided
         try:
-            min_score = float(classifier.get('min_score', 0.0))
+            min_score = float(classifier.get("min_score", 0.0))
         except (TypeError, ValueError):
             min_score = 0.0
         return score if score >= min_score else 0.0
@@ -803,10 +882,24 @@ class TemplateLearner:
             return {"boundaries": []}
         patterns = []
         # Headings like: Chapter 1, Section 2.3, ABSTRACT, REFERENCES, etc.
-        patterns.append({"kind": "chapter", "pattern": r"^\s*(Chapter\s+\d+\b)", "flags": "im"})
-        patterns.append({"kind": "section", "pattern": r"^\s*(Section\s+\d+(?:\.\d+)*\b)", "flags": "im"})
-        patterns.append({"kind": "abstract", "pattern": r"^\s*Abstract\b", "flags": "im"})
-        patterns.append({"kind": "references", "pattern": r"^\s*References\b", "flags": "im"})
-        patterns.append({"kind": "header_atx", "pattern": r"^\s*#{1,6}\s+.+$", "flags": "m"})
+        patterns.append(
+            {"kind": "chapter", "pattern": r"^\s*(Chapter\s+\d+\b)", "flags": "im"}
+        )
+        patterns.append(
+            {
+                "kind": "section",
+                "pattern": r"^\s*(Section\s+\d+(?:\.\d+)*\b)",
+                "flags": "im",
+            }
+        )
+        patterns.append(
+            {"kind": "abstract", "pattern": r"^\s*Abstract\b", "flags": "im"}
+        )
+        patterns.append(
+            {"kind": "references", "pattern": r"^\s*References\b", "flags": "im"}
+        )
+        patterns.append(
+            {"kind": "header_atx", "pattern": r"^\s*#{1,6}\s+.+$", "flags": "m"}
+        )
         # If the text already contains these constructs, keep them; otherwise return minimal ATX detection
         return {"boundaries": patterns}

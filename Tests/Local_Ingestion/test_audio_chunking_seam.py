@@ -34,15 +34,29 @@ class TestAudioChunkingSeam:
         proc = LocalAudioProcessor.__new__(LocalAudioProcessor)
 
         class _Service:
-            def chunk_text(self, content, chunk_size=400, chunk_overlap=100, method="words"):
+            def chunk_text(
+                self, content, chunk_size=400, chunk_overlap=100, method="words"
+            ):
                 assert isinstance(chunk_size, int), "an options dict reached chunk_size"
                 return [
-                    {"text": "alpha beta", "start_char": 0, "end_char": 10, "chunk_index": 0},
-                    {"text": "beta gamma", "start_char": 5, "end_char": 15, "chunk_index": 1},
+                    {
+                        "text": "alpha beta",
+                        "start_char": 0,
+                        "end_char": 10,
+                        "chunk_index": 0,
+                    },
+                    {
+                        "text": "beta gamma",
+                        "start_char": 5,
+                        "end_char": 15,
+                        "chunk_index": 1,
+                    },
                 ]
 
         proc.chunking_service = _Service()
-        out = proc._chunk_text("alpha beta gamma", method="words", max_size=2, overlap=1)
+        out = proc._chunk_text(
+            "alpha beta gamma", method="words", max_size=2, overlap=1
+        )
 
         assert [c["text"] for c in out] == ["alpha beta", "beta gamma"]
         assert all(isinstance(c["text"], str) for c in out)
@@ -56,7 +70,9 @@ class TestAudioChunkingSeam:
         proc = LocalAudioProcessor.__new__(LocalAudioProcessor)
 
         class _StringService:
-            def chunk_text(self, content, chunk_size=400, chunk_overlap=100, method="words"):
+            def chunk_text(
+                self, content, chunk_size=400, chunk_overlap=100, method="words"
+            ):
                 return ["one two", "three four"]
 
         proc.chunking_service = _StringService()

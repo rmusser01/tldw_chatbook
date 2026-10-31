@@ -28,13 +28,17 @@ except Exception:  # pragma: no cover - optional dependency guard
     Image = None  # type: ignore
 
 
-def decode_data_url(data_url: str, *, max_bytes: int | None = None) -> tuple[bytes, str]:
+def decode_data_url(
+    data_url: str, *, max_bytes: int | None = None
+) -> tuple[bytes, str]:
     header, _, encoded = data_url.partition(",")
     if not header.startswith("data:"):
         raise ImageGenerationError("invalid data URL")
     meta = header[5:]
     content_type = "application/octet-stream"
-    content_type = meta.split(";", 1)[0] or content_type if ";" in meta else meta or content_type
+    content_type = (
+        meta.split(";", 1)[0] or content_type if ";" in meta else meta or content_type
+    )
     if ";base64" not in header:
         raise ImageGenerationError("unsupported data URL encoding")
     encoded_clean = "".join(encoded.split())
@@ -57,7 +61,9 @@ def decode_base64_image(encoded: str, *, max_bytes: int | None = None) -> bytes:
     return content
 
 
-def maybe_decode_base64_image(encoded: str | None, *, max_bytes: int | None = None) -> bytes | None:
+def maybe_decode_base64_image(
+    encoded: str | None, *, max_bytes: int | None = None
+) -> bytes | None:
     if not isinstance(encoded, str):
         return None
     raw = encoded.strip()
@@ -96,7 +102,12 @@ def reference_image_data_url(reference_image: ResolvedReferenceImage) -> str:
     if not content:
         raise ImageGenerationError("invalid reference image data")
 
-    mime_type = (reference_image.mime_type or "application/octet-stream").split(";", 1)[0].strip().lower()
+    mime_type = (
+        (reference_image.mime_type or "application/octet-stream")
+        .split(";", 1)[0]
+        .strip()
+        .lower()
+    )
     if not mime_type:
         mime_type = "application/octet-stream"
     encoded = base64.b64encode(content).decode("ascii")
@@ -265,16 +276,26 @@ def fetch_image_bytes(
                 ) as response:
                     status = int(getattr(response, "status_code", 0) or 0)
                     if status in {301, 302, 303, 307, 308}:
-                        location = response.headers.get("location") or response.headers.get("Location")
+                        location = response.headers.get(
+                            "location"
+                        ) or response.headers.get("Location")
                         if not location:
-                            raise ImageGenerationError("image fetch failed: redirect without location")
-                        next_url = _resolve_redirect_url(str(getattr(response, "url", current_url)), str(location))
+                            raise ImageGenerationError(
+                                "image fetch failed: redirect without location"
+                            )
+                        next_url = _resolve_redirect_url(
+                            str(getattr(response, "url", current_url)), str(location)
+                        )
                         if not next_url:
-                            raise ImageGenerationError("image fetch failed: invalid redirect")
+                            raise ImageGenerationError(
+                                "image fetch failed: invalid redirect"
+                            )
                         current_url = next_url
                         continue
                     if status >= 400:
-                        raise ImageGenerationError(f"image fetch failed with status {status}")
+                        raise ImageGenerationError(
+                            f"image fetch failed with status {status}"
+                        )
 
                     headers_obj = getattr(response, "headers", {}) or {}
                     _reject_declared_oversize(headers_obj, max_bytes)

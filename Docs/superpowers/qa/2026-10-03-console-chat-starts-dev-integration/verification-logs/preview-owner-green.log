@@ -1,0 +1,145 @@
+..........F.....                                                         [100%]
+=================================== FAILURES ===================================
+______ test_agent_next_send_uses_selected_project_root_for_local_schemas _______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d4d74d0>
+tmp_path = PosixPath('/private/tmp/console-dev-preview-owner-green-01a0fa6c/test_agent_next_send_uses_sele0')
+
+    @pytest.mark.asyncio
+    async def test_agent_next_send_uses_selected_project_root_for_local_schemas(
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        store = ConsoleChatStore()
+        state = ProjectInstructionControlState(
+            True,
+            "binding-1",
+            "f" * 64,
+            None,
+        )
+        session = store.create_session(
+            ephemeral=True,
+            project_instruction_state=state,
+        )
+        from tldw_chatbook.Chat.console_chat_controller import (
+            ProjectInstructionBindingSelection,
+        )
+        from Tests.console_provider_doubles import provider_resolution
+    
+        selected = ProjectInstructionBindingSelection(
+            binding=SimpleNamespace(binding_id="binding-1"),
+            root=tmp_path,
+            locator_fingerprint="f" * 64,
+            allow_write=True,
+            root_identity=(),
+        )
+        captured = []
+        bridge = SimpleNamespace(
+            native_tool_schemas=list,
+            build_personal_context_preview_snapshot=lambda **_kwargs: (
+                ProfileContextSnapshot.empty()
+            ),
+        )
+        resolution = provider_resolution(
+            ready=True,
+            provider="openai",
+            execution_key="openai",
+            model="gpt-4o-mini",
+            max_tokens=2_048,
+        )
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=SimpleNamespace(
+                resolve_for_send=AsyncMock(return_value=resolution)
+            ),
+            agent_bridge=bridge,
+            agent_runtime_enabled=True,
+        )
+        controller.app = SimpleNamespace(workspace_registry_service=object())
+    
+        async def personal_context_builder(_service=None):
+            return _ProfileContextBuilder()
+    
+        async def compose_providers(**kwargs):
+            captured.append(kwargs)
+            return None, None, None, None
+    
+        monkeypatch.setattr(
+            controller, "_personal_context_builder", personal_context_builder
+        )
+        monkeypatch.setattr(
+            controller, "_compose_agent_request_providers", compose_providers
+        )
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.console_chat_controller.resolve_project_instruction_binding",
+            lambda _session, _registry: selected,
+        )
+    
+>       await controller.build_context_snapshot(draft="question", session_id=session.id)
+
+Tests/Chat/test_console_personal_context_snapshot.py:534: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/Chat/console_chat_controller.py:22681: in build_context_snapshot
+    turn_context = self.resolve_turn_execution_context(session_id)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_controller.py:24209: in resolve_turn_execution_context
+    return self.resolve_turn_configuration_snapshot(session_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_controller.py:24057: in resolve_turn_configuration_snapshot
+    return self.resolve_runtime_turn_configuration_snapshot(session_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_controller.py:24116: in resolve_runtime_turn_configuration_snapshot
+    project_authority=capture_project_instruction_authority(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+session = ConsoleChatSession(incarnation_id='122b2402-519e-4215-97c8-69c5cc73163d', agent_handoff_revision=None, agent_handoff_s... fork_trace_boundary=None, todo_store=<tldw_chatbook.Agents.session_todo_store.SessionTodoStore object at 0x11ab5d730>)
+registry = <object object at 0x10c0eb350>
+
+    def capture_project_instruction_authority(
+        session: ConsoleChatSession,
+        registry: Any,
+        *,
+        include_bindings: bool = True,
+    ) -> ConsoleProjectAuthoritySnapshot:
+        """Freeze one session's maximum project authority without view callbacks.
+    
+        Listing and selection run against the process-wide remote binding
+        status cache (Task 18): the frozen snapshot sees the SAME live
+        remote states every dispatch/preview site sees, so a captured
+        identity chain survives later revalidation instead of reading
+        cold-empty at the comparison site.
+        """
+        state = session.project_instruction_state
+        selected = None
+        options: tuple[ConsoleProjectBindingSnapshot, ...] = ()
+        if include_bindings:
+            try:
+                choices = list_project_instruction_bindings(
+                    session,
+                    registry,
+                    status_cache=_app_remote_binding_status_cache(),
+                )
+            except ProjectInstructionBindingRecovery:
+                choices = ()
+            options = tuple(
+                _project_binding_snapshot(item, workspace_id=session.workspace_id)
+                for item in choices
+            )
+        if include_bindings and state.project_instructions_enabled:
+            try:
+>               selection = resolve_project_instruction_binding(
+                    session,
+                    registry,
+                    status_cache=_app_remote_binding_status_cache(),
+                )
+E               TypeError: test_agent_next_send_uses_selected_project_root_for_local_schemas.<locals>.<lambda>() got an unexpected keyword argument 'status_cache'
+
+tldw_chatbook/Chat/console_chat_controller.py:1182: TypeError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:51:48.539 | WARNING  | tldw_chatbook.Chat.console_turn_context:resolve_turn_tool_policy_profile_id:68 - Console turn context: tool policy profile resolution failed; using the default profile; error_type=AttributeError
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_personal_context_snapshot.py::test_agent_next_send_uses_selected_project_root_for_local_schemas
+1 failed, 15 passed in 1.92s

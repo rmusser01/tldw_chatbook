@@ -79,7 +79,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutations
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
-from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
+from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
 
 
 class _AllGatesOn(dict):
@@ -89,7 +89,6 @@ class _AllGatesOn(dict):
 
     def get(self, key, default=None):  # noqa: D102
         return True
-
 
 
 _BUNDLED_CSS_PATH = str(
@@ -299,8 +298,16 @@ async def test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers():
         workbench = app.query_one(MCPWorkbench)
         # The initial after-refresh dispatch may not have created its worker
         # yet. An empty worker manager is not evidence that loading finished.
+        # Loading can also finish before the rail's queued replacement mounts.
+        # Ending the pilot then can prune a Select before its overlay composes.
+        rail = workbench.query_one(MCPRail)
         async with asyncio.timeout(10):
-            while workbench.is_loading or workbench._reloading:
+            while (
+                workbench.is_loading
+                or workbench._reloading
+                or rail.recompose_in_flight
+                or len(list(app.query("Button.mcp-rail-row"))) != 3
+            ):
                 await pilot.pause(0.025)
         assert workbench.active_mode == "servers"
         # builtin + docs rows (+ "All servers")
@@ -378,8 +385,11 @@ async def test_workbench_at_100x30_keeps_server_master_switch_reachable(monkeypa
         master_row = app.query_one("#mcp-gate-local_tools_enabled", Button)
         # task-32284: the row is a toggle Button whose label carries the
         # state in text, so the label is the name plus ": on ▸"/": off ▸".
+        # task-35153: ... plus the gate's effect-scope suffix from the
+        # shared `effect_scope` field, before the state.
         assert str(master_row.label) == (
-            "Local workspace, web, and Watchlists tools (master switch): on ▸"
+            "Local workspace, web, and Watchlists tools (master switch)"
+            " (next chat): on ▸"
         )
         master_row.scroll_visible(animate=False, force=True, immediate=True)
         master_row.focus()
@@ -1193,7 +1203,9 @@ async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monke
                 fake_save_setting_to_cli_config(section, key, value)
         return ConfigMutationResult(True, True, None)
 
-    monkeypatch.setattr(mcp_workbench_module, "apply_settings_mutation_to_cli_config", fake_mutate)
+    monkeypatch.setattr(
+        mcp_workbench_module, "apply_settings_mutation_to_cli_config", fake_mutate
+    )
 
     app = WorkbenchApp()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -1303,7 +1315,9 @@ def _fake_tool_gate_config_seam(monkeypatch):
                 fake_save_setting_to_cli_config(section, key, value)
         return ConfigMutationResult(True, True, None)
 
-    monkeypatch.setattr(mcp_workbench_module, "apply_settings_mutation_to_cli_config", fake_mutate)
+    monkeypatch.setattr(
+        mcp_workbench_module, "apply_settings_mutation_to_cli_config", fake_mutate
+    )
     return flags, save_calls
 
 
@@ -1578,18 +1592,19 @@ class _StubApp:
     unified_mcp_service = None
 
 
-def test_screen_hosts_workbench_with_mode_action_and_tolerant_restore():
-    screen = MCPScreen(_StubApp())
-    # New surface: workbench host + mode action (old screen has mcp_panel, no workbench).
-    assert hasattr(screen, "workbench")
-    assert not hasattr(screen, "mcp_panel")
-    assert callable(getattr(screen, "action_mcp_mode", None))
+def test_tools_hub_panel_hosts_workbench_with_mode_action_and_tolerant_state():
+    panel = ToolsHubPanel(_StubApp())
+    # New surface: workbench host + mode action (the retired shell's
+    # action_mcp_mode is now the panel's activate_mode; its tolerant
+    # save/restore is now set_initial_view_state/get_view_state).
+    assert hasattr(panel, "workbench")
+    assert callable(getattr(panel, "activate_mode", None))
     # Never crashes on legacy shape, garbage, or empty state pre-mount.
-    screen.restore_state({"unified_mcp_view_state": {"selected_source": "server"}})
-    screen.restore_state({"mcp_hub_view_state": {"mode": "tools"}})
-    screen.restore_state({})
-    state = screen.save_state()
-    assert isinstance(state, dict)
+    panel.set_initial_view_state({"selected_source": "server"})
+    panel.set_initial_view_state({"mode": "tools"})
+    panel.set_initial_view_state(None)
+    state = panel.get_view_state()
+    assert state is None or isinstance(state, dict)
 
 
 def test_mcp_hub_modes_registry_is_complete():
@@ -3078,8 +3093,13 @@ async def test_file_requested_pushes_picker_and_loads_selected_file_into_panel(
         pushed["screen"] = screen
         pushed["callback"] = callback
 
-    async def fake_load_import_file(file_path: str) -> None:
+    loaded_text: list[str] = []
+    publish = loaded_text.append
+    panel = SimpleNamespace(file_text_receiver=lambda: publish)
+
+    async def fake_load_import_file(file_path: str, receiver) -> None:
         scheduled["loaded_path"] = file_path
+        scheduled["receiver"] = receiver
 
     def fake_run_worker(coroutine, **kwargs):
         scheduled["coroutine"] = coroutine
@@ -3090,7 +3110,7 @@ async def test_file_requested_pushes_picker_and_loads_selected_file_into_panel(
         run_worker=fake_run_worker,
         _load_import_file=fake_load_import_file,
     )
-    event = SimpleNamespace(stop=lambda: stopped.append(True))
+    event = SimpleNamespace(stop=lambda: stopped.append(True), panel=panel)
 
     await MCPWorkbench.on_mcp_import_panel_file_requested(handler, event)
 
@@ -3105,8 +3125,7 @@ async def test_file_requested_pushes_picker_and_loads_selected_file_into_panel(
     }
     await scheduled["coroutine"]
     assert scheduled["loaded_path"] == str(config_path)
-
-    loaded_text: list[str] = []
+    assert scheduled["receiver"] is publish
     notifications: list[tuple[str, str]] = []
     loader = SimpleNamespace(
         app=SimpleNamespace(
@@ -3114,12 +3133,9 @@ async def test_file_requested_pushes_picker_and_loads_selected_file_into_panel(
                 (str(message), severity)
             )
         ),
-        _import_panel_or_none=lambda: SimpleNamespace(
-            set_file_text=lambda text: loaded_text.append(text)
-        ),
     )
 
-    await MCPWorkbench._load_import_file(loader, str(config_path))
+    await MCPWorkbench._load_import_file(loader, str(config_path), publish)
 
     assert notifications == []
     assert loaded_text == [config_path.read_text()]
@@ -3725,6 +3741,7 @@ class ToolTestHubService(FakeHubService):
         self.preview_profile_calls: list[tuple[str, str | None, int | None]] = []
         self.lease_observer = None
         self.lease_observations: list[int] = []
+
     def gate_tool_test(
         self, tool: Any, *, profile_id: str = "default"
     ) -> EffectiveToolState:
@@ -6496,7 +6513,9 @@ class PermissionsHubService(FakeHubService):
             server_key, tool_name, profile_id=profile_id
         )
 
-    def remove_tool_arg_rule(self, server_key, tool_name, rule_id, *, profile_id="default"):
+    def remove_tool_arg_rule(
+        self, server_key, tool_name, rule_id, *, profile_id="default"
+    ):
         return self._store.remove_tool_arg_rule(
             server_key, tool_name, rule_id, profile_id=profile_id
         )
@@ -6630,39 +6649,6 @@ async def test_settings_deep_link_rejects_stale_tool_policy_profile(tmp_path):
 
         assert workbench.active_mode == "permissions"
         assert workbench._tool_policy_profile_id == "default"
-
-
-def test_mcp_screen_accepts_bounded_tool_profile_navigation_context():
-    screen = MCPScreen(SimpleNamespace())
-    screen.apply_navigation_context(
-        {
-            "mode": "permissions",
-            "tool_policy_profile_id": "research",
-            "profile_revision": 7,
-            "profile_policy_digest": "d" * 64,
-        }
-    )
-    assert screen._initial_view_state() == {
-        "mode": "permissions",
-        "tool_policy_profile_id": "research",
-        "profile_revision": 7,
-        "profile_policy_digest": "d" * 64,
-    }
-
-    screen.apply_navigation_context(
-        {"mode": "permissions", "tool_policy_profile_id": "other", "extra": True}
-    )
-    assert screen._initial_view_state()["tool_policy_profile_id"] == "research"
-
-    screen.apply_navigation_context(
-        {
-            "mode": "permissions",
-            "tool_policy_profile_id": "digest-missing",
-            "profile_revision": None,
-            "profile_policy_digest": None,
-        }
-    )
-    assert screen._initial_view_state()["tool_policy_profile_id"] == "research"
 
 
 def test_profile_scoped_mutation_does_not_retry_an_internal_type_error():
@@ -7759,8 +7745,7 @@ async def test_space_on_server_default_row_round_trips_through_store(tmp_path):
         payload = app.unified_mcp_service.permission_store.load()
         # Wave B: first press from Inherit lands on "ask"
         assert (
-            payload["profiles"]["default"]["servers"]["local:docs"]["default"]
-            == "ask"
+            payload["profiles"]["default"]["servers"]["local:docs"]["default"] == "ask"
         )
         assert _perm_table_texts(app, 1) == ["Server default — docs", "Ask •"]
 
@@ -8268,9 +8253,7 @@ async def test_matrix_marks_and_inspector_lists_and_removes_arg_rules(tmp_path):
         # open on the SAME tool.
         assert app.query_one("#mcp-inspector-permission").display is True
         assert (
-            str(
-                app.query_one("#mcp-inspector-permission-tool", Static).renderable
-            )
+            str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
             == "search — docs"
         )
 
@@ -8494,7 +8477,6 @@ async def test_reallow_round_trip_clears_config_changed_marker_and_matrix_warnin
         tool_entry = payload["profiles"]["default"]["servers"]["local:docs"]["tools"][
             "search"
         ]
-
 
         assert tool_entry["state"] == "allow"
 
@@ -9805,9 +9787,7 @@ def test_audit_entry_detail_payload_is_metadata_only():
     assert payload["decision"] == "allowed"
     assert payload["decision_label"] == "Allowed"
     assert (
-        audit_entry_detail_payload({"decision": "denied-killswitch"})[
-            "decision_label"
-        ]
+        audit_entry_detail_payload({"decision": "denied-killswitch"})["decision_label"]
         == "Blocked (kill switch)"
     )
     assert payload["argument_names"] == ["query"]
@@ -11142,8 +11122,9 @@ async def test_tools_mode_failed_master_save_restores_persisted_truth(monkeypatc
 
     monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get)
     monkeypatch.setattr(
-        mcp_workbench_module, "apply_settings_mutation_to_cli_config",
-        lambda *args, **kwargs: ConfigMutationResult(False, False, "before_replace")
+        mcp_workbench_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda *args, **kwargs: ConfigMutationResult(False, False, "before_replace"),
     )
 
     app = WorkbenchApp()
@@ -11154,9 +11135,7 @@ async def test_tools_mode_failed_master_save_restores_persisted_truth(monkeypatc
         await workbench._mount_deferred_canvases()
         await workbench._sync_children()
         toggle = app.query_one("#mcp-tools-local-enabled", Button)
-        assert str(toggle.label) == (
-            "Local workspace, web, and Watchlists tools: on ▸"
-        )
+        assert str(toggle.label) == ("Local workspace, web, and Watchlists tools: on ▸")
         toggle.press()
         await pilot.pause()
         await app.workers.wait_for_complete()
@@ -11516,6 +11495,7 @@ async def test_matrix_marks_and_inspector_revokes_session_approvals(tmp_path):
     service.session_approvals.add(("default", "local:docs", "search"))
     service.session_approvals.add(("default", "agent:builtin", "calculator"))
 
+
 # -- Wave A (2026-09-11 MCP Hub UX program): bounded polish -----------------
 
 
@@ -11612,9 +11592,7 @@ def test_tool_has_arg_rules_marks_an_inherited_rule(tmp_path):
     # The child stores nothing of its own.
     assert has_rules(child_servers, "srv", "search") is False
     assert (
-        has_rules(
-            child_servers, "srv", "search", ancestor_servers=(default_servers,)
-        )
+        has_rules(child_servers, "srv", "search", ancestor_servers=(default_servers,))
         is True
     )
     # An ancestor that carries nothing for this tool changes nothing.

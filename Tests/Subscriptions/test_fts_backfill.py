@@ -1,3 +1,7 @@
+import inspect
+import threading
+import time
+
 import pytest
 
 from tldw_chatbook.DB.fts_backfill_pacing import ABORT_POLL_SECONDS
@@ -34,7 +38,9 @@ def test_wired_backfill_makes_preexisting_items_searchable(db):
     """task-688: the upgrade path end to end. A database with items that
     predate the FTS index becomes fully searchable after the wired
     (looping-to-completion) path runs, not just after a single chunk."""
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     _drop_ai_trigger(db)
     for index in range(12):
         _insert_legacy_item(
@@ -47,23 +53,31 @@ def test_wired_backfill_makes_preexisting_items_searchable(db):
 
     # Confirm the rows really are unindexed first, or this test would pass
     # vacuously.
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM subscription_items_fts_docsize"
-    ).fetchone()[0] == 0
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items_fts_docsize"
+        ).fetchone()[0]
+        == 0
+    )
 
     total = backfill_subscription_items_fts(db, chunk_size=5)
 
     assert total == 12
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
-        ("rubric",),
-    ).fetchone()[0] == 12
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
+            ("rubric",),
+        ).fetchone()[0]
+        == 12
+    )
 
 
 def test_wired_backfill_is_idempotent_once_complete(db):
     """A second call after completion indexes nothing and does not corrupt
     the index (fts5 'integrity-check' stays clean)."""
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     _drop_ai_trigger(db)
     _insert_legacy_item(db, source_id, "https://a.example/1", "Item", "alpha content")
 
@@ -83,7 +97,9 @@ def test_wired_backfill_on_already_fully_indexed_db_is_a_noop(db):
     """A database with no legacy backlog at all (the common case, since the
     `_ai` trigger indexes every item going forward) should not error and
     should report nothing to do."""
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     _insert_legacy_item(db, source_id, "https://a.example/1", "Item", "alpha content")
 
     assert backfill_subscription_items_fts(db) == 0
@@ -194,3 +210,137 @@ def test_abort_cuts_an_in_flight_pause_at_the_poll_slice(db):
     assert total == 4
     assert recorded == [ABORT_POLL_SECONDS] * 3
     assert sum(recorded) < 5.0
+
+
+# ---------------------------------------------------------------------------
+# task-21233: chunk commits vs. concurrent subscriptions writers
+# ---------------------------------------------------------------------------
+
+#: Every SubscriptionsDB writer that can run concurrently with the chunked
+#: ``subscription_items_fts`` backfill (the backfill runs in an app-startup
+#: worker while the app is already serving screens, so every live writer can
+#: overlap it). TASK-21100's standing policy applies: each reserves SQLite's
+#: write lock up front with ``transaction(immediate=True)``. Deliberately NOT
+#: here: read-only methods (readers never upgrade; the two explicit
+#: ``BEGIN DEFERRED`` snapshot readers in ``get_reader_items_page`` and
+#: ``artifact_read_snapshot`` never write), ``_initialize_schema`` (boot /
+#: open path, before any worker or UI writer exists), and the already-IMMEDIATE
+#: sites (``accept_watchlist_runs``, ``accept_briefing``,
+#: ``_migrate_from_v1_to_v2``).
+SUBSCRIPTIONS_HOT_WRITERS = (
+    "backfill_items_fts",  # the chunk itself: one IMMEDIATE unit per chunk
+    "add_subscription",
+    "update_subscription",
+    "delete_subscription",
+    "record_check_result",
+    "record_check_error",
+    "reset_subscription_errors",
+    "mark_item_status",
+    "mark_all_read",
+    "restore_items_new",
+    "set_item_briefing_queued",
+    "set_item_flagged",
+    "transition_watchlist_run",
+    "mark_watchlist_run_started",
+    "transition_briefing",
+    "insert_briefing",
+    "update_briefing",
+    "complete_briefing",
+    "insert_briefing_preset",
+    "update_briefing_preset",
+    "delete_briefing_preset",
+    "insert_briefing_script",
+    "update_briefing_script",
+    "create_briefing_audio",
+    "update_briefing_audio",
+    "set_watchlist_briefing_settings",
+    "bulk_update_items",
+    "update_subscription_stats",
+    "add_filter",
+    "save_template",
+)
+
+
+def test_real_item_writes_during_an_in_flight_backfill_never_die_locked(db):
+    """task-21233 AC #2: a real write against ``subscription_items`` WHILE a
+    chunked backfill is in progress must never surface ``database is locked``.
+
+    Production shape: one shared ``SubscriptionsDB`` (thread-local
+    connections over a WAL file), the real paced driver on a worker thread
+    (240 legacy rows / chunk 8 / 0.05 s pause = 30 chunk commits over
+    >= 1.5 s), and the real item writers (``mark_item_status``,
+    ``set_item_flagged``) from the foreground across the window. Any
+    ``database is locked`` received by a foreground write fails this test.
+    The in-flight assertions keep it from passing vacuously.
+    """
+    _legacy_backlog(db, 240)
+    item_ids = [
+        row[0]
+        for row in db.conn.execute(
+            "SELECT id FROM subscription_items ORDER BY id"
+        ).fetchall()
+    ]
+    assert len(item_ids) == 240
+
+    def _docsize() -> int:
+        return db.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items_fts_docsize"
+        ).fetchone()[0]
+
+    assert _docsize() == 0  # the window is open
+
+    backfill_failures: list[BaseException] = []
+
+    def run_backfill() -> None:
+        try:
+            backfill_subscription_items_fts(db, chunk_size=8, pause_seconds=0.05)
+        except BaseException as exc:  # pragma: no cover - failure detail
+            backfill_failures.append(exc)
+
+    backfill_thread = threading.Thread(target=run_backfill, daemon=True)
+    backfill_thread.start()
+
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and _docsize() == 0:
+        time.sleep(0.005)
+    assert _docsize() > 0, "backfill never started"
+
+    errors: list[str] = []
+    for i, item_id in enumerate(item_ids[:10]):
+        try:
+            assert db.mark_item_status(item_id, "reviewed")
+            db.set_item_flagged(item_id, True)  # returns None; must not raise
+        except BaseException as exc:
+            errors.append(f"write {i} (item {item_id}): {type(exc).__name__}: {exc}")
+        if i == 4:
+            assert backfill_thread.is_alive(), (
+                "backfill finished before the writes -- probe was vacuous"
+            )
+        time.sleep(0.03)
+
+    assert backfill_thread.is_alive(), (
+        "backfill finished before the writes -- probe was vacuous; "
+        f"errors so far: {errors}"
+    )
+    assert errors == [], errors
+
+    backfill_thread.join(timeout=60.0)
+    assert not backfill_thread.is_alive()
+    assert backfill_failures == []
+    # Everything converged: backfilled plus trigger-indexed writes.
+    assert _docsize() == 240
+
+
+def test_subscriptions_hot_writers_reserve_the_write_lock_up_front():
+    """Structural backstop (the v47 ``HOT_MESSAGE_WRITERS`` idiom): every
+    writer that can overlap the chunked backfill must take an IMMEDIATE
+    transaction, so a reverted or new DEFERRED writer fails here by name."""
+    for name in SUBSCRIPTIONS_HOT_WRITERS:
+        source = inspect.getsource(getattr(SubscriptionsDB, name))
+        assert "self.transaction(immediate=True)" in source, (
+            f"{name} must reserve the write lock up front (see "
+            "SUBSCRIPTIONS_HOT_WRITERS)"
+        )
+        assert "self.transaction()" not in source, (
+            f"{name} still opens a DEFERRED transaction"
+        )

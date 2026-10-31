@@ -7,14 +7,20 @@ regression.py / quality_gating.py), read before writing these tests:
 `RegressionDetector.check_regression(...)` (not `detect`), `save_baseline`/
 `load_baseline`, and `GatingConfig`'s default stable/unstable metric tables.
 """
+
 from __future__ import annotations
 
 from tldw_chatbook.RAG_Search.eval.gating import (
-    GatingConfig, GatingEvaluationResult, GatingEvaluator, GatingResult,
+    GatingConfig,
+    GatingEvaluationResult,
+    GatingEvaluator,
+    GatingResult,
     MetricCategory,
 )
 from tldw_chatbook.RAG_Search.eval.regression import (
-    MetricBaseline, RegressionDetector, environment_mismatch,
+    MetricBaseline,
+    RegressionDetector,
+    environment_mismatch,
 )
 
 
@@ -79,7 +85,9 @@ def test_unstable_metric_regression_flags_warning_not_fail(tmp_path):
 
 def test_check_regression_no_baseline_found_is_not_a_regression(tmp_path):
     detector = RegressionDetector(baseline_dir=tmp_path)
-    report = detector.check_regression(current_metrics={"precision": 0.5}, baseline_id="latest")
+    report = detector.check_regression(
+        current_metrics={"precision": 0.5}, baseline_id="latest"
+    )
 
     assert report.has_regression is False
     assert report.results == []

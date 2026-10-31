@@ -23,12 +23,18 @@ from tldw_chatbook.Chat.local_server_discovery import (
     connect_error_is_refused,
     read_bounded_model_response,
 )
+from tldw_chatbook.Chat.provider_endpoint_contract import (
+    ProviderEndpointResolution,
+    is_native_generate_route,
+    resolve_provider_endpoint,
+)
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
 from tldw_chatbook.LLM_Calls.qwencloud_url import (
     QwenCloudBaseURLValidationError,
     normalize_qwencloud_base_url,
 )
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+    CAPABILITY_HINT_KEYS,
     DiscoveredModel,
     DiscoveryErrorKind,
     ModelDiscoveryError,
@@ -39,7 +45,6 @@ from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
 _NATIVE_ENDPOINT_PATHS_BY_PROVIDER = {
-    "koboldcpp": frozenset({"/api/v1/generate"}),
     "ollama": frozenset({"/api/tags"}),
     "local_ollama": frozenset({"/api/tags"}),
 }
@@ -59,6 +64,8 @@ _BASE_URL_INFERABLE_PROVIDER_KEYS = frozenset(
         "custom_openai_api",
         "custom_openai_api_2",
         "llama_cpp",
+        "strata",
+        "polystrata",
         "local_llamacpp",
         "local_llamafile",
         "local_llm",
@@ -409,6 +416,19 @@ def _is_explicit_openai_compatible_path(path: str) -> bool:
     )
 
 
+def _contract_native_resolution(
+    provider_key: str, endpoint: str | None
+) -> ProviderEndpointResolution | None:
+    """The endpoint contract's resolution of a native route it lists, else None.
+
+    koboldcpp's template endpoint, KoboldAI's /api/v1/generate, lists at the
+    URL Switch model probes, its root's /v1/models (TASK-35832). The contract
+    alone decides which endpoints that is.
+    """
+    resolution = resolve_provider_endpoint(provider_key, str(endpoint or ""))
+    return resolution if is_native_generate_route(resolution) else None
+
+
 def supports_openai_compatible_model_discovery(
     provider_identity: str,
     normalized_endpoint: str | None,
@@ -417,7 +437,12 @@ def supports_openai_compatible_model_discovery(
 
     Eligibility is based on explicit OpenAI-compatible URL paths. Native
     provider discovery URLs are rejected even when the provider can also expose
-    an OpenAI-compatible API at another configured endpoint.
+    an OpenAI-compatible API at another configured endpoint. The exception is
+    a native route the endpoint contract lists (koboldcpp's /api/v1/generate,
+    TASK-35832): it is eligible when the contract resolves it as that route,
+    and lists at the contract's models URL. A form the contract refuses (an
+    API suffix before the route) meets the rules below, which list no path
+    ending in it.
     """
     provider_key = _normalized_provider_identity(provider_identity)
     record = RECORDS_BY_KEY.get(provider_key)
@@ -437,6 +462,8 @@ def supports_openai_compatible_model_discovery(
         return False
 
     path = _normalized_path(parsed)
+    if _contract_native_resolution(provider_key, normalized_endpoint) is not None:
+        return True
     native_paths = _NATIVE_ENDPOINT_PATHS_BY_PROVIDER.get(provider_key, frozenset())
     if path in native_paths:
         return False
@@ -462,6 +489,11 @@ def build_models_url(endpoint: str, provider_identity: str) -> str:
     if parsed is None:
         return str(endpoint or "").strip()
 
+    native = _contract_native_resolution(
+        _normalized_provider_identity(provider_identity), endpoint
+    )
+    if native is not None and native.models_url is not None:
+        return native.models_url
     path = _normalized_path(parsed)
     if path in {"/completion", "/completions"}:
         base_url = normalize_llamacpp_base_url(endpoint)
@@ -549,6 +581,11 @@ def _scrub_model_metadata_value(
                 raise ValueError("Invalid models response: metadata key is invalid")
             if _is_sensitive_metadata_key(key):
                 continue
+            if type(nested_value) is str and len(nested_value) > MODEL_METADATA_MAX_VALUE_CHARS:
+                # Drop the field, keep the model: Together ships chat templates
+                # up to 16 KB in config.chat_template, and rejecting them
+                # listed nothing for every Together user (TASK-34361).
+                continue
             result[key] = _scrub_model_metadata_value(
                 nested_value,
                 depth=depth + 1,
@@ -594,6 +631,77 @@ def _safe_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
     return metadata
 
 
+def _bounded_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a model's safe metadata, dropping only what breaks a bound.
+
+    One model's oversized details must not cost the user the whole list:
+    Vercel's tiered pricing (270 items against a 256-item bound) listed none
+    of its 407 models (TASK-34363). A top-level field that breaks a bound on
+    its own is dropped first; if the rest together still exceed a bound, the
+    largest fields go, biggest first, until they fit, and a field the
+    capability inference reads goes only after every other. Nothing unbounded is
+    ever kept. The work is bounded: a model with more top-level fields than
+    the item bound cannot fit and gets no metadata, each field is measured
+    once on its own, and the number to drop is found by bisection (about
+    nine measurements of the record, however many fields it has).
+
+    Args:
+        model_payload: One model object from a ``/models`` response.
+
+    Returns:
+        The model's metadata within every bound; empty when no field fits.
+    """
+    try:
+        return _safe_model_metadata(model_payload)
+    except ValueError:
+        pass
+    if len(model_payload) > MODEL_METADATA_MAX_ITEMS:
+        return {}
+    kept: dict[str, Any] = {}
+    for key, value in model_payload.items():
+        try:
+            _safe_model_metadata({key: value})
+        except ValueError:
+            continue
+        kept[key] = value
+    # Largest first, but the fields capability inference reads go last
+    # (TASK-34402): shrinking a listing should not cost the model its hint.
+    largest_first = sorted(
+        kept,
+        key=lambda name: (
+            name not in CAPABILITY_HINT_KEYS,
+            len(json.dumps(kept[name])),
+        ),
+        reverse=True,
+    )
+    # Every kept field passed on its own, so what remains can only break a
+    # total (items or serialized bytes), and removing a field never raises
+    # either: whether the record fits is monotone in how many fields are gone.
+    # Bisect for the fewest evictions. Re-measuring after each one scrubbed a
+    # record of 255 small fields 255 times, minutes of CPU for a large listing.
+    measured: dict[int, dict[str, Any] | None] = {}
+
+    def without(evicted: int) -> dict[str, Any] | None:
+        if evicted not in measured:
+            gone = set(largest_first[:evicted])
+            try:
+                measured[evicted] = _safe_model_metadata(
+                    {name: value for name, value in kept.items() if name not in gone}
+                )
+            except ValueError:
+                measured[evicted] = None
+        return measured[evicted]
+
+    fewest, most = 0, len(largest_first)
+    while fewest < most:
+        middle = (fewest + most) // 2
+        if without(middle) is None:
+            fewest = middle + 1
+        else:
+            most = middle
+    return without(fewest) or {}
+
+
 def normalize_models_response(
     payload: Mapping[str, Any],
     *,
@@ -634,7 +742,7 @@ def normalize_models_response(
                 source="runtime_discovered",
                 endpoint_fingerprint=endpoint_fingerprint,
                 discovered_at=now_iso,
-                metadata_raw_safe=_safe_model_metadata(item),
+                metadata_raw_safe=_bounded_model_metadata(item),
             )
         )
 
@@ -840,6 +948,10 @@ async def discover_openai_compatible_models(
                         "Use an endpoint that returns a JSON object with a data array of model IDs.",
                     ),
                 )
+            if type(payload) is list:
+                # Together answers /models with the bare array, no envelope
+                # (TASK-34361, Tests/fixtures/cloud_live/together.json).
+                payload = {"data": payload}
             if type(payload) is not dict or type(payload.get("data")) is not list:
                 return None, ModelDiscoveryResult(
                     provider=provider,
@@ -908,7 +1020,8 @@ async def discover_openai_compatible_models(
         else:
             async with _provider_recovery.discovery_native_context(
                 build_httpx_async_client(
-                    timeout=timeout_seconds, **_provider_recovery.discovery_client_options()
+                    timeout=timeout_seconds,
+                    **_provider_recovery.discovery_client_options(),
                 )
             ) as active_client:
                 payloads, request_error = await _request_payloads(active_client)
@@ -948,7 +1061,11 @@ async def discover_openai_compatible_models(
         datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )
     try:
-        models = normalize_models_response(
+        # Off the event loop, like the JSON decode above: bounding a listing's
+        # metadata is CPU work that grows with the response (a record whose
+        # fields only overflow together is re-measured once per dropped field).
+        models = await asyncio.to_thread(
+            normalize_models_response,
             {"data": combined_data},
             provider=provider,
             provider_list_key=provider_list_key,

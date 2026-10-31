@@ -78,9 +78,7 @@ async def test_a_send_after_navigating_away_extends_the_persisted_chain(tmp_path
     _attach_real_dbs(app, tmp_path)
 
     async with app.run_test(size=(160, 48)) as pilot:
-        _, _, _, session_id, conversation_id = await _seed_console(
-            app, pilot, gateway
-        )
+        _, _, _, session_id, conversation_id = await _seed_console(app, pilot, gateway)
         db = app.chachanotes_db
         before = _db_chain(db, conversation_id)
         await _navigate(app, pilot, "library", expect="LibraryScreen")

@@ -105,9 +105,7 @@ def _note_folder_modal(kind: str):
 
 def _note_folder_control(kind: str, control: str) -> str:
     prefix = (
-        "library-note-folder-dialog"
-        if kind == "name"
-        else "library-note-folder-target"
+        "library-note-folder-dialog" if kind == "name" else "library-note-folder-target"
     )
     return f"#{prefix}-{control}"
 

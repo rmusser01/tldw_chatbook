@@ -248,9 +248,7 @@ def build_library_rag_save_sections(
     )
     chat_defaults = app_config.get("chat_defaults")
     merged_chat_defaults = (
-        dict(deepcopy(chat_defaults))
-        if isinstance(chat_defaults, Mapping)
-        else {}
+        dict(deepcopy(chat_defaults)) if isinstance(chat_defaults, Mapping) else {}
     )
     merged_chat_defaults["rag_auto_retrieve_on_send"] = bool(
         values.rag_auto_retrieve_on_send
@@ -511,14 +509,10 @@ def validate_library_rag_defaults(
             f"{MIN_RAG_CONTEXT_CHARS} and {MAX_RAG_CONTEXT_CHARS} characters.",
         )
     if not str(values.embedding_model).strip():
-        return SettingsValidationResult(
-            False, "Embedding model must not be empty."
-        )
+        return SettingsValidationResult(False, "Embedding model must not be empty.")
     embedding_max_length = _strict_int(values.embedding_max_length)
     if embedding_max_length is None or embedding_max_length <= 0:
-        return SettingsValidationResult(
-            False, "Embedding max length must be positive."
-        )
+        return SettingsValidationResult(False, "Embedding max length must be positive.")
     if values.chunking_method not in CHUNKING_METHODS:
         return SettingsValidationResult(
             False, "Chunking method must be words, sentences, or paragraphs."

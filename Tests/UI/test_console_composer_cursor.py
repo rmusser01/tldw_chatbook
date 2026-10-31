@@ -384,6 +384,7 @@ def test_composer_display_canonical_index_mapping_snaps_over_tokens():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_arrow_home_end_keys_move_caret_and_render_glyph():
     app = _build_test_app()
@@ -418,6 +419,7 @@ async def test_console_composer_arrow_home_end_keys_move_caret_and_render_glyph(
         assert "hello▌" in visible_draft.renderable.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_typing_inserts_at_caret_mid_draft():
     app = _build_test_app()
@@ -441,6 +443,7 @@ async def test_console_composer_typing_inserts_at_caret_mid_draft():
         assert composer.cursor_index == 5
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_ctrl_w_deletes_word_left_of_caret():
     app = _build_test_app()
@@ -463,6 +466,7 @@ async def test_console_composer_ctrl_w_deletes_word_left_of_caret():
         assert composer.cursor_index == len("delete this ")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_shift_enter_inserts_newline_enter_still_sends():
     gateway = CapturingGateway()
@@ -492,6 +496,13 @@ async def test_console_composer_shift_enter_inserts_newline_enter_still_sends():
         assert not gateway.sent_messages
 
         await pilot.press("enter")
+        # The admission status also says "accepted" before the provider runs.
+        # Wait for the actual gateway delivery before checking its payload.
+        for _ in range(100):
+            if gateway.sent_messages:
+                break
+            await pilot.pause(0.05)
+        assert gateway.sent_messages
         await _wait_for_text(console, pilot, "accepted")
 
         assert gateway.sent_messages[-1][-1]["content"] == "line one\nline two"
@@ -499,6 +510,7 @@ async def test_console_composer_shift_enter_inserts_newline_enter_still_sends():
         assert composer.cursor_index == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_click_positions_caret_in_literal_text():
     app = _build_test_app()
@@ -526,6 +538,7 @@ async def test_console_composer_click_positions_caret_in_literal_text():
         assert composer.draft_text() == "clickX to place the caret"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_screen_coordinate_click_positions_caret():
     app = _build_test_app()
@@ -552,6 +565,7 @@ async def test_console_composer_screen_coordinate_click_positions_caret():
         assert composer.cursor_index == 9
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_click_on_paste_token_still_unfurls_not_positions():
     app = _build_test_app()
@@ -573,6 +587,7 @@ async def test_console_composer_click_on_paste_token_still_unfurls_not_positions
         assert composer.cursor_index == cursor_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_prompt_insert_appends_at_end_regardless_of_caret():
     """The `/prompt` and Library handoffs keep their append-at-end contract."""
@@ -657,6 +672,7 @@ async def _count_layout_passes(pilot, composer, rounds: int, *, blink: bool) -> 
     return calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_blink_tick_arms_no_layout_pass():
     """A blink phase flip costs no more layout work than an idle settle.
@@ -702,6 +718,7 @@ async def test_console_composer_blink_tick_arms_no_layout_pass():
         assert "▌" in shown_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_blink_phases_are_geometry_identical():
     """Both blink phases occupy identical geometry, at every wrap boundary.
@@ -792,6 +809,7 @@ async def _drive_ticks(pilot, composer, count: int) -> list[bool]:
     return phases
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_idle_blink_ticks_do_no_wrap_or_history_scan(
     monkeypatch,
@@ -878,6 +896,7 @@ class _ComposerCoverModal(ModalScreen[None]):
         yield Static("covering modal", id="composer-cover-modal-body")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_blink_freezes_solid_under_modal_and_resumes():
     """Blink ticks stop flipping while the composer's screen is covered.
@@ -921,6 +940,7 @@ async def test_console_composer_blink_freezes_solid_under_modal_and_resumes():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_typing_after_idle_ticks_repaints_new_draft():
     """The render memo invalidates on a draft edit -- no stale caret/text.
@@ -955,6 +975,7 @@ async def test_console_composer_typing_after_idle_ticks_repaints_new_draft():
         assert "▌" not in visible.renderable.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_history_append_while_idle_updates_ghost(tmp_path):
     """A history record while the composer idles invalidates the ghost text.

@@ -185,9 +185,7 @@ class ChunkingService:
             ) from e
 
         chunks = _with_flat_chunk_index(raw_chunks)
-        logger.debug(
-            f"Chunked text into {len(chunks)} chunks using method '{method}'"
-        )
+        logger.debug(f"Chunked text into {len(chunks)} chunks using method '{method}'")
         return chunks
 
 

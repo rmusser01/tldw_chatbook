@@ -33,6 +33,8 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
     ToolSchema,
     READ_AGENT_MESSAGES_TOOL_NAME,
+    LIST_PEER_AGENTS_TOOL_NAME,
+    SEND_TO_PEER_TOOL_NAME,
     REPORT_TO_SUPERVISOR_TOOL_NAME,
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     DISCARD_AGENT_WORKTREE_TOOL_NAME,
@@ -46,29 +48,33 @@ from Tests.Agents.test_agent_service import FleetChat, verbatim
 
 def test_install_skill_name_in_runtime_tool_names():
     assert INSTALL_SKILL_TOOL_NAME == "install_skill"
-    assert RUNTIME_TOOL_NAMES == {        # ADR-150 chat fork/spawn + dev-baseline completion (fleet message/
-        # worktree constants were in RUNTIME_TOOL_NAMES but unlisted here).
-        MERGE_AGENT_WORKTREE_TOOL_NAME,
-        DISCARD_AGENT_WORKTREE_TOOL_NAME,
-        PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
-        REPORT_TO_SUPERVISOR_TOOL_NAME,
-        READ_AGENT_MESSAGES_TOOL_NAME,
-
-        SPAWN_TOOL_NAME,
-        FIND_TOOLS_NAME,
-        LOAD_TOOLS_NAME,
-        SKILL_FILE_TOOL_NAME,
-        INSTALL_SKILL_TOOL_NAME,
-        RUN_SKILL_SCRIPT_TOOL_NAME,
-        SEARCH_RUN_LOG_TOOL_NAME,
-        RUN_LOG_STATS_TOOL_NAME,
-        RUN_LOG_SLICE_TOOL_NAME,
-        WAIT_AGENTS_TOOL_NAME,
-        CHECK_AGENTS_TOOL_NAME,
-        SEND_TO_AGENT_TOOL_NAME,
-        FORK_CHAT_TOOL_NAME,
-        NEW_CHAT_TOOL_NAME,
-    }
+    assert (
+        RUNTIME_TOOL_NAMES
+        == {  # ADR-150 chat fork/spawn + dev-baseline completion (fleet message/
+            # worktree constants were in RUNTIME_TOOL_NAMES but unlisted here).
+            MERGE_AGENT_WORKTREE_TOOL_NAME,
+            DISCARD_AGENT_WORKTREE_TOOL_NAME,
+            PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
+            REPORT_TO_SUPERVISOR_TOOL_NAME,
+            READ_AGENT_MESSAGES_TOOL_NAME,
+            LIST_PEER_AGENTS_TOOL_NAME,
+            SEND_TO_PEER_TOOL_NAME,
+            SPAWN_TOOL_NAME,
+            FIND_TOOLS_NAME,
+            LOAD_TOOLS_NAME,
+            SKILL_FILE_TOOL_NAME,
+            INSTALL_SKILL_TOOL_NAME,
+            RUN_SKILL_SCRIPT_TOOL_NAME,
+            SEARCH_RUN_LOG_TOOL_NAME,
+            RUN_LOG_STATS_TOOL_NAME,
+            RUN_LOG_SLICE_TOOL_NAME,
+            WAIT_AGENTS_TOOL_NAME,
+            CHECK_AGENTS_TOOL_NAME,
+            SEND_TO_AGENT_TOOL_NAME,
+            FORK_CHAT_TOOL_NAME,
+            NEW_CHAT_TOOL_NAME,
+        }
+    )
 
 
 def test_install_skill_schema_shape():
@@ -83,7 +89,9 @@ def test_install_skill_schema_shape():
 
 
 _CALC = ToolSchema(
-    id="builtin:calculator", name="calculator", description="math",
+    id="builtin:calculator",
+    name="calculator",
+    description="math",
     parameters={"type": "object"},
 )
 
@@ -100,7 +108,8 @@ def _deps(turns, *, install_skill=None, invoke=None):
 
     return LoopDeps(
         call_model=call_model,
-        invoke_tool=invoke or (lambda c: ToolResult(ok=False, error=f"Tool not permitted: {c.name}")),
+        invoke_tool=invoke
+        or (lambda c: ToolResult(ok=False, error=f"Tool not permitted: {c.name}")),
         spawn=lambda task: ToolResult(ok=True, content="sub"),
         find_tools=lambda q: [],
         load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
@@ -126,7 +135,9 @@ def test_install_skill_dispatches_to_deps_when_wired():
         [_CALC],
         _deps(
             [
-                ModelTurn(text=_fence("install_skill", {"url": "https://github.com/o/r"})),
+                ModelTurn(
+                    text=_fence("install_skill", {"url": "https://github.com/o/r"})
+                ),
                 ModelTurn(text="done"),
             ],
             install_skill=installer,
@@ -134,7 +145,9 @@ def test_install_skill_dispatches_to_deps_when_wired():
     )
     assert out.status == RUN_DONE
     assert seen == ["https://github.com/o/r"]
-    assert any(s.kind == "tool_result" and "installed" in (s.result or "") for s in out.steps)
+    assert any(
+        s.kind == "tool_result" and "installed" in (s.result or "") for s in out.steps
+    )
 
 
 def test_install_skill_falls_through_when_not_wired():
@@ -144,7 +157,9 @@ def test_install_skill_falls_through_when_not_wired():
         [_CALC],
         _deps(
             [
-                ModelTurn(text=_fence("install_skill", {"url": "https://github.com/o/r"})),
+                ModelTurn(
+                    text=_fence("install_skill", {"url": "https://github.com/o/r"})
+                ),
                 ModelTurn(text="done"),
             ],
             install_skill=None,  # not wired -> generic invoke_tool path
@@ -190,8 +205,10 @@ def test_top_level_agent_dispatches_install_skill(tmp_path):
         conversation_id="c1",
         messages=[{"role": "user", "content": "install it"}],
         config=AgentConfig(
-            model="m", system_prompt="s",
-            allowed_tools=("calculator",), budget=RunBudget(),
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(),
         ),
         api_endpoint="llama_cpp",
     )
@@ -212,7 +229,7 @@ def test_subagent_cannot_call_install_skill(tmp_path):
     # per agent instead; the replies themselves are unchanged.
     chat = FleetChat(
         [
-            _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),   # parent spawns
+            _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),  # parent spawns
             {"choices": [{"message": {"content": "final"}}]},
         ],
         {
@@ -230,8 +247,10 @@ def test_subagent_cannot_call_install_skill(tmp_path):
         conversation_id="c1",
         messages=[{"role": "user", "content": "go"}],
         config=AgentConfig(
-            model="m", system_prompt="s",
-            allowed_tools=("calculator", SPAWN_TOOL_NAME), budget=RunBudget(),
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator", SPAWN_TOOL_NAME),
+            budget=RunBudget(),
         ),
         api_endpoint="llama_cpp",
     )

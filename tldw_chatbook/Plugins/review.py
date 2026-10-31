@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Literal
 
 from .authority import PluginMarker
-from .inspection import inspect_package
 from .models import PackageInspection
 from .package_files import canonical_json
 
@@ -70,6 +69,8 @@ def inspection_identity(inspection: PackageInspection) -> str:
 
 def reinspect(inspection: PackageInspection, root: Path) -> PackageInspection:
     """Verify materialized bytes while preserving authenticated source provenance."""
+    from .inspection import inspect_package
+
     observed = inspect_package(root, dialect=inspection.dialect)
     observed = observed.model_copy(
         update={

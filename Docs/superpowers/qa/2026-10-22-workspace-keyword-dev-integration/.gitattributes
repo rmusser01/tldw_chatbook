@@ -1,0 +1,5 @@
+# Immutable evidence: preserve original bytes; summaries and product code remain text.
+raw/** -text -diff
+review.md -text -diff
+implementation-report.md -text -diff
+execution-ledger.md -text -diff

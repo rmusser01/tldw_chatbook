@@ -1,0 +1,24 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console ! │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handof… Speak replies   ▌   Hands-free   ▌     Blocked
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+──────────█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█──────────
+ Conversat█                                                          █
+    ◆ View█               Close tab "Pending [notes]"?               █rary
+ Each tab █                                                          █ >     ✕
+ ╭────────█             Saved history stays in Library.              █────────╮
+ │ The age█             Closing will discard or cancel:              █        │
+ │        █             Temporary or unsaved messages: 1             █        │
+ │ Choice █                   Live agent turns: 1                    █        │
+ │ Private█         Tool approvals: denied; runs cancelled.          █        │
+ │ ▐●▌ One█                                                          █        │
+ │ ▐●▌ Two█                                                          █        │
+ │ ▊▔▔▔▔▔▔█                    Stay        Close                     █▔▔▔▔▔▎  │
+ │ ▊  Othe█                                                          █     ▎  │
+ │ ▊▁▁▁▁▁▁█▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█▁▁▁▁▁▎  │
+ │                                                                            │
+────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model:
+│  Composer ▾  Menu  Ask, command, or paste        Send         Dictate
+  Ctrl+Shift+F focus | Alt+I inspect | F1 · F6 · Ctrl+P · Ctrl+Q

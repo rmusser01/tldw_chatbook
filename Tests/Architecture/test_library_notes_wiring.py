@@ -98,8 +98,31 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: wave 4: task-32536 adds ``failure_line``, the complete one-sentence
 #: blocker ("Can't use this note in Console -- ... Next: ...") that replaced
 #: the two disagreeing messages the critique found, rendered verbatim in
-#: place of the generic "{action} failed" line (105 + 1 = 106).
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 106
+#: place of the generic "{action} failed" line (105 + 1 = 106). **107**:
+#: TASK-34000.1 adds ``autosave_burst``, the burst of unsaved typing the
+#: autosave max wait bounds (106 + 1 = 107). **108**: TASK-34000.2 adds
+#: ``tree_attention_folder_ids``, the sync folders held for attention whose
+#: tree row and list status say so (107 + 1 = 108). **109**: TASK-34000.50
+#: fix round 1 adds ``tree_unwatched_folder_ids``, the healthy sync folders
+#: nothing is watching, whose tree row reads "⚠ Sync stopped" (108 + 1 = 109).
+#: **110**: TASK-34000.25 -- ``create_caret``, where the caret lands once a
+#: just-created note's editor is ready ("title" for every create today,
+#: "body-end" for the Media Reader's Note action) (109 + 1 = 110). **111**:
+#: TASK-34000.10 -- ``validation_field``, the field a standing validation
+#: veto named, which the editor outlines with the reason under it
+#: (110 + 1 = 111). **112**: TASK-34000.10 fix round 1 -- ``validation_message``,
+#: that veto's own reason, kept with the field so the mark can outlive a key
+#: typed into another field (111 + 1 = 112). **113-114**: TASK-34000.11
+#: (2026-10-23) -- ``link_picker_generation``, the ``[[`` picker's
+#: candidate-load generation that drops a stale answer, and
+#: ``link_picker_latch``, the completion start Escape dismissed so the picker
+#: stays closed until the context changes (112 + 2 = 114). **115**:
+#: TASK-34000.11 final fix round (2026-10-23) -- ``link_picker_request``, the
+#: ``(start, query)`` completion the picker was last asked for, the one
+#: field every hot path (caret move, Tab, resize frame) reads before doing
+#: anything, and the reason one keystroke starts one candidate load
+#: (114 + 1 = 115).
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 115
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_
@@ -314,10 +337,16 @@ def test_the_four_member_list_entry_focus_family_stays_screen_owned() -> None:
 #: + 4 ``action_*``) are exempt from the census outright; SS4's third member,
 #: ``on_<message>`` NAME dispatch, contributes ZERO for notes and
 #: ``test_no_notes_handler_is_name_dispatched_by_textual`` keeps that proven.
-#: 26 of 185 = 14.05%.
+#: 26 of 185 = 14.05%. **28**: TASK-34000.1 pruned two more,
+#: ``_fire_library_note_autosave`` and ``_gc_pending_blank_note``. Their only
+#: screen-side callers moved into ``Library_Modules/library_note_autosave.py``
+#: and ``library_pending_work.py``, which call the controller directly. That
+#: offsets the screen's two new quit hooks in its method budget.
 _NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     (
         "_apply_library_note_saved_presentation",
+        "_fire_library_note_autosave",
+        "_gc_pending_blank_note",
         "_apply_library_notes_operation_state",
         "_defer_library_notes_settled_focus_restore",
         "_exit_library_notes_lasting_sync",

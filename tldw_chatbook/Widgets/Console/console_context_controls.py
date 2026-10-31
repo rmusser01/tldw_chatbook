@@ -61,6 +61,22 @@ def format_context_tokens(value: int | None) -> str:
     return "unknown" if value is None else f"{value:,}"
 
 
+def context_token_row(label: str, value: int | None) -> str:
+    """Return one Context view row: the label in 20 cells, then the count.
+
+    Args:
+        label: The row's label, e.g. ``"Safety margin"``.
+        value: The count, or None when nothing measured it.
+
+    Returns:
+        For example ``"Safety margin       640 tokens"``; an unknown count
+        reads ``"unknown"``, never "unknown tokens" (TASK-33007 capture
+        finding 17).
+    """
+    count = "unknown" if value is None else f"{value:,} tokens"
+    return f"{label:<20}{count}"
+
+
 @dataclass(frozen=True, slots=True)
 class ThinkingHistoryControlState:
     """Saved optional replay preference and its current effective state."""
@@ -115,19 +131,6 @@ class ConsoleContextControlState:
         if budget is None:
             return None
         return int(budget * self.resolved_policy.policy.target_ratio)
-
-    @property
-    def request_row(self) -> str:
-        used = format_context_tokens(self.request_tokens)
-        ceiling = format_context_tokens(self.safe_input_ceiling_tokens)
-        if self.safe_input_ceiling_tokens is None:
-            suffix = "limit unknown"
-        elif self.model_window_verified:
-            suffix = "safe input"
-        else:
-            suffix = "estimated input; model unverified"
-        estimate_prefix = "~" if self.request_tokens is not None else ""
-        return f"{estimate_prefix}{used} / {ceiling} {suffix}"
 
     @property
     def conversation_row(self) -> str:
@@ -402,6 +405,7 @@ def build_console_context_cost_state(
     context: ConsoleContextControlState,
     cost: ConsoleCostState,
     next_send: ConsoleNextSendSpendState | None = None,
+    rate_limit_line: str | None = None,
 ) -> ConsoleCostState:
     """Combine context fullness with current and next-send spend states.
 
@@ -409,6 +413,9 @@ def build_console_context_cost_state(
         context: Estimated request occupancy and model capacity.
         cost: Current settled spend and cache presentation.
         next_send: Additional input-charge forecast, if available.
+        rate_limit_line: The provider's remaining rate limit from its last
+            response, shown last among the info lines; ``None`` when the
+            provider reported none (TASK-28229).
 
     Returns:
         Full and compact labels with detailed context and spend tooltips.
@@ -432,6 +439,12 @@ def build_console_context_cost_state(
             f"Context: ~{format_context_tokens(used)} / "
             f"{format_context_tokens(ceiling)} safe input ({fullness} full)"
         )
+        if (
+            context.model_window_tokens is not None
+            and not context.model_window_verified
+        ):
+            # TASK-33007 #12: a fallback window is unknown, its size assumed.
+            context_line += " (assumed; window unknown)"
     conversation = format_context_tokens(context.conversation_tokens)
     budget = format_context_tokens(context.conversation_budget_tokens)
     prefix = "~" if context.conversation_tokens is not None else ""
@@ -455,14 +468,18 @@ def build_console_context_cost_state(
         if current_label.endswith(suffix):
             current_label = current_label.removesuffix(suffix)
             break
+    # TASK-34100.5 AC#9: an unknown window only matters when it blocks a
+    # send, and that refusal names the fix; the chip drops the segment.
+    context_part = "" if fullness == "unknown" else f"Context {fullness} · "
+    compact_part = "" if fullness == "unknown" else f"Ctx {fullness} · "
     return replace(
         cost,
         label=(
-            f"Context {fullness} · Current {current_label} "
+            f"{context_part}Current {current_label} "
             f"· On next send {next_send.label}"
         ),
         compact_label=(
-            f"Ctx {fullness} · Now {current_label} · Next {next_send.label}"
+            f"{compact_part}Now {current_label} · Next {next_send.label}"
         ),
         tooltip="\n".join(
             (
@@ -471,6 +488,7 @@ def build_console_context_cost_state(
                 compaction_line,
                 cost.tooltip,
                 next_send.tooltip,
+                *((rate_limit_line,) if rate_limit_line else ()),
                 "Open Conversation Inspector for Costs, Exchange, and Next Send.",
             )
         ),
@@ -484,5 +502,6 @@ __all__ = [
     "build_console_context_control_state",
     "build_console_context_cost_state",
     "build_console_next_send_spend_state",
+    "context_token_row",
     "format_context_tokens",
 ]

@@ -9,16 +9,30 @@
  * vocabulary, console-surface scoped. ======================================== */
 
 
+/* TASK-33006.1 (spec §6, mock (b)): Chat settings is 22 rows over the
+   Console, so the whole Model view fits at 211x44 without scrolling; both
+   caps keep it inside smaller terminals. No vertical padding: the frame,
+   header, tabs, scope, defaults line and footer cost 9 of the 22 rows,
+   leaving 13 for the MODEL row, at most 8 CORE rows and 4 disclosures.
+   Its width is the token's 176 columns (mock (b)'s 150 cut every help line
+   longer than 95 cells: TASK-33007 capture finding 15). */
 #console-settings-modal {
-    width: $ds-size-120;
+    width: $ds-chat-settings-width;
     max-width: $ds-percent-95;
-    height: $ds-percent-94;
+    height: $ds-size-22;
     max-height: $ds-percent-95;
     overflow: hidden;
     scrollbar-size: 1 1;
     border: round $ds-grid-line;
     background: $ds-surface-panel;
-    padding: $ds-space-1 $ds-space-2;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+/* The Context and memory view keeps its own, taller height (TASK-33006.1
+   AC#11). 85%, not 94%: centred, it leaves the nav bar's 3 rows clear at
+   211x44 and 235x52 (TASK-33007 capture finding 21, round 2). */
+#console-settings-modal.-context-view {
+    height: $ds-percent-85;
 }
 
 /* TASK-31665 AC#15: visible scrollbar thumb. `$ds-grid-line` on a
@@ -47,9 +61,11 @@
 /* TASK-33003.1 (spec §6 "a closed disclosure costs 1 row"): drop the global
    components/_widgets.tcss Collapsible frame (round border, min-height 3,
    $surface band) and Textual's padding-bottom inside Chat settings, so a
-   collapsed section is its 1-row title plus the section margin above. */
+   collapsed section is its 1-row title (TASK-33006.1 drops the margin too:
+   the four disclosures stack row on row under the CORE fields). */
 ConsoleSettingsModal Collapsible {
     min-height: $ds-size-0;
+    margin: $ds-space-0;
     padding: $ds-space-0;
     border: none;
     background: $ds-surface-panel;
@@ -57,22 +73,24 @@ ConsoleSettingsModal Collapsible {
 
 /* TASK-33003.3: the body too. The global `Collapsible > Contents` $surface
    is the fields' own fill, so a 12-column field inside a disclosure read as
-   a full row; on the panel it shows its width, as in the Context view. */
+   a full row; on the panel it shows its width, as in the Context view.
+   TASK-33006.1: no padding, so an opened disclosure's rows line up with the
+   CORE rows above it and add no blank row. */
 ConsoleSettingsModal Collapsible > Contents {
+    padding: $ds-space-0;
     background: $ds-surface-panel;
 }
 
+/* TASK-33006.2: a disclosure title spans its row. A title set after mount
+   (Sampling, Connection, Request estimate, name) keeps an auto width's first
+   measure and paints cut short; each builder keeps it to one row (141 cells,
+   owner ruling 2026-10-02), so nothing wraps. */
 #console-settings-provider-model-section,
-#console-settings-connection {
+#console-settings-connection,
+ConsoleSettingsModal CollapsibleTitle {
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: auto;
-}
-
-.console-settings-primary-section {
-    padding: $ds-space-0 $ds-space-1;
-    border: round $ds-action-focus;
-    background: $ds-surface-raised;
 }
 
 .console-settings-modal-row {
@@ -92,13 +110,24 @@ ConsoleSettingsModal Collapsible > Contents {
     text-wrap: wrap;
 }
 
+/* TASK-33006.6: 'Conversation max tokens' is exactly as wide as the shared
+   23-cell column and ran into its input, so the Context view's labels get
+   one more cell. The compact tier keeps 16 in both views (more specific). */
+.-context-view .console-settings-modal-label {
+    width: $ds-size-24;
+    max-width: $ds-size-24;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact .console-settings-modal-label {
+    width: $ds-size-16;
+}
+
 /* TASK-33003.2: one-row controls (the Input/Select rules live with the rest
    of the modal's field styling in components/_agentic_terminal.tcss). These
    moved here from the modal's DEFAULT_CSS, which loses to app CSS anyway. */
 ConsoleSettingsModal Button,
 ConsoleSettingsModal #console-settings-view-tabs,
-ConsoleSettingsModal #console-settings-default-recovery-actions,
-ConsoleSettingsModal ModelSearchPicker .model-search-picker-control {
+ConsoleSettingsModal #console-settings-default-recovery-actions {
     height: $ds-control-height-compact;
     min-height: $ds-control-height-compact;
 }
@@ -106,6 +135,13 @@ ConsoleSettingsModal ModelSearchPicker .model-search-picker-control {
 ConsoleSettingsModal .console-context-action-row {
     height: auto;
     min-height: $ds-control-height-compact;
+}
+
+/* TASK-33007 capture finding 19 (round 2): a row shows two buttons (the
+   second swaps with Undo or Confirm), so the first keeps one cell clear. */
+#console-context-compact-now,
+#console-context-reset-overrides {
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 .console-settings-control {
@@ -116,58 +152,80 @@ ConsoleSettingsModal .console-context-action-row {
 
 /* TASK-33003.3 (spec §6 row grammar): a Chat settings field is as wide as
    the value it holds, edge included, never a share of the viewport, so it
-   keeps its width from 211 to 235 columns. Every Input in Advanced
-   generation and in the Context view holds a number (12). An enum Select
-   is its longest option or blank prompt + 5: the edge, a padding cell each
-   side, the arrow and its gap (Keep after compaction's 27-cell option makes
-   32, so it shares the names cap). Free text keeps `1fr` so it gives way in
+   keeps its width from 211 to 235 columns. TASK-33007 #12(b): a view's
+   controls share one width, so its arrows (and the Model view's Source
+   words) form one column. An enum Select needs its widest option + 5 (the
+   edge, a padding cell each side, the arrow and its gap): "Detailed" makes
+   13, which a Model view field row's number takes too; Keep after
+   compaction's 27-cell option makes 32 in the Context view (the names cap),
+   whose Inputs hold numbers (12). Free text keeps `1fr` so it gives way in
    a narrow terminal, capped by type: names 32, model ids 48, URLs 64.
    Widths stay on the $ds-size-N scale until a second editor shares this row
    grammar (design-language.md §2.8). Bare ids, no ConsoleSettingsModal
    prefix: the boot CSS budget (ADR-097) sits bytes under its ceiling, and
    deleting dead rules for retired Console widgets paid for these.
    ponytail: the number width is by container, so a free-text Input added to
-   either container later also gets 12 columns; give it an id rule then. */
-#console-settings-generation-advanced Input,
-#console-settings-context-view Input {
-    width: $ds-size-12;
-}
-
-#console-settings-verbosity,
-#console-settings-thinking-effort {
-    width: $ds-size-11;
-}
-
-#console-settings-reasoning-effort,
-#console-context-thinking-history-policy {
-    width: $ds-size-12;
-}
-
-#console-settings-reasoning-summary {
+   either container later also gets its width; give it an id rule then.
+   The subjects are the Chat settings types, not bare Input/Select: the CSS
+   fast-path ratchet counts ancestor-scoped bare-type subjects, which every
+   Input or Select in the app would be matched against. */
+.console-settings-field-row ConsoleSettingsInput,
+.console-settings-field-row ConsoleSettingsSelect {
     width: $ds-size-13;
 }
 
-#console-context-budget-mode,
-#console-context-compaction-mode {
-    width: $ds-size-14;
+#console-settings-context-view ConsoleSettingsInput {
+    width: $ds-size-12;
 }
 
-#console-context-compaction-representation {
-    width: $ds-size-22;
+#console-settings-context-view ConsoleSettingsSelect {
+    width: $ds-size-32;
 }
 
-#console-context-failure-behavior {
-    width: $ds-size-23;
+/* TASK-33006.1 (spec §6 row grammar): Label (18) | control | Source word |
+   help line, each one row (a Static is as tall as its one line of text).
+   Source and help read in $ds-text-muted, the readable token the theme
+   guard keeps at 4.5:1 on the panel; a help line longer than the row ends
+   in an ellipsis instead of a second row. */
+.console-settings-field-label {
+    width: $ds-size-18;
 }
 
-#console-context-carry-forward,
+.console-settings-field-source {
+    width: $ds-size-20;
+    padding: $ds-space-0 $ds-space-1;
+    color: $ds-text-muted;
+}
+
+.console-settings-help-line {
+    width: $ds-width-fill;
+    color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
 #console-settings-user-display-name {
     max-width: $ds-size-32;
 }
 
-#console-settings-provider-picker,
-#console-settings-model-picker {
-    max-width: $ds-size-48;
+/* TASK-33006.4: model · provider | Source | readiness · context | Change.
+   The pair takes the free width; ModelPairSummary shortens only an id
+   wider than that, in the middle. Below 100 columns: pair and Change. */
+#console-settings-model-summary {
+    width: $ds-width-fill;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#console-settings-model-source,
+#console-settings-model-status {
+    width: auto;
+    margin: $ds-space-0 $ds-space-1;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-model-source,
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-model-status {
+    display: none;
 }
 
 #console-settings-base-url {
@@ -183,16 +241,21 @@ ConsoleSettingsModal .console-context-action-row {
     align-horizontal: right;
 }
 
+/* TASK-33007 capture finding 16: one blank cell before each footer button,
+   so "Esc close" and the labels never read as one phrase. The compact
+   footer stacks full-width buttons and takes none. */
+#console-settings-actions Button {
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-actions Button {
+    margin: $ds-space-0;
+}
+
 #console-settings-connection-actions {
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: auto;
-}
-
-#console-settings-model-custom {
-    width: $ds-size-18;
-    min-width: $ds-size-18;
-    max-width: $ds-size-18;
 }
 
 #console-settings-model-discover {
@@ -276,24 +339,8 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     width: $ds-width-full;
     min-width: $ds-size-0;
     max-width: $ds-width-full;
-}
-
-ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-connection-action {
     height: $ds-size-1;
     min-height: $ds-size-1;
-}
-
-/* Wide-terminal tier (viewport >= 150 columns): the fixed 120-column
-   Conversation settings dialog reads as cramped next to the full-screen
-   F9 Settings on wide terminals, so grow the container to 85% of the
-   viewport, capped at 196 columns. The class is toggled by Python from
-   the app viewport width -- the container's own width cannot drive this
-   without a chicken-and-egg loop. Everything else (height, padding,
-   borders) is unchanged; the compact tier below 100 container columns
-   cannot co-occur (150 viewport columns implies a >= 120 container). */
-#console-settings-modal.-conversation-settings-wide {
-    width: $ds-percent-85;
-    max-width: $ds-console-settings-wide-max-width;
 }
 
 /* TASK-33003.8: beside a choice row's Select and its support note (a
@@ -619,7 +666,7 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
 
 /* TASK-31663 AC#4: the thumb measured 1.01:1 against its own track. It must
    clear the 3:1 non-text floor and nothing in the surface family does on
-   this theme ($ds-column-line 1.28:1, $panel-lighten-3 2.16:1), so it takes
+   this theme ($surface-lighten-2 1.28:1, $panel-lighten-3 2.16:1), so it takes
    $ds-text-muted -- the app's other established thumb token, generated per
    theme polarity. See TASK-31663 notes. */
 #console-inspector-rail-body {
@@ -723,7 +770,7 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
 }
 
 #console-switcher-query:focus {
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     text-style: bold;
 }
 
@@ -745,7 +792,16 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     border-left: solid $ds-status-error;
 }
 
+#console-character-identity {
+    height: $ds-control-height-compact;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    text-style: $ds-text-strong;
+}
+
 #console-character-avatar-frame {
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: auto;
@@ -837,23 +893,25 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
 
    1. A tint cannot carry the cue here. `$ds-action-focus 12%` measured
       1.35:1 against the rail ground and 1.11:1 against the pinned card;
-      45% reaches ~1.74:1; even a fully opaque accent is only 3.77:1 on this
-      near-black theme. To clear WCAG's 3:1 non-text floor a tint has to be
+      45% reaches ~1.74:1; even a fully opaque $ds-action-focus is only
+      3.77:1 on this near-black theme. To clear WCAG's 3:1 non-text floor a tint has to be
       ~85-90% opaque -- a solid block behind the text, not a tint.
-   2. A full outline DOES clear it (3.77:1 / 3.01:1) and is what DESIGN.md
+   2. A full outline in that accent DOES clear it (3.77:1 / 3.01:1) and is what DESIGN.md
       prescribes -- the pinned authority summary already proves it works,
       one widget away. But `outline` paints over the widget's own edge
       cells, and at 80x24 this scroller's body is THREE rows; a top and
       bottom border would claim two of them.
-   3. A one-column left edge costs one column instead of two rows, clears
-      the same 3.77:1 because it is the same colour, and is already the
-      house pattern -- DESIGN.md's dense-form convention flips exactly this
-      edge to `thick $ds-action-focus` on focus. The rail is 33 columns at
+   3. A one-column left edge costs one column instead of two rows and is
+      already the house pattern -- DESIGN.md's dense-form convention flips
+      exactly this edge to `thick $ds-active-fg` on focus. Since TASK-36479
+      it paints $ds-active-fg, not the accent: in textual-dark 5.12:1 on the
+      rail's $panel ground and 6.26:1 on $surface (the accent: 3.01:1 and
+      3.68:1). The rail is 33 columns at
       120 and narrower; a column is affordable where two of three rows is
       not. */
 #console-inspector-rail-body:focus,
 #console-right-rail:focus {
-    outline-left: thick $ds-action-focus;
+    outline-left: thick $ds-active-fg;
 }
 
 /* The COLLAPSED rail's handle -- the shipping default state, and before this
@@ -862,7 +920,7 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
    "◂" of "◂ Inspect" while the last column is always blank. A left edge would
    paint "█ Inspect". See TASK-31663 notes. */
 #console-inspector-rail-open:focus {
-    outline-right: thick $ds-action-focus;
+    outline-right: thick $ds-active-fg;
 }
 
 .console-model-section-line {
@@ -2002,7 +2060,7 @@ ChatScreen.-focus #console-workbench-header {
 
 .console-prompts-primary-action:focus,
 #console-prompts-modal Button:focus {
-    outline: heavy $ds-action-focus;
+    outline: heavy $ds-active-fg;
 }
 
 .console-prompts-primary-action:disabled,
@@ -2038,7 +2096,7 @@ ChatScreen.-focus #console-workbench-header {
 
 #console-prompts-source:focus,
 #console-prompts-search:focus {
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     background: $ds-focus-bg;
     text-style: bold;
 }
@@ -2527,3 +2585,31 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
 /* TASK-33004.5: the value row's one-row controls and Source-word column. */
 .console-popover-value { width: $ds-size-8; height: $ds-control-height-compact; }
 .console-popover-source { width: $ds-size-18; }
+
+/* Native goal controls (ADR-227). */
+
+    ConsoleGoalSetupModal { align: center middle; }
+    ConsoleGoalSetupModal > .goal-dialog-panel { width: $ds-size-76; max-width: $ds-width-full; height: $ds-percent-90; background: $ds-surface-raised; border: solid $ds-control-edge; }
+    ConsoleGoalSetupModal .goal-dialog-scroll { height: $ds-height-fill; padding: $ds-space-0 $ds-space-inline; }
+    ConsoleGoalSetupModal .goal-dialog-editor { height: $ds-textarea-min-height; }
+    ConsoleGoalSetupModal .goal-dialog-selections { height: $ds-textarea-min-height; }
+    ConsoleGoalSetupModal .goal-dialog-text { height: $ds-height-auto; }
+    ConsoleGoalSetupModal .goal-dialog-actions { height: $ds-control-height; }
+    ConsoleGoalSetupModal .goal-dialog-action { min-width: $ds-size-12; width: $ds-width-fill; }
+
+
+/* Native goal controls (ADR-227). */
+
+    ConsoleGoalStatus { align: center middle; }
+    ConsoleGoalStatus > .goal-dialog-panel { width: $ds-size-90; max-width: $ds-width-full; height: $ds-percent-95; background: $ds-surface-raised; border: solid $ds-control-edge; }
+    ConsoleGoalStatus .goal-dialog-scroll { height: $ds-height-fill; padding: $ds-space-0 $ds-space-inline; }
+    ConsoleGoalStatus .goal-dialog-text { height: $ds-height-auto; }
+    ConsoleGoalStatus .goal-dialog-actions { height: $ds-control-height; }
+    ConsoleGoalStatus .goal-dialog-action { min-width: $ds-size-9; width: $ds-width-fill; }
+
+
+
+    ConsoleGoalHistory { align: center middle; }
+    ConsoleGoalHistory > .goal-dialog-panel { width: $ds-size-76; max-width: $ds-width-full; height: $ds-height-auto; max-height: $ds-percent-90; background: $ds-surface-raised; border: solid $ds-control-edge; padding: $ds-space-inset; }
+    ConsoleGoalHistory .goal-dialog-actions { height: $ds-control-height; }
+    ConsoleGoalHistory .goal-dialog-action { width: $ds-width-fill; min-width: $ds-size-10; }

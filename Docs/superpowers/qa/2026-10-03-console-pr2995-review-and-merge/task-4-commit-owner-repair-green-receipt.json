@@ -1,0 +1,28 @@
+{
+  "name": "commit-owner-repair-green",
+  "revision": "fc1627e99b8722a0a69812530d950410e8356ba0",
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/Chat/test_console_durable_commit_offload.py",
+    "Tests/Chat/test_console_durable_commit_diagnostics.py",
+    "Tests/Chat/test_console_close_during_durable_postcommit.py",
+    "--basetemp=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-commit-owner-repair-green-profile-3o5em2_q/pytest",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-commit-owner-repair-green.xml"
+  ],
+  "environment": {
+    "TLDW_TEST_CONFIG_ROOT": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-commit-owner-repair-green-profile-3o5em2_q"
+  },
+  "sha256": {
+    "tldw_chatbook/Chat/console_chat_start.py": "aa40a2c47baf2035b9ee877e3953586ffae5c3e5d80ed4d8052ff11a6b1f760f",
+    "tldw_chatbook/Chat/console_chat_controller.py": "1e871398a219dec109c65fd10894f7724e1f3d4027b21eab0d0c9710e567d22f",
+    "tldw_chatbook/Chat/message_metadata.py": "c8aa1bdf33d9297dce415cc0332460f89f3720bdb3cedab6c872171ca61a99a0",
+    "tldw_chatbook/DB/automatic_work.py": "469048bba71060e650658a56b36799e23ae9e8255c2070ffa8f8c6582358e4c5",
+    "Tests/Chat/test_console_chat_start.py": "e1082aed78dc543bccc3b8c71e07ca5c1e9ca6c8f7493bcc6327c683e85183a6",
+    "Tests/DB/test_automatic_chat_starts.py": "0facbc59edaf699fb5171eef4d327621d4767a56b2feee0de13a6638a07fd3ad"
+  },
+  "exit": 1
+}

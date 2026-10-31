@@ -3,20 +3,15 @@
 from __future__ import annotations
 
 import sqlite3
-import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Union
 
-from tldw_chatbook.Backup_Recovery.participants import (
-    _core_cached_connection,
-    _core_closing,
-    _core_getter,
-    _core_transaction,
-    _register_core_connection,
-)
+from tldw_chatbook.Backup_Recovery.participants import _core_transaction
+
 from .base_db import BaseDB
+from .store_kernel import SQLiteStoreKernel
 
 
 class LibraryCollectionsSchemaError(RuntimeError):
@@ -27,7 +22,7 @@ class LibraryCollectionsSchemaError(RuntimeError):
         super().__init__(reason)
 
 
-class LibraryCollectionsDB(BaseDB):
+class LibraryCollectionsDB(SQLiteStoreKernel, BaseDB):
     """Database wrapper for Library-owned local Collections.
 
     task-15466: connections are held per thread (the ``Workspace_DB``
@@ -45,7 +40,7 @@ class LibraryCollectionsDB(BaseDB):
     makes the held connection safe here -- each thread owns exactly one.
     """
 
-    _CURRENT_SCHEMA_VERSION = 4
+    _CURRENT_SCHEMA_VERSION = 5
     _WAL_SETUP_TIMEOUT_SECONDS = 5.0
 
     _CAPTURE_TABLE_NAMES = frozenset(
@@ -165,6 +160,8 @@ class LibraryCollectionsDB(BaseDB):
             updated_at TEXT NOT NULL,
             revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),
             purge_state TEXT,
+            url_provenance TEXT NOT NULL DEFAULT 'unknown'
+                CHECK(url_provenance IN ('unknown', 'user_entered')),
             PRIMARY KEY(authority_key, capture_id),
             UNIQUE(authority_key, canonical_url)
         )
@@ -436,11 +433,13 @@ class LibraryCollectionsDB(BaseDB):
         """,
     )
 
-    #: Liveness-ping gate (mirrors `Workspace_DB`/`ChaChaNotes_DB`,
-    #: task-261/3011): pinging on every call roughly doubles the statement
-    #: count on query-heavy paths. A recently-used held connection is
-    #: known-good without a ping.
-    _LIVENESS_PING_IDLE_SECONDS = 30.0
+    #: BaseDB-provenance (ADR-228): connections open through BaseDB's
+    #: per-call path under the db.base owner; participants identity
+    #: stays db.base, so no per-store policy entry is minted. Writes
+    #: take BEGIN IMMEDIATE up front because the MCP server opens
+    #: this same file in its own process; the kernel transaction()'s
+    #: immediate default serves exactly that.
+    _kernel_sqlite_owner = "db.base"
 
     # task-28240 (schema v4): Library review sets -- an ordered, pinned snapshot
     # of local media ids + an absolute cursor + per-item done marks + a
@@ -491,48 +490,12 @@ class LibraryCollectionsDB(BaseDB):
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         # Must precede super().__init__: BaseDB.__init__ calls
         # _initialize_schema(), which already needs the held connection.
-        self._thread_local = threading.local()
+        self._init_store_kernel()
         super().__init__(db_path, client_id)
 
-    @_core_getter
-    def _get_connection(self) -> sqlite3.Connection:
-        from tldw_chatbook.Backup_Recovery.participants import _core_access
-
-        _core_access(self)
-        conn = super()._get_connection()
-        _register_core_connection(self, conn)
-        try:
-            _core_access(self)
-        except BaseException:
-            conn.close()
-            raise
-        conn.execute("PRAGMA foreign_keys = ON")
-        if not self.is_memory_db:
-            self._enable_wal(conn)
-        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
-        # lose the last commit, acceptable for this local collections cache)
-        # and avoids an fsync per commit. Unlike journal_mode, which is
-        # persisted in the file, synchronous is per-connection -- so it must
-        # be re-applied here on every NEW connection, which is exactly why
-        # this pairing lives in the one place connections are created
-        # (task-15465).
-        conn.execute("PRAGMA synchronous = NORMAL")
-        # task-3012: a held (long-lived) connection needs true autocommit.
-        # Python's default isolation mode auto-BEGINs on any DML, and an
-        # implicit transaction accumulated outside `transaction()` makes the
-        # explicit BEGIN there fail with "cannot start a transaction within a
-        # transaction" -- and silently ROLLS BACK bare DML on close.
-        # Audited (task-15466): every write in this file's own module and in
-        # `Library/library_collections_service.py` goes through
-        # `transaction()`; schema initialization owns its explicit migration
-        # transaction.
-        conn.isolation_level = None
-        try:
-            _core_access(self)
-        except BaseException:
-            conn.close()
-            raise
-        return conn
+    def _open_connection(self) -> sqlite3.Connection:
+        """Open through BaseDB's db.base path (ADR-228 provenance section)."""
+        return BaseDB._get_connection(self)
 
     def _enable_wal(self, conn: sqlite3.Connection) -> None:
         """Enable WAL despite a concurrent opener briefly holding the file."""
@@ -546,55 +509,25 @@ class LibraryCollectionsDB(BaseDB):
                     raise
                 time.sleep(0.01)
 
-    @_core_getter
-    def _held_connection(self) -> sqlite3.Connection:
-        """Return this thread's held connection, opening or reviving it.
+    def _configure_connection(self, conn: sqlite3.Connection) -> sqlite3.Connection:
+        """Collections per-connection policy (kernel wraps registration/gating).
 
-        The liveness probe is a plain no-op statement; a connection another
-        component closed (or that SQLite invalidated) is transparently
-        replaced, mirroring `Workspace_DB._held_connection`.
+        NORMAL is safe under WAL (app-crash-safe; only an OS/power crash
+        can lose the last commit, acceptable for this local collections
+        cache) and avoids an fsync per commit; synchronous is
+        per-connection, so it is re-applied on every NEW connection
+        (task-15465). task-3012/task-15466: the held connection needs true
+        autocommit — every write in this module and in
+        Library/library_collections_service.py goes through
+        ``transaction()``; schema initialization owns its explicit
+        migration transaction.
         """
-        from tldw_chatbook.Backup_Recovery.participants import _core_access
-
-        _core_access(self)
-        conn = getattr(self._thread_local, "conn", None)
-        conn = _core_cached_connection(self, conn)
-        if conn is not None:
-            last_used = getattr(self._thread_local, "conn_last_used", None)
-            if (
-                last_used is None
-                or (time.monotonic() - last_used)
-                >= self._LIVENESS_PING_IDLE_SECONDS
-            ):
-                try:
-                    conn.execute("SELECT 1")
-                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    # A failed ping does not prove a live native borrower can be
-                    # revoked. Only SQLite's closed-handle state permits revival.
-                    try:
-                        sqlite3.Connection.in_transaction.__get__(conn)
-                    except sqlite3.ProgrammingError:
-                        conn.close()  # Native already closed; failures retain refs.
-                    else:
-                        raise
-                    conn = None
-
-        if conn is None:
-            conn = self._get_connection()
-            self._thread_local.conn = conn
-        self._thread_local.conn_last_used = time.monotonic()
+        conn.execute("PRAGMA foreign_keys = ON")
+        if not self.is_memory_db:
+            self._enable_wal(conn)
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.isolation_level = None
         return conn
-
-    @_core_transaction
-    @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
-        """Yield the thread's held connection (row factory, foreign keys on).
-
-        No transaction is opened: in autocommit mode each statement is its
-        own implicit transaction, so single-statement reads cost nothing
-        extra and never pin a WAL read snapshot between calls.
-        """
-        yield self._held_connection()
 
     @_core_transaction
     @contextmanager
@@ -646,53 +579,6 @@ class LibraryCollectionsDB(BaseDB):
                 "always rolled back. Use transaction() for writes."
             )
 
-    @_core_transaction
-    @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Yield the held connection inside a write transaction.
-
-        ``BEGIN IMMEDIATE`` takes the write lock up front. The MCP server
-        opens this same database file in its own process, so a deferred
-        transaction that read before writing could fail to upgrade; taking
-        the lock immediately removes that class of failure. Pure readers
-        must use ``read_transaction`` (or ``connection``) instead.
-
-        Nesting: this and ``read_transaction`` both issue an explicit BEGIN
-        on the ONE connection this thread holds, so nesting either inside
-        the other raises ``sqlite3.OperationalError: cannot start a
-        transaction within a transaction``. Pre-port each block had its own
-        connection and nesting silently "worked"; the outer block still
-        rolls back cleanly, because the failure propagates through its
-        ``except``.
-
-        Raises:
-            BaseException: Re-raised after rolling back, on any error or
-                interruption inside the ``with`` block. On clean exit the
-                transaction commits.
-        """
-        conn = self._held_connection()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield conn
-        except BaseException:
-            conn.rollback()
-            raise
-        else:
-            conn.commit()
-
-    def close(self) -> None:
-        """Close the current thread's held connection, if any."""
-        conn = getattr(self._thread_local, "conn", None)
-        if conn is not None:
-            with _core_closing(self, conn) as allowed:
-                if not allowed:
-                    return
-                try:
-                    conn.close()
-                    self._thread_local.conn = None
-                except Exception:  # noqa: BLE001 - best-effort teardown
-                    pass
-
     def _initialize_schema(self) -> None:
         """Atomically initialize or migrate the local Collections schema."""
         with self.transaction() as conn:
@@ -705,16 +591,41 @@ class LibraryCollectionsDB(BaseDB):
             )
             current_version = 0
             if has_version_table:
-                row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
-                current_version = int(row[0] or 0) if row is not None else 0
+                versions = [row[0] for row in conn.execute("SELECT version FROM schema_version")]
+                if not versions or any(type(version) is not int or version < 1 for version in versions):
+                    raise LibraryCollectionsSchemaError("unsupported_schema_version")
+                current_version = max(versions)
+            elif conn.execute(
+                "SELECT 1 FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchone():
+                raise LibraryCollectionsSchemaError("unsupported_schema_version")
             if current_version > self._CURRENT_SCHEMA_VERSION:
                 raise LibraryCollectionsSchemaError("schema_too_new")
+            if current_version == 5:
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(collection_capture_items)")}
+                if "url_provenance" not in columns:
+                    raise LibraryCollectionsSchemaError("unsupported_hybrid_schema")
 
             if current_version == 0:
                 for statement in self._LEGACY_SCHEMA_DDL:
                     conn.execute(statement)
                 conn.execute(
                     "INSERT OR IGNORE INTO schema_version (version) VALUES (1)"
+                )
+
+            if current_version in {2, 3, 4}:
+                columns = {
+                    str(row[1]) for row in conn.execute(
+                        "PRAGMA table_info(collection_capture_items)"
+                    )
+                }
+                if "url_provenance" in columns:
+                    raise LibraryCollectionsSchemaError("unsupported_hybrid_schema")
+                conn.execute(
+                    (Path(__file__).with_name("migrations")
+                     / "library_collections_v4_to_v5_url_provenance.sql").read_text(
+                        encoding="utf-8"
+                    )
                 )
 
             for statement in self._CAPTURE_SCHEMA_DDL:
@@ -775,9 +686,7 @@ class LibraryCollectionsDB(BaseDB):
             }
             capture_item_columns = {
                 str(row[1])
-                for row in conn.execute(
-                    "PRAGMA table_info(collection_capture_items)"
-                )
+                for row in conn.execute("PRAGMA table_info(collection_capture_items)")
             }
         tables = {name for kind, name in objects if kind in {"table", "view"}}
         triggers = {name for kind, name in objects if kind == "trigger"}
@@ -788,6 +697,7 @@ class LibraryCollectionsDB(BaseDB):
             or not {
                 "extraction_owner_token",
                 "extraction_lease_expires_at",
+                "url_provenance",
             }
             <= capture_item_columns
         ):
@@ -798,9 +708,55 @@ class LibraryCollectionsDB(BaseDB):
         with self.connection() as conn:
             for table, required_columns in self._LEGACY_REQUIRED_COLUMNS.items():
                 columns = {
-                    str(row[1])
-                    for row in conn.execute(f"PRAGMA table_info({table})")
+                    str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")
                 }
                 if not required_columns <= columns:
                     return False
         return True
+
+
+# Original callbacks eligible for finite deferred Collections setup only.
+def _record_collections_setup_source(entries):
+    from types import FunctionType
+
+    rows = []
+    for owner, name in entries:
+        original = owner[name] if type(owner) is dict else getattr(owner, name)  # exact stock compatibility boundary
+        function = getattr(original, "__func__", original)
+        records = []
+        while type(function) is FunctionType:
+            records.append(
+                (
+                    function,
+                    function.__code__,
+                    function.__globals__,
+                    function.__defaults__,
+                    function.__kwdefaults__,
+                    tuple((function.__kwdefaults__ or {}).items()),
+                    function.__closure__,
+                    tuple(
+                        (cell, cell.cell_contents)
+                        for cell in function.__closure__ or ()
+                    ),
+                    vars(function).get("__wrapped__"),
+                )
+            )
+            function = vars(function).get("__wrapped__")
+        rows.append((owner, name, original, tuple(records)))
+    return globals(), tuple(rows)
+
+
+_COLLECTIONS_SETUP_SOURCE = _record_collections_setup_source(
+    (
+        (globals(), "LibraryCollectionsDB"),
+        (LibraryCollectionsDB, "__init__"),
+        (LibraryCollectionsDB, "_get_connection"),
+        (LibraryCollectionsDB, "_held_connection"),
+        (LibraryCollectionsDB, "connection"),
+        (LibraryCollectionsDB, "read_transaction"),
+        (LibraryCollectionsDB, "require_capture_schema"),
+        (LibraryCollectionsDB, "close"),
+        (LibraryCollectionsDB, "transaction"),
+    )
+)
+del _record_collections_setup_source

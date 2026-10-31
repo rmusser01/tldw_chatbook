@@ -371,12 +371,10 @@ def test_unlink_membership_removes_only_matching_membership_and_scope_item(
         ),
     )
 
-    assert service.unlink_membership(
-        "ws-a", item_type="media", item_id=item_id
-    ) is True
-    assert service.unlink_membership(
-        "ws-a", item_type="media", item_id=item_id
-    ) is False
+    assert service.unlink_membership("ws-a", item_type="media", item_id=item_id) is True
+    assert (
+        service.unlink_membership("ws-a", item_type="media", item_id=item_id) is False
+    )
 
     assert {
         (membership.workspace_id, membership.role)
@@ -390,28 +388,31 @@ def test_unlink_membership_removes_only_matching_membership_and_scope_item(
     assert canonical["content"] == "Canonical content must survive workspace unlink."
 
 
-def test_unlink_reference_membership_keeps_source_scope_selected(tmp_path: Path) -> None:
+def test_unlink_reference_membership_keeps_source_scope_selected(
+    tmp_path: Path,
+) -> None:
     service = build_test_registry(tmp_path)
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
     service.link_membership("ws-a", item_type="media", item_id="41", role="source")
-    service.link_membership(
-        "ws-a", item_type="media", item_id="41", role="reference"
-    )
+    service.link_membership("ws-a", item_type="media", item_id="41", role="reference")
     scope = RagScope(
         items=(ScopeItem("media", "41"),),
         updated_at="2026-08-24T12:00:00Z",
     )
     service.set_workspace_scope("ws-a", scope)
 
-    assert service.unlink_membership(
-        "ws-a", item_type="media", item_id="41", role="reference"
-    ) is True
+    assert (
+        service.unlink_membership(
+            "ws-a", item_type="media", item_id="41", role="reference"
+        )
+        is True
+    )
 
     assert service.get_workspace_scope("ws-a") == scope
     memberships = service.get_item_memberships("media", "41")
-    assert [(membership.workspace_id, membership.role) for membership in memberships] == [
-        ("ws-a", "source")
-    ]
+    assert [
+        (membership.workspace_id, membership.role) for membership in memberships
+    ] == [("ws-a", "source")]
 
 
 def test_registry_persists_runtime_bindings_without_secrets(tmp_path: Path) -> None:
@@ -701,8 +702,7 @@ def test_archive_workspace_hides_from_listing(tmp_path: Path) -> None:
     listed = {record.workspace_id for record in service.list_workspaces()}
     assert "ws-a" not in listed
     listed_all = {
-        record.workspace_id
-        for record in service.list_workspaces(include_archived=True)
+        record.workspace_id for record in service.list_workspaces(include_archived=True)
     }
     assert "ws-a" in listed_all
 
@@ -733,7 +733,9 @@ def test_archive_workspace_protects_default_and_unknown(tmp_path: Path) -> None:
 # --- TASK-1: unarchive + duplicate-name guard --------------------------------
 
 
-def test_unarchive_workspace_restores_listing_without_activating(tmp_path: Path) -> None:
+def test_unarchive_workspace_restores_listing_without_activating(
+    tmp_path: Path,
+) -> None:
     service = build_test_registry(tmp_path)
     service.ensure_default_workspace()
     service.create_workspace(workspace_id="ws-a", name="Workspace 1")
@@ -800,8 +802,14 @@ def test_v2_migration_dedupes_and_indexes_existing_duplicates(tmp_path: Path) ->
     db = WorkspaceDB(tmp_path / "mig.sqlite", client_id="mig")
     with db.connection() as conn:
         conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
-        conn.execute("DELETE FROM schema_version WHERE version = 2")  # simulate a pre-v2 database (receipts keep later migrations idle)
-        for wid, name in (("w1", "Same Name"), ("w2", "same name"), ("w3", "SAME NAME")):
+        conn.execute(
+            "DELETE FROM schema_version WHERE version = 2"
+        )  # simulate a pre-v2 database (receipts keep later migrations idle)
+        for wid, name in (
+            ("w1", "Same Name"),
+            ("w2", "same name"),
+            ("w3", "SAME NAME"),
+        ):
             conn.execute(
                 """
                 INSERT INTO workspace_records
@@ -809,7 +817,12 @@ def test_v2_migration_dedupes_and_indexes_existing_duplicates(tmp_path: Path) ->
                      active, archived, created_at, updated_at)
                 VALUES (?, ?, '', 'local-only', 'not-configured', 0, 0, ?, ?)
                 """,
-                (wid, name, f"2026-01-0{wid[-1]}T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+                (
+                    wid,
+                    name,
+                    f"2026-01-0{wid[-1]}T00:00:00+00:00",
+                    "2026-01-01T00:00:00+00:00",
+                ),
             )
         conn.commit()
 
@@ -838,7 +851,9 @@ def test_v2_migration_dedupes_across_groups_without_collision(tmp_path: Path) ->
     db = WorkspaceDB(tmp_path / "mig-cross-group.sqlite", client_id="mig")
     with db.connection() as conn:
         conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
-        conn.execute("DELETE FROM schema_version WHERE version = 2")  # simulate a pre-v2 database (receipts keep later migrations idle)
+        conn.execute(
+            "DELETE FROM schema_version WHERE version = 2"
+        )  # simulate a pre-v2 database (receipts keep later migrations idle)
         # Group 1: "Foo" / "foo" duplicates. Group 2: a lone pre-existing
         # "Foo (2)" that is NOT a duplicate of anything by itself, but is
         # exactly the candidate name group 1's rename would naively produce.
@@ -850,7 +865,12 @@ def test_v2_migration_dedupes_across_groups_without_collision(tmp_path: Path) ->
                      active, archived, created_at, updated_at)
                 VALUES (?, ?, '', 'local-only', 'not-configured', 0, 0, ?, ?)
                 """,
-                (wid, name, f"2026-01-0{wid[-1]}T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+                (
+                    wid,
+                    name,
+                    f"2026-01-0{wid[-1]}T00:00:00+00:00",
+                    "2026-01-01T00:00:00+00:00",
+                ),
             )
         conn.commit()
 
@@ -879,7 +899,9 @@ def test_v2_migration_dedupes_against_preexisting_suffixed_name(tmp_path: Path) 
     db = WorkspaceDB(tmp_path / "mig-preexisting-suffix.sqlite", client_id="mig")
     with db.connection() as conn:
         conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
-        conn.execute("DELETE FROM schema_version WHERE version = 2")  # simulate a pre-v2 database (receipts keep later migrations idle)
+        conn.execute(
+            "DELETE FROM schema_version WHERE version = 2"
+        )  # simulate a pre-v2 database (receipts keep later migrations idle)
         for wid, name in (("w1", "Bar"), ("w2", "bar"), ("w3", "Bar (2)")):
             conn.execute(
                 """
@@ -888,7 +910,12 @@ def test_v2_migration_dedupes_against_preexisting_suffixed_name(tmp_path: Path) 
                      active, archived, created_at, updated_at)
                 VALUES (?, ?, '', 'local-only', 'not-configured', 0, 0, ?, ?)
                 """,
-                (wid, name, f"2026-01-0{wid[-1]}T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+                (
+                    wid,
+                    name,
+                    f"2026-01-0{wid[-1]}T00:00:00+00:00",
+                    "2026-01-01T00:00:00+00:00",
+                ),
             )
         conn.commit()
 
@@ -1101,7 +1128,9 @@ def test_restore_as_rejects_invalid_workspace_names_without_mutation(tmp_path, n
     assert service.mutation_generation == generation
 
 
-@pytest.mark.parametrize("name", ["  Project α / 東京 🧪  ", "x" * 4096, "Project\nNotes"])
+@pytest.mark.parametrize(
+    "name", ["  Project α / 東京 🧪  ", "x" * 4096, "Project\nNotes"]
+)
 def test_restore_as_preserves_existing_workspace_name_policy(tmp_path, name):
     service = build_test_registry(tmp_path)
     # Creation already defines the supported workspace-name contract.
@@ -1189,3 +1218,87 @@ def test_concurrent_unicode_restore_names_remain_unique(tmp_path, monkeypatch):
     assert len([w for w in first.list_workspaces() if w.name.casefold() == "é"]) == 1
     first.db.close()
     second.db.close()
+
+
+def test_project_index_authority_witness_survives_remove_recreate_and_move(tmp_path):
+    from dataclasses import replace
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+    from tldw_chatbook.Workspaces.models import (
+        WorkspaceRuntimeBinding,
+        RuntimeBindingKind,
+        RuntimeBindingStatus,
+    )
+
+    db = WorkspaceDB(tmp_path / "registry.sqlite")
+    registry = LocalWorkspaceRegistryService(db)
+    registry.create_workspace(workspace_id="one", name="One")
+    registry.create_workspace(workspace_id="two", name="Two")
+    binding = WorkspaceRuntimeBinding(
+        workspace_id="one",
+        binding_id="fixed",
+        binding_kind=RuntimeBindingKind.LOCAL_FILESYSTEM,
+        label="Folder",
+        locator=str(tmp_path),
+        status=RuntimeBindingStatus.READY,
+    )
+    registry.save_runtime_binding(binding)
+    first = registry.binding_authority_revision("fixed")
+    registry.save_runtime_binding(replace(binding, workspace_id="two"))
+    moved = registry.binding_authority_revision("fixed")
+    registry.remove_runtime_binding("fixed")
+    removed = registry.binding_authority_revision("fixed")
+    registry.save_runtime_binding(binding)
+    recreated = registry.binding_authority_revision("fixed")
+    assert 0 < first < moved < removed < recreated
+    db.close()
+
+
+def test_index_authority_fence_checks_exact_scope_and_blocks_other_process(tmp_path):
+    from dataclasses import replace
+    import subprocess
+    import sys
+    from Tests.Workspaces.project_index_support import make_index_key
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+    from tldw_chatbook.Workspaces.models import (
+        WorkspaceRuntimeBinding,
+        RuntimeBindingKind,
+        RuntimeBindingStatus,
+    )
+
+    db = WorkspaceDB(tmp_path / "registry.sqlite")
+    registry = LocalWorkspaceRegistryService(db)
+    registry.create_workspace(workspace_id="workspace-1", name="One")
+    registry.save_runtime_binding(
+        WorkspaceRuntimeBinding(
+            workspace_id="workspace-1",
+            binding_id="binding-1",
+            binding_kind=RuntimeBindingKind.LOCAL_FILESYSTEM,
+            label="Folder",
+            locator=str(tmp_path),
+            status=RuntimeBindingStatus.READY,
+        )
+    )
+    key = make_index_key(tmp_path)
+    reader, fence = registry.project_index_authority_adapters(lambda: "authority-1")
+    assert reader(key).key == key
+    assert reader(replace(key, workspace_id="other")) is None
+    assert reader(replace(key, data_authority_id="restored")) is None
+    script = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1],timeout=0); c.execute(\"UPDATE workspace_runtime_bindings SET label='changed' WHERE binding_id='binding-1'\"); c.commit()"
+    with fence(key) as authority:
+        assert authority.authority_revision > 0
+        blocked = subprocess.run(
+            [sys.executable, "-c", script, str(db.db_path)],
+            capture_output=True,
+            text=True,
+        )
+        assert blocked.returncode != 0 and "locked" in blocked.stderr
+    allowed = subprocess.run(
+        [sys.executable, "-c", script, str(db.db_path)], capture_output=True, text=True
+    )
+    assert allowed.returncode == 0, allowed.stderr
+    assert reader(key).authority_revision > authority.authority_revision
+    registry.remove_runtime_binding("binding-1")
+    assert reader(key) is None
+    db.close()

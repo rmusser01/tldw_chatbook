@@ -25,7 +25,10 @@ from tldw_chatbook.Constants import (
 
 def test_chunking_lab_is_a_separate_library_tool_command():
     from tldw_chatbook.app import LibraryIngestProvider
-    assert any(command[1] == "open_chunking_lab" for command in LibraryIngestProvider.COMMANDS)
+
+    assert any(
+        command[1] == "open_chunking_lab" for command in LibraryIngestProvider.COMMANDS
+    )
     assert "chunking_lab" not in TabNavigationProvider.command_palette_tab_ids()
 
 
@@ -40,7 +43,9 @@ def test_tab_navigation_provider_includes_settings_and_mcp_shell_commands():
     tab_ids = TabNavigationProvider.navigation_tab_ids()
 
     assert TAB_SETTINGS in tab_ids
-    assert TAB_MCP in tab_ids
+    # ADR-240: the MCP destination retired into Settings > Tools & MCP; the
+    # legacy route ids are no longer navigation tabs.
+    assert TAB_MCP not in tab_ids
     assert TAB_TOOLS_SETTINGS not in tab_ids
 
 
@@ -52,7 +57,8 @@ def test_command_palette_has_one_entry_per_shell_destination(request):
 
     # One labeled palette command per destination; nothing else.
     assert command_tab_ids == TabNavigationProvider.navigation_tab_ids()
-    assert len(command_tab_ids) == len(SHELL_DESTINATION_ORDER) == 14
+    # ADR-240 retired the MCP destination: 13 shell destinations remain.
+    assert len(command_tab_ids) == len(SHELL_DESTINATION_ORDER) == 13
 
     # Legacy route ids are aliases, not separate labeled commands.
     legacy_tab_ids = set(ALL_TABS) - set(command_tab_ids)
@@ -77,7 +83,6 @@ def test_legacy_routes_are_searchable_alias_terms_on_their_destination(request):
             "research",
             "personas",
             "watchlists_collections",
-            "mcp",
             "lab",
             "settings",
         )
@@ -107,15 +112,21 @@ def test_legacy_routes_are_searchable_alias_terms_on_their_destination(request):
         "characters",
         "roleplay",
     } <= alias_terms["personas"]
-    assert "Roleplay" in alias_terms["personas"]  # TAB_CCP display label, deduped to one command
+    assert (
+        "Roleplay" in alias_terms["personas"]
+    )  # TAB_CCP display label, deduped to one command
     # F-034: "Roleplay" is the one public name; the retired long form no
     # longer rents a search term either.
     assert "Roleplay & Chat Dictionaries" not in alias_terms["personas"]
-    assert "personas" in alias_terms["personas"]  # still searchable via id/primary_route
+    assert (
+        "personas" in alias_terms["personas"]
+    )  # still searchable via id/primary_route
     assert {"subscriptions", "subscription", "Subscriptions"} <= alias_terms[
         "watchlists_collections"
     ]
-    assert {"tools_settings", "MCP"} <= alias_terms["mcp"]
+    # ADR-240: the MCP destination's route identity moved onto Settings as
+    # palette alias terms.
+    assert {"tools", "mcp", "tool settings"} <= alias_terms["settings"]
     assert {"chatbooks", "Chatbooks"} <= alias_terms["library"]
     assert {
         "llm_management",
@@ -159,11 +170,30 @@ def test_legacy_tab_ids_still_switch_through_route_aliases():
 
 def test_tab_navigation_provider_copy_uses_shell_vocabulary():
     assert "global preferences" in TabNavigationProvider.TAB_HELP_TEXT[TAB_SETTINGS]
-    assert "MCP" in TabNavigationProvider.TAB_HELP_TEXT[TAB_MCP]
-    assert "MCP" in TabNavigationProvider.TAB_HELP_TEXT[TAB_TOOLS_SETTINGS]
+    # task-35152: the retired MCP routes describe their real landing
+    # (Settings > Tools & MCP), not a standalone MCP destination.
+    assert "Tools & MCP" in TabNavigationProvider.TAB_HELP_TEXT[TAB_MCP]
+    assert "Tools & MCP" in TabNavigationProvider.TAB_HELP_TEXT[TAB_TOOLS_SETTINGS]
     # RAG UX v2 PR-1, Task 2: the retired standalone Search screen means this
     # copy must say where "search" actually lands now.
     assert "Library" in TabNavigationProvider.TAB_HELP_TEXT[TAB_SEARCH]
+
+
+def test_palette_offers_tools_and_mcp_deeplink_command():
+    """task-35152 / ADR-240: the retired MCP destination keeps its
+    popular-row slot, but under its own label -- a second "Switch to
+    Settings" beside the Settings destination's own helped nobody. The
+    entry posts the legacy "mcp" route, which
+    ``LEGACY_ROUTE_NAV_CONTEXTS`` lands on Settings' Tools category."""
+    commands = TabNavigationProvider.FOLDED_ROUTE_COMMANDS
+    routes = [route for route, _, _ in commands]
+    assert TAB_MCP in routes
+    mcp_command = next(item for item in commands if item[0] == TAB_MCP)
+    assert mcp_command[1] == "Tab Navigation: Switch to Tools & MCP"
+    assert "Tools & MCP" in mcp_command[2]
+    # Routing is unchanged: the route must pass through unaliased so the
+    # legacy deep-link map ({"category": "tools"}) handles it.
+    assert TabNavigationProvider.route_for_tab(TAB_MCP) == "mcp"
 
 
 def test_palette_offers_library_skills_deeplink_command():
@@ -172,7 +202,7 @@ def test_palette_offers_library_skills_deeplink_command():
     posts the legacy "skills" route, which
     ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT`` already lands on the Skills rail
     row (covered by ``test_screen_navigation``'s deep-link test)."""
-    commands = TabNavigationProvider.LIBRARY_SUBROUTE_COMMANDS
+    commands = TabNavigationProvider.FOLDED_ROUTE_COMMANDS
     routes = [route for route, _, _ in commands]
     assert "skills" in routes
     skills_command = next(item for item in commands if item[0] == "skills")
@@ -185,7 +215,7 @@ def test_palette_offers_library_skills_deeplink_command():
 def test_library_and_skills_palette_entries_are_distinguishable():
     from tldw_chatbook.app import TabNavigationProvider
 
-    subroutes = TabNavigationProvider.LIBRARY_SUBROUTE_COMMANDS
+    subroutes = TabNavigationProvider.FOLDED_ROUTE_COMMANDS
     skills = next(item for item in subroutes if item[0] == "skills")
     # The skills deep-link command text must be distinct from the generic
     # "Library" destination command so a first-time user can tell them apart.

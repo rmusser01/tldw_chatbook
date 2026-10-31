@@ -1,0 +1,23 @@
+# 09 fixed build (this branch, live, socket w1-t2-2, REUSE of the base-wedged profile): Manage sync folders -> Recovery on the root the base build wedged
+-- operations (kind|state|reason):
+  10 create_note|completed|
+   2 update_file|completed|
+-- roots (state|last_status_code):
+active|up_to_date
+-- note in DB:
+version=3
+length=99 last16hex=6974206C696E6520616E64206D6F7265
+> The best time to plant a tree was 20 years ago.
+
+> Writing is thinking.
+second edit line and more
+-- file on disk (md5, od tail):
+d2d937bbe13cb4268ec489b0b64bf7c6
+0000120        e   d   i   t       l   i   n   e       a   n   d       m
+0000140    o   r   e  \n                                                
+0000144
+-- file content:
+> The best time to plant a tree was 20 years ago.
+
+> Writing is thinking.
+second edit line and more

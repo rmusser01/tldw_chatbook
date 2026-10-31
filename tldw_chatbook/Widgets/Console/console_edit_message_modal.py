@@ -57,14 +57,16 @@ class ConsoleEditMessageModal(
     #console-edit-message-modal {
         width: 92;
         height: 28;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
     #console-edit-message-context {
         height: auto;
         margin: 1 0 1 0;
+        color: $text;
     }
 
     #console-edit-message-body {
@@ -76,7 +78,7 @@ class ConsoleEditMessageModal(
     #console-edit-message-error {
         height: auto;
         min-height: 1;
-        color: red;
+        color: $text-error;
     }
 
     #console-edit-message-actions {
@@ -221,14 +223,16 @@ class ConsoleEditThinkingModal(
     #console-edit-thinking-modal {
         width: 92;
         height: 28;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
     #console-edit-thinking-context {
         height: auto;
         margin: 1 0 1 0;
+        color: $text;
     }
 
     #console-edit-thinking-body {
@@ -240,7 +244,7 @@ class ConsoleEditThinkingModal(
     #console-edit-thinking-error {
         height: auto;
         min-height: 1;
-        color: red;
+        color: $text-error;
     }
 
     #console-edit-thinking-actions {

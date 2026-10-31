@@ -15,6 +15,8 @@ from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
     ConsoleCharacterOption,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 async def _noop_async(*_args: object, **_kwargs: object) -> None:
     return None
@@ -32,6 +34,7 @@ def _controller(**overrides: Any) -> ConsoleCharacterController:
         "ensure_chat_store": ConsoleChatStore,
         "provider_readiness_config_accessor": lambda: {},
         "default_session_settings": lambda: ConsoleSessionSettings(),
+        "set_active_workspace_for_session": lambda _session_id: None,
         "swap_session_character": lambda *_args, **_kwargs: False,
         "sync_temporary_chip": lambda: None,
         "sync_native_chat_ui": _noop_async,

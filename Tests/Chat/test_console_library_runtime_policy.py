@@ -35,6 +35,8 @@ from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnExecutionContext,
 )
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+from Tests.Chat.test_console_workspace_guidance import _policy_rows, _project_case
+from Tests.private_profile import private_profile_test
 
 
 class _DirectService:
@@ -274,3 +276,59 @@ def test_runtime_factory_builds_the_direct_provider_from_a_bare_app():
 
     assert isinstance(provider, LibraryToolProvider)
     assert len(provider.list_catalog()) == len(LIBRARY_TOOL_DESCRIPTORS)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("automatic", [0, 1], ids=["never", "automatic"])
+@pytest.mark.parametrize("access", [0, 1], ids=["blocked", "allowed"])
+@private_profile_test
+async def test_project_turn_preserves_all_library_policy_combinations(
+    request,
+    tmp_path,
+    monkeypatch,
+    automatic,
+    access,
+):
+    """Project guidance must never rewrite the user's saved Library choices."""
+    case = await _project_case(
+        tmp_path, monkeypatch, native=True, automatic=automatic, access=access
+    )
+    try:
+        before = _policy_rows(case)
+        saved_values = (
+            case.db.get_connection()
+            .execute(
+                "SELECT auto_retrieve_on_send, assistant_library_access "
+                "FROM console_conversation_library_policy WHERE conversation_id = ?",
+                (case.conversation_id,),
+            )
+            .fetchone()
+        )
+        assert tuple(saved_values) == (automatic, access)
+        case.gateway.release.set()
+
+        result = await case.controller.submit_draft(
+            "Summarize this project", session_id=case.session.id
+        )
+
+        assert result.accepted, result.visible_copy
+        assert case.gateway.calls == 1
+        payload = "\n".join(
+            str(row.get("content", "")) for row in case.gateway.messages_seen[0]
+        )
+        assert case.aliases["owned"] in payload
+        assert _policy_rows(case) == before
+        assert len(case.service.calls) == automatic
+        assert case.session.library_policy_holder.snapshot.auto_retrieve is (
+            ConsoleAutoRetrieve.AUTOMATIC if automatic else ConsoleAutoRetrieve.NEVER
+        )
+        assert case.session.library_policy_holder.snapshot.assistant_access is (
+            ConsoleAssistantLibraryAccess.ALLOWED
+            if access
+            else ConsoleAssistantLibraryAccess.BLOCKED
+        )
+    finally:
+        await case.controller.shutdown()
+        case.runs.close()
+        case.db.close()
+        case.workspace_db.close()

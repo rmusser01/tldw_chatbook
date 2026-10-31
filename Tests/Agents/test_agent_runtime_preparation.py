@@ -295,8 +295,9 @@ def test_dispatch_gate_receives_only_calls_with_effective_proceed_verdict():
             [_native_turn(calls), ModelTurn(text="done")],
             review_tool_calls=lambda _batch: {"call-1": "denied"},
             before_tool_dispatch=lambda batch, _pure: gated.append(list(batch)),
-            invoke_tool=lambda call: invoked.append(call.name)
-            or ToolResult(ok=True, content="ok"),
+            invoke_tool=lambda call: (
+                invoked.append(call.name) or ToolResult(ok=True, content="ok")
+            ),
         ),
     )
 
@@ -323,10 +324,10 @@ def test_raised_review_hook_still_runs_dispatch_gate_before_fail_open_dispatch()
             before_tool_dispatch=lambda batch, _pure: events.append(
                 ("gate", list(batch))
             ),
-            invoke_tool=lambda tool_call: events.append(
-                ("invoke", tool_call.name)
-            )
-            or ToolResult(ok=True, content="ok"),
+            invoke_tool=lambda tool_call: (
+                events.append(("invoke", tool_call.name))
+                or ToolResult(ok=True, content="ok")
+            ),
         ),
     )
 

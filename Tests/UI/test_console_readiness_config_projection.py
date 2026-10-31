@@ -1,0 +1,833 @@
+"""Presentation config IO stays owned off-loop; actions still read live."""
+
+import asyncio
+import threading
+import time
+from contextlib import contextmanager
+from types import SimpleNamespace
+
+import pytest
+
+from tldw_chatbook import config
+from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
+from tldw_chatbook.UI.Console_Modules.config_sync import run_console_presentation_sync
+
+pytestmark = pytest.mark.bootstrap_profile
+
+
+def _screen(monkeypatch):
+    identity = list(config.current_config_identity())
+    monkeypatch.setattr(config, "current_config_identity", lambda: tuple(identity))
+    owner = SimpleNamespace(id="first", workspace_id="workspace", revision=1)
+    store = SimpleNamespace(
+        active_session_id=owner.id,
+        sessions=lambda: [owner],
+        session_settings_revision=lambda _: owner.revision,
+    )
+    tasks, published = [], []
+
+    def schedule(operation, **_):
+        task = asyncio.create_task(operation)
+        tasks.append(task)
+        return task
+
+    async def refresh():
+        published.append(True)
+
+    screen = SimpleNamespace(
+        app_instance=SimpleNamespace(
+            app_config={"original": True}, chachanotes_db=object()
+        ),
+        _console_chat_store=store,
+        _console_derivation_memo=None,
+        _console_config_snapshot_is_disk_loaded=lambda _: True,
+        run_worker=schedule,
+        _sync_native_console_chat_ui=refresh,
+        _request_console_control_bar_sync=lambda **_: None,
+    )
+
+    @contextmanager
+    def scope():
+        previous = screen._console_derivation_memo
+        screen._console_derivation_memo = {} if previous is None else previous
+        try:
+            yield
+        finally:
+            screen._console_derivation_memo = previous
+
+    screen._console_derivation_scope = scope
+    return screen, owner, identity, tasks, published
+
+
+def _read_result(value, before=None):
+    identity = config.current_config_identity()
+    return spend.ConsoleReadinessConfigRead(before or identity, value, identity)
+
+
+@pytest.mark.asyncio
+async def test_control_bar_helper_refreshes_after_joining_an_old_revision(monkeypatch):
+    from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
+
+    screen, owner, _identity, tasks, _published = _screen(monkeypatch)
+    entered, release = threading.Event(), threading.Event()
+    reads, rendered = [], []
+
+    def read():
+        revision = owner.revision
+        reads.append(revision)
+        if len(reads) == 1:
+            entered.set()
+            assert release.wait(3)
+        return _read_result({"revision": revision})
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    screen._console_readiness_config_projection = projection
+    screen._sync_console_control_bar = lambda: rendered.append(projection.value) or True
+    helper = None
+    try:
+        assert projection.run(lambda: None) is False
+        assert await asyncio.to_thread(entered.wait, 3)
+        owner.revision += 1
+        helper = asyncio.create_task(_sync_console_control_bar_now(screen))
+        await asyncio.sleep(0)
+        assert not helper.done() and rendered == []
+        release.set()
+        await helper
+        assert reads == [1, 2]
+        assert rendered == [{"revision": 2}]
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if helper is not None:
+            await asyncio.gather(helper, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_control_bar_helper_still_refuses_an_unavailable_owner(monkeypatch):
+    from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
+
+    screen, _owner, _identity, _tasks, _published = _screen(monkeypatch)
+    screen._closing = True
+    projection = spend.ConsoleReadinessConfigProjection(
+        screen, read_current=lambda: pytest.fail("closed owner read")
+    )
+    screen._console_readiness_config_projection = projection
+    screen._sync_console_control_bar = lambda: pytest.fail("closed owner rendered")
+    # The match pins the helper's own fast refusal; without it, its 15 s
+    # retry bound would raise a different AssertionError that passes too.
+    with pytest.raises(AssertionError, match="the Console is closing"):
+        await _sync_console_control_bar_now(screen)
+
+
+@pytest.mark.asyncio
+async def test_control_bar_helper_refuses_a_disposed_runtime_at_once(monkeypatch):
+    """A disposed runtime can never render, so the helper fails at once
+    instead of retrying until its bound (TASK-35660)."""
+    from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
+
+    screen, _owner, _identity, _tasks, _published = _screen(monkeypatch)
+    screen._console_runtime_fallback = SimpleNamespace(_disposed=True)
+    projection = spend.ConsoleReadinessConfigProjection(
+        screen, read_current=lambda: pytest.fail("disposed owner read")
+    )
+    screen._console_readiness_config_projection = projection
+    screen._sync_console_control_bar = lambda: pytest.fail("disposed owner rendered")
+    with pytest.raises(AssertionError, match="the Console runtime is disposed"):
+        await _sync_console_control_bar_now(screen)
+
+
+@pytest.mark.asyncio
+async def test_control_bar_helper_warms_again_while_each_read_goes_stale(monkeypatch):
+    """Under ``taskpolicy -b`` the helper's second warm-up was not current
+    either, and it failed with a bare ``assert False`` (TASK-35660). Here the
+    settings change during the first two reads; the third is current."""
+    from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
+
+    screen, owner, _identity, tasks, _published = _screen(monkeypatch)
+    reads, rendered = [], []
+
+    def read():
+        revision = owner.revision
+        reads.append(revision)
+        if len(reads) < 3:
+            owner.revision += 1  # the settings changed while this read ran
+        return _read_result({"revision": revision})
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    screen._console_readiness_config_projection = projection
+    screen._sync_console_control_bar = lambda: rendered.append(projection.value) or True
+    try:
+        await _sync_console_control_bar_now(screen)
+        assert reads == [1, 2, 3]
+        assert rendered == [{"revision": 3}]
+    finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_control_bar_helper_bounds_a_warm_up_that_never_settles(monkeypatch):
+    """The helper's bound covers its warm-up too: a refresh that never
+    settles fails within the bound, naming the warm-up (TASK-35660)."""
+    from Tests.UI import test_console_native_chat_flow as flow
+
+    monkeypatch.setattr(flow, "_CONTROL_BAR_RENDER_TIMEOUT_S", 0.3)
+    screen, _owner, _identity, tasks, _published = _screen(monkeypatch)
+    entered, release = threading.Event(), threading.Event()
+
+    def read():
+        entered.set()
+        assert release.wait(10)
+        return _read_result({"settled": True})
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    screen._console_readiness_config_projection = projection
+    screen._sync_console_control_bar = lambda: pytest.fail("rendered before a warm-up")
+    try:
+        # A helper that waits on the warm-up unbounded fails here, not at
+        # pytest's own timeout.
+        async with asyncio.timeout(5):
+            with pytest.raises(
+                AssertionError, match="last: the readiness warm-up did not settle"
+            ):
+                await flow._sync_console_control_bar_now(screen)
+        assert entered.is_set()
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_control_bar_helper_bounds_taking_the_config_locks(monkeypatch):
+    """The helper's bound covers taking the config locks: another thread that
+    keeps them fails the helper within the bound, naming the locks, instead
+    of blocking the loop until that thread lets go (TASK-35660)."""
+    from Tests.UI import test_console_native_chat_flow as flow
+
+    monkeypatch.setattr(flow, "_CONTROL_BAR_RENDER_TIMEOUT_S", 0.3)
+    screen, owner, _identity, tasks, _published = _screen(monkeypatch)
+    projection = spend.ConsoleReadinessConfigProjection(
+        screen, read_current=lambda: _read_result({"revision": owner.revision})
+    )
+    screen._console_readiness_config_projection = projection
+    rendered = []
+    screen._sync_console_control_bar = lambda: rendered.append(True) or True
+    held, release = threading.Event(), threading.Event()
+
+    def hold() -> None:
+        with config._settings_rebuild_lock(), config._config_file_lock():
+            held.set()
+            release.wait(6)
+
+    holder = threading.Thread(target=hold, name="config-lock-keeper", daemon=True)
+    holder.start()
+    try:
+        assert await asyncio.to_thread(held.wait, 5), "the keeper never took the locks"
+        started = time.monotonic()
+        # A helper that blocks on the locks unbounded renders once the keeper
+        # gives up at 6 s, and so does not raise.
+        with pytest.raises(
+            AssertionError, match="last: another thread held the config locks"
+        ):
+            await flow._sync_console_control_bar_now(screen)
+        assert time.monotonic() - started < 3, "the bound did not cover the locks"
+        assert rendered == []
+    finally:
+        release.set()
+        await asyncio.to_thread(holder.join, 10)
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_control_bar_helper_names_a_deferral_that_used_up_its_bound(monkeypatch):
+    """A sync that defers just inside the bound is the refusal the helper
+    names. It must not start another warm-up with no time left, which would
+    time out at once and be named instead (TASK-35660)."""
+    from Tests.UI import test_console_native_chat_flow as flow
+
+    real_monotonic = time.monotonic
+    offset = [-real_monotonic()]  # the helper's clock starts at zero
+    monkeypatch.setattr(
+        flow, "time", SimpleNamespace(monotonic=lambda: real_monotonic() + offset[0])
+    )
+    monkeypatch.setattr(flow, "_CONTROL_BAR_RENDER_TIMEOUT_S", 5.0)
+    screen, owner, _identity, tasks, _published = _screen(monkeypatch)
+    projection = spend.ConsoleReadinessConfigProjection(
+        screen, read_current=lambda: _read_result({"revision": owner.revision})
+    )
+    screen._console_readiness_config_projection = projection
+    syncs = []
+
+    def defer_at_the_deadline() -> bool:
+        syncs.append(owner.revision)
+        owner.revision += 1  # so the next warm-up would have to wait
+        offset[0] = 4.99 - real_monotonic()  # 10 ms of the bound left
+        return False
+
+    screen._sync_console_control_bar = defer_at_the_deadline
+    try:
+        with pytest.raises(
+            AssertionError, match="last: the control-bar sync deferred"
+        ):
+            await flow._sync_console_control_bar_now(screen)
+        assert syncs == [1]
+    finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def test_checked_config_source_tags_require_active_matching_operation():
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Backup_Recovery.config_participants import (
+        checked_config_identity,
+        operation,
+    )
+
+    with operation(config) as active:
+        assert (
+            checked_config_identity(config, active) == config.current_config_identity()
+        )
+        with pytest.raises(RecoveryRequired, match="config_operation_source_invalid"):
+            checked_config_identity(object(), active)
+    with pytest.raises(RecoveryRequired, match="raw_operation_provenance_invalid"):
+        checked_config_identity(config, active)
+
+
+@pytest.mark.asyncio
+async def test_cold_and_expired_config_presentation_share_owned_read_and_live_action(
+    monkeypatch,
+):
+    screen, _owner, _identity, tasks, published = _screen(monkeypatch)
+    calls, renders = [], []
+    value = {"current": 1}
+
+    def read():
+        calls.append(threading.get_ident())
+        return _read_result(dict(value))
+
+    assert hasattr(spend, "ConsoleReadinessConfigProjection")
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+
+    def render():
+        renders.append(spend.provider_readiness_app_config(screen, read))
+
+    for _ in range(6):
+        assert projection.run(render) is False
+    assert not calls and not renders and len(tasks) == 1
+    await asyncio.gather(*tasks)
+    assert calls == [calls[0]] and calls[0] != threading.get_ident()
+    for _ in range(6):
+        assert projection.run(render) is True
+    assert renders == [{"current": 1}] * 6 and len(calls) == 1
+    projection.at -= projection.max_age + 1
+    value["current"] = 2
+    for _ in range(6):
+        assert projection.run(render) is True
+    assert renders[-6:] == [{"current": 1}] * 6
+    assert len(calls) == 1
+    await asyncio.gather(*tasks)
+    assert len(calls) == 2
+    assert projection.run(render) is True and renders[-1] == {"current": 2}
+    assert all(thread != threading.get_ident() for thread in calls)
+    assert spend.provider_readiness_app_config(screen, lambda: read().value) == {
+        "current": 2
+    }
+    assert calls[-1] == threading.get_ident(), "explicit getter stopped reading live"
+    assert published
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mutation", ["profile", "session", "workspace", "settings", "database"]
+)
+async def test_readiness_config_publication_rejects_changed_owner(
+    monkeypatch, mutation
+):
+    screen, owner, identity, tasks, published = _screen(monkeypatch)
+    entered, release = threading.Event(), threading.Event()
+
+    def read():
+        before = config.current_config_identity()
+        entered.set()
+        assert release.wait(3)
+        return _read_result({"foreign": mutation}, before)
+
+    assert hasattr(spend, "ConsoleReadinessConfigProjection")
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    assert projection.run(lambda: pytest.fail("cold projection rendered")) is False
+    assert await asyncio.to_thread(entered.wait, 3)
+    if mutation == "profile":
+        identity[1] = "second-profile"
+    elif mutation == "session":
+        screen._console_chat_store.active_session_id = "second"
+    elif mutation == "workspace":
+        owner.workspace_id = "second-workspace"
+    elif mutation == "settings":
+        owner.revision += 1
+    else:
+        screen.app_instance.chachanotes_db = object()
+    release.set()
+    await asyncio.gather(*tasks)
+    assert projection.value is None and not published
+
+
+@pytest.mark.asyncio
+async def test_cancelled_config_projection_retires_worker_then_can_retry(monkeypatch):
+    screen, _owner, _identity, tasks, _published = _screen(monkeypatch)
+    entered, release, retired = threading.Event(), threading.Event(), threading.Event()
+
+    def read():
+        try:
+            entered.set()
+            assert release.wait(3)
+            return _read_result({"retired": True})
+        finally:
+            retired.set()
+
+    assert hasattr(spend, "ConsoleReadinessConfigProjection")
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    assert projection.run(lambda: None) is False
+    assert await asyncio.to_thread(entered.wait, 3)
+    tasks[0].cancel()
+    await asyncio.sleep(0)
+    assert not tasks[0].done() and not retired.is_set()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await tasks[0]
+    assert retired.is_set() and not projection.pending
+    assert projection.run(lambda: None) is False
+    await asyncio.gather(*tasks[1:])
+    assert projection.value == {"retired": True}
+
+
+@pytest.mark.asyncio
+async def test_real_screen_presentation_entry_reuses_config_while_actions_read_live(
+    monkeypatch,
+):
+    from tldw_chatbook.UI.Screens import chat_screen as module
+
+    screen, _owner, _identity, tasks, _published = _screen(monkeypatch)
+    calls, rendered = [], []
+
+    def load():
+        calls.append(threading.get_ident())
+        return {"current": True}
+
+    monkeypatch.setattr(module, "load_settings", load)
+    screen._provider_readiness_app_config = (
+        lambda: module.ChatScreen._provider_readiness_app_config(screen)
+    )
+
+    def body():
+        rendered.append(screen._provider_readiness_app_config())
+
+    assert run_console_presentation_sync(screen, body) is False
+    assert not calls and not rendered
+    await asyncio.gather(*tasks)
+    for _ in range(6):
+        assert run_console_presentation_sync(screen, body) is True
+    assert rendered == [{"current": True}] * 6
+    assert len(calls) == 1 and calls[0] != threading.get_ident()
+    assert screen._provider_readiness_app_config() == {"current": True}
+    assert calls[-1] == threading.get_ident()
+
+
+@pytest.mark.asyncio
+async def test_actual_mode_bar_defers_cold_config_and_uses_owned_presentation(
+    monkeypatch,
+):
+    from tldw_chatbook.UI.Screens import chat_screen as module
+
+    screen, _owner, _identity, tasks, _published = _screen(monkeypatch)
+    reads, updates = [], []
+
+    def load():
+        reads.append(threading.get_ident())
+        return {"current": True}
+
+    monkeypatch.setattr(module, "load_settings", load)
+    screen._provider_readiness_app_config = (
+        lambda: module.ChatScreen._provider_readiness_app_config(screen)
+    )
+    mode_bar = SimpleNamespace(update=updates.append)
+    chips = SimpleNamespace(sync_run_chip=lambda *_args: None)
+    screen.query_one = (
+        lambda selector, *_args: mode_bar if selector == "#console-mode-bar" else chips
+    )
+    screen._pending_console_launch_context = None
+    screen._build_console_control_state = (
+        lambda *_args: screen._provider_readiness_app_config()
+    )
+    screen._console_mode_summary = lambda state: str(state["current"])
+    screen._native_run_status_copy = lambda: "Streaming"
+    screen._console_active_run_copy = lambda: "Streaming"
+    # The same real body without its projection is the positive UI-IO control.
+    module.ChatScreen._sync_console_mode_bar.__wrapped__(screen)
+    assert reads == [threading.get_ident()] and updates == ["True | Run: Streaming"]
+    reads.clear()
+    updates.clear()
+    assert module.ChatScreen._sync_console_mode_bar(screen) is False
+    assert not reads and not updates
+    await asyncio.gather(*tasks)
+    for _ in range(6):
+        assert module.ChatScreen._sync_console_mode_bar(screen) is True
+    assert len(reads) == 1 and reads[0] != threading.get_ident()
+    assert updates == ["True | Run: Streaming"] * 6
+
+
+@pytest.mark.asyncio
+async def test_checked_config_read_rejects_retarget_to_other_source_and_back(
+    monkeypatch,
+):
+    actual_source = config.current_config_identity()
+    screen, _owner, identity, tasks, published = _screen(monkeypatch)
+    # Vary the UI's cheap selector observation while the real native operation
+    # reads its installed B source. A literal env retarget is separately refused
+    # by the installed participant; this must not weaken that source guard.
+    from pathlib import Path
+
+    requested = (
+        actual_source[0],
+        str(Path(actual_source[1]).with_name("requested-A.toml")),
+    )
+    identity[:] = requested
+    entered, begin, loaded, finish = [threading.Event() for _ in range(4)]
+    failures = []
+    real_to_thread = asyncio.to_thread
+    loop = asyncio.get_running_loop()
+    real_submit = loop.run_in_executor
+
+    def controlled_read(function):
+        entered.set()
+        assert begin.wait(3)
+        try:
+            result = function()
+        except Exception as error:
+            failures.append(error)
+            loaded.set()
+            raise
+        loaded.set()
+        assert finish.wait(3)
+        return result
+
+    def submit(executor, function, *args):
+        if args and getattr(args[0], "__name__", "") == "invoke":
+            return real_submit(executor, controlled_read, lambda: function(*args))
+        return real_submit(executor, function, *args)
+
+    monkeypatch.setattr(loop, "run_in_executor", submit)
+    projection = spend.ConsoleReadinessConfigProjection.for_screen(screen)
+    try:
+        assert projection.run(lambda: pytest.fail("cold owner rendered")) is False
+        assert await real_to_thread(entered.wait, 3)
+        identity[:] = actual_source
+        begin.set()
+        assert await real_to_thread(loaded.wait, 3)
+        assert not failures, repr(failures)
+        identity[:] = requested
+        finish.set()
+        await asyncio.gather(*tasks)
+        assert (
+            projection.value is None
+        ), "other source was published after selector returned"
+        assert not published
+    finally:
+        begin.set()
+        finish.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _real_session_screen(monkeypatch):
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_session_settings import (
+        blank_console_session_settings,
+    )
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+    from tldw_chatbook.UI.Screens import chat_screen as module
+
+    screen, _owner, _identity, tasks, _published = _screen(monkeypatch)
+    screen.app_instance.app_config = config.load_settings().copy()
+    screen.app_instance.app_config["chat_defaults"] = {
+        "provider": "llama_cpp",
+        "model": "established",
+    }
+    store = ConsoleChatStore()
+    screen._console_chat_store = store
+    # The production session implementation and store own all convergence and
+    # provenance gates; only unrelated constructor dependencies are omitted.
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._screen = screen
+    controller.app_instance = screen.app_instance
+    controller._chat_store_accessor = lambda: store
+    controller._provider_readiness_app_config_fn = (
+        lambda: spend.provider_readiness_app_config(screen, module.load_settings)
+    )
+    controller._pristine_defaults_checked = None
+    screen._session = controller
+    established = blank_console_session_settings(screen.app_instance.app_config)
+    session = store.create_session(
+        settings=established, canonical_settings_baseline=established
+    )
+    return screen, store, session, tasks
+
+
+@pytest.mark.asyncio
+async def test_expired_presentation_never_converges_real_session_but_fresh_handoff_does(
+    monkeypatch,
+):
+    import copy
+
+    from tldw_chatbook.UI.Screens import chat_screen as module
+
+    screen, store, session, tasks = _real_session_screen(monkeypatch)
+    stale = copy.deepcopy(screen.app_instance.app_config)
+    stale["chat_defaults"]["model"] = "expired"
+    fresh = copy.deepcopy(screen.app_instance.app_config)
+    fresh["chat_defaults"]["model"] = "fresh"
+    entered, release = threading.Event(), threading.Event()
+
+    def read():
+        entered.set()
+        assert release.wait(3)
+        return _read_result(fresh)
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    projection.key, projection.value = projection._key(), stale
+    revision = store.session_settings_revision(session.id)
+    try:
+        assert projection.run(screen._session._ensure_active_console_session_settings)
+        assert session.settings.model == "established"
+        assert store.session_settings_revision(session.id) == revision
+    finally:
+        release.set()
+        await asyncio.gather(*tasks)
+    assert session.settings.model == "fresh", "fresh checked result did not converge"
+    assert store.session_settings_revision(session.id) == revision + 1
+    assert (
+        projection.key == projection._key()
+    ), "own convergence invalidated the new mapping"
+    task_count = len(tasks)
+    assert projection.run(screen._session._ensure_active_console_session_settings)
+    assert len(tasks) == task_count
+    action = copy.deepcopy(fresh)
+    action["chat_defaults"]["model"] = "live-action"
+    monkeypatch.setattr(module, "load_settings", lambda: action)
+    assert (
+        screen._session._ensure_active_console_session_settings().model == "live-action"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["session", "workspace"])
+async def test_fresh_default_handoff_rejects_actual_session_owner_swap(
+    monkeypatch, mutation
+):
+    import copy
+
+    screen, store, session, tasks = _real_session_screen(monkeypatch)
+    fresh = copy.deepcopy(screen.app_instance.app_config)
+    fresh["chat_defaults"]["model"] = "foreign"
+    entered, release = threading.Event(), threading.Event()
+
+    def read():
+        entered.set()
+        assert release.wait(3)
+        return _read_result(fresh)
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    assert projection.run(lambda: None) is False
+    assert await asyncio.to_thread(entered.wait, 3)
+    if mutation == "session":
+        other = store.create_session(
+            settings=session.settings, canonical_settings_baseline=session.settings
+        )
+        assert store.active_session_id == other.id
+    else:
+        session.workspace_id = "changed-workspace"
+    release.set()
+    await asyncio.gather(*tasks)
+    assert projection.value is None
+    assert session.settings.model == "established"
+    if mutation == "session":
+        assert other.settings.model == "established"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("edge", ["before", "after"])
+async def test_wrong_checked_source_edge_never_converges_actual_session(
+    monkeypatch, edge
+):
+    import copy
+
+    screen, _store, session, tasks = _real_session_screen(monkeypatch)
+    fresh = copy.deepcopy(screen.app_instance.app_config)
+    fresh["chat_defaults"]["model"] = "wrong-source"
+    source = config.current_config_identity()
+    wrong = (source[0] + 1, source[1])
+
+    def read():
+        return spend.ConsoleReadinessConfigRead(
+            wrong if edge == "before" else source,
+            fresh,
+            wrong if edge == "after" else source,
+        )
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    assert projection.run(lambda: None) is False
+    await asyncio.gather(*tasks)
+    assert projection.value is None and session.settings.model == "established"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ineligible", ["user_work", "source_owned", "default_generation"]
+)
+async def test_fresh_handoff_preserves_actual_session_provenance_gates(
+    monkeypatch, ineligible
+):
+    import copy
+
+    screen, _store, session, tasks = _real_session_screen(monkeypatch)
+    if ineligible == "user_work":
+        session.has_user_work = True
+    elif ineligible == "source_owned":
+        session.canonical_settings_baseline = None
+    else:
+        screen.app_instance.console_new_chat_default_generation = 1
+    fresh = copy.deepcopy(screen.app_instance.app_config)
+    fresh["chat_defaults"]["model"] = "ineligible"
+    projection = spend.ConsoleReadinessConfigProjection(
+        screen, read_current=lambda: _read_result(fresh)
+    )
+    assert projection.run(lambda: None) is False
+    await asyncio.gather(*tasks)
+    assert projection.value == fresh
+    assert session.settings.model == "established"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("all_tasks", [False, True])
+async def test_readiness_repeated_cancel_retains_physical_read(monkeypatch, all_tasks):
+    screen, _owner, _identity, tasks, published = _screen(monkeypatch)
+    entered, release, retired = (threading.Event() for _ in range(3))
+    existing = asyncio.all_tasks()
+
+    def read():
+        entered.set()
+        try:
+            assert release.wait(3)
+            return _read_result({"complete": True})
+        finally:
+            retired.set()
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    try:
+        assert projection.run(lambda: None) is False
+        assert await asyncio.to_thread(entered.wait, 3)
+        for _ in range(3):
+            selected = asyncio.all_tasks() - existing if all_tasks else tasks[:1]
+            for task in selected:
+                task.cancel()
+            await asyncio.sleep(0)
+            assert not tasks[0].done() and not retired.is_set()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await tasks[0]
+        assert retired.is_set() and not projection._reads and not published
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("closing", ["before", "held"])
+async def test_closed_readiness_owner_never_reads_or_publishes(monkeypatch, closing):
+    screen, _owner, _identity, tasks, published = _screen(monkeypatch)
+    entered, release = threading.Event(), threading.Event()
+    reads = []
+
+    def read():
+        reads.append(True)
+        entered.set()
+        assert release.wait(3)
+        return _read_result({"closed": True})
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    try:
+        if closing == "before":
+            screen._closing = True
+            release.set()
+        assert projection.run(lambda: pytest.fail("cold body")) is False
+        if closing == "held":
+            assert await asyncio.to_thread(entered.wait, 3)
+            screen._closing = True
+            release.set()
+        await asyncio.gather(*tasks)
+        assert projection.value is None and not published
+        if closing == "before":
+            assert not reads and not tasks
+        count = len(reads)
+        assert projection.run(lambda: pytest.fail("closed body")) is False
+        await asyncio.gather(*tasks)
+        assert len(reads) == count
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_disposed_readiness_runtime_starts_no_new_native_read(monkeypatch):
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    screen, _owner, _identity, tasks, _published = _screen(monkeypatch)
+    runtime = ConsoleRuntime(app=None)
+    screen._console_runtime_fallback = runtime
+    reads = []
+
+    def read():
+        reads.append(threading.get_ident())
+        return _read_result({"ready": True})
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    try:
+        assert projection.run(lambda: None) is False
+        await asyncio.gather(*tasks)
+        assert len(reads) == 1 and reads[0] != threading.get_ident()
+        await runtime.dispose()
+        assert runtime._disposed and not runtime._preparation_reads
+        projection.at -= 2
+        assert projection.run(lambda: pytest.fail("disposed display")) is False
+        await asyncio.gather(*tasks)
+        assert len(reads) == 1
+    finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await runtime.dispose()
+
+
+@pytest.mark.asyncio
+async def test_rebound_readiness_runtime_cannot_publish_held_read(monkeypatch):
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    screen, _owner, _identity, tasks, published = _screen(monkeypatch)
+    original, replacement = ConsoleRuntime(app=None), ConsoleRuntime(app=None)
+    screen._console_runtime_fallback = original
+    entered, release = threading.Event(), threading.Event()
+
+    def read():
+        entered.set()
+        assert release.wait(3)
+        return _read_result({"old-runtime": True})
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    try:
+        assert projection.run(lambda: None) is False
+        assert await asyncio.to_thread(entered.wait, 3)
+        assert len(original._preparation_reads) == 1
+        screen._console_runtime_fallback = replacement
+        release.set()
+        await asyncio.gather(*tasks)
+        assert not original._preparation_reads and not replacement._preparation_reads
+        assert projection.value is None and not published
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await original.dispose()
+        await replacement.dispose()

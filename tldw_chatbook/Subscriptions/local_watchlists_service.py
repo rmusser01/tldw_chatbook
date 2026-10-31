@@ -18,8 +18,11 @@ from ..DB.Subscriptions_DB import SubscriptionsDB
 from ..Utils.egress import (
     MAX_FETCH_BYTES_PAGE,
     MAX_FETCH_BYTES_SITEMAP,
+    URL_PROVENANCE_OPTION,
+    UrlProvenance,
     guarded_fetch_httpx_async,
-    origin_set,
+    source_trusted_origins,
+    provenance_of_stored_source,
 )
 from .db_offload import run_db_off_loop
 from .item_persist import (
@@ -153,6 +156,7 @@ def _disposition_count_keys() -> dict[tuple[str, str | None], str]:
         REASON_BELOW_CHANGE_THRESHOLD,
         REASON_EXTRACTION_SETTINGS_CHANGED,
         REASON_FIRST_CHECK,
+        _BS4_INSTALL_HINT,
     )
 
     return {
@@ -169,6 +173,12 @@ def _disposition_count_keys() -> dict[tuple[str, str | None], str]:
         # URLs errored", not "which exception", so it needs exactly one
         # stable pair rather than one per exception type.
         (DISPOSITION_ERROR, None): "error",
+        # TASK-21230: the ONE non-None error reason -- the TASK-21104 bs4
+        # install hint, a module constant with no user data, carried so the
+        # disposition (and, on an all-error run, the run's error message)
+        # can tell a `url_list`/`sitemap` user what to install instead of a
+        # bare, reason-less error. Counts into the same "error" counter.
+        (DISPOSITION_ERROR, _BS4_INSTALL_HINT): "error",
         # task-16838: a URL this run never checked because a concurrent
         # check of the same (subscription, url) pair was already in flight.
         (DISPOSITION_SKIPPED_IN_FLIGHT, None): "skipped",
@@ -227,9 +237,7 @@ def _disposition_counts(dispositions: list[dict[str, Any]]) -> dict[str, int]:
 #: `record_check_result`'s SUCCESS branch, resetting the breaker and
 #: stamping `last_successful_check` for a run that contacted nothing.
 _SUCCESS_DISPOSITION_COUNTERS: tuple[str, ...] = tuple(
-    counter
-    for counter in _DISPOSITION_COUNTERS
-    if counter not in ("error", "skipped")
+    counter for counter in _DISPOSITION_COUNTERS if counter not in ("error", "skipped")
 )
 
 
@@ -468,7 +476,9 @@ class LocalWatchlistsService:
         self.notification_app = notification_app
         self.run_executor = run_executor
         self.filter_service = filter_service or WatchlistFilterService()
-        self.content_alert_service = content_alert_service or WatchlistContentAlertService()
+        self.content_alert_service = (
+            content_alert_service or WatchlistContentAlertService()
+        )
 
     @property
     def db_factory(self) -> Callable[[], SubscriptionsDB]:
@@ -714,9 +724,7 @@ class LocalWatchlistsService:
             after=after,
         )
         return WatchlistItemPage(
-            items=tuple(
-                normalize_watchlist_item("local", row) for row in page.items
-            ),
+            items=tuple(normalize_watchlist_item("local", row) for row in page.items),
             has_more=page.has_more,
             snapshot_max_item_id=page.snapshot_max_item_id,
             snapshot_count=page.snapshot_count,
@@ -763,9 +771,7 @@ class LocalWatchlistsService:
                 subscription_id=int(source_id) if source_id is not None else None,
                 status=status if status else None,
                 run_id=int(run_id) if run_id is not None else None,
-                watchlist_id=(
-                    int(watchlist_id) if watchlist_id is not None else None
-                ),
+                watchlist_id=(int(watchlist_id) if watchlist_id is not None else None),
                 unassigned_only=bool(unassigned_only),
                 statuses=list(statuses) if statuses is not None else None,
                 is_flagged=is_flagged,
@@ -782,7 +788,9 @@ class LocalWatchlistsService:
             rows.append(
                 {
                     "name": str(payload.get("name") or "Untitled subscription"),
-                    "type": self._local_type_for_source_type(payload.get("source_type")),
+                    "type": self._local_type_for_source_type(
+                        payload.get("source_type")
+                    ),
                     "source": str(
                         payload.get("url")
                         or payload.get("source")
@@ -795,15 +803,24 @@ class LocalWatchlistsService:
                     **self._subscription_config_fields(payload),
                 }
             )
+        for row, payload in zip(rows, payloads, strict=True):
+            options = self._parsed_options(row)
+            # This enum is supplied by app-owned input, never a serialized API
+            # payload. Shared/agent writers cannot vouch for their own URL.
+            provenance = payload.get("url_provenance")
+            options[URL_PROVENANCE_OPTION] = (
+                UrlProvenance.USER_ENTERED.value
+                if provenance is UrlProvenance.USER_ENTERED
+                else UrlProvenance.UNKNOWN.value
+            )
+            row["processing_options"] = options
         return rows
 
     @staticmethod
     def _create_source_rows_exact_batch(
         db: SubscriptionsDB, rows: Sequence[Mapping[str, Any]]
     ) -> list[dict[str, Any]]:
-        outcomes = db.create_sources_exact_batch(
-            rows, result_mode="watchlist_source"
-        )
+        outcomes = db.create_sources_exact_batch(rows, result_mode="watchlist_source")
         return [
             {
                 "input_index": int(outcome["input_index"]),
@@ -866,12 +883,36 @@ class LocalWatchlistsService:
         if "source_type" in payload:
             changes["type"] = self._local_type_for_source_type(payload["source_type"])
         changes.update(self._subscription_config_fields(payload))
-        if changes:
-            await run_db_off_loop(
-                db, db.update_subscription, int(source_id), **changes
+        if "source" in changes or "processing_options" in changes:
+            current = await run_db_off_loop(db, db.get_subscription, int(source_id))
+            options = self._parsed_options(
+                changes if "processing_options" in changes else current
             )
+            provenance = provenance_of_stored_source(
+                (current or {}).get("processing_options")
+            )
+            if "source" in changes:
+                if payload.get("url_provenance") is UrlProvenance.USER_ENTERED:
+                    provenance = UrlProvenance.USER_ENTERED
+                elif str(changes["source"]) != str((current or {}).get("source")):
+                    provenance = UrlProvenance.UNKNOWN
+            options[URL_PROVENANCE_OPTION] = provenance.value
+            changes["processing_options"] = options
+        if changes:
+            await run_db_off_loop(db, db.update_subscription, int(source_id), **changes)
         row = await run_db_off_loop(db, db.get_subscription, int(source_id))
         return normalize_local_subscription_row(row)
+
+    @staticmethod
+    def _parsed_options(row: Mapping[str, Any] | None) -> dict[str, Any]:
+        """A subscription row's ``processing_options`` as a dict (or empty)."""
+        options = (row or {}).get("processing_options")
+        if isinstance(options, str):
+            try:
+                options = json.loads(options)
+            except ValueError:
+                options = None
+        return dict(options) if isinstance(options, Mapping) else {}
 
     #: Statuses a watchlist item may be moved to from the UI. Mirrors
     #: `ItemsPane._STATUS_OPTIONS` minus its "all" filter entry.
@@ -1110,7 +1151,9 @@ class LocalWatchlistsService:
         db = self._db()
         return await run_db_off_loop(db, db.get_subscription_id_by_source, str(url))
 
-    async def resolve_or_create_watchlist(self, name: str) -> tuple[dict[str, Any], bool]:
+    async def resolve_or_create_watchlist(
+        self, name: str
+    ) -> tuple[dict[str, Any], bool]:
         """The watchlist named `name` (case-insensitive), creating it if missing.
 
         TASK-3604 (ADR-043 rule 4): OPML folder names map to watchlists by
@@ -1142,7 +1185,9 @@ class LocalWatchlistsService:
         )
         return result["watchlist"], result["outcome"] == "created"
 
-    async def add_source_to_watchlist(self, *, watchlist_id: Any, source_id: Any) -> None:
+    async def add_source_to_watchlist(
+        self, *, watchlist_id: Any, source_id: Any
+    ) -> None:
         """Add a source to a watchlist (idempotent), via the bundle service.
 
         Args:
@@ -1155,7 +1200,9 @@ class LocalWatchlistsService:
         """Every watchlist, via the bundle service (TASK-3604 export)."""
         return WatchlistBundleService(self._db()).list_watchlists(limit=10000)
 
-    async def list_watchlist_source_rows(self, *, watchlist_id: Any) -> list[dict[str, Any]]:
+    async def list_watchlist_source_rows(
+        self, *, watchlist_id: Any
+    ) -> list[dict[str, Any]]:
         """One watchlist's member feeds, in the serializer's vocabulary.
 
         TASK-3604: maps the bundle's tree-row keys (`type`) onto the OPML
@@ -1267,9 +1314,7 @@ class LocalWatchlistsService:
             # scheduled-check handler, the Check Now path) were written
             # against `KeyError`. Mapped back to the documented contract, with
             # the original chained so the cause is not lost.
-            raise KeyError(
-                f"Subscription not found: {resolved_source_id}"
-            ) from exc
+            raise KeyError(f"Subscription not found: {resolved_source_id}") from exc
         run = await self.get_run(receipt["id"])
         run["_claim_acquired"] = receipt["_claim_acquired"]
         return run
@@ -1488,9 +1533,7 @@ class LocalWatchlistsService:
                 await self.record_run_failure(
                     run_id,
                     source_id=source_id,
-                    error=(
-                        "Check cancelled: navigated away before it finished."
-                    ),
+                    error=("Check cancelled: navigated away before it finished."),
                     elapsed_ms=int((time.time() - start_time) * 1000),
                 )
             except Exception:
@@ -1564,9 +1607,7 @@ class LocalWatchlistsService:
                     f"{run_id}; subscriptions.last_error will not be updated."
                 )
         if source_id is not None:
-            await run_db_off_loop(
-                db, db.record_check_error, int(source_id), error_msg
-            )
+            await run_db_off_loop(db, db.record_check_error, int(source_id), error_msg)
         return await self.record_run_result(
             run_id,
             status="failed",
@@ -1852,9 +1893,7 @@ class LocalWatchlistsService:
         # `update_alert_rule` both end by awaiting this method, so leaving
         # it inline would have left those two still blocking the loop on
         # their last statement.
-        row = await run_db_off_loop(
-            db, self._select_alert_rule_row, db, int(rule_id)
-        )
+        row = await run_db_off_loop(db, self._select_alert_rule_row, db, int(rule_id))
         if row is None:
             raise KeyError(f"Watchlist alert rule not found: {rule_id}")
         return normalize_watchlist_alert_rule(
@@ -2210,45 +2249,69 @@ class LocalWatchlistsService:
             # pane with nothing further to wire.
             disposition_counts = _disposition_counts(dispositions)
             run_stats: dict[str, Any] = {"dispositions": disposition_counts}
-            all_error_message = _all_error_check_message(
-                disposition_counts, len(items)
-            )
+            all_error_message = _all_error_check_message(disposition_counts, len(items))
             if all_error_message is not None:
-                failures = [
-                    failure
+                # TASK-21230: a PERMANENT install failure (every error
+                # disposition carries the same module-constant hint, the only
+                # non-None reason `_check_url_isolated` can produce) is
+                # surfaced verbatim BEFORE the failure-classification
+                # aggregate: "connection failed"-shaped copy about a missing
+                # package would send the user debugging their network for a
+                # `pip install` problem. The single-`url` arm surfaces the
+                # same ImportError message via `record_run_failure`.
+                from .monitoring_engine import DISPOSITION_ERROR
+
+                error_reasons = {
+                    disposition.get("reason")
                     for disposition in dispositions
-                    if (failure := watchlist_failure_from_stats(disposition))
-                    is not None
-                ]
-                categories = {failure.category for failure in failures}
-                error_count = int(disposition_counts.get("error", 0) or 0)
-                if len(failures) == error_count and len(categories) == 1:
-                    category = next(iter(categories))
-                    aggregate = watchlist_failure_from_stats(
-                        {"failure_category": category.value}
-                    )
-                    assert aggregate is not None
-                    aggregate_stats = watchlist_failure_stats(aggregate)
-                    statuses = {failure.http_status for failure in failures}
-                    retry_delays = {
-                        failure.retry_after_seconds for failure in failures
-                    }
-                    if len(statuses) == 1:
-                        aggregate_stats["http_status"] = next(iter(statuses))
-                    if len(retry_delays) == 1:
-                        aggregate_stats["retry_after_seconds"] = next(
-                            iter(retry_delays)
-                        )
-                    # Category, status, and delay are aggregate facts only
-                    # when every failed URL agrees. Never select per-URL
-                    # recovery metadata by input or exception order.
-                    run_stats.update(aggregate_stats)
-                    result_payload["error_msg"] = aggregate.message
-                    result_payload["log_text"] = (
-                        f"{aggregate.message} {aggregate.next_action}"
-                    )
+                    if disposition.get("kind") == DISPOSITION_ERROR
+                }
+                shared_permanent_reason = (
+                    next(iter(error_reasons))
+                    if error_reasons
+                    and len(error_reasons) == 1
+                    and None not in error_reasons
+                    else None
+                )
+                if shared_permanent_reason is not None:
+                    result_payload["error_msg"] = shared_permanent_reason
+                    result_payload["log_text"] = str(shared_permanent_reason)
                 else:
-                    result_payload["error_msg"] = LEGACY_FAILURE_MESSAGE
+                    failures = [
+                        failure
+                        for disposition in dispositions
+                        if (failure := watchlist_failure_from_stats(disposition))
+                        is not None
+                    ]
+                    categories = {failure.category for failure in failures}
+                    error_count = int(disposition_counts.get("error", 0) or 0)
+                    if len(failures) == error_count and len(categories) == 1:
+                        category = next(iter(categories))
+                        aggregate = watchlist_failure_from_stats(
+                            {"failure_category": category.value}
+                        )
+                        assert aggregate is not None
+                        aggregate_stats = watchlist_failure_stats(aggregate)
+                        statuses = {failure.http_status for failure in failures}
+                        retry_delays = {
+                            failure.retry_after_seconds for failure in failures
+                        }
+                        if len(statuses) == 1:
+                            aggregate_stats["http_status"] = next(iter(statuses))
+                        if len(retry_delays) == 1:
+                            aggregate_stats["retry_after_seconds"] = next(
+                                iter(retry_delays)
+                            )
+                        # Category, status, and delay are aggregate facts only
+                        # when every failed URL agrees. Never select per-URL
+                        # recovery metadata by input or exception order.
+                        run_stats.update(aggregate_stats)
+                        result_payload["error_msg"] = aggregate.message
+                        result_payload["log_text"] = (
+                            f"{aggregate.message} {aggregate.next_action}"
+                        )
+                    else:
+                        result_payload["error_msg"] = LEGACY_FAILURE_MESSAGE
             # A sibling key rather than a sixth entry inside `dispositions`,
             # which is a dict of counters and stays one: a float in among the
             # integers would break every whole-dict comparison of the counts.
@@ -2420,9 +2483,7 @@ class LocalWatchlistsService:
         _IN_FLIGHT_URL_CHECKS.add(key)
         try:
             if isolated:
-                return await self._check_url_isolated(
-                    monitor, subscription_config, url
-                )
+                return await self._check_url_isolated(monitor, subscription_config, url)
             return await monitor.check_url(subscription_config)
         finally:
             # `finally`, so a raise (the non-isolated arm), a cancellation
@@ -2473,13 +2534,26 @@ class LocalWatchlistsService:
             # Type-only: never the exception message or the URL itself, both
             # of which can carry fetched page content or a query string with
             # sensitive data.
-            logger.debug(
-                f"watchlist URL check failed, isolated: {type(exc).__name__}"
-            )
+            logger.debug(f"watchlist URL check failed, isolated: {type(exc).__name__}")
             failure = classify_watchlist_failure(exc)
+            # TASK-21230: a PERMANENT ImportError (the TASK-21104 bs4 guard)
+            # must not be suppressed the way transient failures are -- a
+            # `url_list`/`sitemap` user whose install lacks the extra would
+            # otherwise see DISPOSITION_ERROR rows with no reason text and
+            # never learn the install hint the single-`url` arm surfaces
+            # verbatim. The hint is a module constant containing no user
+            # data, so surfacing it does not violate the task-1394 privacy
+            # rule the suppression exists for; anything else (timeouts,
+            # SSRF blocks, HTTP errors, parser failures) keeps reason=None.
+            reason: str | None = None
+            if isinstance(exc, ImportError):
+                from .monitoring_engine import _BS4_INSTALL_HINT
+
+                if str(exc) == _BS4_INSTALL_HINT:
+                    reason = _BS4_INSTALL_HINT
             return None, {
                 "kind": DISPOSITION_ERROR,
-                "reason": None,
+                "reason": reason,
                 "withheld_percentage": None,
                 **watchlist_failure_stats(failure),
             }
@@ -2529,7 +2603,8 @@ class LocalWatchlistsService:
                 source,
                 client=client,
                 max_bytes=MAX_FETCH_BYTES_SITEMAP,
-                trusted_origins=origin_set(source),
+                trusted_origins=source_trusted_origins(
+                    source, subscription.get("processing_options")),
                 headers={"User-Agent": _PRODUCT_USER_AGENT},
             )
             response.raise_for_status()
@@ -2593,14 +2668,17 @@ class LocalWatchlistsService:
             extraction_rules if isinstance(extraction_rules, Mapping) else {}
         )
         params = request_options.get("params") or request_options.get("query")
-        request_params = dict(params) if isinstance(params, Mapping) and params else None
+        request_params = (
+            dict(params) if isinstance(params, Mapping) and params else None
+        )
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await guarded_fetch_httpx_async(
                 source,
                 client=client,
                 max_bytes=MAX_FETCH_BYTES_PAGE,
-                trusted_origins=origin_set(source),
+                trusted_origins=source_trusted_origins(
+                    source, subscription.get("processing_options")),
                 headers=headers,
                 params=request_params,
             )
@@ -2997,7 +3075,9 @@ class LocalWatchlistsService:
         except (TypeError, ValueError):
             return None
 
-    def _load_source_filters(self, db: SubscriptionsDB, source_id: int) -> list[dict[str, Any]]:
+    def _load_source_filters(
+        self, db: SubscriptionsDB, source_id: int
+    ) -> list[dict[str, Any]]:
         """Load active include/exclude/flag filters for a source."""
         cursor = db.conn.cursor()
         cursor.execute(
@@ -3013,19 +3093,23 @@ class LocalWatchlistsService:
         )
         filters: list[dict[str, Any]] = []
         for row in cursor.fetchall():
-            filters.append({
-                "id": row["id"],
-                "name": row["name"],
-                "is_active": bool(row["is_active"]),
-                "conditions": self._parse_json_value(row["conditions"]),
-                "action": row["action"],
-                "action_params": self._parse_json_value(row["action_params"]),
-                "priority": int(row["priority"] or 0),
-                "is_include_required": bool(row["is_include_required"]),
-            })
+            filters.append(
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "is_active": bool(row["is_active"]),
+                    "conditions": self._parse_json_value(row["conditions"]),
+                    "action": row["action"],
+                    "action_params": self._parse_json_value(row["action_params"]),
+                    "priority": int(row["priority"] or 0),
+                    "is_include_required": bool(row["is_include_required"]),
+                }
+            )
         return filters
 
-    def _load_content_alert_rules(self, db: SubscriptionsDB, source_id: int) -> list[dict[str, Any]]:
+    def _load_content_alert_rules(
+        self, db: SubscriptionsDB, source_id: int
+    ) -> list[dict[str, Any]]:
         """Load active content-alert rules for a source."""
         cursor = db.conn.cursor()
         cursor.execute(
@@ -3041,16 +3125,20 @@ class LocalWatchlistsService:
         )
         rules: list[dict[str, Any]] = []
         for row in cursor.fetchall():
-            rules.append({
-                "id": row["id"],
-                "name": row["name"],
-                "is_active": bool(row["is_active"]),
-                "conditions": self._parse_json_value(row["conditions"]),
-                "action": row["action"],
-                "action_params": self._parse_json_value(row["action_params"]),
-                "priority": int(row["priority"] or 0),
-                "severity": (self._parse_json_value(row["action_params"]) or {}).get("severity", "warning"),
-            })
+            rules.append(
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "is_active": bool(row["is_active"]),
+                    "conditions": self._parse_json_value(row["conditions"]),
+                    "action": row["action"],
+                    "action_params": self._parse_json_value(row["action_params"]),
+                    "priority": int(row["priority"] or 0),
+                    "severity": (
+                        self._parse_json_value(row["action_params"]) or {}
+                    ).get("severity", "warning"),
+                }
+            )
         return rules
 
     def _apply_filters_and_alerts(
@@ -3071,7 +3159,9 @@ class LocalWatchlistsService:
             enriched["filter_decision"] = decision
             enriched["matched_filter_id"] = evaluation.get("matched_filter_id")
             enriched["run_id"] = run_id
-            alert_matches = self.content_alert_service.evaluate(enriched, content_alert_rules)
+            alert_matches = self.content_alert_service.evaluate(
+                enriched, content_alert_rules
+            )
             enriched["alert_matches"] = alert_matches if alert_matches else None
             kept.append(enriched)
         return kept

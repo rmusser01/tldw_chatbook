@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N    N   Saved · Next: Keep editing; changes save automatically.
+  a    o
+  v    t    ‹ Back to list    Advisor meeting 2026-09-24      Library notes
+       e   In the Library database only — no file on disk
+       s   Saved
+
+--->
+          ┌────────────────────────────────────────────────────────────────────┐
+     ---> │  Thesis outline — retrieval-augmented tutoring                     │
+          │Reuse & Export                                                      │
+          │  Copy                                                              │
+--->      │  Export Markdown                                                  ▁│
+          │  Export text                                                       │
+          │Danger                                                              │
+          │  Delete                                                            │
+          │ Delete this note? Undo will be available in the Notes list.        │
+          │ ┃ Cancel ┃   Delete                                                │
+          └────────────────────────────────────────────────────────────────────┘
+  enter cancel | tab switch | esc cancel | F1 · F6 · Ctrl+P · Ctrl+Q

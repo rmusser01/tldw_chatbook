@@ -1186,11 +1186,12 @@ def _discovery(status, *, kind=None, category=None, models=()):
         ),
         # Qodo #2958 finding 5 (owner ruling, rewritten on purpose): a 403
         # means this key may not LIST models, not that it cannot chat. It
-        # checked nothing and blocks nothing; only a 401 rejects the key.
+        # checked nothing and blocks nothing; only a 401 rejects the key. It
+        # keeps "forbidden" (owner decision 2026-10-17, PR #3144 D2).
         (
             _discovery("error", kind="missing_credentials", category="forbidden"),
             True,
-            ("model_listing_unavailable", 0, "http_status", False),
+            ("model_listing_unavailable", 0, "forbidden", False),
         ),
         # Qodo #2958 finding 4: an answer with no usable model id lists
         # nothing, so it is no key acceptance either.

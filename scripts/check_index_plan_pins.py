@@ -191,14 +191,18 @@ def read_census() -> dict[str, tuple[str, str]]:
             continue
         parts = line.split("\t")
         if len(parts) < 2:
-            print(f"FAIL: {CENSUS.name}:{lineno}: expected TAB-separated "
-                  f"<name>\\t<status>[\\t<note>], got: {line!r}")
+            print(
+                f"FAIL: {CENSUS.name}:{lineno}: expected TAB-separated "
+                f"<name>\\t<status>[\\t<note>], got: {line!r}"
+            )
             raise SystemExit(1)
         name, status = parts[0].strip(), parts[1].strip()
         note = parts[2].strip() if len(parts) > 2 else ""
         if status not in VALID_STATUSES:
-            print(f"FAIL: {CENSUS.name}:{lineno}: status must be one of "
-                  f"{sorted(VALID_STATUSES)}, got {status!r}")
+            print(
+                f"FAIL: {CENSUS.name}:{lineno}: status must be one of "
+                f"{sorted(VALID_STATUSES)}, got {status!r}"
+            )
             raise SystemExit(1)
         if name in rows:
             print(f"FAIL: {CENSUS.name}:{lineno}: duplicate entry for {name!r}")

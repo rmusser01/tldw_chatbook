@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved · Export…                                                                    │
+│   a  │ Library notes · Ready                                        │  o      ‹ Notes      Index — start here                                                │
+│   v  │ Notes (122)                                                  │  t                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s   In the Library database only — no file on disk                                    │
+│      │ copy or keep a folder synced, choose Add from files.         │     S                                                                                  │
+│      │                                                              │              Edit           Preview            Info               Save         Use in  │
+│      │ Filter                                                       │                                                                                        │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     ┌────────────────────────────────────────────────────────────────────────────────┐ │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     │Properties                                                                      │ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█                                               │ │
+│      │                                          █                                                          █▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│ │
+│      │    New     Sort: Newest     Select       █                  Replace existing file?                  █                                              ▎│ │
+│ ---> │    Add from files…     Export            █                                                          █▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│ │
+│      │ Folders & placement                      █             Replace "precious.md" in ~/exp?              █                                               │ │
+│      │    New folder     Add to folder     Move █                                                          █go                                             │ │
+│      │    ○ Remove placement                    █  The existing file will be overwritten by this export.   █go                                             │ │
+│      │                                          █                                                          █                                               │ │
+│      │                                          █                                                          █                                               │ │
+│      │  ▸ Agent_Lessons                         █                   Cancel      Replace                    █ere yet                                        │ │
+│      │  ▸ Journal                               █                                                          █                                               │ │
+│      │  ▸ Meetings                              █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█                                               │ │
+│      │  ▸ Projects                                                  │     │  Export Markdown                                                               │ │
+│ ---> │  ▸ Recipes                                                   │     │  Export text                                                                   │ │
+│      │  ▸ Research                                                  │     │Export…                                                                         │ │
+│      │  ▸ Study                                                     │     │Danger                                                                          │ │
+│      │  ▾ Unfiled                                                   │     │    ┃    Delete    ┃                                                            │ │
+│      │    Ideas inbox · 23h                                         │     │                                                                                │ │
+│      │    Reading list · 1d                                         │     │                                                                                │ │
+│      │    Index — start here · 2d                                   │     │                                                                                │ │
+│      │    Meeting Notes 2026-09-30 · 3d                             │     │                                                                                │ │
+│      │    Gardening log · 5d                                        │     │                                                                                │ │
+│      │    📚 Reading queue 2026 ✨ · 1w                             │     │                                                                                │ │
+│      │    A very long note title that keeps going so we can test …  │     │                                                                                │ │
+│      │    Daily log 2026-09-21 · 1w                                 │     │                                                                                │ │
+│      │    Daily log 2026-09-20 · 1w                                 │     └────────────────────────────────────────────────────────────────────────────────┘ │
+│      └──────────────────────────────────────────────────────────────┘     Export…                                                                            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter delete note | esc back to note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

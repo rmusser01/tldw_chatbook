@@ -156,6 +156,14 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     screen._session._chat_store_accessor = lambda: screen._console_chat_store
     screen._session._current_chat_store_accessor = lambda: screen._console_chat_store
+    # TASK-19642.6: the `__new__` bypass skips ConsoleSessionController's
+    # own `__init__` line that seeds `_console_visible_draft_session_id`
+    # (session.py). The screen's wave-2 proxy property delegates to that
+    # attribute (and its setter also reaches `self._hooks.cancel_pending()`
+    # when the value changes), so the H3 tests that assign the visible
+    # draft session need both seams wired on this shell.
+    screen._session._console_visible_draft_session_id = None
+    screen._hooks = SimpleNamespace(cancel_pending=lambda: None)
     # Task 3 attachment inventories project-decision projection hooks while
     # the runtime claim is created, so the session projection owner must
     # exist before this property setter attaches the bare screen.
@@ -218,6 +226,7 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
         current_chat_store_accessor=lambda: screen._console_chat_store,
         ensure_console_chat_controller=_unreached,
         current_chat_controller_accessor=lambda: None,
+        generation_refusal_copy=_unreached,
         sync_native_console_chat_ui=screen._sync_native_console_chat_ui,
         active_session_is_ephemeral=(
             lambda: screen._session._console_active_session_is_ephemeral()
@@ -1161,6 +1170,13 @@ async def test_dispatch_console_command_blocks_generate_image_when_ephemeral():
 # --- Task 3: handler-level wiring test for /generate-image style threading ----
 
 
+# TASK-19642.5: these handler cases resolve the style/user template
+# registry (get_all_templates -> get_user_data_dir on the guarded
+# config loader) on their hot path; under the per-test env redirect that
+# read fails closed with RecoveryRequired("raw_source_selection_changed")
+# (ADR-179 per-node admission class). The file's other 35 nodes are
+# sandbox-clean and stay unmarked.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generate_image_handler_threads_prepared_fields_into_batch(monkeypatch):
     """Handler-level test of _console_command_generate_image: verifies that
@@ -1420,6 +1436,7 @@ def _wired_generate_image_screen(store, *, batch_calls, batch_data=b"generated_i
     return screen, _mock_batch
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generate_image_handler_no_prompt_uses_llm_composed_context_end_to_end(
     monkeypatch,
@@ -1484,6 +1501,7 @@ async def test_generate_image_handler_no_prompt_uses_llm_composed_context_end_to
     assert llm_text in generation_messages[0].content
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generate_image_handler_no_prompt_llm_call_raises_falls_back(
     monkeypatch,
@@ -1533,6 +1551,7 @@ async def test_generate_image_handler_no_prompt_llm_call_raises_falls_back(
     assert "a quiet lakeside cabin at dawn" in batch_calls[0]["prompt"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generate_image_handler_no_prompt_llm_timeout_falls_back(monkeypatch):
     """A slow chat_api_call past the configured timeout -> keyword result
@@ -1584,6 +1603,7 @@ async def test_generate_image_handler_no_prompt_llm_timeout_falls_back(monkeypat
     assert "a quiet lakeside cabin at dawn" in batch_calls[0]["prompt"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generate_image_handler_no_prompt_llm_empty_response_falls_back(
     monkeypatch,
@@ -1630,6 +1650,7 @@ async def test_generate_image_handler_no_prompt_llm_empty_response_falls_back(
     assert "a quiet lakeside cabin at dawn" in batch_calls[0]["prompt"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generate_image_handler_no_prompt_kill_switch_off_skips_llm_path(
     monkeypatch,
@@ -1707,19 +1728,45 @@ async def test_generate_image_handler_prompt_present_never_resolves_llm_context(
 
 
 class _FakeComposer:
-    """Minimal composer double: draft_text()/clear_draft()/insert_text_as_paste()."""
+    """Minimal composer double for the draft-revision API a command takes and
+    restores its draft through (``UI/Console_Modules/command_draft.py``):
+    text, user edit serial, and a draft generation that every scope change
+    (clear, commit, restore) advances."""
 
     def __init__(self, text: str = ""):
         self._text = text
+        self.edit_serial = 0
+        self._generation = 0
 
     def draft_text(self) -> str:
         return self._text
 
     def clear_draft(self) -> None:
         self._text = ""
+        self._generation += 1
 
-    def insert_text_as_paste(self, text: str) -> None:
-        self._text = text
+    def capture_draft_for_send(self):
+        if not self._text:
+            return None
+        return SimpleNamespace(
+            text=self._text, edit_serial=self.edit_serial, generation=self._generation
+        )
+
+    def capture_draft_snapshot(self):
+        return SimpleNamespace(generation=self._generation)
+
+    def commit_captured_draft(self, stash) -> bool:
+        if self._generation != stash.generation or not self._text.startswith(
+            stash.text
+        ):
+            return False
+        self._text = self._text[len(stash.text) :]
+        self._generation += 1
+        return True
+
+    def restore_stashed_draft(self, stash) -> None:
+        self._text = stash.text + self._text
+        self._generation += 1
 
 
 @pytest.mark.asyncio

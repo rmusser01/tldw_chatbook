@@ -7,6 +7,7 @@ from threading import Event
 
 import pytest
 
+from Tests.Backup_Recovery import conftest as recovery_fixtures
 from Tests.Backup_Recovery.test_held_sqlite_rollback import replacement_case
 from tldw_chatbook.Backup_Recovery import bootstrap, crypto, publication, replacement
 from tldw_chatbook.Backup_Recovery.journal import Journal
@@ -19,6 +20,9 @@ from tldw_chatbook.Backup_Recovery.models import (
 from tldw_chatbook.Evals.recovery import _DefinitionsAdapter
 
 
+helper_resource_root = recovery_fixtures.helper_resource_root
+
+
 @pytest.fixture
 def rolled_back_eval(tmp_path, monkeypatch, helper_resource_root, request):
     from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
@@ -29,11 +33,12 @@ def rolled_back_eval(tmp_path, monkeypatch, helper_resource_root, request):
         candidate, plan, _, _, _, selector = case
         choice = getattr(request, "param", True)
         covered = choice is True
-        if choice == "canonical-preserved":
-            from tldw_chatbook.Evals import _default_config_path
+        if choice in ("canonical-preserved", "absent-canonical"):
+            from tldw_chatbook.Evals import _override_config_path
 
-            selected = _default_config_path()
-            assert selected.is_file()
+            selected = _override_config_path(selector)
+            if choice == "canonical-preserved":
+                selected.write_bytes(b"budget: {default_limit: 7}\n")
         else:
             selected = selector.parent / "retained-eval.yaml"
             selected.write_bytes(b"tasks:\n  original: true\n")
@@ -42,7 +47,7 @@ def rolled_back_eval(tmp_path, monkeypatch, helper_resource_root, request):
             "eval.definitions",
             "profile:profile:eval.definitions",
             selected,
-            "included",
+            "unused" if choice == "absent-canonical" else "included",
             ("profile:profile:config",),
         )
         target = replace(plan.target, items=(*plan.target.items, item))
@@ -94,6 +99,15 @@ def rolled_back_eval(tmp_path, monkeypatch, helper_resource_root, request):
         yield journal, selected, selector, context
 
 
+@pytest.mark.parametrize("rolled_back_eval", ["absent-canonical"], indirect=True)
+def test_full_rollback_keeps_absent_private_override_normal(rolled_back_eval):
+    _, selected, _, context = rolled_back_eval
+    rows = _DefinitionsAdapter().discover(context)
+    assert len(rows) == 1
+    assert rows[0].path == selected and rows[0].status == "unused"
+    assert not selected.exists()
+
+
 @pytest.mark.parametrize("rolled_back_eval", [False], indirect=True)
 def test_known_original_without_rollback_coverage_refuses(rolled_back_eval):
     _, selected, _, context = rolled_back_eval
@@ -139,13 +153,14 @@ def test_original_eval_retained_and_captured_without_incoming_owner_or_candidate
     from tldw_chatbook.Backup_Recovery.activation import activation_permission
     from tldw_chatbook.Backup_Recovery.capture_service import _capture_names
     from tldw_chatbook.Backup_Recovery.control_records import admission_authority
-    from tldw_chatbook.Evals import _default_config_path
+    from tldw_chatbook.Evals import _override_config_path
 
     journal, selected, selector, context = rolled_back_eval
     adapter = _DefinitionsAdapter()
     items = adapter.discover(context)
-    assert {item.path for item in items} == {_default_config_path(), selected}
-    assert all(item.status == "included" for item in items)
+    assert {item.path for item in items} == {_override_config_path(selector), selected}
+    assert next(item.status for item in items if item.path == selected) == "included"
+    assert next(item.status for item in items if item.path != selected) == "unused"
     assert selected.read_bytes() == b"tasks:\n  original: true\n"
     # Incoming manifest has no eval owner. Only the independently captured
     # original target/safety proof may supply this retained source.
@@ -186,7 +201,12 @@ def test_rolled_back_eval_requires_current_provenance_and_exact_path(
         saved = selected.with_name("saved-original")
         selected.rename(saved)
         if change == "alias":
-            selected.symlink_to(saved)
+            try:
+                selected.symlink_to(saved)
+            except OSError as error:
+                if getattr(error, "winerror", None) != 1314:
+                    raise
+                pytest.skip("Windows file symlink privilege is unavailable")
             with pytest.raises(ValueError):
                 _DefinitionsAdapter().discover(context)
         else:

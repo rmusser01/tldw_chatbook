@@ -1,0 +1,50 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console ! │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings╭──────────────────────────────────────────────────────────╮
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│                                                          │──
+ Console — Chat, source handoffs, live runs, and control actions.                                                                         │ A Console turn completed while hidden. Return to Console │
+   New tab     Settings     ⚓      Context rail     Search Library     Help                                                              │ to review.                                               │
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│                                                          │──
+                                  │ Conversation | Reply with just: hi                                                                    ╰──────────────────────────────────────────────────────────╯
+                       Context ◂  │  ● Reply with just: hi ✕    New tab     Temporary                                                                                                        │
+   Terminal                       │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Workspaces                  ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Conversations               ▾    │                                                                                                                                                          │
+       Archive this chat          │                                                                                                                                                          │
+         Archived chats           │                                                                                                                                                          │
+       Search all chats…          │                                                                                                                                                          │
+   Reply with just: hi            │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                                                          │
+  ▊  Filter visible   ▎           │                                                                                                                                                          │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+  Chats                      ▾    │                                                                                                                                                          │
+   Reply with just: hi      ⟳     │                                                                                                                                                          │
+                                  │                                                                                                                                                          │◂ Inspect
+ ───────────────────────────────  │                                                                                                                                                          │
+ Character · No chats        ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Model                       ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Agent                       ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Details                     ▸    │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                                  │   User                                                                                                                                                   │
+                                  │   Reply with just: hi                                                                                                                                    │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                                  │  ▊ Assistant  Generating…                                                                                                                                │
+                                  │  ▊                                                                                                                                                       │
+                                  │  ▊                                                                                                                                                       │
+                                  │  ▊                                                                                                                                                       │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Run: Agent running.     Library · Auto off · Agent blocked     Provider: OpenAI     Model: gpt-4.1-nano     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                         Type to queue      Queue         Dictate   Redirect  Stop
+
+  Ctrl+G stop run | Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Ctrl+P · Ctrl+Q

@@ -177,7 +177,9 @@ def _logged_node_ids(function: ast.AST) -> set[int]:
     return logged
 
 
-def dead_store_sites(source: str, relative_path: str) -> list[tuple[str, str, str, str]]:
+def dead_store_sites(
+    source: str, relative_path: str
+) -> list[tuple[str, str, str, str]]:
     """Sanitized-looking locals that are never read outside a log call.
 
     Returns (path, function, variable, reason) rows.
@@ -278,7 +280,7 @@ def test_census_flags_a_reintroduced_hand_rolled_escape() -> None:
 def test_a_comment_or_docstring_mentioning_the_escape_is_not_flagged() -> None:
     """False-red direction: prose about the escape is not the escape."""
     prose = (
-        'def search(term):\n'
+        "def search(term):\n"
         '    """Historically this called term.replace(\'"\', \'""\') inline."""\n'
         "    # do not write term.replace('\"', '\"\"') here\n"
         "    return quote_fts5_phrase(term)\n"
@@ -526,7 +528,7 @@ def test_census_three_flags_a_new_seam_that_hand_rolls_either_spelling() -> None
 def test_census_three_is_not_triggered_by_prose_about_match() -> None:
     """False-red direction: a docstring naming `MATCH ?` is not a seam."""
     prose = (
-        'def helper():\n'
+        "def helper():\n"
         '    """Historically this built the `t_fts MATCH ?` expression."""\n'
         "    return None\n"
     )

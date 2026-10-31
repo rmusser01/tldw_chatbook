@@ -1,0 +1,90 @@
+[
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "tldw_chatbook/css/check_bundle_sync.py"
+    ],
+    "returncode": 0,
+    "seconds": 7.11
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_canvas_mermaid_assets.py"
+    ],
+    "returncode": 0,
+    "seconds": 4.13
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_profile_owned_path_inventory.py"
+    ],
+    "returncode": 0,
+    "seconds": 45.83
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_persistent_diagnostic_inventory.py"
+    ],
+    "returncode": 0,
+    "seconds": 112.22
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_backlog_task_ids.py"
+    ],
+    "returncode": 0,
+    "seconds": 9.07
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_backlog_task_files.py"
+    ],
+    "returncode": 0,
+    "seconds": 3.69
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_schema_table_allowlist.py"
+    ],
+    "returncode": 0,
+    "seconds": 0.85
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_index_plan_pins.py"
+    ],
+    "returncode": 0,
+    "seconds": 5.6
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_textual_worker_contract.py"
+    ],
+    "returncode": 0,
+    "seconds": 37.71
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_timestamp_writers.py"
+    ],
+    "returncode": 0,
+    "seconds": 18.22
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_ui_pr_gate_census.py"
+    ],
+    "returncode": 0,
+    "seconds": 0.06
+  }
+]

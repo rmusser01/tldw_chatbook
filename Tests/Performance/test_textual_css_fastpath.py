@@ -323,7 +323,16 @@ async def test_filter_follows_a_class_added_to_an_ancestor_at_runtime(
 #: vocabulary pinning reorganised ten of these rules away: measured 264,
 #: re-pinned at 264 + 10 so the freed headroom is banked, per the same
 #: convention.
-MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES = 274
+#: LOWERED 2026-10-22 (Roleplay frame B2a, TASK-33910.3; spec 2.12 item 1):
+#: the ListView and its pager left PersonasLibraryPane, and with them three
+#: counted rules (`#personas-library-rows ListItem Static`, the recovery
+#: row's `Static`, `#personas-library-pagebar Button`). Measured 272 -> 269
+#: on the slice head; pinned at the measurement, as the spec asks.
+#: RE-MEASURED 2026-10-23 after the slice moved onto dev 5b5920b8e2: dev's
+#: own count rose 272 -> 273 between 7700c63a68 and 5b5920b8e2 (not B2a's),
+#: so the slice head measures 273 -> 270, the same three rules fewer; pinned
+#: at that measurement, still 4 below dev's 274.
+MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES = 270
 
 #: Anti-vacuity floor: the census walking a hollow stylesheet (bundle
 #: missing, parse failure swallowed) must fail loudly, not pass at zero.
@@ -348,6 +357,7 @@ _GUARDED_TYPE_KEYS = (
 @pytest.mark.asyncio
 @private_profile_test
 async def test_ancestor_scoped_bare_type_rule_count_is_a_ratchet(
+    monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
 ) -> None:
     """New CSS must not grow the bare-type-subject candidate tax.
@@ -367,9 +377,21 @@ async def test_ancestor_scoped_bare_type_rule_count_is_a_ratchet(
 
     from Tests.UI.app_factory import _build_test_app
 
+    _scratch_env(monkeypatch)
     app = _build_test_app()
     async with app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
+        assert not app.splash_screen_active, "CSS census is still on the splash screen"
+        # Finish Console startup before the census can exit into teardown.
+        async with asyncio.timeout(30):
+            while not app._ui_ready:
+                await pilot.pause(0.05)
+        recovery_buttons = list(app.screen.query("#console-trace-actions Button"))
+        # TASK-34350 added the context-limit hold's two actions to this card;
+        # TASK-33621.20 its Library pause's "Send once without Library".
+        assert len(recovery_buttons) == 7 and all(
+            button.is_mounted for button in recovery_buttons
+        ), "CSS census requires fully mounted Console recovery controls"
         rules_map = app.stylesheet.rules_map
 
         per_key: Counter = Counter()

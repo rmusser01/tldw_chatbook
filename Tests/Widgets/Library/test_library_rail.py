@@ -75,12 +75,14 @@ async def test_library_starter_and_unknown_rail_render_only_safe_actions(
             f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
             f"library-row-{LIBRARY_ROW_CREATE_NOTE}",
         ]
-        assert rail.query_one(
-            f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}", Button
-        ).row_id == LIBRARY_ROW_INGEST_MEDIA
-        assert rail.query_one(
-            f"#library-row-{LIBRARY_ROW_CREATE_NOTE}", Button
-        ).row_id == LIBRARY_ROW_CREATE_NOTE
+        assert (
+            rail.query_one(f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}", Button).row_id
+            == LIBRARY_ROW_INGEST_MEDIA
+        )
+        assert (
+            rail.query_one(f"#library-row-{LIBRARY_ROW_CREATE_NOTE}", Button).row_id
+            == LIBRARY_ROW_CREATE_NOTE
+        )
         assert rail.query_one("#library-rail-explore-all", Button).label.plain == (
             "Explore all tools"
         )
@@ -118,14 +120,10 @@ async def test_library_expanded_and_graduated_rails_render_full_shell(
         rail = pilot.app.test_widget
 
         assert rail.query_one("#library-search-input", Input)
-        assert [
-            button.row_id for button in pilot.app.query(".library-rail-row")
-        ] == [
+        assert [button.row_id for button in pilot.app.query(".library-rail-row")] == [
             row.row_id for section in shell.sections for row in section.rows
         ]
-        assert (
-            bool(pilot.app.query("#library-rail-back-to-starter")) is shows_back
-        )
+        assert bool(pilot.app.query("#library-rail-back-to-starter")) is shows_back
 
 
 async def test_library_starter_rail_tab_order_and_labels_are_text_complete(
@@ -163,8 +161,10 @@ async def test_library_starter_rail_tab_order_and_labels_are_text_complete(
 
 async def test_library_rail_top_action_factory(widget_pilot):
     """The top_action_factory is stored and its widgets are rendered first."""
+
     def factory():
         return [Button("Ingest", id="library-top-action")]
+
     preferences = LibraryRailPreferences()
 
     async with await widget_pilot(
@@ -285,9 +285,9 @@ async def test_count_policy_loading_known_estimate_and_off_rows(widget_pilot):
 
         loading = pilot.app.query_one("#library-row-r-loading", Button)
         assert loading.label.plain == "  Loading (…)"
-        assert any(
-            "dim" in str(span.style) for span in loading.label.spans
-        ), f"loading placeholder must render dim: {loading.label.spans}"
+        assert any("dim" in str(span.style) for span in loading.label.spans), (
+            f"loading placeholder must render dim: {loading.label.spans}"
+        )
 
         known = pilot.app.query_one("#library-row-r-known", Button)
         assert known.label.plain == "  Known (7)"
@@ -383,6 +383,7 @@ async def test_count_pending_reserve_stabilizes_gloss_across_arrival():
         ("Watchers", "tracked pages", 28),
     )
     for title, gloss, width in cases:
+
         def make(count: int | None, pending: bool) -> LibraryRailRow:
             return LibraryRailRow(
                 row_id="r",

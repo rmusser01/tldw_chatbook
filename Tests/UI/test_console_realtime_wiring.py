@@ -20,13 +20,15 @@ import logging
 import math
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import Any
 
 import pytest
+import pytest_asyncio
 from loguru import logger
 from textual.widgets import Button
 
+from Tests.UI import test_console_dictation as dictation_module
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from Tests.UI.test_console_dictation_streaming import (
     FakeDictationService,
@@ -47,7 +49,39 @@ from tldw_chatbook.UI.Console_Modules import realtime as realtime_module
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
+# Real config readers must retain the collection-time admitted profile.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 _ASYNC_SETTLE_TIMEOUT = 10.0
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _close_realtime_harness_owners(monkeypatch):
+    """Retire storage owned by the unmounted app behind each Console host."""
+    apps = []
+    build = _build_test_app
+
+    def build_owned(*args, **kwargs):
+        app = build(*args, **kwargs)
+        apps.append(app)
+        return app
+
+    monkeypatch.setattr(f"{__name__}._build_test_app", build_owned)
+    monkeypatch.setattr(dictation_module, "_build_test_app", build_owned)
+    yield
+    for app in reversed(apps):
+        # run_test has settled the host; this app never ran its own unmount.
+        with ExitStack() as storage:
+            for db in (
+                app.local_library_collections_db,
+                app.local_workspace_db,
+                getattr(app.evaluation_orchestrator, "db", None),
+                app.subscriptions_db,
+            ):
+                if db is not None:
+                    storage.callback(db.close)
+            await app._shutdown_console_runtime()
 
 
 async def _wait_for(
@@ -390,7 +424,7 @@ def _capture_notifications(console) -> list[tuple[str, dict]]:
 
 async def _enter_live_realtime(console, pilot, rig) -> FakeRealtimeSession:
     """Enter the loop, let it connect, and drive it to `live`."""
-    console.action_toggle_console_hands_free()
+    console._hands_free.action_toggle_console_hands_free()
     await _wait_for(lambda: bool(rig.sessions), pilot)
     await _wait_for(lambda: rig.session.connected, pilot)
     rig.session.fire_ready()
@@ -417,7 +451,7 @@ async def test_persona_buddy_realtime_fsm_replaces_generation_and_releases_on_ex
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for(lambda: console._console_realtime is not None, pilot)
         assert app.persona_buddy_controller.snapshot().state == "offline"
 
@@ -445,7 +479,7 @@ async def test_persona_buddy_realtime_fsm_replaces_generation_and_releases_on_ex
         await _wait_for(
             lambda: app.persona_buddy_controller.snapshot().state == "idle", pilot
         )
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for(lambda: console._console_realtime is not None, pilot)
         assert console._console_realtime.buddy_generation > generation
         assert app.persona_buddy_controller.snapshot().state == "offline"
@@ -466,7 +500,7 @@ async def test_persona_buddy_realtime_generation_survives_screen_replacement(
 
     async with host.run_test(size=(140, 42)) as pilot:
         old_screen = await _mounted_console(host, pilot)
-        old_screen.action_toggle_console_hands_free()
+        old_screen._hands_free.action_toggle_console_hands_free()
         await _wait_for(lambda: old_screen._console_realtime is not None, pilot)
         old_generation = old_screen._console_realtime.buddy_generation
 
@@ -476,7 +510,7 @@ async def test_persona_buddy_realtime_generation_survives_screen_replacement(
             lambda: replacement.query("#console-native-composer").first() is not None,
             pilot,
         )
-        replacement.action_toggle_console_hands_free()
+        replacement._hands_free.action_toggle_console_hands_free()
         await _wait_for(lambda: replacement._console_realtime is not None, pilot)
         replacement_generation = replacement._console_realtime.buddy_generation
 
@@ -522,7 +556,7 @@ async def test_auto_with_realtime_disabled_leaves_the_pipeline_path_untouched(
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         assert console._console_hands_free is not None
@@ -545,7 +579,7 @@ async def test_forced_realtime_while_unconfigured_refuses_with_a_toast(monkeypat
         console = await _mounted_console(host, pilot)
         notifications = _capture_notifications(console)
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         assert console._console_realtime is None
@@ -570,7 +604,7 @@ async def test_unsupported_realtime_provider_refuses_with_a_toast(monkeypatch):
         console = await _mounted_console(host, pilot)
         notifications = _capture_notifications(console)
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         assert console._console_realtime is None
@@ -593,7 +627,7 @@ async def test_realtime_enabled_enters_the_realtime_loop_and_paints_connecting(
     async with host.run_test(size=(160, 48)) as pilot:
         console = await _mounted_console(host, pilot)
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for(lambda: console._console_realtime is not None, pilot)
 
         assert console._console_hands_free is None
@@ -638,7 +672,7 @@ async def test_connect_ready_live_chip_sequence(monkeypatch):
     async with host.run_test(size=(160, 48)) as pilot:
         console = await _mounted_console(host, pilot)
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for(lambda: bool(rig.sessions), pilot)
         assert console._console_realtime.controller.state == "connecting"
         # The mic tap opens immediately, BEFORE the handshake completes --
@@ -814,7 +848,7 @@ async def test_first_words_buffer_until_ready_then_flush_in_order(monkeypatch):
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for(lambda: bool(rig.recorders), pilot)
 
         rig.recorder.push(b"aa")
@@ -1361,7 +1395,7 @@ async def test_toggle_exits_a_running_realtime_loop(monkeypatch):
         console = await _mounted_console(host, pilot)
         session = await _enter_live_realtime(console, pilot, rig)
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for(lambda: console._console_realtime is None, pilot)
 
         assert len(rig.sessions) == 1, "the toggle started a second loop"
@@ -1632,7 +1666,7 @@ async def test_connect_failure_falls_back_to_the_pipeline_loop_loudly(monkeypatc
         console = await _mounted_console(host, pilot)
         notifications = _capture_notifications(console)
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for(lambda: console._console_hands_free is not None, pilot)
 
         assert console._console_realtime is None
@@ -1661,7 +1695,7 @@ async def test_connect_failure_without_a_viable_pipeline_names_both_reasons(
         # over.
         console._console_hands_free_vad_degraded = True
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for(lambda: bool(notifications), pilot)
         await pilot.pause(0.2)
 
@@ -1689,7 +1723,7 @@ async def test_missing_api_key_refuses_before_any_connect_attempt(monkeypatch):
         console = await _mounted_console(host, pilot)
         notifications = _capture_notifications(console)
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for(lambda: console._console_hands_free is not None, pilot)
 
         assert rig.sessions == [], "a connect was attempted with no API key"
@@ -1723,7 +1757,7 @@ async def test_double_failure_toast_carries_the_install_remedy(monkeypatch):
         console = await _mounted_console(host, pilot)
         notifications = _capture_notifications(console)
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for(lambda: bool(notifications), pilot)
 
         joined = " ".join(message for message, _kwargs in notifications)
@@ -1749,7 +1783,7 @@ async def test_connect_timeout_is_bounded_and_falls_back(monkeypatch):
         console = await _mounted_console(host, pilot)
         notifications = _capture_notifications(console)
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for(lambda: console._console_hands_free is not None, pilot)
 
         assert console._console_realtime is None
@@ -1806,7 +1840,7 @@ async def test_realtime_lifecycle_is_persistently_logged(monkeypatch):
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            console.action_toggle_console_hands_free()
+            console._hands_free.action_toggle_console_hands_free()
             await _wait_for(lambda: console._console_realtime is None, pilot)
     finally:
         diagnostics_logger.removeHandler(capture)
@@ -2000,7 +2034,7 @@ async def test_close_before_ready_fails_the_connect_instead_of_hanging(monkeypat
             console = await _mounted_console(host, pilot)
             notifications = _capture_notifications(console)
 
-            console.action_toggle_console_hands_free()
+            console._hands_free.action_toggle_console_hands_free()
             await _wait_for(lambda: bool(rig.sessions), pilot)
             await _wait_for(lambda: rig.session.connected, pilot)
             assert console._console_realtime.controller.state == "connecting"
@@ -2045,7 +2079,7 @@ async def test_error_before_ready_fails_the_connect(monkeypatch):
         console = await _mounted_console(host, pilot)
         notifications = _capture_notifications(console)
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for(lambda: bool(rig.sessions) and rig.session.connected, pilot)
 
         rig.session.fire_error(RuntimeError(_INVALID_KEY_REASON))
@@ -2077,7 +2111,7 @@ async def test_ready_that_never_arrives_times_out_instead_of_hanging(monkeypatch
         console = await _mounted_console(host, pilot)
         notifications = _capture_notifications(console)
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for(lambda: bool(rig.sessions) and rig.session.connected, pilot)
 
         await _wait_for(lambda: console._console_realtime is None, pilot)
@@ -2297,7 +2331,7 @@ async def test_adopted_capture_sends_its_transcript_as_a_text_turn(monkeypatch):
         service.emit_final("what is the capital of france")
         await pilot.pause()
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for(lambda: bool(rig.sessions), pilot)
         await _wait_for(lambda: rig.session.connected, pilot)
         rig.session.fire_ready()

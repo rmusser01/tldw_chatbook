@@ -35,7 +35,13 @@ import pytest
 from textual.events import Key
 
 from Tests.app_module_patches import set_app_global
-from Tests.UI.app_factory import _build_test_app
+from Tests.conftest import _close_database_instance
+from Tests.UI.app_factory import (
+    _build_test_app,
+    persist_seeded_config,
+)
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
+from Tests.UI.pump_probe import pump_runs
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -70,16 +76,53 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import (
 )
 from tldw_chatbook.Widgets.Console import ProjectInstructionSetupResult
 
+
+@pytest.fixture(autouse=True)
+def _register_runtime_database_owners(monkeypatch, owned_console_apps):  # noqa: F811 - pytest fixture dependency
+    """Retire attached test databases after their captured runtime settles.
+
+    Args:
+        monkeypatch: Restore only this module's attachment binding.
+        owned_console_apps: Register exact databases with the existing finalizer.
+
+    Returns:
+        The existing exact-owner registration callback for injected test rigs.
+    """
+    original = _attach_real_dbs
+
+    def attach_owned_database(app, tmp_path):
+        result = original(app, tmp_path)
+        owned_console_apps(app.console_runtime, app.chachanotes_db)
+        return result
+
+    monkeypatch.setitem(globals(), "_attach_real_dbs", attach_owned_database)
+    return owned_console_apps
+
+
 #: Constructor calls that must exist in exactly one place: the runtime.
 #: `ConsoleProviderGateway(` is deliberately NOT here -- the Personas
 #: preview controller builds its own, unrelated to the Console runtime
 #: (`UI/Persona_Modules/personas_preview_controller.py`).
 _RUNTIME_OWNED_CONSTRUCTIONS = ("ConsoleChatStore", "ConsoleChatController")
 
+#: ADR-234: the served MobileChatService is the sanctioned second
+#: construction site -- the parent-process engine binding the spike proved
+#: (see backlog/decisions/234-served-mobile-companion-surface.md and the
+#: binding spike Docs/superpowers/spikes/2026-10-15-mobile-engine-binding-spike.md).
+#: Prefixes are matched against the construction site's package-relative
+#: path, so an entry covers exactly the files it names. Any NEW foreign
+#: construction site must be registered here with an ADR that justifies
+#: it, or the ownership pin below fails.
+_SANCTIONED_FOREIGN_SITES: dict[str, tuple[str, ...]] = {
+    "ConsoleChatStore": ("tldw_chatbook/Web_Server/mobile_service.py",),
+    "ConsoleChatController": ("tldw_chatbook/Web_Server/mobile_service.py",),
+}
+
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 _RUNTIME_MODULE = "tldw_chatbook/Chat/console_runtime.py"
 
 _VIEW_HOOK_OWNERSHIP = {
+    "response_rules_changed": "view-projection",
     "_chat_dictionary_applier": "app-owned-domain",
     "_world_info_applier": "app-owned-domain",
     "_rag_capture_provider": "runtime-custody",
@@ -164,6 +207,7 @@ def test_runtime_owned_custody_tracks_only_lifetime_handles():
         "staged_evidence_launch",
         "one_shot_prefill",
         "one_shot_prefill_revision",
+        "draft_revision",
     }
     assert {field.name for field in fields(type(record))} == {
         "turn_id",
@@ -173,6 +217,10 @@ def test_runtime_owned_custody_tracks_only_lifetime_handles():
         "task",
         # TASK-32873: the record carries the archive reservation handle.
         "archive_conversation_id",
+        # Exact issuing handles for same-slot receipt promotion and cleanup.
+        "store",
+        "received_claim",
+        "received_intent",
     }
     assert {field.name for field in fields(type(record.inputs))} == {
         "attachments",
@@ -314,34 +362,38 @@ async def test_runtime_owns_one_receipt_service_and_coalesces_hydration(
         store_factory=ConsoleChatStore,
         provider_gateway_factory=object,
     )
-
-    assert bridge is not None
-    assert runtime.activity_receipts is not None
-    assert bridge.runs_db is runtime._agent_runs_db
-    assert runtime.profile_authority == str((tmp_path / "chat.db").resolve())
-    assert runtime.authority_token
-
+    runs_db = runtime._agent_runs_db
     entered = threading.Event()
     release = threading.Event()
     calls = {"count": 0}
+    try:
+        assert bridge is not None
+        assert runtime.activity_receipts is not None
+        assert bridge.runs_db is runtime._agent_runs_db
+        assert runtime.profile_authority == str((tmp_path / "chat.db").resolve())
+        assert runtime.authority_token
 
-    def blocked_hydration():
-        calls["count"] += 1
-        entered.set()
-        assert release.wait(5)
-        return 0
+        def blocked_hydration():
+            calls["count"] += 1
+            entered.set()
+            assert release.wait(5)
+            return 0
 
-    monkeypatch.setattr(
-        runtime.activity_receipts, "hydrate_from_storage", blocked_hydration
-    )
-    first = runtime.ensure_activity_hydration()
-    second = runtime.ensure_activity_hydration()
+        monkeypatch.setattr(
+            runtime.activity_receipts, "hydrate_from_storage", blocked_hydration
+        )
+        first = runtime.ensure_activity_hydration()
+        second = runtime.ensure_activity_hydration()
 
-    assert first is second
-    assert await asyncio.to_thread(entered.wait, 5)
-    release.set()
-    assert await first == 0
-    assert calls["count"] == 1
+        assert first is second
+        assert await asyncio.to_thread(entered.wait, 5)
+        release.set()
+        assert await first == 0
+        assert calls["count"] == 1
+    finally:
+        release.set()
+        await runtime.dispose()
+        _close_database_instance(runs_db)
 
 
 @pytest.mark.asyncio
@@ -383,26 +435,32 @@ async def test_runtime_disposal_invalidates_inflight_receipt_hydration(
         store_factory=ConsoleChatStore,
         provider_gateway_factory=object,
     )
+    runs_db = runtime._agent_runs_db
     entered = threading.Event()
     release = threading.Event()
+    try:
 
-    def blocked_hydration():
-        entered.set()
-        assert release.wait(5)
-        return 4
+        def blocked_hydration():
+            entered.set()
+            assert release.wait(5)
+            return 4
 
-    monkeypatch.setattr(
-        runtime.activity_receipts, "hydrate_from_storage", blocked_hydration
-    )
-    task = runtime.ensure_activity_hydration()
-    assert await asyncio.to_thread(entered.wait, 5)
+        monkeypatch.setattr(
+            runtime.activity_receipts, "hydrate_from_storage", blocked_hydration
+        )
+        task = runtime.ensure_activity_hydration()
+        assert await asyncio.to_thread(entered.wait, 5)
 
-    dispose = asyncio.create_task(runtime.dispose())
-    release.set()
-    await dispose
+        dispose = asyncio.create_task(runtime.dispose())
+        release.set()
+        await dispose
 
-    assert task.cancelled() or await task == 0
-    assert runtime.ensure_activity_hydration() is None
+        assert task.cancelled() or await task == 0
+        assert runtime.ensure_activity_hydration() is None
+    finally:
+        release.set()
+        await runtime.dispose()
+        _close_database_instance(runs_db)
 
 
 @pytest.mark.asyncio
@@ -543,11 +601,23 @@ def _construction_sites(class_name: str) -> list[str]:
 
 @pytest.mark.unit
 def test_console_runtime_is_the_single_construction_site():
-    """PIN (characterization): only the runtime builds the store/controller."""
+    """PIN (characterization): only the runtime builds the store/controller.
+
+    ADR-234 sanctions exactly one foreign construction site per token --
+    the served MobileChatService parent-process engine -- registered in
+    `_SANCTIONED_FOREIGN_SITES`. A new foreign site must be registered
+    there with an ADR that justifies it, not silence this pin.
+    """
     for token in _RUNTIME_OWNED_CONSTRUCTIONS:
         sites = _construction_sites(token)
         assert sites, f"{token} vanished entirely -- the pin is stale."
-        foreign = [site for site in sites if not site.startswith(_RUNTIME_MODULE)]
+        sanctioned = _SANCTIONED_FOREIGN_SITES.get(token, ())
+        foreign = [
+            site
+            for site in sites
+            if not site.startswith(_RUNTIME_MODULE)
+            and not site.startswith(sanctioned)
+        ]
         assert not foreign, (
             f"{token} is constructed outside {_RUNTIME_MODULE}; the app is no "
             "longer the Console runtime's owner:\n  " + "\n  ".join(foreign)
@@ -608,6 +678,7 @@ def test_view_hook_inventory_contains_only_disposable_projections():
     }
 
     assert set(_VIEW_HOOK_OWNERSHIP) == {
+        "response_rules_changed",
         "_chat_dictionary_applier",
         "_world_info_applier",
         "_rag_capture_provider",
@@ -961,6 +1032,43 @@ def test_project_dispatch_confirmation_waits_app_owned_when_detached_before_requ
 
     assert not worker.is_alive()
     assert result == ["proceed"]
+
+
+@pytest.mark.parametrize("projection", ("detached", "refused", "mounted"))
+def test_project_dispatch_unanswered_confirmation_cancels_without_disabling(projection):
+    runtime = _project_notice_runtime()
+    runtime._project_instruction_notice_timeout_seconds = 0.01
+    view = None
+    if projection != "detached":
+        view = _WeakView(
+            {
+                "project_project_instruction_dispatch": lambda *_args: projection
+                == "mounted"
+            }
+        )
+        generation = runtime.attach_view(view)
+        assert runtime.finish_view_reconciliation(view, generation)
+    result = []
+    worker = threading.Thread(
+        target=lambda: result.append(
+            runtime._confirm_project_instruction_dispatch(
+                SimpleNamespace(session_id="session-a")
+            )
+        ),
+        daemon=True,
+    )
+    worker.start()
+    try:
+        worker.join(0.5)
+        assert not worker.is_alive(), "an invisible dispatch decision must expire"
+        assert result == [
+            "cancel"
+        ], "expiry must preserve project-instruction preferences"
+        assert runtime._project_dispatch_decisions == {}
+    finally:
+        for decision_id in tuple(runtime._project_dispatch_decisions):
+            runtime.resolve_project_instruction_dispatch(decision_id, "cancel")
+        worker.join(1)
 
 
 def test_project_dispatch_confirmation_does_not_retain_view_detached_during_wait():
@@ -1460,6 +1568,9 @@ def _attach_reconciliation_screen(sync, *, start=None, resume_pending=False):
     screen._console_attach_reconcile_running = False
     screen._console_resume_after_reconcile = resume_pending
     screen._console_runtime_attachment_generation = 1
+    runtime.view = screen
+    runtime._attached_generation = 1
+    screen._is_active_console_screen = lambda: True
     screen._sync_native_console_chat_ui = sync
     screen._console_runtime = lambda: runtime
     screen._start_console_view_after_reconciliation = start or (lambda: None)
@@ -1642,6 +1753,8 @@ def _post_reconciliation_admission_screen(monkeypatch, live_reason=None):
         _pending_console_delete_message_id=None,
     )
     screen._session = SimpleNamespace(
+        consume_pending_vllm_console_intent=no_op,
+        consume_pending_llamacpp_console_intent=no_op,
         _sync_console_session_draft=no_op,
         _ensure_active_console_session_settings=lambda *_a, **_k: None,
     )
@@ -1826,7 +1939,9 @@ async def test_legacy_alias_allocation_requires_current_live_tray(transition):
 
     screen = ChatScreen.__new__(ChatScreen)
     screen._closing = screen._closed = False
-    tray = SimpleNamespace(is_attached=True)
+    tray = SimpleNamespace(
+        is_attached=True, state=SimpleNamespace(new_conversation_enabled=True)
+    )
     current = [tray]
     allocations, children = [], []
     entered, release = asyncio.Event(), asyncio.Event()
@@ -1841,11 +1956,6 @@ async def test_legacy_alias_allocation_requires_current_live_tray(transition):
     tray.mount = mount
     screen.query_one = lambda *_args: current[0]
     screen.query = lambda _selector: []
-    screen._workspace = SimpleNamespace(
-        _build_console_workspace_context_state=lambda: SimpleNamespace(
-            new_conversation_enabled=True
-        )
-    )
     screen._request_console_context_allocation_reconcile = lambda: allocations.append(
         True
     )
@@ -1988,6 +2098,125 @@ async def test_active_runtime_custody_does_not_retain_the_detached_chat_screen()
     assert result.accepted is True
 
 
+def _build_manually_mounted_console_app(**kwargs):
+    """Build the app for a test that supplies its own initial content screen."""
+    # This fixture supplies the content screen itself. Claim startup before
+    # run_test schedules the deferred initial-screen task, not after push_screen.
+    app = _build_test_app(**kwargs)
+    app._initial_screen_pushed = True
+    return app
+
+
+@pytest.mark.asyncio
+async def test_manual_console_fixture_owns_startup_before_any_mount(tmp_path):
+    """A deferred startup callback cannot add a competing retained Console."""
+    app = _build_manually_mounted_console_app()
+    _attach_real_dbs(app, tmp_path)
+    _configure_native_ready_console(app)
+    async with app.run_test(size=(160, 48)) as pilot:
+        # Force startup to settle before the harness supplies its screen.
+        # Without early ownership this installs the competing retained Console.
+        await app._initial_screen_setup_task
+        chat = ChatScreen(app)
+        await app.push_screen(chat)
+        app.current_tab = "chat"
+        await _wait_for_selector(chat, pilot, "#console-native-composer")
+        generation = chat._console_runtime_attachment_generation
+        # Pin a late startup invocation explicitly, rather than relying on speed.
+        await app._push_initial_screen()
+        await pilot.pause()
+        assert app.screen_stack == [app.screen_stack[0], chat]
+        assert app.screen is chat
+        assert app.console_runtime.view is chat
+        assert app.console_runtime._attached_generation == generation
+        assert "chat" not in getattr(app, "_reusable_screen_instances", {})
+
+
+@pytest.mark.asyncio
+async def test_public_startup_console_keeps_its_claim_across_navigation(tmp_path):
+    """The shipping single retained Console reconciles and resumes delivery."""
+    app = _build_test_app(config_overrides={"splash_screen": {"enabled": False}})
+    persist_seeded_config(app, "splash_screen")
+    _attach_real_dbs(app, tmp_path)
+    _configure_native_ready_console(app)
+    async with app.run_test(size=(160, 48)) as pilot:
+        await app._initial_screen_setup_task
+        chat = app.screen
+        assert isinstance(chat, ChatScreen)
+        await _wait_for_selector(chat, pilot, "#console-native-composer")
+        for _ in range(50):
+            if chat._console_attach_reconciled:
+                break
+            await pilot.pause(0.1)
+        assert chat._console_attach_reconciled
+        assert app.screen_stack == [app.screen_stack[0], chat]
+
+        async def wait_for_reconcile_end():
+            # TASK-35833: the retained Console's reconcile skips the view
+            # start and arms the poll through the wake hook's `call_later`,
+            # so wait for the reconcile to END, then for one screen message.
+            def ended():
+                return (
+                    chat._console_attach_reconciled
+                    and not chat._console_attach_reconcile_running
+                )
+
+            for _ in range(50):
+                if ended():
+                    break
+                await pilot.pause(0.1)
+            assert app.screen is chat and ended(), (
+                "Console attach reconcile never ended before the poll check "
+                "(_console_attach_reconciled and not "
+                "_console_attach_reconcile_running): "
+                f"reconciled={chat._console_attach_reconciled}, "
+                f"running={chat._console_attach_reconcile_running}"
+            )
+            assert await pump_runs(chat, 5.0), (
+                "the Console never ran a callback posted after its attach "
+                "reconcile ended, so a deferred poll arm could not have run"
+            )
+
+        runtime = app.console_runtime
+        controller = chat._ensure_console_chat_controller()
+        store, bridge = runtime.chat_store, runtime.agent_bridge
+        generation = chat._console_runtime_attachment_generation
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+        await pilot.pause()
+        assert chat not in app.screen_stack
+        assert chat.is_mounted  # Installed startup screens suspend under current dev.
+        await app.handle_screen_navigation(NavigateToScreen("chat"))
+        await _wait_for_selector(chat, pilot, "#console-native-composer")
+        await wait_for_reconcile_end()
+        assert app.console_runtime is runtime
+        assert (runtime.chat_controller, runtime.chat_store, runtime.agent_bridge) == (
+            controller,
+            store,
+            bridge,
+        )
+        assert runtime.view is chat
+        assert runtime._attached_generation == generation
+        assert controller.notify_run_outcome.__self__ is chat
+        assert chat._console_transcript_sync_timer is None
+
+        from tldw_chatbook.Chat.console_fleet_wake import _WakeDelivery
+
+        session_id = store.active_session_id
+        conversation_id = controller._agent_conversation_id(session_id)
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+        await pilot.pause()
+        controller.fleet_wake._active[conversation_id] = _WakeDelivery(session_id)
+        try:
+            await app.handle_screen_navigation(NavigateToScreen("chat"))
+            await _wait_for_selector(chat, pilot, "#console-native-composer")
+            await wait_for_reconcile_end()
+            assert runtime.view is chat
+            assert runtime._attached_generation == generation
+            assert chat._console_transcript_sync_timer is not None
+        finally:
+            controller.fleet_wake._active.pop(conversation_id, None)
+
+
 @pytest.mark.asyncio
 async def test_second_console_visit_reuses_the_runtime(tmp_path):
     """The runtime SURVIVES leaving Console -- this landing's central change.
@@ -1996,7 +2225,7 @@ async def test_second_console_visit_reuses_the_runtime(tmp_path):
     pinned the opposite (dispose-at-unmount) and said in its own docstring
     that it must be rewritten here.
     """
-    app = _build_test_app()
+    app = _build_manually_mounted_console_app()
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     terminal_manager = app.terminal_session_manager
@@ -2004,7 +2233,6 @@ async def test_second_console_visit_reuses_the_runtime(tmp_path):
     async with app.run_test(size=(160, 48)) as pilot:
         chat = ChatScreen(app)
         await app.push_screen(chat)
-        app._initial_screen_pushed = True
         app.current_tab = "chat"
         await pilot.pause()
         await _wait_for_selector(chat, pilot, "#console-native-composer")
@@ -2099,14 +2327,13 @@ async def test_second_console_visit_reuses_the_runtime(tmp_path):
 
 @pytest.mark.asyncio
 async def test_post_unmount_raw_refusal_restores_on_second_console_visit(tmp_path):
-    app = _build_test_app()
+    app = _build_manually_mounted_console_app()
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
 
     async with app.run_test(size=(160, 48)) as pilot:
         chat = ChatScreen(app)
         await app.push_screen(chat)
-        app._initial_screen_pushed = True
         app.current_tab = "chat"
         await pilot.pause()
         await _wait_for_selector(chat, pilot, "#console-native-composer")
@@ -2164,14 +2391,13 @@ async def test_a_terminal_run_state_after_leaving_does_not_reach_the_dead_screen
     Without `detach_view` the slot is still bound to that screen and it
     does.
     """
-    app = _build_test_app()
+    app = _build_manually_mounted_console_app()
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
 
     async with app.run_test(size=(160, 48)) as pilot:
         chat = ChatScreen(app)
         await app.push_screen(chat)
-        app._initial_screen_pushed = True
         app.current_tab = "chat"
         await pilot.pause()
         await _wait_for_selector(chat, pilot, "#console-native-composer")
@@ -2226,14 +2452,13 @@ async def test_a_superseded_screen_never_detaches_the_successors_runtime(tmp_pat
     detaches SECOND. The successor's claim must win: its hooks stay bound
     and its visit Event stays unset.
     """
-    app = _build_test_app()
+    app = _build_manually_mounted_console_app()
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
 
     async with app.run_test(size=(160, 48)) as pilot:
         chat = ChatScreen(app)
         await app.push_screen(chat)
-        app._initial_screen_pushed = True
         app.current_tab = "chat"
         await pilot.pause()
         await _wait_for_selector(chat, pilot, "#console-native-composer")
@@ -2280,17 +2505,50 @@ async def test_opening_console_during_a_headless_delivery_arms_the_poll(tmp_path
     (return with nothing delivering -> no poll) so the assertion cannot
     pass for the wrong reason.
     """
-    app = _build_test_app()
+    app = _build_manually_mounted_console_app()
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
 
     async with app.run_test(size=(160, 48)) as pilot:
+
+        async def wait_for_attachment(screen):
+            await _wait_for_selector(screen, pilot, "#console-native-composer")
+            # TASK-35710: the composer mounts before a deferred full sync
+            # finishes. A message-pump pause is not attachment completion.
+            # TASK-35833: wait for the reconcile to END, then for one screen
+            # message. The cached Console's reconcile skips the view start
+            # and arms the poll through the wake hook's `call_later`, so the
+            # timer is still unset when `_console_attach_reconciled` flips.
+            def reconcile_ended():
+                return (
+                    screen._console_attach_reconciled
+                    and not screen._console_attach_reconcile_running
+                )
+
+            for _ in range(50):
+                if reconcile_ended():
+                    break
+                await pilot.pause(0.1)
+            assert app.screen is screen and reconcile_ended(), (
+                "Console attach reconcile never ended before the poll check "
+                "(_console_attach_reconciled and not "
+                "_console_attach_reconcile_running): "
+                f"reconciled={screen._console_attach_reconciled}, "
+                f"running={screen._console_attach_reconcile_running}, "
+                f"sync_complete={screen._console_attach_sync_complete}, "
+                f"view_started={screen._console_attach_view_started}, "
+                f"retry_exhausted={screen._console_attach_reconcile_retry_exhausted}"
+            )
+            assert await pump_runs(screen, 5.0), (
+                "the Console never ran a callback posted after its attach "
+                "reconcile ended, so a deferred poll arm could not have run"
+            )
+
         chat = ChatScreen(app)
         await app.push_screen(chat)
-        app._initial_screen_pushed = True
         app.current_tab = "chat"
         await pilot.pause()
-        await _wait_for_selector(chat, pilot, "#console-native-composer")
+        await wait_for_attachment(chat)
 
         controller = chat._ensure_console_chat_controller()
         store = chat._ensure_console_chat_store()
@@ -2304,8 +2562,7 @@ async def test_opening_console_during_a_headless_delivery_arms_the_poll(tmp_path
         await app.handle_screen_navigation(NavigateToScreen("chat"))
         await pilot.pause()
         control = app.screen
-        await _wait_for_selector(control, pilot, "#console-native-composer")
-        await pilot.pause()
+        await wait_for_attachment(control)
         assert control._console_transcript_sync_timer is None, (
             "returning to Console with nothing in flight armed the poll "
             "anyway -- the delivery leg below would prove nothing"
@@ -2317,18 +2574,16 @@ async def test_opening_console_during_a_headless_delivery_arms_the_poll(tmp_path
         assert control not in app.screen_stack, "Console must actually unmount"
         # Harness precondition ONLY: stand in for `_attempt` having marked
         # a delivery in flight. Everything after this line is production.
-        # TASK-32873: delivery state moved to the _active registry
-        # (delivering_session_ids reads item.session_id from _active).
         from tldw_chatbook.Chat.console_fleet_wake import _WakeDelivery
 
-        wake._active = {session_id: _WakeDelivery(session_id=session_id)}
+        conversation_id = controller._agent_conversation_id(session_id)
+        wake._active[conversation_id] = _WakeDelivery(session_id)
         try:
             await app.handle_screen_navigation(NavigateToScreen("chat"))
             await pilot.pause()
             reopened = app.screen
             assert isinstance(reopened, ChatScreen), type(reopened).__name__
-            await _wait_for_selector(reopened, pilot, "#console-native-composer")
-            await pilot.pause()
+            await wait_for_attachment(reopened)
 
             assert reopened._console_transcript_sync_timer is not None, (
                 "Console opened during a wake delivery with no transcript "
@@ -2337,7 +2592,7 @@ async def test_opening_console_during_a_headless_delivery_arms_the_poll(tmp_path
                 f"same_controller={reopened._console_chat_controller is controller}"
             )
         finally:
-            wake._active = {}
+            wake._active.pop(conversation_id, None)
 
 
 @pytest.mark.unit
@@ -2734,7 +2989,7 @@ def test_lazy_persona_buddy_property_defers_and_ensure_constructs():
 
 @pytest.mark.unit
 @pytest.mark.bootstrap_profile
-def test_actor_pack_recovery_precedes_character_persona_surfaces():
+def test_actor_pack_recovery_precedes_character_persona_surfaces(monkeypatch):
     """Cross-store recovery is gated ahead of every affected surface.
 
     task-21106 rewrote what this pin means. Recovery no longer runs inside
@@ -2781,10 +3036,20 @@ def test_actor_pack_recovery_precedes_character_persona_surfaces():
     # on the event loop -- and the behavioral proof that it actually runs
     # after first paint lives in Tests/UI/test_actor_pack_recovery_seam.py
     # and Tests/App/test_boot_worker_stagger_policy.py.
+    from tldw_chatbook import app_startup
     from tldw_chatbook.Utils.boot_worker_policy import STAGGERED_BOOT_WORKER_KEYS
 
-    deferred = inspect.getsource(TldwCli._schedule_deferred_startup_work)
+    deferred = inspect.getsource(app_startup._schedule_deferred_startup_work)
     assert "_start_staggered_boot_workers" in deferred, deferred
+    delegated = []
+    monkeypatch.setattr(
+        app_startup,
+        "_schedule_deferred_startup_work",
+        lambda app, **dependencies: delegated.append(app),
+    )
+    app = object()
+    TldwCli._schedule_deferred_startup_work(app)
+    assert delegated == [app]
     assert STAGGERED_BOOT_WORKER_KEYS[0] == "actor_pack_recovery", (
         f"recovery must stay first in the staggered boot order; observed "
         f"{STAGGERED_BOOT_WORKER_KEYS!r}"
@@ -2880,6 +3145,7 @@ async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
         await asyncio.shield(console_task)
 
     app = object.__new__(TldwCli)
+    app._persona_buddy_controller_lock = threading.Lock()
     app.persona_buddy_controller = Buddy()
     app._persona_buddy_shutdown_task = None
     app._audio_cpp_artifact_lease_coordinator = None
@@ -2931,3 +3197,627 @@ async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
     assert events.index("console-finished") < events.index("buddy-start")
     assert events.index("buddy-finished") < events.index("profile-teardown")
     assert events[-1] == "profile-teardown"
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_clearing_agent_handoff_in_mounted_composer_persists_before_exit(
+    tmp_path,
+):
+    import json
+    from Tests.Chat.test_console_chat_start import _create_handoff, _restore_handoff
+
+    app = _build_manually_mounted_console_app(
+        config_overrides={"splash_screen": {"enabled": False}}
+    )
+    persist_seeded_config(app, "splash_screen")
+    _attach_real_dbs(app, tmp_path)
+    _configure_native_ready_console(app)
+    from tldw_chatbook.config import get_cli_setting
+
+    assert get_cli_setting("splash_screen", "enabled", True) is False
+    async with app.run_test(size=(160, 48)) as pilot:
+        chat = ChatScreen(app)
+        await app.push_screen(chat)
+        app.current_tab = "chat"
+        await _wait_for_selector(chat, pilot, "#console-native-composer")
+        for _ in range(50):
+            if chat._console_attach_reconciled:
+                break
+            await pilot.pause(0.1)
+        assert chat._console_attach_reconciled and app.screen is chat
+        store = chat._ensure_console_chat_store()
+        conversation = _create_handoff(store)
+        target = _restore_handoff(store, conversation)
+        store.switch_session(target.id)
+        chat._session._sync_console_session_draft()
+        await chat._sync_native_console_chat_ui()
+        composer = chat.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+        assert composer.draft_text() == "original"
+        await pilot.press("ctrl+u")
+        await pilot.pause()
+        assert composer.draft_text() == ""
+        assert await store.drain_agent_handoff(target.id)
+        row = app.chachanotes_db.get_conversation_by_id(conversation)
+        handoff = json.loads(row["metadata"])["console_agent_handoff"]
+        assert handoff["draft"] == "" and handoff["draft_revision"] == 2
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_accepted_agent_chat_start_has_visible_stop_in_mounted_target(
+    tmp_path, _register_runtime_database_owners
+):
+    from threading import Event
+    from textual.widgets import Button
+    from Tests.Chat.test_console_chat_start import _native_start_rig
+
+    controller, store, runs, source, target, chain, request = await _native_start_rig(
+        tmp_path
+    )
+    entered, release = Event(), Event()
+    original_reply = controller._agent_bridge.run_reply
+
+    def paused_reply(*args, **kwargs):
+        entered.set()
+        assert release.wait(120)
+        return original_reply(*args, **kwargs)
+
+    controller._agent_bridge.run_reply = paused_reply
+    app = _build_manually_mounted_console_app(
+        config_overrides={"splash_screen": {"enabled": False}}
+    )
+    persist_seeded_config(app, "splash_screen")
+    _attach_real_dbs(app, tmp_path)
+    _configure_native_ready_console(app)
+    from tldw_chatbook.config import get_cli_setting
+
+    assert get_cli_setting("splash_screen", "enabled", True) is False
+    rig_registered = False
+    try:
+        async with app.run_test(size=(160, 48)) as pilot:
+            chat = ChatScreen(app)
+            await app.push_screen(chat)
+            app.current_tab = "chat"
+            await _wait_for_selector(chat, pilot, "#console-native-composer")
+            for _ in range(50):
+                if chat._console_attach_reconciled:
+                    break
+                await pilot.pause(0.1)
+            assert chat._console_attach_reconciled and app.screen is chat
+            runtime = app.console_runtime
+            runtime._chat_store = store
+            runtime._chat_controller = controller
+            runtime._agent_bridge = controller._agent_bridge
+            controller.app = app
+            _register_runtime_database_owners(runtime, runs)
+            _register_runtime_database_owners(runtime, store.persistence.db)
+            rig_registered = True
+            try:
+                start = asyncio.create_task(controller._chat_start.start(request))
+                assert (await start).launch_status == "started"
+                assert await asyncio.to_thread(entered.wait, 5)
+                store.switch_session(target.id)
+                await chat._sync_native_console_chat_ui()
+                await pilot.pause()
+                await _wait_for_selector(
+                    chat, pilot, "#console-stop-generation.console-stop-active"
+                )
+                stop = chat.query_one("#console-stop-generation", Button)
+                assert controller.run_state.status is ConsoleRunStatus.STREAMING
+                assert stop.display and stop.region.width > 0
+                assert stop.region.right <= stop.parent.region.right
+                assert (
+                    str(chat.query_one("#console-send-message", Button).label)
+                    != "Preparing..."
+                )
+                assert not chat._console_setup_modal_blocking()
+                assert app.screen is chat and runtime.view is chat
+                stop_calls = []
+                stop_active = controller.stop_active_run
+
+                def observe_stop(*args, **kwargs):
+                    result = stop_active(*args, **kwargs)
+                    stop_calls.append((store.active_session_id, result))
+                    return result
+
+                controller.stop_active_run = observe_stop
+                assert not stop.disabled
+                assert await pilot.click("#console-stop-generation")
+                for _ in range(50):
+                    if stop_calls:
+                        break
+                    await pilot.pause(0.1)
+                assert stop_calls == [(target.id, True)], (
+                    stop_calls,
+                    stop.disabled,
+                    str(stop.label),
+                    chat._console_setup_modal_blocking(),
+                )
+                owned = tuple(controller._chat_start.tasks())
+                assert owned
+                with pytest.raises(asyncio.TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(asyncio.gather(*owned)), 0.5)
+                assert target.id in controller.fleet_wake._automatic_primary_claims
+                release.set()
+                await asyncio.gather(*controller._chat_start.tasks())
+                assert (
+                    controller.run_state_for(target.id).status
+                    is ConsoleRunStatus.STOPPED
+                )
+                assert runs.automatic_work.snapshot(chain).used["generation"] == 1
+            finally:
+                release.set()
+    finally:
+        release.set()
+        await controller.shutdown()
+        if not rig_registered:
+            runs.close()
+            store.persistence.db.close_connection()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    [
+        "test_accepted_agent_chat_start_has_visible_stop_in_mounted_target",
+        "test_prepared_native_start_allows_mounted_manual_send",
+        "test_native_acceptance_consumes_only_open_target_revision",
+    ],
+)
+async def test_native_rig_mount_failure_retires_unregistered_owners(
+    tmp_path, monkeypatch, case, _register_runtime_database_owners
+):
+    """A failed mount still drains and closes its exact uninstalled rig."""
+    import sqlite3
+    from contextlib import asynccontextmanager
+
+    from Tests.Chat import test_console_chat_start as rigs
+
+    class MountFailure(Exception):
+        pass
+
+    captured = {}
+    original_rig = rigs._native_start_rig
+
+    async def capture_rig(path):
+        result = await original_rig(path)
+        controller, store, runs, *_ = result
+        captured.update(
+            controller=controller,
+            runs=runs,
+            chat=store.persistence.db,
+            runs_connection=runs._held_connection(),
+            chat_connection=store.persistence.db.get_connection(),
+        )
+        return result
+
+    original_app = _build_manually_mounted_console_app
+
+    def failed_mount_app(**kwargs):
+        app = original_app(**kwargs)
+
+        @asynccontextmanager
+        async def failed_mount(**_kwargs):
+            raise MountFailure
+            yield  # pragma: no cover - preserve the async context manager protocol
+
+        monkeypatch.setattr(app, "run_test", failed_mount)
+        return app
+
+    monkeypatch.setattr(rigs, "_native_start_rig", capture_rig)
+    monkeypatch.setitem(
+        globals(), "_build_manually_mounted_console_app", failed_mount_app
+    )
+    kwargs = {
+        "tmp_path": tmp_path,
+        "_register_runtime_database_owners": _register_runtime_database_owners,
+    }
+    if case == "test_native_acceptance_consumes_only_open_target_revision":
+        kwargs["later_edit"] = "unchanged"
+    try:
+        with pytest.raises(MountFailure):
+            await globals()[case](**kwargs)
+        for connection in (captured["runs_connection"], captured["chat_connection"]):
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                connection.execute("SELECT 1")
+    finally:
+        if captured:
+            await captured["controller"].shutdown()
+            captured["runs"].close()
+            captured["chat"].close_connection()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_prepared_native_start_allows_mounted_manual_send(
+    tmp_path, _register_runtime_database_owners
+):
+    from textual.widgets import Button
+    from Tests.Chat.test_console_chat_start import _native_start_rig
+
+    controller, store, runs, source, target, chain, request = await _native_start_rig(
+        tmp_path
+    )
+    entered = asyncio.Event()
+    original = controller._resolve_for_send_bounded
+    calls = 0
+
+    async def held(selection):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            entered.set()
+            await asyncio.Event().wait()
+        return await original(selection)
+
+    controller._resolve_for_send_bounded = held
+    app = _build_manually_mounted_console_app(
+        config_overrides={"splash_screen": {"enabled": False}}
+    )
+    persist_seeded_config(app, "splash_screen")
+    _attach_real_dbs(app, tmp_path)
+    _configure_native_ready_console(app)
+    from tldw_chatbook.config import get_cli_setting
+
+    assert get_cli_setting("splash_screen", "enabled", True) is False
+    rig_registered = False
+    try:
+        async with app.run_test(size=(160, 48)) as pilot:
+            chat = ChatScreen(app)
+            await app.push_screen(chat)
+            app.current_tab = "chat"
+            await _wait_for_selector(chat, pilot, "#console-native-composer")
+            for _ in range(50):
+                if chat._console_attach_reconciled:
+                    break
+                await pilot.pause(0.1)
+            assert chat._console_attach_reconciled and app.screen is chat
+            runtime = app.console_runtime
+            runtime._chat_store = store
+            runtime._chat_controller = controller
+            runtime._agent_bridge = controller._agent_bridge
+            controller.app = app
+            _register_runtime_database_owners(runtime, runs)
+            _register_runtime_database_owners(runtime, store.persistence.db)
+            rig_registered = True
+            store.switch_session(target.id)
+            chat._session._sync_console_session_draft()
+            await chat._sync_native_console_chat_ui()
+            composer = chat.query_one("#console-native-composer", ConsoleComposerBar)
+            assert composer.draft_text() == "original"
+            from dataclasses import replace
+
+            request = replace(
+                request,
+                configuration=controller.resolve_turn_configuration_snapshot(target.id),
+                context_epoch=store.conversation_context_epoch(target.id),
+            )
+            assert controller._chat_start._target_unchanged(request)
+            start = asyncio.create_task(controller._chat_start.start(request))
+            try:
+                readiness = asyncio.create_task(entered.wait())
+                try:
+                    done, _ = await asyncio.wait(
+                        {readiness, start},
+                        timeout=5,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    assert start not in done, start.result()
+                    assert readiness in done and readiness.result()
+                finally:
+                    readiness.cancel()
+                    await asyncio.gather(readiness, return_exceptions=True)
+                chat._sync_console_composer_action_state(can_save_chatbook=False)
+                await pilot.pause()
+                send = chat.query_one("#console-send-message", Button)
+                assert controller._chat_start.is_prepared(target.id)
+                assert not send.disabled and str(send.label).startswith("Send")
+                assert not chat._console_setup_modal_blocking()
+                assert await pilot.click("#console-send-message")
+                assert (await asyncio.wait_for(start, 5)).launch_status == "not_started"
+                for _ in range(50):
+                    if controller.run_state_for(target.id).status in {
+                        ConsoleRunStatus.COMPLETED,
+                        ConsoleRunStatus.FAILED,
+                    }:
+                        break
+                    await pilot.pause(0.1)
+                rows = store.persistence.db.get_messages_for_conversation(
+                    request.conversation_id
+                )
+                users = [row for row in rows if row["sender"] == "user"]
+                assert len(users) == 1 and users[0]["content"] == "original"
+                assert "agent_chat_start" not in str(users[0]["metadata_json"])
+                assert runs.automatic_work.snapshot(chain).used["generation"] == 0
+            finally:
+                controller._chat_start.withdraw_prepared(target.id, "test_cleanup")
+                await asyncio.gather(start, return_exceptions=True)
+    finally:
+        await controller.shutdown()
+        if not rig_registered:
+            runs.close()
+            store.persistence.db.close_connection()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "later_edit",
+    [
+        "unchanged",
+        "caret_only",
+        "selection_only",
+        "replacement",
+        "same_text",
+        "switch_away",
+    ],
+)
+async def test_native_acceptance_consumes_only_open_target_revision(
+    tmp_path, later_edit, _register_runtime_database_owners
+):
+    """The accepted handoff cannot resurrect an unchanged visible composer."""
+    import json
+    from Tests.Chat.test_console_chat_start import _native_start_rig
+
+    controller, store, runs, source, target, chain, request = await _native_start_rig(
+        tmp_path
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    resolve = controller._resolve_for_send_bounded
+
+    async def held_readiness(selection):
+        entered.set()
+        await release.wait()
+        return await resolve(selection)
+
+    controller._resolve_for_send_bounded = held_readiness
+    app = _build_manually_mounted_console_app(
+        config_overrides={"splash_screen": {"enabled": False}}
+    )
+    persist_seeded_config(app, "splash_screen")
+    _attach_real_dbs(app, tmp_path)
+    _configure_native_ready_console(app)
+    from tldw_chatbook.config import get_cli_setting
+
+    assert get_cli_setting("splash_screen", "enabled", True) is False
+    rig_registered = False
+    try:
+        async with app.run_test(size=(160, 48)) as pilot:
+            chat = ChatScreen(app)
+            await app.push_screen(chat)
+            app.current_tab = "chat"
+            await _wait_for_selector(chat, pilot, "#console-native-composer")
+            for _ in range(50):
+                if chat._console_attach_reconciled:
+                    break
+                await pilot.pause(0.1)
+            assert chat._console_attach_reconciled and app.screen is chat
+            runtime = app.console_runtime
+            runtime._chat_store = store
+            runtime._chat_controller = controller
+            runtime._agent_bridge = controller._agent_bridge
+            controller.app = app
+            _register_runtime_database_owners(runtime, runs)
+            _register_runtime_database_owners(runtime, store.persistence.db)
+            rig_registered = True
+            await chat._sync_native_console_chat_ui()
+            composer = chat.query_one("#console-native-composer", ConsoleComposerBar)
+            store.switch_session(source.id)
+            chat._session._sync_console_session_draft()
+            composer.load_draft("source composer sentinel")
+            chat._session._sync_console_session_draft()
+            assert source.draft == "source composer sentinel"
+            source_workspace = source.workspace_id
+            from dataclasses import replace
+
+            # Shipping creation persists destination defaults before launch.
+            # The minimal ledger rig lacks them; use the actual mounted owner.
+            store.replace_session_settings(
+                target.id, chat._session._blank_console_session_settings()
+            )
+            request = replace(
+                request,
+                configuration=controller.resolve_turn_configuration_snapshot(target.id),
+            )
+            submit = controller.submit_draft
+            results = []
+
+            async def observe_submit(*args, **kwargs):
+                result = await submit(*args, **kwargs)
+                results.append(result)
+                return result
+
+            controller.submit_draft = observe_submit
+            start = asyncio.create_task(controller._chat_start.start(request))
+            try:
+                readiness = asyncio.create_task(entered.wait())
+                try:
+                    done, _ = await asyncio.wait(
+                        {readiness, start},
+                        timeout=5,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    assert start not in done, start.result()
+                    assert readiness in done and readiness.result(), {
+                        "start_done": start.done(),
+                        "start_stack": [
+                            (frame.f_code.co_name, frame.f_lineno)
+                            for frame in start.get_stack()
+                        ],
+                        "preparation_tasks": [
+                            (
+                                task.done(),
+                                [
+                                    (frame.f_code.co_name, frame.f_lineno)
+                                    for frame in task.get_stack()
+                                ],
+                            )
+                            for task in controller._chat_start._tasks
+                        ],
+                    }
+                finally:
+                    readiness.cancel()
+                    await asyncio.gather(readiness, return_exceptions=True)
+                # Reattach through the actual mounted lifecycle while the
+                # app-owned native preparation is live. The original view
+                # reconciled before this rig installed its controller.
+                await app.pop_screen()
+                store.switch_session(target.id)
+                chat = ChatScreen(app)
+                await app.push_screen(chat)
+                await _wait_for_selector(chat, pilot, "#console-native-composer")
+                for _ in range(50):
+                    if chat._console_attach_reconciled:
+                        break
+                    await pilot.pause(0.1)
+                assert chat._console_attach_reconciled
+                assert chat._console_transcript_sync_timer is not None
+                composer = chat.query_one(
+                    "#console-native-composer", ConsoleComposerBar
+                )
+                composer.focus()
+                await pilot.pause()
+                assert composer.draft_text() == "original"
+                assert target.agent_handoff_state == "pending"
+                assert controller._chat_start.is_prepared(target.id)
+                assert controller._chat_start._target_unchanged(request), {
+                    "settings_equal": target.settings
+                    == request.configuration.session_settings,
+                    "epoch": (
+                        store.conversation_context_epoch(target.id),
+                        request.context_epoch,
+                    ),
+                    "revision": (target.agent_handoff_revision, request.draft_revision),
+                    "draft": target.draft,
+                    "workspace": (target.workspace_id, request.workspace_id),
+                    "evidence": controller._has_explicit_staged_evidence(target.id),
+                    "attachments": store.pending_attachments(target.id),
+                    "prefill": store.session_one_shot_prefill(target.id),
+                    "queue": controller.prompt_queue_coordinator.controls_generation(
+                        target.id
+                    ),
+                }
+                original_snapshot = composer.capture_draft_snapshot()
+                if later_edit == "caret_only":
+                    await pilot.press("left")
+                elif later_edit == "selection_only":
+                    await pilot.press("ctrl+a")
+                if later_edit in {"caret_only", "selection_only"}:
+                    navigated = composer.capture_draft_snapshot()
+                    assert navigated != original_snapshot
+                    assert navigated.segments == original_snapshot.segments
+                    assert navigated.edit_serial == original_snapshot.edit_serial
+                    assert navigated.generation == original_snapshot.generation
+                    if later_edit == "caret_only":
+                        assert navigated.cursor_index != original_snapshot.cursor_index
+                        assert navigated.selection == original_snapshot.selection
+                    else:
+                        assert navigated.selection != original_snapshot.selection
+                        assert navigated.cursor_index == original_snapshot.cursor_index
+                publish = store.publish_agent_handoff_consumed
+
+                def after_receipt(session_id, revision):
+                    publish(session_id, revision)
+                    if later_edit in {"replacement", "same_text"}:
+                        # A genuine later revision can have identical text; it
+                        # is authored after acceptance and must survive.
+                        composer.load_draft(
+                            "later target edit"
+                            if later_edit == "replacement"
+                            else "original"
+                        )
+                        store.set_session_draft(target.id, composer.draft_text())
+
+                store.publish_agent_handoff_consumed = after_receipt
+                if later_edit == "switch_away":
+                    chat._session._capture_console_draft_switch_snapshot()
+                    assert chat._session._console_draft_switch_snapshot is not None
+                release.set()
+                outcome = await asyncio.wait_for(start, 10)
+                assert outcome.launch_status == "started", (
+                    outcome,
+                    [result.visible_copy for result in results],
+                )
+                expected = {
+                    "unchanged": "",
+                    "caret_only": "",
+                    "selection_only": "",
+                    "replacement": "later target edit",
+                    "same_text": "original",
+                    "switch_away": "",
+                }[later_edit]
+                if later_edit == "switch_away":
+                    # Qualify the switch-away save path before same-session
+                    # polling can consume the mounted receipt.
+                    store.switch_session(source.id)
+                    chat._session._sync_console_session_draft()
+                    assert target.draft == ""
+                    assert composer.draft_text() == "source composer sentinel"
+                    store.switch_session(target.id)
+                    chat._session._sync_console_session_draft()
+                # The other cases observe normal mounted polling before any
+                # explicit synchronization saves or switches the target.
+                for _ in range(50):
+                    await pilot.pause(0.1)
+                    if composer.draft_text() == expected:
+                        break
+                assert composer.draft_text() == expected
+                assert target.draft == expected
+                from textual.widgets import Static
+
+                painted = composer.query_one("#console-command-visible-text", Static)
+                assert painted.region.width > 0
+                if later_edit in {
+                    "unchanged",
+                    "caret_only",
+                    "selection_only",
+                    "switch_away",
+                }:
+                    assert "original" not in str(painted.content)
+                await asyncio.gather(*controller._chat_start.tasks())
+                assert app.focused is composer
+                # Another save and navigation cannot put the accepted prompt
+                # back into the unchanged target.
+                chat._session._sync_console_session_draft()
+                store.switch_session(source.id)
+                chat._session._sync_console_session_draft()
+                await chat._sync_native_console_chat_ui()
+                assert composer.draft_text() == "source composer sentinel"
+                assert source.draft == "source composer sentinel"
+                assert source.workspace_id == source_workspace
+                store.switch_session(target.id)
+                chat._session._sync_console_session_draft()
+                await chat._sync_native_console_chat_ui()
+                assert composer.draft_text() == expected and target.draft == expected
+                row = store.persistence.db.get_conversation_by_id(
+                    request.conversation_id
+                )
+                handoff = json.loads(row["metadata"])["console_agent_handoff"]
+                assert handoff["state"] == "consumed" and handoff["draft"] == ""
+                assert handoff["draft_revision"] == 2 and handoff["accepted_attempt_id"]
+                users = [
+                    row
+                    for row in store.persistence.db.get_messages_for_conversation(
+                        request.conversation_id
+                    )
+                    if row["sender"] == "user"
+                ]
+                assert len(users) == 1 and users[0]["content"] == "original"
+                assert "agent_chat_start" in users[0]["metadata_json"]
+                assert controller.provider_gateway.calls == 1
+                assert runs.automatic_work.snapshot(chain).used["generation"] == 1
+                assert not controller._chat_start.tasks()
+                assert target.id not in controller.fleet_wake._automatic_primary_claims
+            finally:
+                release.set()
+                await asyncio.gather(start, return_exceptions=True)
+    finally:
+        release.set()
+        await controller.shutdown()
+        if not rig_registered:
+            runs.close()
+            store.persistence.db.close_connection()

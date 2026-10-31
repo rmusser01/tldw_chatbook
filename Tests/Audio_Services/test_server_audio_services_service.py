@@ -18,7 +18,7 @@ from tldw_chatbook.tldw_api import (
     SubmitAudioJobRequest,
     VoiceEncodeRequest,
 )
-from tldw_chatbook.tldw_api.exceptions import APIResponseError
+from tldw_chatbook.tldw_api.exceptions import APIResponseError, AuthenticationError
 
 
 class FakeAudioClient:
@@ -324,6 +324,37 @@ async def test_server_audio_diagnostics_preserve_non_auth_capability_errors() ->
 
     assert error.value.status_code == 503
     assert client.calls == [("get_current_user_capabilities",)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("probe", "kwargs"),
+    [
+        ("get_stt_health", {}),
+        ("get_stt_health", {"warm": True}),
+        ("get_audio_streaming_status", {}),
+    ],
+)
+async def test_server_audio_probes_report_auth_required_on_401(probe, kwargs) -> None:
+    """tldw_server#3058: a tokenless (or rejected) credential gets 401 from both
+    probes; that is an explicit ``auth_required`` state, not a raw error."""
+
+    class TokenlessClient:
+        async def get_current_user_capabilities(self):
+            raise AuthenticationError("Authentication failed: Not authenticated")
+
+        async def get_stt_health(self, **kwargs):
+            raise AuthenticationError("Authentication failed: Not authenticated")
+
+        async def get_audio_streaming_status(self):
+            raise AuthenticationError("Authentication failed: Not authenticated")
+
+    service = ServerAudioServicesService(client=TokenlessClient())
+
+    with pytest.raises(PolicyDeniedError, match="Authentication") as denial:
+        await getattr(service, probe)(**kwargs)
+    assert denial.value.reason_code == "auth_required"
+    assert isinstance(denial.value.__cause__, AuthenticationError)
 
 
 @pytest.mark.asyncio

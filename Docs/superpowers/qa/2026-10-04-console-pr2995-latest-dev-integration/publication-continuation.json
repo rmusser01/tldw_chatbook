@@ -1,0 +1,79 @@
+{
+  "old_dev": "8f83422dde2a5b95da648882b8f7e09da5b41f08",
+  "new_dev": "a7d9bca5da7f0d6be95cb9c3b7ab81602987051c",
+  "before_head": "68692af83a1f1afd9af2a53c0f55dbac33e5e22b",
+  "changed_paths": [
+    {
+      "status": "A",
+      "path": "backlog/tasks/task-33620.13 - Console-keeps-the-Generating-video\u2026-row-after-a-generated-video-is-saved-discarded-or-stopped.md"
+    },
+    {
+      "status": "A",
+      "path": "backlog/tasks/task-33620.14 - Chats-list-\u26d4-Blocked-mark-reverts-to-the-normal-icon-after-a-refused-resend.md"
+    },
+    {
+      "status": "A",
+      "path": "backlog/tasks/task-33621.45 - Stopping-a-video-generation-reports-it-as-failed-instead-of-cancelled.md"
+    },
+    {
+      "status": "A",
+      "path": "backlog/tasks/task-33621.46 - The-voice-capture-trace-builder-admits-image-result-rows-without-the-saved-media-check.md"
+    },
+    {
+      "status": "A",
+      "path": "backlog/tasks/task-33621.47 - Check-whether-startup-trace-maintenance-can-sweep-an-admitted-revision-before-its-send-reserves-the-call.md"
+    },
+    {
+      "status": "A",
+      "path": "backlog/tasks/task-33621.48 - Slash-command-hand-off-loses-diagnostics-swallowed-WorkerCancelled-closed-ui_action-scope-silent-double-press-drop.md"
+    },
+    {
+      "status": "A",
+      "path": "backlog/tasks/task-33621.49 - A-Temporary-chats-refused-first-send-leaves-a-shelf-recovery-whose-Restore-re-inserts-already-sent-text.md"
+    },
+    {
+      "status": "A",
+      "path": "backlog/tasks/task-33621.50 - Stop-does-not-cancel-a-running-MiniMax-video-task-so-a-stopped-generation-is-still-billed.md"
+    },
+    {
+      "status": "A",
+      "path": "backlog/tasks/task-33622.18 - CtrlQ-during-an-in-flight-paid-video-generation-quits-without-asking.md"
+    },
+    {
+      "status": "A",
+      "path": "backlog/tasks/task-33622.19 - Watchlists-bulk-sources-dialog-sticks-on-Creating-sources\u2026-when-its-result-arrives-while-covered.md"
+    },
+    {
+      "status": "A",
+      "path": "backlog/tasks/task-33622.20 - A-character-open-from-the-switcher-under-the-quit-question-rolls-back-with-a-generic-error.md"
+    },
+    {
+      "status": "A",
+      "path": "backlog/tasks/task-33622.21 - Quit-prompt-and-fork-paint-tests-assert-before-Textual-delivers-the-result.md"
+    },
+    {
+      "status": "A",
+      "path": "backlog/tasks/task-33625.6 - Unsent-turn-shelf-cuts-a-refusals-action-hint-mid-word.md"
+    },
+    {
+      "status": "A",
+      "path": "backlog/tasks/task-33628.13 - Library-reader-re-check-can-start-a-reload-while-Library-is-covered.md"
+    },
+    {
+      "status": "A",
+      "path": "backlog/tasks/task-33628.14 - Deleting-an-unsaved-message-refuses-with-a-generic-error-when-its-fallback-anchor-was-already-tombstoned.md"
+    }
+  ],
+  "scope": "Three commits,15new Backlog Markdown files only; no source/tests/config/UI/ADR changes. Root documentation-only publication continuation; no source or test replay.",
+  "rebase_head": "a54f2b359475dc8413fee1468e3f067367404a4f",
+  "source_equivalent_commit": "4b35c232f7a7c04bea0e000b80e727ea72199fba",
+  "qualified_source": "9445ed93ed430ba0e3660ad2008621f6a809bd0e",
+  "source_test_hashes_verified": 8123,
+  "every_qualified_source_test_hash_exact": true,
+  "prior_archive_file_hashes_verified": 2111,
+  "prior_archive_bytes_unchanged": true,
+  "new_dev_ancestor": true,
+  "fresh_test_run": false,
+  "recovery_ref": "refs/codex/pr2995-pre-docs-a7d",
+  "external_status": "Current-head Qodo/checks and actual merge pending."
+}

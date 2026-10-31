@@ -210,7 +210,10 @@ def test_remote_acquisition_and_hugging_face_inference_owners_remain() -> None:
     assert hasattr(remote_view, "RemoteView")
     assert hasattr(remote_adapter, "HuggingFaceRemoteAdapter")
     assert hasattr(llm_api, "chat_with_huggingface")
-    assert hasattr(summarization, "summarize_with_huggingface")
+    # TASK-34895: the per-provider summarize_with_* functions are gone; HF
+    # inference now rides the shared chat dispatch (spec-keyed).
+    assert hasattr(summarization, "_summarize_via_chat_api")
+    assert "huggingface" in summarization._SUMMARIZER_CHAT_SPECS
 
 
 def test_model_download_dir_is_only_config_and_installed_legacy_scan_wiring() -> None:

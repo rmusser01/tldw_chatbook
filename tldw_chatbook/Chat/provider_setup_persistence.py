@@ -20,10 +20,12 @@ from weakref import ReferenceType, ref
 
 from ..config import (
     DEFAULT_CONFIG_FROM_TOML,
+    SHIPPED_SAMPLE_MODEL_IDS,
     AtomicConfigSnapshot,
     ConfigMutationResult,
     apply_settings_mutation_to_cli_config,
     is_valid_provider_api_key,
+    normalize_provider_config_key,
 )
 from ..provider_registry import ALL_RECORDS
 from .provider_endpoint_contract import (
@@ -32,7 +34,9 @@ from .provider_endpoint_contract import (
 )
 from .provider_test_evidence import CredentialSource, ProviderDraftIdentity
 
-_MAX_MODEL_CHARS = 120
+#: The longest model id the provider save writes. Settings names it where an
+#: id is typed (TASK-35712), so the two cannot disagree.
+MAX_MODEL_ID_CHARS = 120
 _MAX_SECRET_CHARS = 8192
 _MAX_CONFIG_PROVIDERS = 256
 _MAX_IDENTITY_COUNTER = 2**63 - 1
@@ -81,6 +85,8 @@ class _ProviderOwnership:
 
 _API_URL_PROVIDER_KEYS = frozenset(
     {
+        "strata",
+        "polystrata",
         "aphrodite",
         "custom",
         "custom_2",
@@ -103,6 +109,8 @@ _API_URL_PROVIDER_KEYS = frozenset(
 )
 _CANONICAL_PROVIDER_KEYS = frozenset(
     {
+        "strata",
+        "polystrata",
         "anthropic",
         "aphrodite",
         "cohere",
@@ -783,10 +791,24 @@ def project_provider_setup_expected_state(
 def resolve_remembered_provider_model(
     app_config: object,
     provider: object,
+    *,
+    skip_samples: bool = False,
 ) -> str | None:
-    """Resolve a provider's remembered model without cross-provider borrowing."""
+    """Resolve a provider's remembered model without cross-provider borrowing.
+
+    Args:
+        app_config: The configuration to read.
+        provider: The provider whose model is wanted.
+        skip_samples: Treat a template sample id
+            (``SHIPPED_SAMPLE_MODEL_IDS``) as no remembered model. Only
+            Settings' default choice passes it (TASK-35010); sends keep the
+            table's model.
+    """
 
     ownership = _ownership_for(provider)
+    if skip_samples:
+        model = resolve_remembered_provider_model(app_config, provider)
+        return None if model in SHIPPED_SAMPLE_MODEL_IDS else model
     if not isinstance(app_config, Mapping):
         return None
     chat_defaults = app_config.get("chat_defaults")
@@ -823,7 +845,9 @@ def build_provider_setup_mutation(
             for an unchanged Anthropic subscription selection only.
         keep_stored_credential: For a "stored" draft with no new value, leave
             the existing stored key in place verbatim (neither re-set nor
-            revalidated); it must still resolve as a usable key.
+            revalidated); it must still resolve as a usable key. One key is
+            written: a key the loader copied from legacy ``[API]``, which
+            the provider's table on disk does not hold (TASK-33001.15).
     """
 
     if type(draft) is not ProviderSetupDraft:
@@ -908,6 +932,19 @@ def build_provider_setup_mutation(
             # a key the resolver accepts never fails a model-only save.
             if not is_valid_provider_api_key(existing_value):
                 raise ValueError("Credential setup is invalid.")
+            # TASK-33001.15: a key the loader copied from legacy `[API]` is
+            # not in this table on disk. Left unwritten, "stored" named a
+            # key the table lacked once the env var was exported: readiness
+            # found none while requests spent the env key. A key the setup
+            # validator would refuse stays unwritten, as before.
+            legacy_tables = app_config.get("legacy_api_key_providers")
+            legacy_key = _existing_credential_value(existing_value)
+            if (
+                legacy_key is not None
+                and isinstance(legacy_tables, (tuple, list))
+                and provider_section.removeprefix("api_settings.") in legacy_tables
+            ):
+                provider_values[stored_key] = legacy_key
         else:
             stored_value = credential_value or _existing_credential_value(
                 existing_value
@@ -1077,7 +1114,7 @@ def persist_provider_settings_atomic(
     """Validate and persist one combined provider Settings mutation."""
 
     ownership = _ownership_for(provider)
-    if type(model) is not str or (model and _safe_model(model) != model):
+    if type(model) is not str or (model and not is_writable_model_id(model)):
         raise ValueError("Provider settings model is invalid.")
     _validate_combined_provider_settings_mutation(
         setup_mutation,
@@ -1511,6 +1548,8 @@ def _validate_combined_provider_settings_mutation(
             allowed_extra_keys = {"model_defaults"}
             if ownership.provider_key == "qwencloud":
                 allowed_extra_keys.add("api_mode")
+            if ownership.provider_key == "anthropic":
+                allowed_extra_keys.add("auth_source")
             if not extra_keys.issubset(allowed_extra_keys):
                 if setup_mutation is None:
                     raise connection_error
@@ -1524,11 +1563,31 @@ def _validate_combined_provider_settings_mutation(
                 "chat_completions",
             }:
                 raise error
+            if "auth_source" in extra_keys:
+                # Lazy: the credential module must stay out of the UI-ready set.
+                from ..LLM_Calls.anthropic_subscription import (
+                    AUTH_SOURCE_API_KEY,
+                    AUTH_SOURCE_SUBSCRIPTION,
+                )
+
+                if values["auth_source"] not in {
+                    AUTH_SOURCE_API_KEY,
+                    AUTH_SOURCE_SUBSCRIPTION,
+                }:
+                    raise error
         elif section == "model_capabilities.models":
             if (
                 not model
                 or extra_keys != {model}
                 or not isinstance(values[model], Mapping)
+            ):
+                raise error
+        elif section == "providers":
+            # TASK-35011: a discovered pick joins its own provider's saved
+            # list, by the check Settings' join runs before adding it.
+            list_key, models = next(iter(values.items()))
+            if len(values) != 1 or not saved_model_list_admits(
+                list_key, models, model, ownership.provider_key
             ):
                 raise error
         elif extra_keys:
@@ -1833,13 +1892,45 @@ def _configured_section_key(
     return ownership.config_section
 
 
+def saved_model_list_admits(
+    list_key: object, models: object, model: str, owner: str
+) -> bool:
+    """Say whether a combined save may write ``models`` under ``list_key``.
+
+    The one check the combined validator and Settings' join both run
+    (TASK-35011), so a list Settings adds is one the save accepts, and a
+    list it may not write leaves the default to save alone.
+
+    Args:
+        list_key: The ``[providers]`` key to write: a config key that
+            normalizes to ``owner`` (the owner by ``provider_config_key``,
+            since ``_ownership_for`` cannot spell the template's Custom_2).
+        models: The saved list to write: it holds ``model``, and every id
+            passes the safe-model check.
+        model: The model the save makes the default.
+        owner: The save's canonical provider key.
+
+    Returns:
+        True when the combined save's validator admits the list.
+    """
+    return (
+        bool(model)
+        and type(list_key) is str
+        and _CONFIG_KEY_PATTERN.fullmatch(list_key) is not None
+        and normalize_provider_config_key(list_key) == owner
+        and type(models) is list
+        and model in models
+        and all(_safe_model(item) is not None for item in models)
+    )
+
+
 def _safe_model(value: object) -> str | None:
     if type(value) is not str:
         return None
     model = value.strip()
     if (
         not model
-        or len(model) > _MAX_MODEL_CHARS
+        or len(model) > MAX_MODEL_ID_CHARS
         or not model.isprintable()
         or any(
             unicode_category(character) in _UNSAFE_TEXT_CATEGORIES
@@ -1848,6 +1939,17 @@ def _safe_model(value: object) -> str | None:
     ):
         return None
     return model
+
+
+def is_writable_model_id(model: str) -> bool:
+    """Whether the combined provider save writes ``model`` exactly as given.
+
+    The one model-id check: ``persist_provider_settings_atomic`` refuses an id
+    that fails it, and Settings refuses the same id as it is typed
+    (TASK-35712). It fails an empty or padded id, one over
+    ``MAX_MODEL_ID_CHARS``, and text that is not printable on one line.
+    """
+    return _safe_model(model) == model
 
 
 def _validate_credential_value(value: str) -> None:

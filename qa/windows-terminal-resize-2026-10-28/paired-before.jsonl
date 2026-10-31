@@ -1,0 +1,7 @@
+{"seconds": 0.0, "kind": "windows_size", "size": [98, 42]}
+{"seconds": 2.062, "kind": "app_resize_event", "size": [98, 42]}
+{"seconds": 2.078, "kind": "driver", "name": "WindowsDriver", "input_mode": 512, "output_isatty": true, "render_isatty": true, "windows_terminal": true, "removed_automation_term_dumb": true, "textual": "8.2.8"}
+{"seconds": 4.156, "kind": "layout", "app": [98, 42], "screen": [98, 42], "regions": {"#screen-content": [0, 3, 98, 38], "#logs-destination-header": [0, 3, 98, 5], "#logs-window": [0, 8, 98, 33], "#app-log-display": [0, 9, 98, 30], "#screen-footer-status": [0, 41, 98, 1]}}
+{"seconds": 64.625, "kind": "windows_size", "size": [116, 53]}
+{"seconds": 64.891, "kind": "windows_size", "size": [124, 57]}
+{"seconds": 65.156, "kind": "windows_size", "size": [135, 68]}

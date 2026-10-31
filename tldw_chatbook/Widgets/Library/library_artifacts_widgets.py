@@ -50,6 +50,35 @@ class ArtifactItems(Vertical):
             yield Button("Kept", id="library-artifacts-kept", compact=True)
             yield Button("Newest", id="library-artifacts-sort", compact=True)
         yield Static("Loading reports…", id="library-artifacts-count", markup=False)
+        # TASK-34000.23: the empty-state sentence above names these, so they
+        # sit directly under it in this pane. The CTA opens a consent block;
+        # nothing is seeded, fetched or billed until the run button inside it.
+        # Both start hidden so the frame before the first `sync` paints
+        # neither an orphaned CTA nor an empty framed card.
+        empty_actions = Vertical(id="library-artifacts-empty-actions")
+        empty_actions.display = False
+        confirm = Vertical(id="library-artifacts-demo-confirm")
+        confirm.display = False
+        with empty_actions:
+            with Horizontal(classes="library-artifacts-toolbar"):
+                yield Button(
+                    "Watchlists", id="library-artifacts-watchlists-items", compact=True
+                )
+                yield Button(
+                    "Set up a daily brief…", id="library-artifacts-demo", compact=True
+                )
+            with confirm:
+                yield Static("", id="library-artifacts-demo-copy", markup=False)
+                with Horizontal(classes="library-artifacts-toolbar"):
+                    yield Button(
+                        "Set up and write today's brief",
+                        id="library-artifacts-demo-confirm-run",
+                        classes="console-action-primary",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Cancel", id="library-artifacts-demo-cancel", compact=True
+                    )
         yield OptionList(id="library-artifacts-list")
         with Horizontal(classes="library-artifacts-toolbar"):
             yield Button("First", id="library-artifacts-first", compact=True)
@@ -57,6 +86,9 @@ class ArtifactItems(Vertical):
             yield Button("Next", id="library-artifacts-next", compact=True)
             yield Button("Last", id="library-artifacts-last", compact=True)
         yield Button("Retry", id="library-artifacts-retry", compact=True)
+        yield Button(
+            "Goals & privacy…", id="library-artifacts-dreams-goals", compact=True
+        )
         yield Button(
             "Manage Chatbook packs…", id="library-artifacts-manage", compact=True
         )
@@ -68,6 +100,7 @@ class ArtifactItems(Vertical):
             "reports": "Reports",
             "chatbooks": "Chatbooks",
             "all": "All artifacts",
+            "dreams": "Dreams",
         }[c.scope.view]
         self.query_one("#library-artifacts-heading", Static).update(f"{title} · Local")
         self.query_one(Input).placeholder = (
@@ -75,7 +108,13 @@ class ArtifactItems(Vertical):
             if c.scope.view == "reports"
             else "Find artifacts by title…"
         )
-        self.query_one("#library-artifacts-manage").display = c.scope.view != "reports"
+        self.query_one("#library-artifacts-manage").display = c.scope.view in (
+            "all",
+            "chatbooks",
+        )
+        self.query_one("#library-artifacts-dreams-goals").display = (
+            c.scope.view == "dreams"
+        )
         self.query_one("#library-artifacts-all").display = c.scope.view == "reports"
         self.query_one("#library-artifacts-kept").display = c.scope.view == "reports"
         self._syncing = True
@@ -118,9 +157,31 @@ class ArtifactItems(Vertical):
                     if c.scope.query or c.scope.kept_only
                     else "No Chatbooks yet. Open Manage Chatbook packs."
                     if c.scope.view == "chatbooks"
-                    else "No reports yet. Open Watchlists or try the report demo."
+                    else "No Dreams yet. Enable Dreams in F4 Settings to begin."
+                    if c.scope.view == "dreams"
+                    else "No reports yet. Open Watchlists, or set up a daily brief below."
                 )
             self.query_one("#library-artifacts-count", Static).update(status)
+            # Empty Reports (or a failed first run): the press reaches the
+            # same consent, which reads the existing schedule and shows the
+            # reuse copy. `empty_actions_visible` is the controller's one
+            # predicate; the work pane reads it too (F4).
+            actions_visible = c.empty_actions_visible
+            self.query_one("#library-artifacts-empty-actions").display = actions_visible
+            consent = c.demo_consent if actions_visible else None
+            self.query_one("#library-artifacts-demo-confirm").display = bool(consent)
+            if consent:
+                self.query_one("#library-artifacts-demo-copy", Static).update(
+                    "\n".join(consent.lines)
+                )
+                run = self.query_one("#library-artifacts-demo-confirm-run", Button)
+                run.label = (
+                    "Write today's brief"
+                    if consent.existing
+                    else "Set up and write today's brief"
+                )
+                run.disabled = not consent.available
+                run.tooltip = None if consent.available else consent.lines[0]
             self.query_one("#library-artifacts-retry").display = bool(
                 c.error or c.detail_error
             )
@@ -189,6 +250,7 @@ class ArtifactWork(Vertical):
             yield Button("Details", id="library-artifacts-details", compact=True)
         yield Static("Select a report", id="library-artifacts-title", markup=False)
         yield Static("", id="library-artifacts-retention", markup=False)
+        yield Static("", id="library-artifacts-degradation", markup=False)
         with VerticalScroll(id="library-artifacts-body"):
             yield Static(
                 "Choose an item to read it here.",
@@ -202,12 +264,14 @@ class ArtifactWork(Vertical):
             yield Button("Scripts…", id="library-artifacts-scripts", compact=True)
             yield Button("Play", id="library-artifacts-play", compact=True)
         with Horizontal(classes="library-artifacts-toolbar"):
+            yield Button(
+                "Story actions…", id="library-artifacts-dreams-actions", compact=True
+            )
             yield Button("Share…", id="library-artifacts-share", compact=True)
             yield Button("Use in Console", id="library-artifacts-console", compact=True)
             yield Button("Open source", id="library-artifacts-source", compact=True)
         with Horizontal(classes="library-artifacts-toolbar"):
             yield Button("Watchlists", id="library-artifacts-watchlists", compact=True)
-            yield Button("Try report demo", id="library-artifacts-demo", compact=True)
 
     def sync(self) -> None:
         c = self.controller
@@ -222,7 +286,19 @@ class ArtifactWork(Vertical):
         )
         retained = c.selected and c.selected.source == "kept_report"
         chatbook = c.selected and c.selected.source == "chatbook"
+        dream = c.selected and c.selected.source in (
+            "dream_story",
+            "dream_collection",
+            "dream_track",
+        )
         metadata = dict(detail.details) if detail else {}
+        degradation = self.query_one("#library-artifacts-degradation", Static)
+        degradation.display = bool(metadata.get("Degradation"))
+        degradation.update(
+            Text("Collection notice: " + metadata["Degradation"])
+            if degradation.display
+            else ""
+        )
         self.query_one("#library-artifacts-retention", Static).update(
             " · ".join(
                 filter(
@@ -235,6 +311,11 @@ class ArtifactWork(Vertical):
                 )
             )
             if chatbook
+            else "Dreams · "
+            + metadata.get("Collection", "")
+            + " · "
+            + metadata.get("Collection status", "")
+            if dream
             else "Kept in Library · independent saved copy"
             if retained
             else "Watchlist copy · disappears if its Watchlist is deleted"
@@ -252,8 +333,14 @@ class ArtifactWork(Vertical):
         elif detail.body:
             body = Text("")
         else:
-            body = Text(
-                f"This report is {row.status if row else 'unavailable'}. Open Watchlists for its status."
+            body = (
+                Text("The original story is unavailable. Open Details for tracking status.")
+                if c.selected and c.selected.source == "dream_track"
+                else Text("This discovery cycle recorded no stories.")
+                if dream
+                else Text(
+                    f"This report is {row.status if row else 'unavailable'}. Open Watchlists for its status."
+                )
             )
         preview = bool(
             detail and detail.body and c.mode == "preview" and not c.detail_loading
@@ -274,6 +361,7 @@ class ArtifactWork(Vertical):
             and not c.busy
         )
         for name, allowed in (
+            ("dreams-actions", detail and detail.dream_story is not None),
             ("keep", detail and detail.can_keep),
             ("export", detail and detail.can_export),
             ("play", detail and detail.can_play),
@@ -285,12 +373,14 @@ class ArtifactWork(Vertical):
             button = self.query_one(f"#library-artifacts-{name}", Button)
             button.display = bool(allowed)
             button.disabled = not ready
-        self.query_one("#library-artifacts-demo").display = (
-            c.scope.view != "chatbooks"
-            and (not c.selected or bool(row and row.status == "failed"))
-        )
+        # Final review (2026-10-20) F4: while the items pane offers the
+        # empty-state "Watchlists" beside the daily-brief CTA, this standing
+        # copy stays hidden so the empty state paints the control once.
         self.query_one("#library-artifacts-watchlists").display = (
-            c.scope.view != "chatbooks" and not chatbook
+            c.scope.view not in ("chatbooks", "dreams")
+            and not chatbook
+            and not dream
+            and not c.empty_actions_visible
         )
         for toolbar in self.query(Horizontal):
             toolbar.display = any(button.display for button in toolbar.query(Button))

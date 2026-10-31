@@ -1,0 +1,8 @@
+Tests/Chat/test_console_chat_create_integration.py
+Tests/Chat/test_console_note_span_actions.py
+Tests/UI/test_console_composer_run_controls.py
+Tests/Utils/test_console_new_chat_input_validation.py
+tldw_chatbook/Chat/console_agent_bridge.py
+tldw_chatbook/Chat/console_chat_controller.py
+tldw_chatbook/Utils/input_validation.py
+tldw_chatbook/Widgets/Console/console_composer_bar.py

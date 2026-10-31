@@ -7,6 +7,7 @@ deliberately excluded: child runs keep the run loop's streaming policy.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, overload
 
@@ -30,6 +31,11 @@ _STRING_KEYS = frozenset({
 # settings are held to ONE contract, so an out-of-range value is refused at
 # save time instead of reaching a provider request.
 TEMPERATURE_RANGE: tuple[float, float] = (0.0, 2.0)
+#: A provider whose API takes a narrower temperature, by config key
+#: (TASK-33007 capture finding 11): Anthropic's Messages API takes 0 to 1.
+PROVIDER_TEMPERATURE_RANGES: dict[str, tuple[float, float]] = {
+    "anthropic": (0.0, 1.0),
+}
 TOP_P_RANGE: tuple[float, float] = (0.0, 1.0)
 MIN_P_RANGE: tuple[float, float] = (0.0, 1.0)
 #: Shared by ``presence_penalty`` and ``frequency_penalty``.
@@ -67,6 +73,18 @@ _STRING_ENUMS: dict[str, frozenset[str]] = {
     "verbosity": VERBOSITY_VALUES,
     "thinking_effort": THINKING_EFFORT_VALUES,
 }
+
+
+def temperature_range(provider_key: str) -> tuple[float, float]:
+    """Return the temperature range a provider's API accepts.
+
+    Args:
+        provider_key: The provider's config key, e.g. ``"anthropic"``.
+
+    Returns:
+        ``(low, high)``; ``TEMPERATURE_RANGE`` for a provider not listed.
+    """
+    return PROVIDER_TEMPERATURE_RANGES.get(provider_key, TEMPERATURE_RANGE)
 
 
 def validate_sampling_params(params: Mapping[str, Any]) -> list[str]:
@@ -323,3 +341,47 @@ def bool_setting_from_sources(
             if normalized in {"false", "0"}:
                 return False
     return default
+
+
+_INT_LITERAL = re.compile(r"[+-]?\d+")
+
+
+def parse_params_text(text: str) -> tuple[dict[str, object], list[str]]:
+    """Parse a ``key = value``-per-line sampling-params draft.
+
+    Numeric literals become ``int``/``float``; anything else stays a string.
+    Non-finite float literals (``inf``/``nan``) stay strings so validation
+    rejects them as non-numbers rather than smuggling an un-JSON-able float
+    into the DB or the config file.
+
+    Args:
+        text: The raw TextArea draft.
+
+    Returns:
+        ``(params, errors)``: the parsed mapping (insertion-ordered by line)
+        and grammar errors only — validate the mapping itself with
+        ``validate_sampling_params``. Empty ``errors`` means every non-blank
+        line parsed.
+    """
+    params: dict[str, object] = {}
+    errors: list[str] = []
+    for lineno, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        key, sep, raw_value = line.partition("=")
+        key = key.strip()
+        value = raw_value.strip()
+        if not sep or not key:
+            errors.append(f"params line {lineno}: expected 'key = value'")
+            continue
+        if _INT_LITERAL.fullmatch(value):
+            params[key] = int(value)
+            continue
+        try:
+            number = float(value)
+        except ValueError:
+            params[key] = value
+        else:
+            params[key] = number if math.isfinite(number) else value
+    return params, errors

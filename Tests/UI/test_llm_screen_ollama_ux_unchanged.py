@@ -100,7 +100,9 @@ def _gated_buttons(window: LLMManagementWindow) -> list[Button]:
 async def test_ollama_controls_disabled_when_probe_reports_down(monkeypatch):
     app = _build_test_app()
     async with app.run_test(size=(120, 40)) as pilot:
-        window = await _mount_models_with_probe_result(monkeypatch, pilot, available=False)
+        window = await _mount_models_with_probe_result(
+            monkeypatch, pilot, available=False
+        )
 
         gated = _gated_buttons(window)
         assert gated, "test premise: at least one gated Ollama button exists"
@@ -121,18 +123,21 @@ async def test_ollama_controls_disabled_when_probe_reports_down(monkeypatch):
 async def test_ollama_controls_enabled_when_probe_reports_up(monkeypatch):
     app = _build_test_app()
     async with app.run_test(size=(120, 40)) as pilot:
-        window = await _mount_models_with_probe_result(monkeypatch, pilot, available=True)
+        window = await _mount_models_with_probe_result(
+            monkeypatch, pilot, available=True
+        )
 
         gated = _gated_buttons(window)
         assert gated, "test premise: at least one gated Ollama button exists"
         assert not any(button.disabled for button in gated), (
-            "no gated Ollama button should be disabled while the service "
-            "is available"
+            "no gated Ollama button should be disabled while the service is available"
         )
 
 
 @pytest.mark.asyncio
-async def test_ollama_controls_flip_when_availability_changes_between_ticks(monkeypatch):
+async def test_ollama_controls_flip_when_availability_changes_between_ticks(
+    monkeypatch,
+):
     """The same coroutine drives both the one-shot post-mount check and
     the periodic `set_interval(3.0, ...)` tick -- exercise both directly
     rather than waiting a real 3s for the timer, and prove the gate is not
@@ -140,7 +145,9 @@ async def test_ollama_controls_flip_when_availability_changes_between_ticks(monk
     """
     app = _build_test_app()
     async with app.run_test(size=(120, 40)) as pilot:
-        window = await _mount_models_with_probe_result(monkeypatch, pilot, available=False)
+        window = await _mount_models_with_probe_result(
+            monkeypatch, pilot, available=False
+        )
         assert all(button.disabled for button in _gated_buttons(window))
 
         async def fake_probe_up(host: str = "127.0.0.1", port: int = 11434) -> bool:
@@ -185,7 +192,9 @@ async def test_a_screen_switch_mid_probe_leaves_buttons_untouched(monkeypatch):
     """
     app = _build_test_app()
     async with app.run_test(size=(120, 40)) as pilot:
-        window = await _mount_models_with_probe_result(monkeypatch, pilot, available=True)
+        window = await _mount_models_with_probe_result(
+            monkeypatch, pilot, available=True
+        )
         gated = _gated_buttons(window)
         assert gated, "test premise: at least one gated Ollama button exists"
         assert not any(button.disabled for button in gated), (

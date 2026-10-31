@@ -1,0 +1,11 @@
+{
+  "path": "backlog/docs/lessons-backlog-hygiene.md",
+  "current_rebase_head": "2a106e6717e978fb5b10f4d35ecadac78b8effdb",
+  "replayed_commit": "bbea2bae4deb53f1bdab021469d7cccabd7560de",
+  "base_sha256": "90d8329e39e450a7d26c7fbb84b516db9931d18459bfd352366a79b9ba0b57f5",
+  "upstream_sha256": "febdaa69fac2041422da2d965df22770c0fb43624e6a8730ff77a2d976b0d248",
+  "feature_append_bytes": 869,
+  "incoming_append_bytes": 682,
+  "candidate_sha256": "49f6324c6348519e418d883b8c78b80d5c4dbc2a340c2318ed4edab26b3d1f97",
+  "reverse_feature_append_restores_exact_upstream": true
+}

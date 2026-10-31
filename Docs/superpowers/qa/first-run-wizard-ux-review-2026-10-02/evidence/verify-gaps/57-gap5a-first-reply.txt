@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4   More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Reply with exactly: gemini ok                                                      │
+                  Context ◂  │   Reply with exactly…  ✕    New tab     Temporary                                                 │
+   Terminal                  │                                                                                                   │
+ ──────────────────────────  │                                                                                                   │
+ Workspaces             ▸    │                                                                                                   │
+ ──────────────────────────  │                                                                                                   │
+ Conversations          ▾    │                                                                                                   │
+     Archive this chat       │                                                                                                   │
+      Archived chats         │                                                                                                   │
+     Search all chats…       │                                                                                                   │
+   Reply with exactly:       │                                                                                                   │
+   gemini ok                 │                                                                                                   │
+                             │                                                                                                   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                   │
+  ▊  Filter      ▎           │                                                                                                   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                   │◂ Inspect
+                             │                                                                                                   │
+  Chats                 ▾    │                                                                                                   │
+   Reply with exactl…  💬    │                                                                                                   │
+                             │  ───────────────────────────────────────────────────────────────────────────────────────────────  │
+ ──────────────────────────  │   User                                                                                            │
+ Character · No chats   ▸    │   Reply with exactly: gemini ok                                                                   │
+ ──────────────────────────  │  ───────────────────────────────────────────────────────────────────────────────────────────────  │
+ Model                  ▸    │  ▊ Assistant  Failed                                                                              │
+ ──────────────────────────  │  ▊                                                                                                │
+ Agent                  ▸    │  ▊  Response failed.                                                                              │
+ ──────────────────────────  │  ▊                                                                                                │
+ Details                ▸    │  ▊                                                                                                │
+                             │  ───────────────────────────────────────────────────────────────────────────────────────────────  │
+                             │   System                                                                                          │
+                             │   Agent run failed: provider returned HTTP 404 (Provider error from google: provider              │
+                             │   unavailable. Status: 404.).                                                                     │
+                             │  ───────────────────────────────────────────────────────────────────────────────────────────────  │  failed
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Google Gemini     Model: gemini-2.5-flash     System Prompt: off     Assistant
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                       Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+P · Ctrl+Q

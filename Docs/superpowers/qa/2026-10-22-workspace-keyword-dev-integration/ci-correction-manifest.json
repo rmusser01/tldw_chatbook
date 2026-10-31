@@ -1,0 +1,338 @@
+{
+  "product_source_commit": "e8c841d48ba35f99433842e5e7552f989867c01f",
+  "correction_base": "007521567a9e961d2cd854432b357b545d8605d4",
+  "original_files_verified_unchanged": 161,
+  "new_rulings": 10,
+  "files": [
+    {
+      "source": "ci-ratchet-brief.md",
+      "retained": "raw/ci-correction/ci-ratchet-brief.md",
+      "bytes": 4409,
+      "sha256": "93afed5301cbaee7d11a545fb3f58868d18760331b6638f7609b8a3faf849c86"
+    },
+    {
+      "source": "ci-ratchet-chat-ast.json",
+      "retained": "raw/ci-correction/ci-ratchet-chat-ast.json",
+      "bytes": 387,
+      "sha256": "9799b8c4cd6d5bcb4732478f795b387e317ccc3bef7bf0785a86becc3e649a73"
+    },
+    {
+      "source": "ci-ratchet-chat-guards-command.json",
+      "retained": "raw/ci-correction/ci-ratchet-chat-guards-command.json",
+      "bytes": 1242,
+      "sha256": "4061fcc02a5757ce1f2f130903c547087ef5edc2568b6708c2273de954dcd597"
+    },
+    {
+      "source": "ci-ratchet-chat-guards.txt",
+      "retained": "raw/ci-correction/ci-ratchet-chat-guards.txt",
+      "bytes": 2490,
+      "sha256": "23facd49ddc421f3d4176d83ee583d0a95b5bce41a995d1937c60c4e3c6367f6"
+    },
+    {
+      "source": "ci-ratchet-child-receipts.json",
+      "retained": "raw/ci-correction/ci-ratchet-child-receipts.json",
+      "bytes": 6669,
+      "sha256": "b9adeecc2630ccc3e1f50354ca9f6dda77d3a1ccb8d6a3746f92ed4618890f5f"
+    },
+    {
+      "source": "ci-ratchet-child-retention-limit.json",
+      "retained": "raw/ci-correction/ci-ratchet-child-retention-limit.json",
+      "bytes": 7143,
+      "sha256": "21c5f204b78924bc06d3ec104b50e45104b9ef11591c70a9c63a3bc617ab4213"
+    },
+    {
+      "source": "ci-ratchet-diagnostics-command.json",
+      "retained": "raw/ci-correction/ci-ratchet-diagnostics-command.json",
+      "bytes": 4114,
+      "sha256": "2e53c95e598a26439d751ed70df65da336b40a1658dcedb8ccb95d8b24bbf3fd"
+    },
+    {
+      "source": "ci-ratchet-diagnostics-diff.txt",
+      "retained": "raw/ci-correction/ci-ratchet-diagnostics-diff.txt",
+      "bytes": 2321,
+      "sha256": "a88105ec1a3c6d332005d45fedfa7245cad342487ff32ed6defc83f8d0203279"
+    },
+    {
+      "source": "ci-ratchet-diagnostics-final-command.json",
+      "retained": "raw/ci-correction/ci-ratchet-diagnostics-final-command.json",
+      "bytes": 271,
+      "sha256": "8531dd794ccef2ca493f0828097518cac227062f34b9003764a7d8eb8eb043f8"
+    },
+    {
+      "source": "ci-ratchet-diagnostics-final.txt",
+      "retained": "raw/ci-correction/ci-ratchet-diagnostics-final.txt",
+      "bytes": 185,
+      "sha256": "4f1180cdc178386841d5b85b9a64f8db59db5cb718eb57f78046ff923067ccec"
+    },
+    {
+      "source": "ci-ratchet-diagnostics-statements.txt",
+      "retained": "raw/ci-correction/ci-ratchet-diagnostics-statements.txt",
+      "bytes": 966,
+      "sha256": "74aa757a04478403d00fd194659ef0dbb9e559742fb78f1958ec701cc7a3139b"
+    },
+    {
+      "source": "ci-ratchet-diagnostics-write-command.json",
+      "retained": "raw/ci-correction/ci-ratchet-diagnostics-write-command.json",
+      "bytes": 271,
+      "sha256": "9173cba9322ad2ede83065fb6ad981a7fc4591385f5c73ecce3d4d071c741ea1"
+    },
+    {
+      "source": "ci-ratchet-diagnostics-write.txt",
+      "retained": "raw/ci-correction/ci-ratchet-diagnostics-write.txt",
+      "bytes": 58,
+      "sha256": "80c6216fa384ba3a51f97a8f5ccc8911059ca9684576df30f42d9957b1078ba3"
+    },
+    {
+      "source": "ci-ratchet-final-static-parity.json",
+      "retained": "raw/ci-correction/ci-ratchet-final-static-parity.json",
+      "bytes": 2361,
+      "sha256": "f1d1e80a1ffa05b03f08432a5b4bc01b323c2d1c62b91acd14f8927e4cf31393"
+    },
+    {
+      "source": "ci-ratchet-final-ten-path-matrix.json",
+      "retained": "raw/ci-correction/ci-ratchet-final-ten-path-matrix.json",
+      "bytes": 6639,
+      "sha256": "6bd136a6a3b834a2cf78a3591419cc0b757b29c418c78b9787f235a096daf3fa"
+    },
+    {
+      "source": "ci-ratchet-format-head-settings.txt",
+      "retained": "raw/ci-correction/ci-ratchet-format-head-settings.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "ci-ratchet-format-helper.txt",
+      "retained": "raw/ci-correction/ci-ratchet-format-helper.txt",
+      "bytes": 26,
+      "sha256": "7688ae71c60af2e4266827abb3678cc2145655f587daf33dfa649dbac2c619c3"
+    },
+    {
+      "source": "ci-ratchet-format-settings.txt",
+      "retained": "raw/ci-correction/ci-ratchet-format-settings.txt",
+      "bytes": 90,
+      "sha256": "9038ee0c1a2dbf99e875b16e6a97e1b95b8380e01f312d4a0b1d3667176c27b5"
+    },
+    {
+      "source": "ci-ratchet-grounding-command.json",
+      "retained": "raw/ci-correction/ci-ratchet-grounding-command.json",
+      "bytes": 1193,
+      "sha256": "ce048dd32e8fb3fa03e0cd11b3188f00dc4c666ae2c8bfb000d9f53b6682fbf6"
+    },
+    {
+      "source": "ci-ratchet-grounding.txt",
+      "retained": "raw/ci-correction/ci-ratchet-grounding.txt",
+      "bytes": 2469,
+      "sha256": "ae43031e61e67ee59c15b465bbd011edb93be8821f29e4826a91a14185607aa2"
+    },
+    {
+      "source": "ci-ratchet-import-bootstrap-failure.txt",
+      "retained": "raw/ci-correction/ci-ratchet-import-bootstrap-failure.txt",
+      "bytes": 1196,
+      "sha256": "749d5e88d71ec0b6d5b662cdcce597b22acc2f47ff44cf6efad385edf56a8342"
+    },
+    {
+      "source": "ci-ratchet-import-output.txt",
+      "retained": "raw/ci-correction/ci-ratchet-import-output.txt",
+      "bytes": 1757,
+      "sha256": "d191c319ab9468620fea039c5f72a8814072f5c9107c75f1ba1f996a5d07c7cd"
+    },
+    {
+      "source": "ci-ratchet-import-review-package.json",
+      "retained": "raw/ci-correction/ci-ratchet-import-review-package.json",
+      "bytes": 388,
+      "sha256": "8be97d3f520b638aab048194b527f5ad3f660f4255605fede67acc3aa2748b9b"
+    },
+    {
+      "source": "ci-ratchet-import-review-package.txt",
+      "retained": "raw/ci-correction/ci-ratchet-import-review-package.txt",
+      "bytes": 970,
+      "sha256": "00f3a0c5cc2ab45a08232bdd47840a4e4a65f9f33a97886e51138976fa55a087"
+    },
+    {
+      "source": "ci-ratchet-import-verification.json",
+      "retained": "raw/ci-correction/ci-ratchet-import-verification.json",
+      "bytes": 2538,
+      "sha256": "0c06bb3d73a423b9402c8e90d2171fa6dbe446a85032613dc12af77236fa973b"
+    },
+    {
+      "source": "ci-ratchet-import-verify.py",
+      "retained": "raw/ci-correction/ci-ratchet-import-verify.py",
+      "bytes": 3396,
+      "sha256": "705d2a908983aa88f4a11be9ca4fc52f4bbf194e9fbf10599804dd6a4e85567d"
+    },
+    {
+      "source": "ci-ratchet-interrupt-citation-command.json",
+      "retained": "raw/ci-correction/ci-ratchet-interrupt-citation-command.json",
+      "bytes": 1604,
+      "sha256": "d2d2048f4418a14902a7b485fa2af8ab45b95d3c7bd539867fa8dffc241cd48d"
+    },
+    {
+      "source": "ci-ratchet-interrupt-citation.txt",
+      "retained": "raw/ci-correction/ci-ratchet-interrupt-citation.txt",
+      "bytes": 2194,
+      "sha256": "21725cb622b8c1b9bb02754d7faf9669e972450490d31c8130591fb15d507a06"
+    },
+    {
+      "source": "ci-ratchet-lint-head-settings.txt",
+      "retained": "raw/ci-correction/ci-ratchet-lint-head-settings.txt",
+      "bytes": 7136,
+      "sha256": "b3e62fc9b29ee5e3b24db9e269ec50dc529ed59bf052d966a73fbd88b85663c1"
+    },
+    {
+      "source": "ci-ratchet-lint.txt",
+      "retained": "raw/ci-correction/ci-ratchet-lint.txt",
+      "bytes": 7130,
+      "sha256": "a1681e42bcbf88bf99d6d9e036bcfe473ad5d0b2ff550e42006f9be2a2834951"
+    },
+    {
+      "source": "ci-ratchet-pytest-command.json",
+      "retained": "raw/ci-correction/ci-ratchet-pytest-command.json",
+      "bytes": 1330,
+      "sha256": "bdee7c5ef1f5d9ac54bc2bc0037cd46cfbff73bdc3371d873decb70135294118"
+    },
+    {
+      "source": "ci-ratchet-pytest.txt",
+      "retained": "raw/ci-correction/ci-ratchet-pytest.txt",
+      "bytes": 10221,
+      "sha256": "b029e57ed0b66bdd8805697323a1fb95417bafd6e8e7492b4cdba9e6b369b932"
+    },
+    {
+      "source": "ci-ratchet-query-source-applicability.json",
+      "retained": "raw/ci-correction/ci-ratchet-query-source-applicability.json",
+      "bytes": 7081,
+      "sha256": "0fa9281aacc54397bbfdafb834d67883ed1b9d2b4a7fffa8ab5fa85be013bce3"
+    },
+    {
+      "source": "ci-ratchet-review-brief.md",
+      "retained": "raw/ci-correction/ci-ratchet-review-brief.md",
+      "bytes": 3682,
+      "sha256": "274442d31b128a54020fc417d7b638a02cd9f66c7fcc49b4a29a7fa41ec0b070"
+    },
+    {
+      "source": "ci-ratchet-review-package-00a1e149.txt",
+      "retained": "raw/ci-correction/ci-ratchet-review-package-00a1e149.txt",
+      "bytes": 71120,
+      "sha256": "a5b8f3b739474d12670d72a0ed1b3ffdef15e6a2c281902559be3f02891f9dc8"
+    },
+    {
+      "source": "ci-ratchet-review-package-00a1e149.txt.json",
+      "retained": "raw/ci-correction/ci-ratchet-review-package-00a1e149.txt.json",
+      "bytes": 1079,
+      "sha256": "78d04dce18a7a8c38d3a9a58d5055b2e1b27668a034594bd03913dd7acefaf78"
+    },
+    {
+      "source": "ci-ratchet-review.md",
+      "retained": "raw/ci-correction/ci-ratchet-review.md",
+      "bytes": 7053,
+      "sha256": "bb2250de668ad00758327b9bfba9db36c815a53eabebbe94a44de4381c0cd47c"
+    },
+    {
+      "source": "ci-ratchet-root-final-source-check.json",
+      "retained": "raw/ci-correction/ci-ratchet-root-final-source-check.json",
+      "bytes": 1146,
+      "sha256": "07912f6057d2e7423042015dadd52171cc384e38ff38549b3c3cc60fa6c9492d"
+    },
+    {
+      "source": "ci-ratchet-scoped-checks.json",
+      "retained": "raw/ci-correction/ci-ratchet-scoped-checks.json",
+      "bytes": 1080,
+      "sha256": "f390e84d2a7a4e0c23f52736f7fa781d5d0fb11105309733c8793b740a827357"
+    },
+    {
+      "source": "ci-ratchet-settings-params-command.json",
+      "retained": "raw/ci-correction/ci-ratchet-settings-params-command.json",
+      "bytes": 671,
+      "sha256": "2ccb5eddd3a00a9673bf82be1a3935b2980b1ee790eb0f74b2c5ddccfff48893"
+    },
+    {
+      "source": "ci-ratchet-settings-params.txt",
+      "retained": "raw/ci-correction/ci-ratchet-settings-params.txt",
+      "bytes": 1606,
+      "sha256": "0aa83faaecb8b8835dffbb64c5d9f0a0bd333b299a7350b0851b0da32a83403b"
+    },
+    {
+      "source": "ci-ratchet-shutdown-command.json",
+      "retained": "raw/ci-correction/ci-ratchet-shutdown-command.json",
+      "bytes": 1169,
+      "sha256": "3ee6af4c7fb3f940c783ab0c1dbd26b46d130871c4d9f5bd9a10f187c6781065"
+    },
+    {
+      "source": "ci-ratchet-shutdown.txt",
+      "retained": "raw/ci-correction/ci-ratchet-shutdown.txt",
+      "bytes": 1703,
+      "sha256": "05ea73cad2662af2ef8f00b8ae93feaf66211c11e27dca3f4521b8675f4a0534"
+    },
+    {
+      "source": "ci-ratchet-static.json",
+      "retained": "raw/ci-correction/ci-ratchet-static.json",
+      "bytes": 1092,
+      "sha256": "bf50cd0c51aaab18b11c3b13fe0460889536848e7043c205f0bf20f081d31944"
+    },
+    {
+      "source": "ci-ratchet-task-acceptance.json",
+      "retained": "raw/ci-correction/ci-ratchet-task-acceptance.json",
+      "bytes": 1646,
+      "sha256": "2acd48e4fe5ceb2a3b28c65a8c1d3e53d77d2d8dcde2a07acfbc52a887eb4ee5"
+    },
+    {
+      "source": "ci-ratchet-task-acceptance.stderr.bin",
+      "retained": "raw/ci-correction/ci-ratchet-task-acceptance.stderr.bin",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "ci-ratchet-task-acceptance.stdout.bin",
+      "retained": "raw/ci-correction/ci-ratchet-task-acceptance.stdout.bin",
+      "bytes": 29035,
+      "sha256": "2dba460c813d50ce6a70e2e6ae5a0115fdf289dd08f0db6e44043e6c1ff8ef50"
+    },
+    {
+      "source": "ci-ratchet-unrelated-ratchet-baseline.json",
+      "retained": "raw/ci-correction/ci-ratchet-unrelated-ratchet-baseline.json",
+      "bytes": 3999,
+      "sha256": "b2e9783546ae5541212241cacdbaa1149dc9dd7adf50b2c5b3182f86c02f00d0"
+    },
+    {
+      "source": "hosted-fastlane-failure.log",
+      "retained": "raw/ci-correction/hosted-fastlane-failure.log",
+      "bytes": 88883,
+      "sha256": "7fd262672e3fdda1460dade35a9b9bce74a47d56b3ac6f2c932da9ff4bafdb79"
+    },
+    {
+      "source": "disable-auto-ci-failure.txt",
+      "retained": "raw/ci-correction/disable-auto-ci-failure.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "ci-failure-disarmed-state.json",
+      "retained": "raw/ci-correction/ci-failure-disarmed-state.json",
+      "bytes": 148,
+      "sha256": "3b9fb8503f0f123df3765565563c24129e02cee19d83bacbd0a75d9aecb2d1fd"
+    },
+    {
+      "source": "post-disarm-pull-rebase.txt",
+      "retained": "raw/ci-correction/post-disarm-pull-rebase.txt",
+      "bytes": 20,
+      "sha256": "e5d6c99aec87ec07a2d1b5c1222d8b690d0a61c3548a55c795fff56db9450d0d"
+    },
+    {
+      "source": "ci-correction-pr-state.json",
+      "retained": "raw/ci-correction/ci-correction-pr-state.json",
+      "bytes": 9613,
+      "sha256": "f0ae3bb727d341c502b3d90bf5db1d0a16f1ba59d1dcd11195a65f3752f3d2d4"
+    },
+    {
+      "source": "integration-fix-report.md",
+      "retained": "raw/ci-correction/integration-fix-report.md",
+      "bytes": 60239,
+      "sha256": "aa7d486023eee3f119183978774d8ccd5d0e29218ca5073ad369f67c3be6849e"
+    },
+    {
+      "source": "progress.md",
+      "retained": "raw/ci-correction/progress.md",
+      "bytes": 21127,
+      "sha256": "41d916cee956683d4bb8dede59c260ef4d8a117cafa321077ec942274bb7cf2f"
+    }
+  ]
+}

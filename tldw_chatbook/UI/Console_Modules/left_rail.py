@@ -47,6 +47,7 @@ from dataclasses import dataclass
 
 from loguru import logger
 from rich.cells import cell_len
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
@@ -71,6 +72,8 @@ from ...Chat.console_settings_defaults import (
 )
 from ...Widgets.glyph_fallback import resolve_glyph
 from ...Chat.console_session_settings import ConsoleSettingsSummaryState
+from ...UI.Navigation.surface_swap_guard import finish_removal
+from ...UI.character_display_text import sanitize_character_display_label
 from ...Widgets.Console import (
     ConsoleBoundedSection,
     ConsoleWorkspaceContextTray,
@@ -85,6 +88,7 @@ from ...Widgets.Console.console_agent_steering_bar import (
     ConsoleAgentSteeringState,
 )
 from ...Widgets.Console.console_image_viewer_modal import ClickableAvatarBox
+from ...Widgets.Console.portrait_radio import PortraitRadio
 from ...Widgets.Console.console_character_context import ConsoleCharacterContext
 from ...Widgets.Console.console_workspace_details import ConsoleWorkspaceDetailsTray
 from ...Widgets.destination_rail import (
@@ -137,6 +141,34 @@ CharacterAvatarFitBox = Callable[[int, int], CharacterAvatarBox | None]
 CharacterAvatarPrerenderJob = Callable[
     [CharacterAvatarBox], Callable[[], object] | None
 ]
+
+
+def rail_focus_shortcuts(
+    shortcuts: tuple[tuple[str, str], ...],
+) -> tuple[tuple[str, str], ...]:
+    """Return the Console footer hints for focus inside either rail.
+
+    TASK-32322: with focus inside a rail, Tab is region-locked -- the exits
+    are F6 and Esc, taught first (degradation drops from the END). That names
+    F6 and Esc, so their own hints go (a collapsed composer's Esc too), and
+    Ctrl+K/T trail the rail's Alt+I/A/C: a 211-column footer keeps all three
+    (TASK-33006.20).
+
+    Args:
+        shortcuts: The footer's ``(key label, description)`` hints, in the
+            order the footer shows them.
+
+    Returns:
+        The rail-exit hint, then ``shortcuts`` without the F6/Esc hints and
+        with Ctrl+K/T moved after the last Alt+I/A/C hint (or to the end).
+    """
+    later = (("Ctrl+K", "switch session"), ("Ctrl+T", "new tab"))
+    gone = (("F6", "next pane"), ("Esc", "show composer"), *later)
+    rest = [p for p in shortcuts if p not in gone]
+    keys = ("Alt+I", "Alt+A", "Alt+C")
+    at = max([i + 1 for i, p in enumerate(rest) if p[0] in keys] or [len(rest)])
+    rest[at:at] = [p for p in shortcuts if p in later]
+    return (("Esc", "composer · F6 panes"), *rest)
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +273,12 @@ class _ContextBoundedSection(ConsoleBoundedSection):
             return
         if self.desired_content_lines != previous_demand:
             self._allocation_owner.request_allocation_reconcile()
+
+
+def _reaction_caption(manual_label: str | None) -> str:
+    """The Character section's Reaction line for ``manual_label``."""
+
+    return "Reaction: " + (f"{manual_label} (manual)" if manual_label else "Automatic")
 
 
 class ConsoleLeftRail(Vertical):
@@ -508,11 +546,13 @@ class ConsoleLeftRail(Vertical):
         self._active_reveal_generation = 0
         self._pending_active_reveal: tuple[int, str, str | None, bool] | None = None
         self._allocation_reconcile_scheduled = False
+        # TASK-35970: opened Character renders still mounting the snapshot
+        # deferred while collapsed; allocation passes wait for all of them.
+        self._character_renders_pending = 0
         self._last_allocation_state: (
             tuple[bool, int, tuple[ConsoleBoundedSection, ...]] | None
         ) = None
         self._outer_hint_exists = False
-        self._outer_hint_text = ""
         self._workspace_tree_reflow_check_scheduled = False
         self._workspace_tree_reflow_state: tuple[object, ...] | None = None
         self._section_focus_history: dict[str, tuple[Widget, tuple[Widget, ...]]] = {}
@@ -544,7 +584,9 @@ class ConsoleLeftRail(Vertical):
             return
         widget.sync_state(state)
         header.title = self._character_context_title(state)
-        title.update(header.title)
+        # TASK-33620.15.7: most syncs during a run leave the title unchanged.
+        if title.content != header.title:
+            title.update(header.title)
         title.tooltip = header.title
         self.request_allocation_reconcile()
 
@@ -680,6 +722,48 @@ class ConsoleLeftRail(Vertical):
             f"{intent.literal_model_id} · fields: {scope}{endpoint_copy}"
         )
 
+    def sync_model_section_values(
+        self, summary_state: ConsoleSettingsSummaryState
+    ) -> None:
+        """Write the Model section's sampling values and readiness word.
+
+        Moved from ``ChatScreen._apply_console_settings_summary_state``
+        (TASK-33628.5.2). There, four screen-wide queries per post-action
+        sync walked every mounted transcript row; looked up from the rail by
+        id they walk none.
+
+        Args:
+            summary_state: The derived settings summary to show.
+        """
+        # TASK-32811.7: read the structured values (TASK-32338; `streaming`
+        # since TASK-33004.7) rather than regex-parse `sampling_row`, and query
+        # only composed ids: the Provider/Model rows TASK-23196 removed raised
+        # NoMatches on the FIRST lookup and froze the rest. Each row is guarded.
+        for section_id, value in (
+            ("console-model-section-temperature", summary_state.temperature),
+            ("console-model-section-max-tokens", summary_state.max_tokens),
+            ("console-model-section-streaming", summary_state.streaming),
+        ):
+            line = self.query_one_optional(f"#{section_id}")
+            if line is None:
+                continue
+            text = value or "—"
+            for row in line.query(".console-model-section-value"):
+                # TASK-33620.15.7: this runs on every 0.2 s run tick; an
+                # unchanged value must not request a whole-screen reflow.
+                if row.content != text:
+                    row.update(text)
+                break
+        # TASK-33005.3: the rail line shows the one word; red only when blocked.
+        word = summary_state.readiness_label
+        blocked = getattr(summary_state.readiness, "operability", "") == "not_ready"
+        recovery = self.query_one_optional("#console-model-section-recovery")
+        if isinstance(recovery, Static):
+            if recovery.content != word:  # Unchanged copy costs no layout pass.
+                recovery.update(word)
+            recovery.styles.display = "block" if word else "none"
+            recovery.set_class(blocked, "conversation-attention-error")
+
     def sync_model_recovery(
         self,
         *,
@@ -704,7 +788,19 @@ class ConsoleLeftRail(Vertical):
 
         try:
             title = self.query_one("#console-rail-section-title-model", Static)
-            title.update("Model ⚠" if has_warning else "Model")
+            # TASK-35028: per-write equality gates (same shape as
+            # `sync_model_section_values`' `recovery.content != word` guard
+            # two methods up) -- the tick path reaches this with unchanged
+            # copy, and each row is height:auto, so an unchanged write must
+            # not arm a layout pass. Comparing the widget's own stored
+            # content keeps the gate correct across a same-instance
+            # recompose (a fresh Static always differs or already matches).
+            title_copy = "Model ⚠" if has_warning else "Model"
+            self.query_one(
+                "#console-rail-section-header-model", DestinationRailSectionHeader
+            ).title = title_copy
+            if title.content != title_copy:
+                title.update(title_copy)
             generation_group = self.query_one("#console-generation-recovery-row")
             context_group = self.query_one("#console-context-recovery-row")
             default_group = self.query_one("#console-default-recovery-row")
@@ -738,13 +834,16 @@ class ConsoleLeftRail(Vertical):
             context_button.console_settings_revision = context.revision
             policy_label = context.policy_failure_label
             assert isinstance(policy_label, ConsoleSettingsPolicyFailureLabel)
-            self.query_one("#console-context-recovery-copy", Static).update(
-                f"Not saved: {policy_label.value}"
-            )
+            context_copy = f"Not saved: {policy_label.value}"
+            context_static = self.query_one("#console-context-recovery-copy", Static)
+            if context_static.content != context_copy:  # TASK-35028 gate
+                context_static.update(context_copy)
         generation_button.disabled = generation is None
         context_button.disabled = context is None
 
-        self.query_one("#console-default-recovery-copy", Static).update(default_copy)
+        default_static = self.query_one("#console-default-recovery-copy", Static)
+        if default_static.content != default_copy:  # TASK-35028 gate
+            default_static.update(default_copy)
         generation_token = default_state.newest_intent_generation
         for button in (
             retry_default,
@@ -1360,7 +1459,8 @@ class ConsoleLeftRail(Vertical):
     def _prepare_allocation_reconcile(self) -> None:
         """Let every bounded body commit its own ceiling before outer geometry."""
 
-        if not self.is_mounted:
+        if not self.is_mounted or self._character_renders_pending:
+            # The settled render requests the pass this one would have been.
             self._allocation_reconcile_scheduled = False
             return
         # The two peer list sections grow to fill the rail: each gets half
@@ -1404,6 +1504,11 @@ class ConsoleLeftRail(Vertical):
         """Snapshot committed complete sections and reconcile the outer owner."""
 
         try:
+            if self._character_renders_pending:
+                # A pass measuring the half-mounted Character body read zero
+                # rows and moved the active section off it, dropping the
+                # open's reveal (TASK-35970). The settled render re-requests.
+                return
             self._reconcile_character_avatar_geometry()
             descriptors = self._mounted_descriptors()
             if not descriptors:
@@ -1515,8 +1620,36 @@ class ConsoleLeftRail(Vertical):
         complete_rows = max(0, body.virtual_region_with_margin.height)
         image_rows = max(0, frame.virtual_region_with_margin.height)
         measured_non_image_rows = max(0, complete_rows - image_rows)
-        available_rows = max(0, section.max_content_lines - measured_non_image_rows)
-        available_cols = max(0, body.content_region.width)
+        radio = self.query_one(PortraitRadio)
+        meter = radio.query_one("#console-character-voice-meter")
+        meter_rows = meter.outer_size.height if meter.display else 0
+        header_rows = self.query_one(
+            "#console-rail-section-header-character"
+        ).outer_size.height
+        viewport_rows = max(0, self._snapshot_outer_viewport_height() - header_rows)
+        compact_budget = (
+            min(section.max_content_lines, viewport_rows)
+            if viewport_rows
+            else section.max_content_lines
+        )
+        without_meter = (
+            compact_budget
+            - measured_non_image_rows
+            + meter_rows
+            - frame.styles.gutter.height
+        )
+        compact = without_meter < max(1, frame.styles.gutter.height * 2)
+        if compact != radio.has_class("voice-compact"):
+            radio.set_compact(compact)
+            self.call_after_refresh(self.request_allocation_reconcile)
+            return
+        available_rows = max(
+            0,
+            section.max_content_lines
+            - measured_non_image_rows
+            - frame.styles.gutter.height,
+        )
+        available_cols = max(0, body.content_region.width - frame.styles.gutter.width)
         controls_geometry = (available_cols, measured_non_image_rows)
         if controls_geometry != self._character_avatar_controls_geometry:
             self._character_avatar_controls_geometry = controls_geometry
@@ -1649,13 +1782,95 @@ class ConsoleLeftRail(Vertical):
             return None
         return prerendered
 
+    def sync_character_caption(
+        self, name: str | None, manual_label: str | None
+    ) -> None:
+        """Repaint the avatar caption and Reaction line after an avatar paint.
+
+        Every expression change of a run repaints both; unchanged copy must
+        not request a whole-screen layout (TASK-33620.15.7).
+
+        Args:
+            name: The character's display name, or None with no character.
+            manual_label: The manual reaction's label, or None when automatic.
+        """
+
+        name_copy = Text(
+            sanitize_character_display_label(name, max_characters=180)
+            or "No character in this chat"
+        )
+        for selector, copy in (
+            ("#console-character-name", name_copy),
+            ("#console-character-reaction-state", _reaction_caption(manual_label)),
+        ):
+            try:
+                widget = self.query_one(selector, Static)
+            except QueryError:
+                continue
+            if widget.content != copy:
+                # TASK-35970: the name caption is a hidden seam that is never
+                # displayed; its new copy needs no layout. The painter's
+                # first write of a session lands on its first send.
+                widget.update(copy, layout=widget.display)
+
+    @staticmethod
+    def character_avatar_spec_is_blank(spec: dict | None) -> bool:
+        """Whether ``spec`` builds the hidden blank: no character, no image.
+
+        Args:
+            spec: The cached avatar spec, or None.
+
+        Returns:
+            True when the screen's avatar builder mounts the zero-size,
+            display-none ``#console-character-avatar-empty`` Static.
+        """
+        if spec and spec.get("character_id") is not None:
+            return False
+        return not spec or (
+            spec.get("pil") is None
+            and spec.get("pixels") is None
+            and not spec.get("animation_bytes")
+        )
+
+    @staticmethod
+    def _avatar_holder_shows_blank(holder: Widget) -> bool:
+        """Whether ``holder``'s one child is the hidden no-character blank."""
+
+        children = list(holder.children)
+        if len(children) != 1:
+            return False
+        child = children[0]
+        return (
+            isinstance(child, Static)
+            and child.id == "console-character-avatar-empty"
+            and not child.display
+            and isinstance(child.content, str)
+            and not child.content
+        )
+
     async def replace_character_avatar_widget(
         self,
         widget_builder: Callable[[], Widget],
         *,
         is_current: Callable[[], bool],
+        keep_blank: bool = False,
     ) -> bool:
-        """Serialize one freshness-fenced replacement of the avatar child."""
+        """Serialize one freshness-fenced replacement of the avatar child.
+
+        Args:
+            widget_builder: Builds the new avatar child.
+            is_current: Whether this replacement is still the latest one.
+            keep_blank: The new child would be the hidden no-character blank
+                (``character_avatar_spec_is_blank``). With that blank already
+                mounted, keep it: with no character, every expression change
+                of a run re-mounted it, a whole-screen layout for a widget
+                that paints nothing (TASK-33620.15.7). Decided under the lock,
+                so an in-flight replacement that removes the blank first is
+                seen, and the blank is mounted again.
+
+        Returns:
+            True when the holder shows this replacement's child.
+        """
 
         async with self._character_avatar_mount_lock:
             if not is_current() or not self.is_mounted:
@@ -1664,7 +1879,10 @@ class ConsoleLeftRail(Vertical):
                 holder = self.query_one("#console-character-avatar", ClickableAvatarBox)
             except (NoMatches, QueryError):
                 return False
-            await holder.remove_children()
+            if keep_blank and self._avatar_holder_shows_blank(holder):
+                return True
+            # TASK-34982: the poll's sync reaches this in its timer's task.
+            await finish_removal(holder.remove_children())
             if not is_current() or not holder.is_mounted:
                 return False
             widget = widget_builder()
@@ -1674,7 +1892,7 @@ class ConsoleLeftRail(Vertical):
             if is_current():
                 return True
             if widget.parent is holder:
-                await widget.remove()
+                await finish_removal(widget.remove())
             return False
 
     def _snapshot_outer_viewport_height(self) -> int:
@@ -1892,10 +2110,35 @@ class ConsoleLeftRail(Vertical):
             if self._outer_hint_exists and hint.display and before_end
             else ""
         )
-        if text == self._outer_hint_text and str(hint.renderable) == text:
+        self._paint_outer_hint(hint, text)
+
+    @staticmethod
+    def _paint_outer_hint(hint: Static, text: str) -> None:
+        """Write the fold copy only when it actually changes, without layout.
+
+        TASK-21244: the left rail's copy of the TASK-21117 right-rail fix.
+        This is the rail's ONLY text writer for the hint slot, so the
+        unchanged check can read the live widget's own content rather than
+        a shadow copy held on the rail -- the shadow (``_outer_hint_text``)
+        this method replaces required its own invalidation at every writer,
+        and its dual check (shadow AND live renderable) was the shape
+        TASK-21117's AC3 forbade on the right rail. Here too the display
+        toggles travel through ``_apply_allocation_state``'s full
+        reconcile, never through this copy path.
+
+        ``layout=False`` because this slot's height is pinned to exactly
+        one row by INLINE styles at compose time (``min_height = 1`` /
+        ``max_height = 1``, which beat every stylesheet rule -- the
+        lessons-textual.md note that the pin may not live in a sheet), so
+        its copy can never resize it; the default ``Static.update`` would
+        schedule a view layout for a one-row repaint (the measured
+        two-extra-screen-layout-passes trap TASK-21117 recorded).
+        """
+
+        current = hint.content
+        if isinstance(current, str) and current == text:
             return
-        self._outer_hint_text = text
-        hint.update(text)
+        hint.update(text, layout=False)
 
     def _queue_pending_active_reveal(self) -> None:
         """Queue one deliberate reveal after complete geometry is committed."""
@@ -2298,11 +2541,7 @@ class ConsoleLeftRail(Vertical):
                 markup=False,
             )
             reaction_state = Static(
-                (
-                    f"Reaction: {self._manual_reaction_label} (manual)"
-                    if self._manual_reaction_label
-                    else "Reaction: Automatic"
-                ),
+                _reaction_caption(self._manual_reaction_label),
                 id="console-character-reaction-state",
                 markup=False,
             )
@@ -2320,9 +2559,10 @@ class ConsoleLeftRail(Vertical):
                     # Avatar painting is independent of the browser's data
                     # refresh/recompose lifecycle.  Keep its holder and
                     # private caption outside that replaceable subtree.
+                    character_identity,
                     avatar_frame,
                     character_name,
-                    character_identity,
+                    PortraitRadio(),
                     reaction_state,
                     reaction_button,
                     ConsoleCharacterContext(
@@ -2334,6 +2574,7 @@ class ConsoleLeftRail(Vertical):
                 character_content = Vertical(
                     avatar_frame,
                     character_name,
+                    PortraitRadio(),
                     reaction_state,
                     reaction_button,
                     Static("No character chats yet", markup=False),
@@ -2579,8 +2820,17 @@ class ConsoleLeftRail(Vertical):
                 steering_bar,
                 back_button,
                 full_log_button,
-                *([Button("Progress: 0 queued", id="console-agent-progress", compact=True)]
-                  if self._open_agent_progress is not None else []),
+                *(
+                    [
+                        Button(
+                            "Progress: 0 queued",
+                            id="console-agent-progress",
+                            compact=True,
+                        )
+                    ]
+                    if self._open_agent_progress is not None
+                    else []
+                ),
                 classes="console-agent-section",
             )
             yield _ContextBoundedSection(
@@ -2630,20 +2880,15 @@ class ConsoleLeftRail(Vertical):
             self._progress_timer.stop()
 
     def _sync_progress_count(self) -> None:
-        try:
-            progress = self.query_one("#console-agent-progress", Button)
-        except NoMatches:
-            # A queued tick can outlive the descendants during recomposition.
-            return
         count, counts = (
             self._agent_progress_state() if self._agent_progress_state else (0, {})
         )
-        progress.label = f"Progress: {count} queued"
+        for progress in self.query("#console-agent-progress").results(Button):
+            progress.label = f"Progress: {count} queued"
         if counts != self._progress_counts:
             if self._refresh_progress_navigation is not None:
                 self._refresh_progress_navigation()
             self._progress_counts = counts
-
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Catch this rail's own section-toggle buttons; let everything else bubble.
@@ -2664,7 +2909,10 @@ class ConsoleLeftRail(Vertical):
                 consulted here.
         """
         button_id = event.button.id or ""
-        if button_id == "console-agent-progress" and self._open_agent_progress is not None:
+        if (
+            button_id == "console-agent-progress"
+            and self._open_agent_progress is not None
+        ):
             event.stop()
             self._open_agent_progress()
             return
@@ -2696,6 +2944,14 @@ class ConsoleLeftRail(Vertical):
             opened = not header.open
         self.post_message(self.SectionToggled(section_id=section_id, opened=opened))
         self.call_after_refresh(self._restore_section_toggle_focus, button_id)
+
+    def _character_render_settled(self) -> None:
+        """Measure the opened Character section once its render has mounted."""
+
+        # A reopen before an earlier render settled has one still mounting.
+        self._character_renders_pending = max(0, self._character_renders_pending - 1)
+        if not self._character_renders_pending and self.is_mounted:
+            self.request_allocation_reconcile()
 
     def _restore_section_toggle_focus(self, button_id: str) -> None:
         """Retain pointer focus after the toggle's layout reconciliation."""
@@ -2787,6 +3043,15 @@ class ConsoleLeftRail(Vertical):
         # deliberately preserves scroll state while hidden, so reopening can
         # clamp the prior local offset against the newly measured geometry.
         if section_open:
+            if section_id == "character" and not body.display:
+                # TASK-35970: a collapsed browser kept its newest snapshot
+                # unrendered; start that render before the body shows, and
+                # hold allocation passes until it has mounted.
+                for browser in body.query(ConsoleCharacterContext):
+                    if browser.render_deferred(
+                        on_rendered=self._character_render_settled
+                    ):
+                        self._character_renders_pending += 1
             body.styles.display = "block"
             bounded.set_presented(True)
         else:

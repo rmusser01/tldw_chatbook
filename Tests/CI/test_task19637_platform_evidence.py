@@ -76,9 +76,7 @@ def test_workflow_pins_exact_matrix_python_head_and_job_bound() -> None:
     assert job["timeout-minutes"] == "30"
     assert job["strategy"] == {
         "fail-fast": "false",
-        "matrix": {
-            "os": ["ubuntu-24.04", "windows-2022", "macos-15-intel"]
-        },
+        "matrix": {"os": ["ubuntu-24.04", "windows-2022", "macos-15-intel"]},
     }
     assert job["runs-on"] == "${{ matrix.os }}"
 

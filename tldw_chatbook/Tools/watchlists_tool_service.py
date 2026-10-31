@@ -237,22 +237,15 @@ class WatchlistsToolService:
             "source": self._shape_selected_source(source),
         }
         items: list[dict[str, Any]] = []
-        final_payload = self._search_response(
-            request=request,
-            as_of=as_of,
-            snapshot_max_item_id=int(page["snapshot_max_item_id"]),
-            scope=scope,
-            items=items,
-            has_more=False,
-            next_cursor=None,
-        )
+        accepted_item_bytes = 0
+        final_has_more = False
+        final_next_cursor: str | None = None
         for index, row in enumerate(rows):
             candidate = self._shape_search_item(
                 row,
                 memberships[int(row["subscription_id"])],
                 request.query,
             )
-            candidate_items = [*items, candidate]
             has_more = bool(page["has_more"]) or index < len(rows) - 1
             next_cursor = (
                 self._encode_cursor(
@@ -265,22 +258,52 @@ class WatchlistsToolService:
                 if has_more
                 else None
             )
-            candidate_payload = self._search_response(
-                request=request,
-                as_of=as_of,
-                snapshot_max_item_id=int(page["snapshot_max_item_id"]),
-                scope=scope,
-                items=candidate_items,
-                has_more=has_more,
-                next_cursor=next_cursor,
+            # Byte budget without re-serializing the whole accumulated payload
+            # per row (O(n^2) bytes): with separators=(",", ":") a JSON array
+            # renders as "[" + ",".join(item JSON) + "]", so the candidate
+            # payload's size is byte-exactly the envelope (measured with an
+            # empty items array, minus its "[]") plus each item serialized
+            # once plus the array separators.
+            envelope_size = (
+                self._json_size(
+                    self._search_response(
+                        request=request,
+                        as_of=as_of,
+                        snapshot_max_item_id=int(page["snapshot_max_item_id"]),
+                        scope=scope,
+                        items=[],
+                        has_more=has_more,
+                        next_cursor=next_cursor,
+                    )
+                )
+                - 2  # the "[]" of the empty items array
             )
-            if self._json_size(candidate_payload) >= _MAX_RESULT_BYTES:
+            candidate_bytes = self._json_size(candidate)
+            total_size = (
+                envelope_size
+                + accepted_item_bytes
+                + candidate_bytes
+                + len(items)
+                + 2  # brackets plus the one new comma
+            )
+            if total_size >= _MAX_RESULT_BYTES:
                 break
-            items = candidate_items
-            final_payload = candidate_payload
+            items.append(candidate)
+            accepted_item_bytes += candidate_bytes
+            final_has_more = has_more
+            final_next_cursor = next_cursor
 
         if rows and not items:
             raise RuntimeError("bounded Watchlists item did not fit")
+        final_payload = self._search_response(
+            request=request,
+            as_of=as_of,
+            snapshot_max_item_id=int(page["snapshot_max_item_id"]),
+            scope=scope,
+            items=items,
+            has_more=final_has_more,
+            next_cursor=final_next_cursor,
+        )
         return self._finalize(final_payload)
 
     def get_item(self, arguments: object) -> str:
@@ -410,8 +433,12 @@ class WatchlistsToolService:
         page = database.list_sources_for_agent(
             name_query=name,
             source_type=source_type,
-            is_active=False if state == "disabled" else (True if state == "active" else None),
-            is_paused=True if state == "paused" else (False if state == "active" else None),
+            is_active=False
+            if state == "disabled"
+            else (True if state == "active" else None),
+            is_paused=True
+            if state == "paused"
+            else (False if state == "active" else None),
             watchlist_id=collection_id,
             limit=limit,
             after_name_casefold_prefix=position.get("name_casefold_prefix"),
@@ -587,10 +614,7 @@ class WatchlistsToolService:
                 else None
             )
             payload["newer_operational_context"] = (
-                [
-                    self._shape_briefing_receipt(row)
-                    for row in latest["newer_attempts"]
-                ]
+                [self._shape_briefing_receipt(row) for row in latest["newer_attempts"]]
                 if latest is not None
                 else []
             )
@@ -662,9 +686,7 @@ class WatchlistsToolService:
             return unavailable
         row = database.get_briefing_for_agent(briefing_id)
         if row is None:
-            return self._outcome(
-                "not_found", "briefing was not found", retryable=False
-            )
+            return self._outcome("not_found", "briefing was not found", retryable=False)
         provenance = database.get_briefing_provenance_for_agent(
             briefing_id,
             limit=_PROVENANCE_LIMIT,
@@ -674,9 +696,7 @@ class WatchlistsToolService:
         selected = [self._shape_provenance(item) for item in provenance["selected"]]
         cited = [self._shape_provenance(item) for item in provenance["cited"]]
         body = strip_control_characters(row.get("body_markdown") or "")
-        bounded_body, body_truncated = self._bounded_text(
-            body, _BRIEFING_BODY_BUDGET
-        )
+        bounded_body, body_truncated = self._bounded_text(body, _BRIEFING_BODY_BUDGET)
         briefing = self._shape_briefing_receipt(row)
         briefing["content"] = {
             "body_markdown": bounded_body or "",
@@ -826,10 +846,14 @@ class WatchlistsToolService:
     def _get_operation_status(self, arguments: object) -> str:
         values = self._exact_arguments(arguments, frozenset({"operation_id"}))
         if set(values) != {"operation_id"} or type(values["operation_id"]) is not str:
-            raise _InvalidArgument("operation_id must be an exact canonical operation id")
+            raise _InvalidArgument(
+                "operation_id must be an exact canonical operation id"
+            )
         match = _CANONICAL_OPERATION_RE.fullmatch(values["operation_id"])
         if match is None:
-            raise _InvalidArgument("operation_id must be an exact canonical operation id")
+            raise _InvalidArgument(
+                "operation_id must be an exact canonical operation id"
+            )
         operation_id = int(match.group("id"))
         if operation_id > _MAX_SQLITE_ROW_ID:
             raise _InvalidArgument("operation_id is outside the supported id range")
@@ -916,9 +940,7 @@ class WatchlistsToolService:
         pattern: re.Pattern[str],
         label: str,
     ) -> int:
-        values = WatchlistsToolService._exact_arguments(
-            arguments, frozenset({field})
-        )
+        values = WatchlistsToolService._exact_arguments(arguments, frozenset({field}))
         value = values.get(field)
         if set(values) != {field} or type(value) is not str:
             raise _InvalidArgument(f"{field} must be a canonical {label} id")
@@ -1014,11 +1036,7 @@ class WatchlistsToolService:
     ) -> _PageCursor | None:
         if not supplied:
             return None
-        if (
-            type(value) is not str
-            or not value
-            or len(value) > _MAX_PAGE_CURSOR_CHARS
-        ):
+        if type(value) is not str or not value or len(value) > _MAX_PAGE_CURSOR_CHARS:
             raise _InvalidArgument("cursor is invalid")
         try:
             padding = b"=" * (-len(value) % 4)
@@ -1035,8 +1053,7 @@ class WatchlistsToolService:
             raise _InvalidArgument("cursor is invalid") from None
         if (
             type(payload) is not dict
-            or set(payload)
-            != {"version", "kind", "position", "filter_fingerprint"}
+            or set(payload) != {"version", "kind", "position", "filter_fingerprint"}
             or payload["version"] != _CURSOR_VERSION
             or type(payload["version"]) is not int
             or payload["kind"] != kind
@@ -1067,7 +1084,9 @@ class WatchlistsToolService:
                     item_position is not None
                     and (
                         type(item_position) is not int
-                        or not -_MAX_SQLITE_ROW_ID <= item_position <= _MAX_SQLITE_ROW_ID
+                        or not -_MAX_SQLITE_ROW_ID
+                        <= item_position
+                        <= _MAX_SQLITE_ROW_ID
                     )
                 )
                 or type(item_id) is not int
@@ -1079,7 +1098,10 @@ class WatchlistsToolService:
                 position=position,
                 filter_fingerprint=payload["filter_fingerprint"],
             )
-        if type(position["id"]) is not int or not 1 <= position["id"] <= _MAX_SQLITE_ROW_ID:
+        if (
+            type(position["id"]) is not int
+            or not 1 <= position["id"] <= _MAX_SQLITE_ROW_ID
+        ):
             raise _InvalidArgument("cursor is invalid")
         for key, item in position.items():
             maximum = (
@@ -1468,9 +1490,7 @@ class WatchlistsToolService:
             "is_active": bool(row["is_active"]),
             "is_paused": bool(row["is_paused"]),
             "check_frequency_seconds": row["check_frequency"],
-            "last_checked": WatchlistsToolService._safe_text(
-                row["last_checked"], 128
-            ),
+            "last_checked": WatchlistsToolService._safe_text(row["last_checked"], 128),
             "last_successful_check": WatchlistsToolService._safe_text(
                 row["last_successful_check"], 128
             ),
@@ -1560,9 +1580,7 @@ class WatchlistsToolService:
                 parsed = datetime.fromisoformat(anchor.replace("Z", "+00:00"))
                 if parsed.tzinfo is None:
                     parsed = parsed.replace(tzinfo=UTC)
-                next_eligible = parsed.astimezone(UTC) + timedelta(
-                    seconds=int(cadence)
-                )
+                next_eligible = parsed.astimezone(UTC) + timedelta(seconds=int(cadence))
             except (TypeError, ValueError, OverflowError):
                 next_eligible = None
         if latest_status == "failed":
@@ -1615,9 +1633,7 @@ class WatchlistsToolService:
             ),
             "model_used": WatchlistsToolService._safe_text(row["model_used"], 512),
             "coverage": {
-                "from": WatchlistsToolService._safe_text(
-                    row["covers_from_ts"], 128
-                ),
+                "from": WatchlistsToolService._safe_text(row["covers_from_ts"], 128),
                 "through_item_id": (
                     f"local:watchlist_item:{row['covers_through_item_id']}"
                     if row["covers_through_item_id"] is not None
@@ -1633,9 +1649,7 @@ class WatchlistsToolService:
             "body_byte_count": int(row["body_byte_count"] or 0),
             "state": WatchlistsToolService._normalize_briefing_state(status),
             "retryable": status == "failed",
-            "attention_state": (
-                "needs_attention" if status == "failed" else "ok"
-            ),
+            "attention_state": ("needs_attention" if status == "failed" else "ok"),
         }
 
     @staticmethod
@@ -1680,9 +1694,7 @@ class WatchlistsToolService:
                     ),
                     "name": source_name,
                     "name_truncated": source_name_truncated,
-                    "type": WatchlistsToolService._safe_text(
-                        row["source_type"], 128
-                    ),
+                    "type": WatchlistsToolService._safe_text(row["source_type"], 128),
                     "url": source_url,
                     "url_redacted": source_url_redacted,
                     "url_truncated": source_url_truncated,
@@ -1739,9 +1751,7 @@ class WatchlistsToolService:
             "created_at": WatchlistsToolService._safe_text(row["created_at"], 128),
             "updated_at": WatchlistsToolService._safe_text(row["updated_at"], 128),
             "started_at": WatchlistsToolService._safe_text(row["started_at"], 128),
-            "finished_at": WatchlistsToolService._safe_text(
-                row["finished_at"], 128
-            ),
+            "finished_at": WatchlistsToolService._safe_text(row["finished_at"], 128),
             "result_available": row["stats_json"] is not None,
             "error_category": recovery["error_category"] if recovery else None,
             "error_message": recovery["error_message"] if recovery else None,
@@ -1783,7 +1793,10 @@ class WatchlistsToolService:
     ) -> int:
         for candidate in candidates:
             destination.append(candidate)
-            if WatchlistsToolService._json_size(destination) >= _PROVENANCE_ARRAY_BUDGET:
+            if (
+                WatchlistsToolService._json_size(destination)
+                >= _PROVENANCE_ARRAY_BUDGET
+            ):
                 destination.pop()
                 break
         if candidates and not destination:
@@ -1852,20 +1865,43 @@ class WatchlistsToolService:
         payload["returned_count"] = 0
         payload["has_more"] = False
         payload["next_cursor"] = None
+        empty_items: list[dict[str, Any]] = []
+        sum_of_item_bytes = 0
         for index, (row, item) in enumerate(zip(rows, shaped, strict=True)):
-            accepted.append(item)
             has_more = storage_has_more or index < len(rows) - 1
-            payload["returned_count"] = len(accepted)
+            next_cursor = cursor_for(row) if has_more else None
+            # Byte budget without re-serializing the whole accumulated payload
+            # per row (O(n^2) bytes): serialize this row once, keep a running
+            # byte total, and measure only the (small) envelope — with
+            # separators=(",", ":") the items array contributes exactly
+            # "[" + ",".join(items) + "]", so the incremental total is
+            # byte-identical to measuring the assembled payload.
+            item_bytes = WatchlistsToolService._json_size(item)
+            payload["returned_count"] = len(accepted) + 1
             payload["has_more"] = has_more
-            payload["next_cursor"] = cursor_for(row) if has_more else None
-            if WatchlistsToolService._json_size(payload) >= _MAX_RESULT_BYTES:
-                accepted.pop()
+            payload["next_cursor"] = next_cursor
+            payload[item_key] = empty_items  # measure the envelope sans items
+            envelope_size = WatchlistsToolService._json_size(payload) - 2
+            payload[item_key] = accepted  # restore before any break/finalize
+            total_size = (
+                envelope_size
+                + sum_of_item_bytes
+                + item_bytes
+                + len(accepted)
+                + 2  # brackets plus the one new comma
+            )
+            if total_size >= _MAX_RESULT_BYTES:
                 if not accepted:
                     raise RuntimeError("bounded Watchlists metadata row did not fit")
+                # Revert to the last accepted page tail: with a rejected row
+                # there is always a previous row (index > 0 here), whose tail
+                # was has_more=True and this row's predecessor as the cursor.
                 payload["returned_count"] = len(accepted)
                 payload["has_more"] = True
                 payload["next_cursor"] = cursor_for(rows[index - 1])
                 break
+            accepted.append(item)
+            sum_of_item_bytes += item_bytes
         return WatchlistsToolService._finalize(payload)
 
     @staticmethod

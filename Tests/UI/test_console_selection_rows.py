@@ -168,9 +168,9 @@ async def test_sync_message_clamps_selection_end_when_text_shrinks():
         # The clamped range stays highlighted (rendered), not just stored.
         renderable = _body_static(row).renderable
         assert isinstance(renderable, Text)
-        assert any(
-            "reverse" in str(span.style) for span in renderable.spans
-        ), f"expected a reverse span after clamp-on-sync: {renderable.spans}"
+        assert any("reverse" in str(span.style) for span in renderable.spans), (
+            f"expected a reverse span after clamp-on-sync: {renderable.spans}"
+        )
 
 
 @pytest.mark.asyncio
@@ -396,7 +396,9 @@ async def test_markdown_row_sync_non_prefix_shrink_clamps_cleanly():
         replaced = _make_assistant_message("abcdefghi\nXY")
         row.sync_message(
             replaced,
-            resolve_console_message_presentation(replaced, ConsolePresentationContext()),
+            resolve_console_message_presentation(
+                replaced, ConsolePresentationContext()
+            ),
         )
         assert row.get_selection_text() == "Y"
 
@@ -668,9 +670,7 @@ async def test_transcript_resolves_diff_view_drag_to_line_selection():
 
         text = diff_row.get_display_text()
         diff_row.post_message(
-            _mouse_event(
-                MouseDown, diff_row, screen_x=region.x, screen_y=region.y
-            )
+            _mouse_event(MouseDown, diff_row, screen_x=region.x, screen_y=region.y)
         )
         await pilot.pause()
         assert transcript.selection_manager.state.active is True

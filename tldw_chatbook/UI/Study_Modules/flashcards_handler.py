@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
+from rich.text import Text
 from textual.css.query import NoMatches, QueryError
+from textual.widget import MountError
 from textual.widgets import (
     Button,
     Input,
@@ -37,6 +40,52 @@ FLASHCARD_SELECT_DECK_DELETE_TOOLTIP = "Select a deck before deleting it."
 FLASHCARD_DELETE_DECK_SERVER_TOOLTIP = "Server mode does not support deck deletion. Delete cards individually or switch to local mode."
 
 
+def _quiet_when_swapped_out(action):
+    """End a controller action quietly when Flashcards is swapped out under it.
+
+    The Study window stays mounted while its sub-view goes, so any lookup an
+    action makes after an await (its service call, the card-list rebuild) can
+    miss. It then has nothing left to show, and `NoMatches` out of its worker
+    or button handler would end the app.
+
+    Args:
+        action: An async controller method.
+
+    Returns:
+        The method, ending on a `NoMatches` raised once Flashcards is no
+        longer the sub-view, has been swapped out and back (the new panel
+        is not composed yet) or the window is being removed (a tab switch);
+        one raised while the same panel is shown is a bug and raises. It
+        also ends on a `NoMatches` or `MountError` raised once the window
+        has left the app -- above all while the app quits (TASK-34751):
+        every widget reads as detached once `App._exit` is set, so a
+        card-list rebuild resuming then raised `MountError` from its worker.
+    """
+
+    @functools.wraps(action)
+    async def guarded(self, *args: Any, **kwargs: Any) -> None:
+        swaps = getattr(self.window, "view_swaps", 0)
+        try:
+            await action(self, *args, **kwargs)
+        except (NoMatches, MountError) as error:
+            if not self.window.is_attached:
+                return  # the app is quitting, or the window is gone
+            if isinstance(error, MountError):
+                raise
+            # Ask the window, not the DOM: a removal goes leaf first, so
+            # `#card-list` can outlive `#review-status` for a moment. A tab
+            # switch removes the window and leaves `current_view` alone;
+            # `display` is False once the window is being removed.
+            if (
+                self.window.current_view == "flashcards"
+                and self.window.display
+                and getattr(self.window, "view_swaps", 0) == swaps
+            ):
+                raise
+
+    return guarded
+
+
 class StudyFlashcardsController:
     """Own flashcards deck/card/review interactions inside the Study screen."""
 
@@ -56,6 +105,10 @@ class StudyFlashcardsController:
         # TASK-19559: rating submissions are serialised, never cancelled --
         # see `submit_rating`.
         self._review_submit_lock = asyncio.Lock()
+        # One `#card-list` rebuild at a time: six paths await
+        # `refresh_cards()` outside the exclusive `study-refresh-cards` worker
+        # group, and `create_deck` also triggers that group's rebuild.
+        self._refresh_cards_lock = asyncio.Lock()
         # TASK-19559 review: a monotonic token for "which card is on screen
         # right now". It is bumped every time the presented card changes and
         # every time the panel is torn down, so a rating that finishes saving
@@ -348,7 +401,7 @@ class StudyFlashcardsController:
 
         selected_deck_id = self._selected_deck_id()
         options = [
-            (str(deck.get("name") or "Unnamed deck"), str(deck.get("backing_id")))
+            (Text(str(deck.get("name") or "Unnamed deck")), str(deck.get("backing_id")))
             for deck in self.current_decks
             if deck.get("backing_id") not in {None, "", selected_deck_id}
         ]
@@ -548,6 +601,7 @@ class StudyFlashcardsController:
             await asyncio.sleep(0.01)
         return False
 
+    @_quiet_when_swapped_out
     async def initialize_view(self) -> None:
         service = self._scope_service()
         if service is None:
@@ -589,8 +643,9 @@ class StudyFlashcardsController:
         self.current_decks = list(decks)
 
         deck_select = self.window.query_one("#deck-select", Select)
+        # Text: a str prompt is markup ("[new]" vanishes, "[/]" raises).
         options = [
-            (str(deck.get("name") or "Unnamed deck"), str(deck.get("backing_id")))
+            (Text(str(deck.get("name") or "Unnamed deck")), str(deck.get("backing_id")))
             for deck in decks
             if deck.get("backing_id") not in {None, ""}
         ]
@@ -620,7 +675,17 @@ class StudyFlashcardsController:
 
         self._update_lifecycle_controls()
 
+    @_quiet_when_swapped_out
     async def refresh_cards(self, *, preserve_review_panel: bool = False) -> None:
+        """Rebuild `#card-list`; concurrent rebuilds run one after another.
+
+        Interleaved, one rebuild's clear landed between the other's clear and
+        appends, so the list held both rebuilds' rows.
+        """
+        async with self._refresh_cards_lock:
+            await self._rebuild_card_list(preserve_review_panel=preserve_review_panel)
+
+    async def _rebuild_card_list(self, *, preserve_review_panel: bool) -> None:
         service = self._scope_service()
         if service is None:
             self.reset_review_panel("Study flashcards backend is unavailable.")
@@ -629,7 +694,10 @@ class StudyFlashcardsController:
             self.handle_scope_changed()
             return
 
+        # `refresh_cards` ends quietly on a lookup that misses; the search box
+        # is read before the next await.
         list_view = self.window.query_one("#card-list", ListView)
+        search_value = self.window.query_one("#flashcard-search-input", Input).value
         await list_view.clear()
         self.current_cards = []
         self.selected_card_record = None
@@ -645,10 +713,15 @@ class StudyFlashcardsController:
             self._update_lifecycle_controls()
             return
 
-        search_value = self.window.query_one("#flashcard-search-input", Input).value
+        # TASK-34000.6 (S-05): no scope keywords here. A card list is scoped by
+        # its deck on both backends (`LocalStudyService.list_flashcards(deck_id=
+        # ...)`, `ServerStudyService.list_flashcards(deck_id=...)`), and the deck
+        # came from the scope-filtered `list_decks` above; `StudyScopeService.
+        # list_flashcards` has no `scope_type`/`workspace_id` and spreading
+        # `_scope_arguments()` into it raised TypeError the moment a deck was
+        # selected -- an unhandled exception that exited the app.
         cards = await service.list_flashcards(
             mode=self._current_mode(),
-            **self._scope_arguments(),
             deck_id=deck_id,
             q=search_value,
             limit=100,
@@ -668,7 +741,8 @@ class StudyFlashcardsController:
         for index, card in enumerate(cards):
             queue_state = str(card.get("queue_state") or "unknown")
             label = f"{card.get('front', '')} [{queue_state}]"
-            list_item = ListItem(Label(label))
+            # Literal: as markup "[new]" is a style tag and "[/]" raises.
+            list_item = ListItem(Label(label, markup=False))
             list_item.study_card_record = card
             list_item.study_card_index = index
             await list_view.append(list_item)
@@ -677,6 +751,7 @@ class StudyFlashcardsController:
             self._set_review_status("Ready to review selected deck.")
         self._update_lifecycle_controls()
 
+    @_quiet_when_swapped_out
     async def create_deck(self) -> None:
         service = self._scope_service()
         if service is None:
@@ -687,7 +762,8 @@ class StudyFlashcardsController:
             return
 
         name_input = self.window.query_one("#new-deck-name-input", Input)
-        name = str(name_input.value or "").strip()
+        submitted_name = name_input.value
+        name = str(submitted_name or "").strip()
         if not name:
             self._notify("Deck name is required.")
             return
@@ -707,7 +783,8 @@ class StudyFlashcardsController:
             self._notify("Failed to create deck.", severity="error")
             return
 
-        name_input.value = ""
+        if name_input.value == submitted_name:
+            name_input.value = ""
         created_deck_id = str(
             created.get("backing_id") or created.get("record_id") or Select.BLANK
         )
@@ -718,6 +795,7 @@ class StudyFlashcardsController:
         await self.refresh_cards()
         self._set_review_status(f"Deck '{created.get('name', name)}' created.")
 
+    @_quiet_when_swapped_out
     async def create_card(self) -> None:
         service = self._scope_service()
         if service is None:
@@ -735,8 +813,11 @@ class StudyFlashcardsController:
         front_widget = self.window.query_one("#card-front", TextArea)
         back_widget = self.window.query_one("#card-back", TextArea)
         tags_widget = self.window.query_one("#card-tags", Input)
-        front = str(front_widget.text or "").strip()
-        back = str(back_widget.text or "").strip()
+        submitted_front = front_widget.text
+        submitted_back = back_widget.text
+        submitted_tags = tags_widget.value
+        front = str(submitted_front or "").strip()
+        back = str(submitted_back or "").strip()
         if not front:
             self._notify("Card front is required.")
             return
@@ -744,11 +825,13 @@ class StudyFlashcardsController:
             self._notify("Card back is required.")
             return
 
-        tags = self._parse_tags(tags_widget.value)
+        tags = self._parse_tags(submitted_tags)
         try:
+            # TASK-34000.6: same contract as `refresh_cards` -- the card is
+            # scoped by its deck; `StudyScopeService.create_flashcard` accepts
+            # no scope keywords.
             await service.create_flashcard(
                 mode=self._current_mode(),
-                **self._scope_arguments(),
                 deck_id=deck_id,
                 front=front,
                 back=back,
@@ -761,9 +844,12 @@ class StudyFlashcardsController:
             self._notify("Failed to create flashcard.", severity="error")
             return
 
-        front_widget.text = ""
-        back_widget.text = ""
-        tags_widget.value = ""
+        if front_widget.text == submitted_front:
+            front_widget.text = ""
+        if back_widget.text == submitted_back:
+            back_widget.text = ""
+        if tags_widget.value == submitted_tags:
+            tags_widget.value = ""
         await self.refresh_cards()
         self._set_review_status("Flashcard created.")
 
@@ -791,9 +877,11 @@ class StudyFlashcardsController:
         self._update_lifecycle_controls()
 
     def handle_move_target_changed(self) -> None:
-        self._sync_move_target_options()
+        # No option rebuild here: `set_options` resets the selection, so the
+        # pick would be undone. The deck list and deck changes rebuild them.
         self._update_lifecycle_controls()
 
+    @_quiet_when_swapped_out
     async def delete_selected_card(self) -> None:
         service = self._scope_service()
         self._reconcile_live_selection_state()
@@ -828,6 +916,7 @@ class StudyFlashcardsController:
         if review_snapshot is not None:
             self._restore_review_panel_state(review_snapshot)
 
+    @_quiet_when_swapped_out
     async def move_selected_card(self) -> None:
         service = self._scope_service()
         self._reconcile_live_selection_state()
@@ -868,6 +957,7 @@ class StudyFlashcardsController:
         if review_snapshot is not None:
             self._restore_review_panel_state(review_snapshot)
 
+    @_quiet_when_swapped_out
     async def delete_selected_deck(self) -> None:
         service = self._scope_service()
         self._reconcile_live_selection_state()
@@ -1110,6 +1200,7 @@ class StudyFlashcardsController:
             self._set_next_intervals(outcome.get("next_intervals"))
             await self._load_next_review_candidate(deck_id=self._selected_deck_id())
 
+    @_quiet_when_swapped_out  # Start review and a rating both await the next card
     async def _load_next_review_candidate(self, *, deck_id: Optional[str]) -> None:
         service = self._scope_service()
         if service is None or deck_id is None or not self._scope_is_available():

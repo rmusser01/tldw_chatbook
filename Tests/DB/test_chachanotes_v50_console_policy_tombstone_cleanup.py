@@ -234,10 +234,13 @@ def test_a_shipped_v48_profile_loses_its_tombstone_policy_rows(
         )
         # The tombstoned conversation itself is untouched: this step retires
         # dead policy, not user data.
-        assert connection.execute(
-            "SELECT deleted FROM conversations WHERE id = ?",
-            ("tombstoned-conversation",),
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT deleted FROM conversations WHERE id = ?",
+                ("tombstoned-conversation",),
+            ).fetchone()[0]
+            == 1
+        )
     finally:
         migrated.close_connection()
 

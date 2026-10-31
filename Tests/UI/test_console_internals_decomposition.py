@@ -1,6 +1,7 @@
 # ruff: noqa: F811
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -20,7 +21,10 @@ from Tests.UI.test_destination_shells import (
     _wait_for_selector,
     _wait_for_visible_text,
 )
-from Tests.UI.test_console_native_chat_flow import ConsoleNavigationHarness
+from Tests.UI.test_console_native_chat_flow import (
+    ConsoleNavigationHarness,
+    _sync_console_control_bar_now,
+)
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
@@ -30,7 +34,6 @@ from Tests.Agents.test_mcp_tool_provider import (
     _catalog_record,
     _tool_dict,
 )
-from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
     ACTION_SAVE_CHATBOOK,
 )
@@ -320,10 +323,7 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "    border: none;"
         ) in css
         assert (
-            "#console-staged-context-tray {\n"
-            "    height: auto;\n"
-            "    min-height: 0;\n"
-            "}"
+            "#console-staged-context-tray {\n    height: auto;\n    min-height: 0;\n}"
         ) in css
         assert (
             "#console-workspace-context {\n    height: auto;\n    min-height: 0;"
@@ -856,7 +856,7 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
             run_active=False,
             can_save_chatbook=False,
             send_blocked=True,
-            setup_blocked_reason="Choose a model in Console Settings before sending.",
+            setup_blocked_reason="Choose a model in Chat settings before sending.",
         )
         await pilot.pause(0.1)
 
@@ -874,9 +874,7 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
             == "Send blocked — choose a model to continue ›"
         )
         assert send_button.disabled is True
-        assert (
-            send_button.tooltip == "Choose a model in Console Settings before sending."
-        )
+        assert send_button.tooltip == "Choose a model in Chat settings before sending."
 
         composer.load_draft("draft despite missing setup")
         await pilot.pause(0.1)
@@ -888,9 +886,7 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
         # A typed draft does not lift a setup block.
         assert send_button.disabled is True
         assert disabled_reason.styles.display == "block"
-        assert (
-            send_button.tooltip == "Choose a model in Console Settings before sending."
-        )
+        assert send_button.tooltip == "Choose a model in Chat settings before sending."
 
 
 @pytest.mark.asyncio
@@ -2155,7 +2151,7 @@ async def test_console_setup_modal_dismisses_when_readiness_and_model_satisfied(
         assert modal.is_blocking is False
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         assert composer.can_focus is True
-        assert "Ready — type a message to begin." in _visible_text(console)
+        assert "Ready · not tested — type a message to begin." in _visible_text(console)
 
 
 @pytest.mark.asyncio
@@ -2291,7 +2287,7 @@ async def test_console_on_screen_resume_resyncs_stale_setup_modal_block():
         assert modal.is_blocking is False
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         assert composer.can_focus is True
-        assert "Ready — type a message to begin." in _visible_text(console)
+        assert "Ready · not tested — type a message to begin." in _visible_text(console)
 
 
 @pytest.mark.asyncio
@@ -2382,7 +2378,7 @@ async def test_console_empty_ready_transcript_shows_first_run_guidance():
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
         text = _visible_text(console)
-        assert "Ready — type a message to begin." in text
+        assert "Ready · not tested — type a message to begin." in text
         assert (
             "Type in Composer, attach sources, or run Library RAG before sending."
             not in text
@@ -2527,9 +2523,7 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
             not in _visible_text(console)
         )
         send_button = console.query_one("#console-send-message", Button)
-        assert (
-            send_button.tooltip == "Choose a model in Console Settings before sending."
-        )
+        assert send_button.tooltip == "Choose a model in Chat settings before sending."
         assert "Setup required: Choose model before sending." not in _visible_text(
             console
         )
@@ -2538,7 +2532,7 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
             session.id,
             ConsoleSessionSettings(provider="llama_cpp", model="local-model"),
         )
-        console._sync_console_control_bar()
+        await _sync_console_control_bar_now(console)
         await pilot.pause()
 
         assert not list(console.query("#console-provider-blocker"))
@@ -2556,7 +2550,7 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
             session.id,
             ConsoleSessionSettings(provider="llama_cpp", model=None),
         )
-        console._sync_console_control_bar()
+        await _sync_console_control_bar_now(console)
         await pilot.pause()
 
         assert not list(console.query("#console-provider-blocker"))
@@ -2575,9 +2569,7 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
             not in _visible_text(console)
         )
         send_button = console.query_one("#console-send-message", Button)
-        assert (
-            send_button.tooltip == "Choose a model in Console Settings before sending."
-        )
+        assert send_button.tooltip == "Choose a model in Chat settings before sending."
 
 
 @pytest.mark.asyncio
@@ -2636,7 +2628,7 @@ async def test_console_inline_guidance_does_not_reserve_transcript_space():
             session.id, role=ConsoleMessageRole.USER, content="Hello Console"
         )
         await console._sync_native_console_chat_ui()
-        console._sync_console_control_bar()
+        await _sync_console_control_bar_now(console)
         await pilot.pause()
 
         assert not list(console.query("#console-start-here"))
@@ -2770,7 +2762,7 @@ async def test_console_native_transcript_is_visible_transcript_surface():
         assert transcript.region.height > 0
         assert transcript.styles.display != "none"
         text = _visible_text(console)
-        assert "Ready — type a message to begin." in text
+        assert "Ready · not tested — type a message to begin." in text
         assert (
             "Type in Composer, attach sources, or run Library RAG before sending."
             not in text
@@ -2797,7 +2789,9 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         # Ready state is compact: one displayed ready line, no action row at all.
         body = empty_panel.query_one("#console-empty-body", Static)
         assert getattr(body.render(), "plain", str(body.render())) == (
-            "Ready — type a message to begin."
+            # TASK-34100.5 AC#11: the arrival line names what setup connected.
+            "Setup complete — llama.cpp · local-model. "
+            "Ready · not tested — type a message to begin."
         )
         assert body.display is True
         assert not list(empty_panel.query("#console-empty-action-row"))
@@ -3396,7 +3390,7 @@ async def test_console_composer_status_renders_session_metadata_as_plain_text():
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.sync_session_data(
-            ChatSessionData(
+            SimpleNamespace(
                 tab_id="metadata",
                 title="[red]Injected[/red]\n\tforged title",
                 runtime_backend="[blue]server[/blue]",
@@ -3450,7 +3444,7 @@ async def test_console_native_control_bar_and_staged_context_reflect_pending_han
         assert "Provider:" in text
         assert "Model:" in text
         assert "Assistant: General" in text
-        assert "Library · Auto off · Agent blocked" in text
+        assert "Library · Auto off · Agent access off" in text
         assert "Sources: 1" in text
         assert "Transformer notes" in text
         assert "ready" in text
@@ -3533,7 +3527,7 @@ def test_console_control_state_tolerates_missing_config_and_precise_rag_source()
         ConsoleLiveWorkLaunch(source="Library Search/RAG", title="RAG result"),
     )
 
-    assert non_rag_state.rag_label == "Library · Auto off · Agent blocked"
+    assert non_rag_state.rag_label == "Library · Auto off · Agent access off"
     assert rag_state.rag_label == non_rag_state.rag_label
 
 
@@ -3545,7 +3539,7 @@ def test_console_control_state_tolerates_missing_launch_source():
         ConsoleLiveWorkLaunch(source=None, title="Unknown source"),
     )
 
-    assert state.rag_label == "Library · Auto off · Agent blocked"
+    assert state.rag_label == "Library · Auto off · Agent access off"
 
 
 @pytest.mark.asyncio
@@ -3586,9 +3580,9 @@ def test_console_rag_source_status_unchanged_with_a_pending_launch():
     )
     # A stale sent-notice sitting alongside a NEW pending launch changes
     # nothing -- pending-launch derivation takes over unconditionally.
-    assert screen._retrieval._console_rag_source_status(launch, sent_source_count=5) == (
-        "staged from Library Search/RAG"
-    )
+    assert screen._retrieval._console_rag_source_status(
+        launch, sent_source_count=5
+    ) == ("staged from Library Search/RAG")
 
 
 def test_console_rag_source_status_remembers_the_last_send_when_nothing_is_staged():
@@ -3610,10 +3604,13 @@ def test_console_rag_source_status_genuinely_empty_reads_not_staged():
     screen = ChatScreen(app)
 
     assert screen._retrieval._console_rag_source_status(None) == "not staged"
-    assert screen._retrieval._console_rag_source_status(None, sent_source_count=0) == "not staged"
-    assert screen._retrieval._console_rag_source_status(None, sent_source_count=None) == (
-        "not staged"
+    assert (
+        screen._retrieval._console_rag_source_status(None, sent_source_count=0)
+        == "not staged"
     )
+    assert screen._retrieval._console_rag_source_status(
+        None, sent_source_count=None
+    ) == ("not staged")
 
 
 def test_console_inspector_sources_row_remembers_the_last_send():
@@ -3659,7 +3656,9 @@ def test_console_strip_and_inspector_sent_counts_provably_agree():
     inspector_state_2 = screen._build_console_inspector_state(None)
     rows_by_label_2 = {row.label: row for row in inspector_state_2.rows}
     assert strip_state_2.notice == "Evidence sent with this message · 2 sources"
-    assert rows_by_label_2["Retrieval"].value == "sent with the last message · 2 sources"
+    assert (
+        rows_by_label_2["Retrieval"].value == "sent with the last message · 2 sources"
+    )
 
 
 def test_console_prefers_configured_provider_when_app_reactive_is_stale_default():
@@ -3758,9 +3757,7 @@ async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_sour
         # disappear together -- a stranded reason line would still advertise a
         # control the user cannot reach.
         assert not list(console.query("#console-inspector-review-tool-call"))
-        assert not list(
-            console.query("#console-inspector-review-tool-call-reason")
-        )
+        assert not list(console.query("#console-inspector-review-tool-call-reason"))
 
 
 @pytest.mark.asyncio
@@ -3911,7 +3908,7 @@ async def test_console_run_inspector_mcp_row_reflects_real_compose_mcp_provider(
         assert app.console_mcp_tool_count == 1
         assert app.console_mcp_not_connected_count == 0
 
-        console._sync_console_control_bar()
+        await _sync_console_control_bar_now(console)
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-mcp")
 
@@ -3948,7 +3945,7 @@ async def test_console_run_inspector_mcp_row_shows_blocked_when_stale_server_has
         assert app.console_mcp_tool_count == 1
         assert app.console_mcp_not_connected_count == 1
 
-        console._sync_console_control_bar()
+        await _sync_console_control_bar_now(console)
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-mcp")
 
@@ -3998,9 +3995,8 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result(
         # scope-summary grammar under the Console's own "Sources" noun
         # ("Scope" here already means the retrieval ITEM scope), and it
         # names what is off -- the default still being today's three.
-        assert (
-            "Sources: Notes, Media, Conversations (Prompts off)"
-            in _visible_text(console)
+        assert "Sources: Notes, Media, Conversations (Prompts off)" in _visible_text(
+            console
         )
         await _run_manual_library_search(console, pilot, query)
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
@@ -4258,9 +4254,7 @@ async def test_console_rag_staging_shows_evidence_summary_authority_and_snippet(
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        await _run_manual_library_search(
-            console, pilot, "Why did the incident happen?"
-        )
+        await _run_manual_library_search(console, pilot, "Why did the incident happen?")
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-evidence")
@@ -4327,9 +4321,7 @@ async def test_console_rag_send_blocks_when_staged_evidence_is_not_context_eligi
 
         text = _visible_text(console)
         assert "Evidence: 0/1 available (blocked)" in text
-        assert (
-            "Console send blocked: Library search has no available evidence" in text
-        )
+        assert "Console send blocked: Library search has no available evidence" in text
         assert "Review source authority before sending." in text
         assert composer.draft_text() == "Answer using the staged RAG evidence"
 
@@ -4809,8 +4801,7 @@ async def test_console_command_provider_covers_every_alt_bound_action():
         paste_hits = [hit async for hit in provider.search("paste image")]
         assert paste_hits, "expected the paste-image command to be searchable"
         assert any(
-            hit.command == console.action_paste_clipboard_image
-            for hit in paste_hits
+            hit.command == console.action_paste_clipboard_image for hit in paste_hits
         )
 
 

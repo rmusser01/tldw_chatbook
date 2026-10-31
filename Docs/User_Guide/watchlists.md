@@ -112,6 +112,41 @@ recorded outcome says the same input can be retried. For authentication,
 access, invalid-feed, and policy failures, make the stated configuration or
 content change first and then use **Check now**.
 
+## Feeds at a private address
+
+The network safety policy fetches a source at a private address — a NAS,
+an intranet server, `localhost` — only when you typed that address into
+this screen yourself, with **New source** or **Add several…**. Such a
+source needs no further setup. Every other source must resolve to a public
+address, and so must anything a feed links to.
+
+A source made by an earlier version of the app, or brought in by an OPML or
+bundle import, does not count as typed in. If its address is private, its
+checks now fail, and the failed run shows "Failure: The source was blocked
+by the network safety policy." and "Next: Choose a public HTTP(S) source
+allowed by the network safety policy." For a feed you trust, do this instead:
+Watchlists cannot change a source's address, so list its host in
+`config.toml`, then restart the app (an edit made while the app is running
+may not be noticed until it restarts):
+
+```toml
+[web_security]
+allowed_hosts = ["nas.home.arpa", "192.168.1.20"]
+```
+
+Write each host as it appears in the source's address, without the scheme,
+port or path. An IPv6 address goes in without its square brackets:
+`fd00::5`, not `[fd00::5]`. There are no wildcards, and a listed name does
+not cover its subdomains.
+
+A listed host is never checked at all. Whatever address a network gives
+that name is fetched, for every fetch the app makes — that source's checks,
+and also a link in any feed, a redirect, or a Dreams story that points at
+it — and a cloud-metadata address is no longer refused for it. On a hotel,
+airport or VPN network, a bare name such as `nas`, a `.local` name or a
+private address such as `192.168.1.20` can belong to someone else's
+machine, which is exactly the risky case. List only hosts you trust.
+
 ## Exporting briefings and podcast feeds
 
 The **Artifacts** section of a watchlist holds its briefings — text digests

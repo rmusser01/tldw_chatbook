@@ -65,6 +65,7 @@ alias table below already carried ``prompt``/``prompts``, which is why this
 module needed no behavioural change for B2 — only this sentence, which had
 become false.
 """
+
 from __future__ import annotations
 
 from typing import Any, Iterable, Mapping, Sequence
@@ -186,8 +187,7 @@ def rows_to_doc_ids(
     for position, row in enumerate(rows, start=1):
         if not isinstance(row, Mapping):
             raise TypeError(
-                f"row {position} is a {type(row).__name__}, not a mapping: "
-                f"{row!r}"
+                f"row {position} is a {type(row).__name__}, not a mapping: {row!r}"
             )
         provenance = row.get("provenance")
         raw_type = (

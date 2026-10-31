@@ -12,6 +12,7 @@ import stat
 import threading
 import warnings
 import zipfile
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from importlib import resources
@@ -226,6 +227,30 @@ MAX_EXPRESSION_PACK_DECODED_PIXELS = MAX_EXPRESSION_IMAGE_DIMENSION**2 * 16
 
 _READ_CHUNK_SIZE = 1024 * 1024
 
+# Inspection-facts memoization (task-16/F13): the deliberate corruption-check
+# decode (seek+load of every frame) runs once per (source identity, stat
+# signature) instead of once per resolve_visual_identity call. Keys are stat
+# signatures -- user assets carry (path, size, mtime_ns) captured from the
+# descriptor the bytes were actually read from, builtin assets carry their
+# verified manifest digest, and DB blobs carry their content digest -- so any
+# file touch (mtime change) or content change misses and re-decodes. Content
+# itself is still re-verified on every load (`load_visual_identity_asset`
+# re-hashes), so a memo hit can never describe bytes other than the ones that
+# were just read. Failures are never memoized: corrupt payloads re-decode (and
+# re-fail) on every resolution, exactly as before.
+_INSPECTION_MEMO_LIMIT = 32
+_inspection_memo: OrderedDict[
+    tuple[str, ...], tuple[str, tuple[int, int], int, bool, int | None, int]
+] = OrderedDict()
+_INSPECTION_MEMO_LOCK = threading.Lock()
+
+
+def _reset_inspection_memo() -> None:
+    """Forget every memoized inspection (test isolation only)."""
+
+    with _INSPECTION_MEMO_LOCK:
+        _inspection_memo.clear()
+
 _LOWER_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _LICENSE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*\Z")
 _EXPECTED_IMAGE_FORMATS = {
@@ -284,6 +309,8 @@ class LoadedVisualIdentityAsset:
 
     asset: VisualIdentityManifestAsset
     data: bytes
+    inspection_key: tuple[str, ...] = ()
+    decode_identity: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,6 +334,7 @@ class VisualIdentityResolution:
     fallback_reason: str
     cache_identity: tuple[str, ...]
     image_bytes: bytes | None
+    decode_identity: tuple[str, ...] | None = None
 
 
 class VisualIdentityPublicationError(ValueError):
@@ -661,7 +689,7 @@ def resolve_visual_identity(
                 source_kind=str(candidate["pack_source_kind"]),
                 user_data_dir=user_data_dir,
             )
-            _validate_image_bytes(loaded, decoded_pixels_before=0)
+            _validate_image_bytes(loaded, decoded_pixels_before=0, retain_decoded=True)
         except (TypeError, ValueError, OverflowError) as exc:
             detail = str(exc)
             category = (
@@ -714,6 +742,7 @@ def resolve_visual_identity(
                 f"sha256={digest}",
             ),
             image_bytes=loaded.data,
+            decode_identity=loaded.decode_identity or None,
         )
 
     if legacy_state is not None:
@@ -732,7 +761,7 @@ def resolve_visual_identity(
         legacy = None
     if legacy is not None:
         legacy = dict(legacy)
-        validated = _validate_fallback_image(legacy["image"])
+        validated = _validate_fallback_image(legacy["image"], retain_decoded=True)
         if validated is None:
             logger.warning(
                 "visual_identity_resolution_fallback_failed actor_kind=character "
@@ -744,8 +773,7 @@ def resolve_visual_identity(
     else:
         validated = None
     if validated is not None:
-        data, content_type, is_animated = validated
-        digest = hashlib.sha256(data).hexdigest()
+        data, content_type, is_animated, digest = validated
         return VisualIdentityResolution(
             actor_kind=actor_kind,
             actor_id=actor_id_text,
@@ -775,6 +803,7 @@ def resolve_visual_identity(
                 f"sha256={digest}",
             ),
             image_bytes=data,
+            decode_identity=("vi-decode-v1", "content", digest),
         )
 
     card = db.execute_query(
@@ -787,7 +816,7 @@ def resolve_visual_identity(
     ).fetchone()
     if card is not None:
         card = dict(card)
-        validated = _validate_fallback_image(card["image"])
+        validated = _validate_fallback_image(card["image"], retain_decoded=True)
         if validated is None and card["image_bytes"] is not None:
             logger.warning(
                 "visual_identity_resolution_fallback_failed actor_kind=character "
@@ -798,8 +827,7 @@ def resolve_visual_identity(
     else:
         validated = None
     if validated is not None:
-        data, content_type, is_animated = validated
-        digest = hashlib.sha256(data).hexdigest()
+        data, content_type, is_animated, digest = validated
         return VisualIdentityResolution(
             actor_kind=actor_kind,
             actor_id=actor_id_text,
@@ -828,6 +856,7 @@ def resolve_visual_identity(
                 f"sha256={digest}",
             ),
             image_bytes=data,
+            decode_identity=("vi-decode-v1", "content", digest),
         )
     return _placeholder_resolution(
         actor_kind,
@@ -972,7 +1001,7 @@ def resolve_historical_visual_identity(
             source_kind=str(candidate["pack_source_kind"]),
             user_data_dir=user_data_dir,
         )
-        _validate_image_bytes(loaded, decoded_pixels_before=0)
+        _validate_image_bytes(loaded, decoded_pixels_before=0, retain_decoded=True)
     except (AttributeError, TypeError, ValueError, OverflowError, sqlite3.Error):
         logger.warning(
             "visual_identity_history_resolution_failed actor_id={} pack_id={} "
@@ -1012,6 +1041,7 @@ def resolve_historical_visual_identity(
             f"sha256={digest}",
         ),
         image_bytes=loaded.data,
+        decode_identity=loaded.decode_identity or None,
     )
 
 
@@ -1069,18 +1099,34 @@ def _resolution_cache_identity(
     )
 
 
-def _validate_fallback_image(value: object) -> tuple[bytes, str, bool] | None:
+def _validate_fallback_image(
+    value: object,
+    *,
+    digest: str | None = None,
+    retain_decoded: bool = False,
+) -> tuple[bytes, str, bool, str] | None:
     if not isinstance(value, (bytes, bytearray, memoryview)):
         return None
     data = bytes(value)
     if not data or len(data) > MAX_EXPRESSION_ASSET_BYTES:
         return None
+    content_digest = (
+        digest
+        if digest is not None and _LOWER_SHA256_RE.fullmatch(digest) is not None
+        else hashlib.sha256(data).hexdigest()
+    )
     try:
-        image_format, _, _, is_animated, _, _ = _inspect_image_bytes(data)
+        image_format, _, _, is_animated, _, _ = _inspect_image_bytes(
+            data,
+            key=("vi-decode-v1", "content", content_digest),
+            retain=("vi-decode-v1", "content", content_digest)
+            if retain_decoded
+            else None,
+        )
         content_type = _IMAGE_CONTENT_TYPES_BY_FORMAT[image_format]
     except (KeyError, ValueError):
         return None
-    return data, content_type, is_animated
+    return data, content_type, is_animated, content_digest
 
 
 class _VisualIdentityBudgetError(ValueError):
@@ -1310,18 +1356,43 @@ def load_visual_identity_asset(
     parts = _safe_relative_parts(asset.storage_relpath)
     if source_kind == "builtin":
         data = _read_builtin_asset(parts, expected_bytes=asset.bytes)
+        inspection_key = (
+            "vi-decode-v1",
+            "builtin",
+            asset.storage_relpath,
+            asset.sha256,
+        )
     else:
-        data = _read_user_asset(
+        data, stat_signature, candidate_text = _read_user_asset(
             parts,
             expected_bytes=asset.bytes,
             user_data_dir=user_data_dir,
+        )
+        # Stat signature captured from the descriptor the bytes were read
+        # from: an in-place rewrite between open and read either still
+        # matches the verified sha256 below or fails it, so the memo can
+        # never describe different content than was actually read.
+        inspection_key = (
+            "vi-decode-v1",
+            "asset",
+            candidate_text,
+            str(stat_signature[0]),
+            str(stat_signature[1]),
         )
 
     if len(data) != asset.bytes:
         raise ValueError("visual_identity_asset_size_mismatch")
     if hashlib.sha256(data).hexdigest() != asset.sha256:
         raise ValueError("visual_identity_asset_sha256_mismatch")
-    return LoadedVisualIdentityAsset(asset=asset, data=data)
+    return LoadedVisualIdentityAsset(
+        asset=asset,
+        data=data,
+        inspection_key=inspection_key,
+        # Content key: load_visual_identity_asset has just verified this
+        # digest against the bytes, so retained frames keyed by it can be
+        # reused across stat changes (and callers) without re-decoding.
+        decode_identity=("vi-decode-v1", "content", asset.sha256),
+    )
 
 
 @visual_lifetime.reader_guard
@@ -1344,23 +1415,25 @@ def _read_user_asset(
     *,
     expected_bytes: int,
     user_data_dir: str | Path | None,
-) -> bytes:
+) -> tuple[bytes, tuple[int, int], str]:
     assets_root, candidate = _confined_user_asset_path(parts, user_data_dir)
     try:
         source = visual_lifetime.source_for(assets_root.parent)
         with visual_lifetime.files(source, (candidate,)):
             if _supports_secure_dir_fd():
-                return _read_user_asset_secure(
+                data, signature = _read_user_asset_secure(
                     assets_root,
                     parts,
                     expected_bytes=expected_bytes,
                 )
-            return _read_user_asset_fallback(
-                assets_root,
-                candidate,
-                parts,
-                expected_bytes=expected_bytes,
-            )
+            else:
+                data, signature = _read_user_asset_fallback(
+                    assets_root,
+                    candidate,
+                    parts,
+                    expected_bytes=expected_bytes,
+                )
+        return data, signature, str(candidate)
     except visual_lifetime.bootstrap.RecoveryRequired:
         raise ValueError("visual_identity_path_invalid") from None
 
@@ -1406,7 +1479,7 @@ def _read_user_asset_secure(
     parts: tuple[str, ...],
     *,
     expected_bytes: int,
-) -> bytes:
+) -> tuple[bytes, tuple[int, int]]:
     opened_fds: list[int] = []
     flags = os.O_RDONLY | os.O_NOFOLLOW
     if hasattr(os, "O_CLOEXEC"):
@@ -1435,7 +1508,11 @@ def _read_user_asset_secure(
         _verify_opened_leaf_identity(parent_fd, leaf, opened_stat)
         data = _read_fd_bounded(leaf_fd, expected_bytes=expected_bytes)
         _verify_opened_leaf_identity(parent_fd, leaf, opened_stat)
-        return data
+        # Stat signature from the descriptor the bytes were read from: an
+        # in-place rewrite between open and read either still matches the
+        # verified sha256 below or fails it, so the memo can never describe
+        # different content than was actually read.
+        return data, (opened_stat.st_size, opened_stat.st_mtime_ns)
     except ValueError:
         raise
     except OSError as error:
@@ -1475,7 +1552,7 @@ def _read_user_asset_fallback(
     parts: tuple[str, ...],
     *,
     expected_bytes: int,
-) -> bytes:
+) -> tuple[bytes, tuple[int, int]]:
     descriptor: int | None = None
     flags = os.O_RDONLY
     if os.name == "posix":
@@ -1494,7 +1571,7 @@ def _read_user_asset_fallback(
         data = _read_fd_bounded(descriptor, expected_bytes=expected_bytes)
         _verify_fallback_directories(assets_root, parts)
         _verify_fallback_identity(candidate, opened_stat)
-        return data
+        return data, (opened_stat.st_size, opened_stat.st_mtime_ns)
     except ValueError:
         raise
     except OSError as error:
@@ -1839,6 +1916,7 @@ def _validate_image_bytes(
     loaded: LoadedVisualIdentityAsset,
     *,
     decoded_pixels_before: int = 0,
+    retain_decoded: bool = False,
 ) -> int:
     asset = loaded.asset
     (
@@ -1851,6 +1929,8 @@ def _validate_image_bytes(
     ) = _inspect_image_bytes(
         loaded.data,
         decoded_pixels_before=decoded_pixels_before,
+        key=loaded.inspection_key or None,
+        retain=loaded.decode_identity if retain_decoded else None,
     )
 
     try:
@@ -1874,6 +1954,8 @@ def _inspect_image_bytes(
     data: bytes,
     *,
     decoded_pixels_before: int = 0,
+    key: tuple[str, ...] | None = None,
+    retain: tuple[str, ...] | None = None,
 ) -> tuple[str, tuple[int, int], int, bool, int | None, int]:
     # TASK-22217: PIL stays off the warm boot path. This module is imported on
     # EVERY boot via seed_builtin_content -> ensure_builtin_samira, whose
@@ -1885,6 +1967,57 @@ def _inspect_image_bytes(
     # still surfaces as the same ImportError as the old module-level import,
     # now raised at first image work instead of at module import.
     from PIL import Image, UnidentifiedImageError
+
+    memo_key = key if key is not None else (
+        "vi-decode-v1",
+        "bytes",
+        hashlib.sha256(data).hexdigest(),
+    )
+    with _INSPECTION_MEMO_LOCK:
+        facts = _inspection_memo.get(memo_key)
+        if facts is not None:
+            _inspection_memo.move_to_end(memo_key)
+    if facts is None:
+        facts = _decode_image_facts(
+            data,
+            Image=Image,
+            UnidentifiedImageError=UnidentifiedImageError,
+            memo_key=memo_key,
+            retain=retain,
+            decoded_pixels_before=decoded_pixels_before,
+        )
+    # Limit and budget arithmetic is fact-invariant, so it is re-applied on
+    # memo hits too (cheap, no decode): raising before decode stays the
+    # property of the miss path, while hits still honor the module limits
+    # currently in force.
+    _image_size, _frame_count = facts[1], facts[2]
+    decoded_pixels = facts[5]
+    if (
+        _image_size[0] > MAX_EXPRESSION_IMAGE_DIMENSION
+        or _image_size[1] > MAX_EXPRESSION_IMAGE_DIMENSION
+        or _frame_count > MAX_EXPRESSION_FRAME_COUNT
+    ):
+        raise ValueError("visual_identity_asset_limits_exceeded")
+    if (
+        decoded_pixels > MAX_EXPRESSION_ASSET_DECODED_PIXELS
+        or decoded_pixels_before + decoded_pixels > MAX_EXPRESSION_PACK_DECODED_PIXELS
+    ):
+        raise ValueError("visual_identity_budget_exceeded")
+    return facts
+
+
+def _decode_image_facts(
+    data: bytes,
+    *,
+    Image: Any,
+    UnidentifiedImageError: Any,
+    memo_key: tuple[str, ...],
+    retain: tuple[str, ...] | None,
+    decoded_pixels_before: int,
+) -> tuple[str, tuple[int, int], int, bool, int | None, int]:
+    """Fully decode ``data`` once, memoize the facts, optionally retain frames."""
+
+    from tldw_chatbook.Chat.character_expression_playback import SharedFrameRetention
 
     try:
         with warnings.catch_warnings():
@@ -1923,7 +2056,25 @@ def _inspect_image_bytes(
                 # work` is the test that catches it -- the "actual" in its name
                 # is load-bearing. Any future attempt to skip this must keep a
                 # decode, not just the arithmetic.
-                decoded_duration_ms = _image_duration_ms(image, frame_count)
+                #
+                # task-16/F13: the decode now runs once per stat signature
+                # (memoized above), and when ``retain`` names the content key
+                # the same pass deposits the composited RGBA frames for
+                # ``prepare_expression`` so playback never re-decodes.
+                retention = (
+                    SharedFrameRetention(
+                        retain,
+                        loop_raw=image.info.get("loop"),
+                        default_image=bool(image.info.get("default_image")),
+                        image_format=image_format,
+                        size=image_size,
+                    )
+                    if retain is not None
+                    else None
+                )
+                decoded_duration_ms = _image_duration_ms(
+                    image, frame_count, retention=retention
+                )
                 duration_ms = decoded_duration_ms if is_animated else None
     except _VisualIdentityImageLimitError:
         raise ValueError("visual_identity_asset_limits_exceeded") from None
@@ -1941,7 +2092,7 @@ def _inspect_image_bytes(
         ValueError,
     ):
         raise ValueError("visual_identity_asset_decode_invalid") from None
-    return (
+    facts = (
         image_format,
         image_size,
         frame_count,
@@ -1949,14 +2100,37 @@ def _inspect_image_bytes(
         duration_ms,
         decoded_pixels,
     )
+    with _INSPECTION_MEMO_LOCK:
+        _inspection_memo[memo_key] = facts
+        while len(_inspection_memo) > _INSPECTION_MEMO_LIMIT:
+            _inspection_memo.popitem(last=False)
+    return facts
 
 
-def _image_duration_ms(image: Image.Image, frame_count: int) -> int:
+def _image_duration_ms(
+    image: Image.Image,
+    frame_count: int,
+    retention: Any = None,
+) -> int:
     duration_ms = 0
-    for frame_index in range(frame_count):
-        image.seek(frame_index)
-        image.load()
-        duration_ms += int(image.info.get("duration") or 0)
+    raw_durations: list[Any] = []
+    accepted = True
+    try:
+        for frame_index in range(frame_count):
+            image.seek(frame_index)
+            image.load()
+            raw_duration = image.info.get("duration", 0)
+            raw_durations.append(raw_duration)
+            duration_ms += int(raw_duration or 0)
+            if retention is not None and accepted:
+                if not retention.accept(image.convert("RGBA")):
+                    accepted = False
+    finally:
+        if retention is not None:
+            if accepted:
+                retention.seal(tuple(raw_durations))
+            else:
+                retention.abort()
     return duration_ms
 
 

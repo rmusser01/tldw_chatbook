@@ -33,6 +33,15 @@ Discovery does not create a new provider registry and does not auto-save endpoin
 
 Implementations must preserve exact top-level `[providers]` key spelling/casing and write only selected raw endpoint model IDs. Settings and Console must share the same merged saved/discovered model list so users do not see contradictory model availability.
 
+## Amendment 2026-10-14, owner decision ("Pick = use as default"; TASK-35011)
+
+Choosing a discovered model is now an explicit persistence choice too. When the user chooses, in Settings ▸ Providers & Models ▸ Default model, a model the current Discover models listing holds and the provider's saved list does not, that choice is staged as the default for new chats, and the **s** that saves it persists exactly that raw model ID as the default and appends it to the provider's exact existing `[providers].<provider-list-key>` list in the same write. Nothing is written at pick time, and nothing is saved without a user choice: a Revert, a Discard, or a quit with Discard drops the pending addition with its draft.
+
+- This supersedes TASK-33007.3 AC#4 (a discovered model chosen as the default stays off the saved list) and the "[providers] list did not change" clause of TASK-33007.3 AC#10.
+- **Save selected** becomes **Add to model list**, the bulk path for adding several models at once; it applies immediately, as the labelled instant-apply exception (ADR-033). It changes the label and the Tab order (Discover models, the list, Add to model list, Clear) that P7 parent AC#9 and TASK-33007.6 AC#3 ("Discover, Save selected and Clear behave as before") describe; their behaviour is otherwise unchanged.
+- Every list write starts from the file under the config write lock, never from the app's startup copy (TASK-35010). The **s** save reads the list under the lock, then writes only if the locked list is still that one; if it moved, nothing is written and the draft is kept.
+- Only a model the listing served joins: an ID already saved, a catalog ID the server did not list, or a typed Custom ID is saved as the default alone. The default is also saved alone when the served ID equals one of the shipped sample IDs no saved list keeps (OD-1: such a pick never pends, so nothing says it joins), and, with a receipt that says why the model was not added, when no single `[providers]` key matches the provider, when the list holds an ID the save cannot write, when its `[providers]` key is one the save cannot write, and when the config file cannot be read; persistence still never synthesizes a key.
+
 ## Links
 
 - [OpenAI-compatible model discovery PRD](../../Docs/superpowers/specs/2026-06-04-openai-compatible-model-discovery-prd-design.md)

@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "/private/tmp/console-dev-live-01a0fa6c/verify_qa_blobs.py"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {},
+  "started_at": 1791067622.311282,
+  "elapsed_seconds": 2.0330300331115723,
+  "returncode": 0,
+  "stdout": "{\"head\": \"49ea0fe952f113dd90ab4513efe74443b7cf69d0\", \"source_archive_records\": 641, \"live_records\": 172, \"all_committed_blob_lengths_hashes_decompression_and_readable_copies_equal\": true}\n",
+  "head": "49ea0fe952f113dd90ab4513efe74443b7cf69d0"
+}

@@ -9,12 +9,39 @@ Loads and manages configuration from YAML files for the evaluation system.
 """
 
 import copy
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+from weakref import WeakValueDictionary
+
+from loguru import logger
 import yaml
 
 from tldw_chatbook.Backup_Recovery import raw_participants as raw
-from pathlib import Path
-from typing import Dict, Any, List, Optional
-from loguru import logger
+
+
+def _merge(base, updates):
+    from tldw_chatbook.config import deep_merge_dicts
+
+    return deep_merge_dicts(base, copy.deepcopy(updates))
+
+
+def _capture_draft(overrides, expected, draft):
+    """Capture mutable getter edits without pinning unchanged inherited values."""
+    result = copy.deepcopy(overrides)
+    for key in expected.keys() - draft.keys():
+        result.pop(key, None)
+    for key, value in draft.items():
+        if key in expected and value == expected[key]:
+            continue
+        if isinstance(value, dict) and isinstance(expected.get(key), dict):
+            nested = _capture_draft(result.get(key, {}), expected[key], value)
+            if nested:
+                result[key] = nested
+            else:
+                result.pop(key, None)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
 
 
 class EvalConfigLoader:
@@ -25,16 +52,21 @@ class EvalConfigLoader:
         Initialize configuration loader.
 
         Args:
-            config_path: Optional path to configuration file
+            config_path: Optional full configuration file. Omission selects
+                shipped defaults with private profile overrides.
         """
-        if config_path is None:
-            from . import _default_config_path
+        self._uses_profile_overrides = config_path is None
+        if self._uses_profile_overrides:
+            from . import _override_config_path
 
-            config_path = _default_config_path()
+            config_path = _override_config_path()
 
         self.config_path = Path(config_path)
         self._config = None
         self._persisted_config = None
+        self._defaults = {}
+        self._overrides = {}
+        self._persisted_overrides = {}
         self.persistence_error = None
         self._load_config()
 
@@ -42,20 +74,45 @@ class EvalConfigLoader:
         """Load configuration from YAML file."""
         previous_config = self._config
         previous_persisted = self._persisted_config
+        defaults = None
         try:
+            if self._uses_profile_overrides:
+                from . import _default_config_path
+
+                # Distribution assets are read-only resources, not private state.
+                with _default_config_path().open(encoding="utf-8") as stream:
+                    defaults = yaml.safe_load(stream)
+                if not isinstance(defaults, dict):
+                    raise ValueError("eval_defaults_not_mapping")
             with raw._scope(self, "eval_config") as operation:
                 selected = raw._selected(operation)
                 if not selected.exists():
-                    logger.warning(f"Configuration file not found: {selected}")
-                    self._config = self._get_default_config()
-                    self._persisted_config = None
-                    return
-                with raw._file(operation, selected, "r") as f:
-                    loaded = yaml.safe_load(f)
-                self._config = loaded
-                self._persisted_config = copy.deepcopy(loaded)
-                self.persistence_error = None
-                logger.info(f"Loaded configuration from {selected}")
+                    if not self._uses_profile_overrides:
+                        logger.warning(f"Configuration file not found: {selected}")
+                        self._config = self._get_default_config()
+                        self._persisted_config = None
+                        return
+                    loaded = {}
+                else:
+                    with raw._file(operation, selected, "r") as f:
+                        loaded = yaml.safe_load(f)
+                    if self._uses_profile_overrides and loaded is None:
+                        loaded = {}
+                if self._uses_profile_overrides:
+                    if not isinstance(loaded, dict):
+                        raise ValueError("eval_overrides_not_mapping")
+                    effective = _merge(defaults, loaded)
+                else:
+                    effective = loaded
+                # Commit baselines only after the private operation closes cleanly.
+            self._config = effective
+            self._persisted_config = copy.deepcopy(effective)
+            if self._uses_profile_overrides:
+                self._defaults = defaults
+                self._overrides = copy.deepcopy(loaded)
+                self._persisted_overrides = copy.deepcopy(loaded)
+            self.persistence_error = None
+            logger.debug(f"Loaded evaluation configuration from {selected}")
         except Exception as e:
             self._config = previous_config
             self._persisted_config = previous_persisted
@@ -63,11 +120,18 @@ class EvalConfigLoader:
             logger.error(f"Error loading configuration: {e}")
             # Refusal never discards an existing mutable draft.
             if self._config is None:
-                self._config = self._get_default_config()
+                if isinstance(defaults, dict):
+                    self._defaults = defaults
+                    self._config = copy.deepcopy(defaults)
+                else:
+                    self._config = self._get_default_config()
 
     def persistence_safe_point(self):
         """Report the actual mutable draft, including edits through get()."""
-        if self._config != self._persisted_config:
+        if self._config != self._persisted_config or (
+            self._uses_profile_overrides
+            and self._overrides != self._persisted_overrides
+        ):
             return "needs_user_save_or_discard"
         return "persistence_failed" if self.persistence_error else "ready"
 
@@ -229,41 +293,58 @@ class EvalConfigLoader:
         if self._config is None:
             self._config = {}
 
-        def deep_update(d, u):
-            for k, v in u.items():
-                if isinstance(v, dict):
-                    d[k] = deep_update(d.get(k, {}), v)
-                else:
-                    d[k] = v
-            return d
-
-        self._config = deep_update(self._config, updates)
+        if self._uses_profile_overrides:
+            self._overrides = _capture_draft(
+                self._overrides, _merge(self._defaults, self._overrides), self._config
+            )
+            self._overrides = _merge(self._overrides, updates)
+        self._config = _merge(self._config, updates)
 
     def save(self, path: Optional[str] = None):
         """
         Save configuration to file.
 
         Args:
-            path: Optional path to save to (defaults to original path)
+            path: Optional full-config export destination. Saving to the
+                profile override path writes only explicit overrides.
         """
         save_path = Path(path) if path else self.config_path
         previous_persisted = self._persisted_config
         try:
-            with raw._scope(self, "eval_config", writing=True, selected_read=save_path) as operation:
+            with raw._scope(
+                self, "eval_config", writing=True, selected_read=save_path
+            ) as operation:
                 selected = raw._selected(operation)
-                snapshot = copy.deepcopy(self._config)
+                primary = selected == raw.lexical_path(self.config_path)
+                sparse = self._uses_profile_overrides and primary
+                overrides = (
+                    _capture_draft(
+                        self._overrides,
+                        _merge(self._defaults, self._overrides),
+                        self._config,
+                    )
+                    if sparse
+                    else None
+                )
+                snapshot = copy.deepcopy(overrides if sparse else self._config)
                 raw._mkdirs(operation)
                 temporary = selected.with_suffix(selected.suffix + ".tmp")
                 try:
                     with raw._file(operation, temporary, "w") as f:
-                        yaml.dump(snapshot, f, default_flow_style=False, sort_keys=False)
+                        yaml.safe_dump(
+                            snapshot, f, default_flow_style=False, sort_keys=False
+                        )
                     raw._replace(operation, temporary, selected)
                 finally:
                     raw._remove_temporary(operation, temporary)
-                if selected == raw.lexical_path(self.config_path):
-                    self._persisted_config = snapshot
-                    self.persistence_error = None
-                logger.info(f"Saved configuration to {selected}")
+            if primary:
+                if sparse:
+                    self._overrides = overrides
+                    self._persisted_overrides = copy.deepcopy(overrides)
+                    self._config = _merge(self._defaults, overrides)
+                self._persisted_config = copy.deepcopy(self._config)
+                self.persistence_error = None
+            logger.info(f"Saved configuration to {selected}")
         except Exception as e:
             self._persisted_config = previous_persisted
             self.persistence_error = "eval_save_failed"
@@ -272,18 +353,23 @@ class EvalConfigLoader:
 
 # Global configuration instance
 _config_loader = None
+_profile_loaders = WeakValueDictionary()
 
 
 def get_eval_config() -> EvalConfigLoader:
     """Get or create the global configuration loader."""
     global _config_loader
-    if _config_loader is None:
-        _config_loader = EvalConfigLoader()
+    from . import _override_config_path
+
+    selected = _override_config_path()
+    if _config_loader is None or _config_loader.config_path != selected:
+        _config_loader = _profile_loaders.get(selected)
+        if _config_loader is None:
+            _config_loader = EvalConfigLoader()
+            _profile_loaders[selected] = _config_loader
     return _config_loader
 
 
 def reload_config():
     """Reload the global configuration."""
-    global _config_loader
-    if _config_loader:
-        _config_loader.reload()
+    get_eval_config().reload()

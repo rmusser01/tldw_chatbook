@@ -1,4 +1,4 @@
-# MCP — MCP servers, tools, permissions, auth, and audit
+# MCP — MCP servers, tools, permissions, auth, and history
 
 ## Watchlists privacy boundary
 
@@ -14,17 +14,21 @@ It does not publish source or collection mutation, checking, briefing generation
 
 Use Console when an agent needs to read or summarize a complete briefing on your behalf. Use external MCP for discovery, receipts, and status automation without exporting private briefing bodies.
 
-## What this screen is for
+## What this category is for
 
-MCP manages MCP servers, scoped tools, permissions, and audit readiness
-(on-screen subtitle: "MCP (Model Context Protocol) lets chatbook use
-external tools — most people never need to change anything here."). It's
-organized into four modes: Servers, Tools, Permissions, and Audit.
+MCP is not a screen of its own: **Settings ▸ Tools & MCP**, a Settings
+category, manages MCP servers, scoped tools, permissions, and history
+(on-screen subtitle: "What your agents can use, what asks first, and what
+they did — most people never need to change anything here."). It's
+organized into four modes: Servers, Tools, Permissions, and History.
 
 ## Getting there
 
-- Press **Ctrl+9**, click **⌃9 MCP** in the nav bar, or press **Ctrl+P** →
-  "Tab Navigation: Switch to MCP".
+- Press **Ctrl+9**, which opens Settings ▸ Tools & MCP from anywhere (it has
+  no nav-bar label), or press **Ctrl+P** → "Tab Navigation: Switch to Tools &
+  MCP".
+- In Settings (**F4**), choose **Tools & MCP** in the category rail's
+  **Data & Privacy** group.
 
 ## Adding your first MCP server (step by step)
 
@@ -32,7 +36,7 @@ Local servers run as stdio processes chatbook launches for you. Secrets are
 never stored — reference them as `KEY=$ENV_VAR` and export the variable in
 your shell before connecting.
 
-1. **Open the screen** (Ctrl+9). On a fresh install the overview table is
+1. **Open Settings ▸ Tools & MCP** (Ctrl+9). On a fresh install the overview table is
    showing, with the built-in server listed and the `Add server` and
    `Import…` buttons at the top. (You can also press `a` in any mode.)
 2. **Press Add server** (or `a`). Fill in:
@@ -56,7 +60,7 @@ your shell before connecting.
 5. **Try a tool.** Press `2` (Tools), arrow onto the tool, and press `t`
    to open the Test Tool panel — a form built from the tool's schema (or
    a raw-JSON box when the schema is too complex). An Ask-gated tool asks
-   once per run; the run is recorded in Audit (`4`).
+   once per run; the run is recorded in History (`4`).
 
 To remove a server, select its row in Servers mode and use **Delete**
 (a two-step confirm; Escape backs out). **Import…** accepts a
@@ -116,7 +120,7 @@ Supported fields are `name` (update only), `description`, `personality`,
 limits apply. Image fields, unknown fields, and delete/restore are unsupported.
 
 Both tools are persistent writes and require approval when Allow is inherited.
-An explicit per-tool Allow in MCP Permissions grants access. External stdio
+An explicit per-tool Allow in Tools & MCP's Permissions mode grants access. External stdio
 clients cannot display an approval card: they receive `permission_required`
 until an operator grants the tool under the built-in `tldw_chatbook` server.
 Revocation and the MCP kill switch apply on the next call. Restored MCP settings
@@ -231,8 +235,10 @@ decide MCP availability independently.
 
 Select the built-in server's row in Servers mode; its detail pane has a
 **Tool gates** group under the existing enable/expose checkboxes. Each gate
-is a button that spells its own state out in text — `Read file: off ▸`,
-`Read file: on ▸` — and presses toggle it the same optimistic-then-revert
+is a button that spells its own state out in text — `Read file (next
+chat): off ▸`, `Read file (next chat): on ▸` — with the parenthesized
+suffix naming when the gate takes effect (next chat, or restart to apply
+for `web_deep_search`); presses toggle it the same optimistic-then-revert
 way the local master switch above does; the tool's plain-language name
 and one-line description are the same copy the first-run setup wizard
 shows. The group is split into two subheadings:
@@ -261,8 +267,10 @@ Every gate here saves immediately and reads back the real config value
 after saving — the label you end up looking at is what is really stored,
 never an optimistic guess. **When a change takes effect:** every gate in
 this group applies to the *next Console agent run* — each run builds its
-tool catalog fresh — so no app restart is needed. The one caveat, called
-out in its own note under the group, is `web_deep_search`: when `[mcp]
+tool catalog fresh — so no app restart is needed; that is what each row's
+`(next chat)` suffix states. The one caveat, called
+out in its own note under the group and in its row's `(restart to apply)`
+suffix, is `web_deep_search`: when `[mcp]
 expose_local_tools` is on, it is also published to *external* MCP clients,
 and that list is built when the built-in server starts, so that half
 follows the next client launch. This pane is still labeled as the
@@ -275,7 +283,8 @@ If the local master is off, both the Permissions matrix's legend and the
 Tools-mode empty state explicitly name `web_search`, `web_fetch`, and
 `web_crawl` and point to the direct Tools-mode control. Other disabled gates
 still report the total number of gates that are off, and the legend names
-where they live: **MCP ▸ Servers ▸ built-in row ▸ Tool gates**.
+where they live: **Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool
+gates**.
 
 ### `expand_document` and the Library consent boundary
 
@@ -492,7 +501,8 @@ cycle and every marker it can show:
 > Allow → Ask → Off
 
 When any registration gate is off, a second legend line names where the gates
-live — **MCP ▸ Servers ▸ built-in row ▸ Tool gates** — since a gate-off tool
+live — **Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates** —
+since a gate-off tool
 has no row here to find.
 
 ### The risk floor, and how an explicit Allow gets past it
@@ -608,7 +618,7 @@ A completed run shows:
   isn't enough.
 
 A run that finished but can't be shown where you're looking — you closed
-the panel, picked a different tool, or switched to Audit mode while it was
+the panel, picked a different tool, or switched to History mode while it was
 still in flight — still tells you: a toast reads "\<tool\> finished
 running, but its result isn't shown here." A run that never reached the
 tool at all — a hard **Off** gate, a runtime-governance denial, or the
@@ -625,7 +635,7 @@ changes what a tool does drops back to Ask) — built-in tools skip that
 check entirely, since an ordinary app update that only edits a docstring
 must never silently turn your "Allow" back into "Ask".
 
-In Audit mode, a run you confirmed under an Ask gate is recorded with the
+In History mode, a run you confirmed under an Ask gate is recorded with the
 decision **approved**, distinct from **allowed** (a tool already set to
 Allow) — so the log shows not just that a call reached the tool, but
 whether it needed your confirmation first. The table repopulates as soon
@@ -655,6 +665,16 @@ the same **Denied (no decision)** row every other unresolved round does. A
 headless round writes no audit row at all — not even that one — since the
 log is reached through the app, and this path exists precisely because
 there is no app to reach it through.
+
+### Approval timeouts
+
+`[mcp] approval_timeout_seconds` has one default, `0`, for Console approval
+cards and live MCP confirmation requests. Unset, unparsable, zero or negative
+values mean no approval deadline: the request waits for a decision or cancellation.
+Set a positive value (for example, `120`) to expire unanswered requests after
+that many seconds. An expired or cancelled MCP confirmation cannot be approved
+later. This ceiling applies to human decisions; tool execution timeouts remain
+separate, and waiting never grants permission to run a tool.
 
 ### Session approvals
 
@@ -711,7 +731,7 @@ arguments, pick `tool.execute` from the action list, and press **Run
 Action**. It goes through the same
 permission gate and the same execution log as every other tool run —
 a tool set to **Off** is refused ("Blocked · not run"), and the refusal is
-recorded in Audit mode just like any other blocked run.
+recorded in History mode just like any other blocked run.
 
 Because this route resolves permissions by key rather than a stored
 definition hash, almost everything it touches needs a per-run confirm —

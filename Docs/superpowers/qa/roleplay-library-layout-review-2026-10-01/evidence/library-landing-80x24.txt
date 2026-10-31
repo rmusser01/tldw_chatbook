@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌───────────────────────────┐Search everything, pick a section, or add something
+│ Navigat…    Collapse      │new.
+│     Import…               │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │Notes (5) · Media (2) · Conversations (6)
+│ ▊ Search Library…   ▎▊x▎  │From your Library
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │ Notes · Recipe: cardamom buns
+│                           │ Media · Notes on Character Card V3
+│ ────────────────────────  │ Conversations · Sourdough troubleshooting
+│ Browse               ▾  ▁ │Quick actions
+│    Media (2)              │
+│    Conversations (6)      │     Import…         New note         Search
+│    Notes (5)              │
+│    Prompts (4) — reuse    │
+│    Skills (1)             │
+│    Collections (0)        │
+│    Search / RAG           │
+│ ────────────────────────  │
+│  ▾ scroll for more        │
+└───────────────────────────┘
+  / focus search | i import content | F1 · F6 · Ctrl+P · Ctrl+Q

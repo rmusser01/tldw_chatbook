@@ -74,13 +74,19 @@ def test_loop_dispatches_run_log_stats_to_the_injected_callable():
 
     def handler(args):
         seen.update(args)
-        return ToolResult(ok=True, content="1 record(s), grouped by tool:\n  calc: count=1")
+        return ToolResult(
+            ok=True, content="1 record(s), grouped by tool:\n  calc: count=1"
+        )
 
     turns = [
         ModelTurn(
             text="",
             tool_calls=(
-                ToolCall(name=RUN_LOG_STATS_TOOL_NAME, args={"group_by": "tool"}, call_id="c1"),
+                ToolCall(
+                    name=RUN_LOG_STATS_TOOL_NAME,
+                    args={"group_by": "tool"},
+                    call_id="c1",
+                ),
             ),
             assistant_message={"role": "assistant", "content": ""},
         ),
@@ -101,7 +107,9 @@ def test_loop_dispatches_run_log_slice_to_the_injected_callable():
 
     def handler(args):
         seen.update(args)
-        return ToolResult(ok=True, content="records 000001-000003 of this run's log:\n\n...")
+        return ToolResult(
+            ok=True, content="records 000001-000003 of this run's log:\n\n..."
+        )
 
     turns = [
         ModelTurn(
@@ -234,8 +242,12 @@ def test_subagent_cannot_call_run_log_stats_or_run_log_slice(tmp_path, monkeypat
     tool_results = [
         s["result"] for s in child_runs[0]["steps"] if s["kind"] == "tool_result"
     ]
-    assert any(f"Tool not permitted: {RUN_LOG_STATS_TOOL_NAME}" in r for r in tool_results)
-    assert any(f"Tool not permitted: {RUN_LOG_SLICE_TOOL_NAME}" in r for r in tool_results)
+    assert any(
+        f"Tool not permitted: {RUN_LOG_STATS_TOOL_NAME}" in r for r in tool_results
+    )
+    assert any(
+        f"Tool not permitted: {RUN_LOG_SLICE_TOOL_NAME}" in r for r in tool_results
+    )
 
 
 # -- Real closures, empty / single-segment / multi-segment logs --------------
@@ -271,7 +283,9 @@ def real_closures(wired, monkeypatch):
     monkeypatch.setattr(agent_service_module, "run_agent_loop", spy_run_agent_loop)
 
     service = AgentService(
-        db, registry, chat_call=lambda **kw: {"choices": [{"message": {"content": "ok"}}]}
+        db,
+        registry,
+        chat_call=lambda **kw: {"choices": [{"message": {"content": "ok"}}]},
     )
     service.run_turn(
         conversation_id="c1",
@@ -372,7 +386,11 @@ def test_multi_segment_log_stats_and_slice_see_every_record(tmp_path, monkeypatc
     last (or first) one.
     """
     from tldw_chatbook.Agents import run_log as run_log_module
-    from tldw_chatbook.Agents.run_log_search import compute_stats, load_records, slice_records
+    from tldw_chatbook.Agents.run_log_search import (
+        compute_stats,
+        load_records,
+        slice_records,
+    )
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
     writer = run_log_module.RunLogWriter(segment_bytes=400)
@@ -404,13 +422,17 @@ def test_multi_segment_log_stats_and_slice_see_every_record(tmp_path, monkeypatc
     assert total_matched == total
     by_key = {g.key: g for g in groups}
     assert by_key["alpha"].count + by_key["beta"].count == total
-    assert sum(g.error_count for g in groups) == len([i for i in range(total) if i % 5 == 0])
+    assert sum(g.error_count for g in groups) == len(
+        [i for i in range(total) if i % 5 == 0]
+    )
 
     # slice_records spans a segment boundary correctly (segment_bytes=400
     # rolls well before 30 records of ~45 bytes each are written).
     selected, matched, lo, hi = slice_records(records, from_record=1, to_record=total)
     assert matched == total
-    assert [r.number for r in selected] == list(range(1, min(total, MAX_SLICE_RECORDS) + 1))
+    assert [r.number for r in selected] == list(
+        range(1, min(total, MAX_SLICE_RECORDS) + 1)
+    )
 
 
 # -- Junk arguments through the REAL service closures ------------------------
@@ -448,7 +470,9 @@ def test_multi_segment_log_stats_and_slice_see_every_record(tmp_path, monkeypatc
         {"to_record": float("-inf")},
     ],
 )
-def test_run_log_stats_unparseable_numeric_args_return_a_clean_error(real_closures, bad_args):
+def test_run_log_stats_unparseable_numeric_args_return_a_clean_error(
+    real_closures, bad_args
+):
     run_log_stats, _slice = real_closures
     result = run_log_stats(bad_args)
     assert result.ok is False
@@ -471,7 +495,9 @@ def test_run_log_stats_unparseable_numeric_args_return_a_clean_error(real_closur
         {"to_record": float("-inf")},
     ],
 )
-def test_run_log_slice_unparseable_numeric_args_return_a_clean_error(real_closures, bad_args):
+def test_run_log_slice_unparseable_numeric_args_return_a_clean_error(
+    real_closures, bad_args
+):
     _stats, run_log_slice = real_closures
     result = run_log_slice(bad_args)
     assert result.ok is False
@@ -483,10 +509,10 @@ def test_run_log_slice_unparseable_numeric_args_return_a_clean_error(real_closur
     [
         {"from_record": None},
         {"to_record": None},
-        {"from_record": 10 ** 18},  # huge int
-        {"to_record": 10 ** 18},  # huge int
-        {"from_record": 10 ** 30},  # enormous int, well past int64 range
-        {"to_record": 10 ** 30},
+        {"from_record": 10**18},  # huge int
+        {"to_record": 10**18},  # huge int
+        {"from_record": 10**30},  # enormous int, well past int64 range
+        {"to_record": 10**30},
         {"from_record": 1e300},  # enormous float, still finite -- int() succeeds
         {"to_record": 1e300},
         {"from_record": -5},  # negative
@@ -506,10 +532,10 @@ def test_run_log_stats_null_huge_and_negative_args_never_raise(real_closures, ok
     [
         {"from_record": None},
         {"to_record": None},
-        {"from_record": 10 ** 18},  # huge int -- resolves to an empty-but-clean slice
-        {"to_record": 10 ** 18},
-        {"from_record": 10 ** 30},  # enormous int, well past int64 range
-        {"to_record": 10 ** 30},
+        {"from_record": 10**18},  # huge int -- resolves to an empty-but-clean slice
+        {"to_record": 10**18},
+        {"from_record": 10**30},  # enormous int, well past int64 range
+        {"to_record": 10**30},
         {"from_record": 1e300},  # enormous float, still finite -- int() succeeds
         {"to_record": 1e300},
         {"from_record": -5},  # negative -- clamped to record 1
@@ -537,7 +563,9 @@ def test_run_log_slice_null_huge_and_negative_args_never_raise(real_closures, ok
         {"kind": None},
     ],
 )
-def test_run_log_stats_string_typed_args_are_defensively_coerced(real_closures, bad_args):
+def test_run_log_stats_string_typed_args_are_defensively_coerced(
+    real_closures, bad_args
+):
     run_log_stats, _slice = real_closures
     result = run_log_stats(bad_args)
     assert result.ok is True
@@ -551,7 +579,9 @@ def test_run_log_stats_string_typed_args_are_defensively_coerced(real_closures, 
 # vastly larger result than a bounded one.
 
 
-def test_real_run_log_stats_and_slice_stay_bounded_on_a_large_log(tmp_path, monkeypatch):
+def test_real_run_log_stats_and_slice_stay_bounded_on_a_large_log(
+    tmp_path, monkeypatch
+):
     from tldw_chatbook.Agents import run_log as run_log_module
     from tldw_chatbook.Agents import agent_service as agent_service_module
 
@@ -702,7 +732,9 @@ def test_real_run_log_stats_caps_groups_when_tool_names_far_exceed_the_cap(
 # feeds both the aggregation and the label.
 
 
-def test_run_log_stats_unsupported_group_by_is_labelled_as_tool_not_echoed(real_closures):
+def test_run_log_stats_unsupported_group_by_is_labelled_as_tool_not_echoed(
+    real_closures,
+):
     run_log_stats, _slice = real_closures
     result = run_log_stats({"group_by": "not_a_real_dimension"})
     assert result.ok is True
@@ -711,7 +743,9 @@ def test_run_log_stats_unsupported_group_by_is_labelled_as_tool_not_echoed(real_
 
 
 @pytest.mark.parametrize("group_by", ["tool", "type", "status", "kind"])
-def test_run_log_stats_every_supported_group_by_is_labelled_correctly(real_closures, group_by):
+def test_run_log_stats_every_supported_group_by_is_labelled_correctly(
+    real_closures, group_by
+):
     run_log_stats, _slice = real_closures
     result = run_log_stats({"group_by": group_by})
     assert result.ok is True
@@ -744,7 +778,7 @@ _HOSTILE_JSON_VALUES = [
     pytest.param([1, 2, 3], id="list"),
     pytest.param(True, id="boolean"),
     pytest.param(-5, id="negative"),
-    pytest.param(10 ** 30, id="out-of-range"),
+    pytest.param(10**30, id="out-of-range"),
 ]
 
 RUN_LOG_STATS_ARG_NAMES = (

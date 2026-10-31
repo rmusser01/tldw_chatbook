@@ -135,6 +135,8 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         "prepare_managed_skill_promotion",
         "read_agent_messages",
         "report_to_supervisor",
+        "list_peer_agents",
+        "send_to_peer",
         "context",
         "doctor",
         "emergency-stop",

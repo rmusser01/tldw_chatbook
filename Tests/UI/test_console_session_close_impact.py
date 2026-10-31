@@ -34,7 +34,11 @@ def test_session_close_impact_counts_only_unsaved_conversation_tree_nodes(
         )
         for index, persisted_message_id in enumerate(persisted_message_ids)
     ]
-    store = SimpleNamespace(all_messages_for_session=lambda _session_id: messages)
+    store = SimpleNamespace(
+        all_messages_for_session=lambda _session_id: messages,
+        sessions=lambda: (SimpleNamespace(id="session-1", pending_attachments=[]),),
+        session_draft=lambda _session_id: "",
+    )
     lifecycle = ConsoleLifecycleImpact(
         revision=7,
         live_run_count=0,
@@ -44,10 +48,12 @@ def test_session_close_impact_counts_only_unsaved_conversation_tree_nodes(
     runtime = SimpleNamespace(
         lifecycle_impact=lambda *, session_id: (
             lifecycle if session_id == "session-1" else None
-        )
+        ),
+        pending_round_kinds=lambda _session_id: frozenset(),
     )
     controller = ConsoleSessionController.__new__(ConsoleSessionController)
     controller._chat_store_accessor = lambda: store
+    controller._composer_accessor = lambda: None
     controller._ensure_console_chat_controller_fn = lambda: runtime
 
     impact = controller._session_close_impact("session-1")

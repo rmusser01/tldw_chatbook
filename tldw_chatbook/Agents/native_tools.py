@@ -151,6 +151,8 @@ def provider_supports_native_tools(
     """
     provider = str(api_endpoint or "").strip().lower()
     if provider in {
+        "strata",
+        "polystrata",
         "llama_cpp",
         "local_llamacpp",
         "vllm",

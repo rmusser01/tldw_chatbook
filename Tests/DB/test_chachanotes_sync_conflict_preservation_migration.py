@@ -108,9 +108,7 @@ def test_upgrade_from_a_real_v43_database_adds_the_columns(tmp_path: Path):
                 """
             )
 
-    migrated = open_current_chachanotes_from_legacy(
-        db_path, client_id="v44-upgrade"
-    )
+    migrated = open_current_chachanotes_from_legacy(db_path, client_id="v44-upgrade")
     try:
         connection = migrated.get_connection()
         # Dynamic, not a literal 44: this reopen is UNPATCHED, so it replays
@@ -154,9 +152,7 @@ def test_upgrade_is_re_enterable_after_a_half_applied_run(tmp_path: Path):
     finally:
         connection.close()
 
-    migrated = open_current_chachanotes_from_legacy(
-        db_path, client_id="v44-reentry"
-    )
+    migrated = open_current_chachanotes_from_legacy(db_path, client_id="v44-reentry")
     try:
         # Dynamic for the same reason as the sibling test above: the reopen
         # is unpatched, so the literal would red on the next schema bump and

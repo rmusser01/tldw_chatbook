@@ -287,7 +287,9 @@ class WatchlistScopeService:
         backend = self._normalize_backend(runtime_backend)
         self._enforce_policy(backend, "items.list")
         if backend == WatchlistBackend.SERVER:
-            raise ValueError("Item listing is only supported for the local backend in this slice.")
+            raise ValueError(
+                "Item listing is only supported for the local backend in this slice."
+            )
         service = self._service_for_backend(backend)
         return await self._maybe_await(
             service.list_items(
@@ -636,12 +638,8 @@ class WatchlistScopeService:
                 "in this slice."
             )
         service = self._service_for_backend(backend)
-        row_ids = [
-            self._source_id_from_item_id(item_id) for item_id in item_ids or []
-        ]
-        return int(
-            await self._maybe_await(service.restore_items_new(item_ids=row_ids))
-        )
+        row_ids = [self._source_id_from_item_id(item_id) for item_id in item_ids or []]
+        return int(await self._maybe_await(service.restore_items_new(item_ids=row_ids)))
 
     async def set_item_flagged(
         self,
@@ -838,10 +836,9 @@ class WatchlistScopeService:
                         except Exception:
                             current_run = None
                         if isinstance(current_run, Mapping):
-                            already_recorded = (
-                                str(current_run.get("status") or "").lower()
-                                not in {"queued", "running"}
-                            )
+                            already_recorded = str(
+                                current_run.get("status") or ""
+                            ).lower() not in {"queued", "running"}
                     if not already_recorded:
                         record_failure = getattr(service, "record_run_failure", None)
                         if callable(record_failure):
@@ -949,7 +946,9 @@ class WatchlistScopeService:
         backend = self._normalize_backend(runtime_backend)
         self._enforce_policy(backend, "runs.cancel")
         service = self._service_for_backend(backend)
-        return await self._maybe_await(service.cancel_run(self._run_id_from_item_id(run_id)))
+        return await self._maybe_await(
+            service.cancel_run(self._run_id_from_item_id(run_id))
+        )
 
     async def list_alert_rules(
         self,
@@ -1029,7 +1028,9 @@ class WatchlistScopeService:
         if rule_id is not None:
             self._enforce_policy(backend, "alert_rules.update")
             return await self._maybe_await(
-                service.update_alert_rule(self._rule_id_from_item_id(rule_id), **clean_payload)
+                service.update_alert_rule(
+                    self._rule_id_from_item_id(rule_id), **clean_payload
+                )
             )
         self._enforce_policy(backend, "alert_rules.create")
         return await self._maybe_await(service.create_alert_rule(**clean_payload))
@@ -1068,7 +1069,9 @@ class WatchlistScopeService:
         backend = self._normalize_backend(runtime_backend)
         self._enforce_policy(backend, "preview")
         if backend == WatchlistBackend.SERVER:
-            raise ValueError("Preview is only supported for the local backend in this slice.")
+            raise ValueError(
+                "Preview is only supported for the local backend in this slice."
+            )
         preview_service = WatchlistPreviewService(run_executor=self._get_run_executor())
         return await self._maybe_await(preview_service.preview(source_config))
 
@@ -1120,7 +1123,9 @@ class WatchlistScopeService:
         backend = self._normalize_backend(runtime_backend)
         self._enforce_policy(backend, "import")
         if backend == WatchlistBackend.SERVER:
-            raise ValueError("OPML import is only supported for the local backend in this slice.")
+            raise ValueError(
+                "OPML import is only supported for the local backend in this slice."
+            )
         payloads = WatchlistOpmlService().parse(xml_text)
         service = self._service_for_backend(backend)
         created: list[dict[str, Any]] = []

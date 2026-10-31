@@ -92,8 +92,16 @@ async def test_local_research_search_service_lists_and_launches_local_paper_sear
 
     # task-16792: the listing IS the catalog (priority order).
     assert providers == [
-        "openalex", "semantic_scholar", "crossref", "arxiv",
-        "biorxiv", "medrxiv", "pubmed", "zenodo", "figshare", "osf",
+        "openalex",
+        "semantic_scholar",
+        "crossref",
+        "arxiv",
+        "biorxiv",
+        "medrxiv",
+        "pubmed",
+        "zenodo",
+        "figshare",
+        "osf",
     ]
     assert arxiv["items"][0]["id"] == "2401.00001"
     assert semantic["items"][0]["paperId"] == "abc"

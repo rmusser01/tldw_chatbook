@@ -1,0 +1,30 @@
+{
+  "server": "siliconflow",
+  "base_url": "https://api.siliconflow.com/v1",
+  "probe_model": "probe-model",
+  "listing": {
+    "status": 401,
+    "body": {
+      "code": 30014,
+      "data": null,
+      "message": "Token is invalid."
+    }
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "code": 30014,
+      "data": null,
+      "message": "Token is invalid."
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "code": 30014,
+      "data": null,
+      "message": "Token is invalid."
+    }
+  },
+  "probed_at": "2026-09-30T04:19:54+00:00"
+}

@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                       Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | Chat 1                                                                                                                                             │
+                         Context ◂  │         Chat 1         ✕    New tab     Temporary                                                                                                                 │
+   Terminal                         │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Workspaces                    ▸    │                                                                                                                                                                   │
+ ───────────────────────────────── ╭─ Switch model · now: DeepSeek · deepseek-v4-flash ───────────────────────────────────────────────────────────────────────────────────────╮                         │
+ Conversations                 ▾   │ Find DeepSeek                                                                                                                            │                         │
+        Archive this chat          │ RECENT · your last 50 chats                                                                                                              │                         │
+          Archived chats           │ ▶ deepseek-v4-flash                      DeepSeek                 ?  Ready · not tested           ● CURRENT                              │                         │
+        Search all chats…          │ READY PROVIDERS · matches from every provider's catalog                                                                                  │                         │
+   Chat 1                          │   deepseek-v4-pro                        DeepSeek                 ?  Ready · not tested                                                  │                         │
+                                   │ NEEDS SETUP · Enter opens the fix or explains it                                                                                         │                         │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear   │   @cf/deepseek-ai/deepseek-v4-pro-0813   Cloudflare Worke… AI     ?  Not ready · no key           Enter: add key in Settings             │                         │
+  ▊  Filter visible     ▎          │   @cf/deepseek-ai/deepseek-v4-flash-0731 Cloudflare Worke… AI     ?  Not ready · no key           Enter: add key in Settings             │                         │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎          │   deepseek/deepseek-v4-pro               Command Code             ?  Not ready · no key           Enter: add key in Settings             │                         │
+                                   │   deepseek/deepseek-v4-flash             Command Code             ?  Not ready · no key           Enter: add key in Settings             │                         │◂ Inspect
+   New conversation                │   deepseek/deepseek-v4.1-flash           Command Code             ?  Not ready · no key           Enter: add key in Settings             │                         │
+  Chats                        ▾   │   deepseek-v4.1-flash                    OpenCode Zen             ?  Not ready · no key           Enter: add key in Settings             │                         │
+   Chat 1                     💬   │   deepseek-v4-pro                        OpenCode Zen             ?  Not ready · no key           Enter: add key╭──────────────────────────────────────────────────────────╮
+                                   │   deepseek-v4-flash                      OpenCode Zen             ?  Not ready · no key           Enter: add key│                                                          │
+ ───────────────────────────────── │     … 1 more provider needs setup · type a name to find one                                                     │ Provider and model settings saved: new chats and open    │
+ Character · No chats          ▸   │ Values for deepseek-v4-flash · DeepSeek                                                                         │ chats nobody has used yet take them; chats with work     │
+ ───────────────────────────────── │ Temperature 0.6      Console Behavior  Max tokens 4096     provider          Streaming Off   ▼  provider        │ keep their own settings (change them in Console with     │
+ Model                         ▸   │  Enter apply to this chat  · Tab edit values ·  Ctrl+N default for new chats  ·  Ctrl+O chat settings  · Esc can│ Alt+M).                                                  │
+ ───────────────────────────────── │  Save as model default  saves Temperature, Max tokens, Streaming                                             App│                                                          │
+ Agent                         ▸   ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╰──────────────────────────────────────────────────────────╯
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Details                       ▸    │                                                                                                                                                                   │
+                                    │                                                                                                                ╭──────────────────────────────────────────────────────────╮
+                                    │                                                                                                                │                                                          │
+                                    │                                                                                                                │ Console provider changed OpenAI → DeepSeek: this unused  │
+                                    │                                                                                                                │ session now follows your saved defaults (Settings ▸      │
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│ Providers & Models).                                     │──
+ Status ▾   Library · Auto off · Agent access off     Provider: DeepSeek     Model: deepseek-v4-flash     System Prompt: off     Assistant: General  │                                                          │
+                                                                                                                                                     ╰──────────────────────────────────────────────────────────╯
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                    Send disabled: type a message       Send         Dictate
+
+  Ctrl+P palette | Ctrl+Q quit

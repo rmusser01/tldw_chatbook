@@ -50,7 +50,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
+from textual.widgets import Button, Collapsible, Input, Select, Static
 
 from tldw_chatbook.Media_Creation.generation_templates import (
     BUILTIN_TEMPLATES,
@@ -65,6 +65,7 @@ from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
     effective_placeholder,
     load_user_image_generation_table,
 )
+from tldw_chatbook.Widgets.state_checkbox import StateCheckbox
 
 # Generation-defaults scalar fields, in display order. `context_llm_enabled`
 # is rendered separately as a Checkbox (booleans have no placeholder analog).
@@ -75,7 +76,9 @@ _GENERATION_DEFAULT_FIELDS: tuple[tuple[str, str], ...] = (
     ("context_llm_timeout_seconds", "Context LLM timeout (s)"),
 )
 
-_DEMO_HINT_TEXT = "Test a generation end-to-end: command palette → Image Generation demo"
+_DEMO_HINT_TEXT = (
+    "Test a generation end-to-end: command palette → Image Generation demo"
+)
 
 
 def _key_source_line(key_source: str) -> str:
@@ -132,9 +135,8 @@ def switch_word(value: bool) -> str:
 
 
 def toggle_label(name: str, value: bool) -> str:
-    """Checkbox label that carries the state in TEXT (task-1561): the glyph
-    paints an "X" in both states and distinguishes them by color alone,
-    which reads as checked either way in reduced-color terminals."""
+    """Checkbox label that carries the state in TEXT too (task-1561), so the
+    row reads without the glyph."""
     return f"{name}: on" if value else f"{name}: off"
 
 
@@ -192,7 +194,9 @@ class ImageGenSettingsPanel(Vertical):
         # VALUE instead of a placeholder.
         raw_top: Mapping = load_user_image_generation_table()
         rows = build_backend_rows(cfg)
-        rows_by_id: dict[str, ImageGenBackendRow] = {row.backend_id: row for row in rows}
+        rows_by_id: dict[str, ImageGenBackendRow] = {
+            row.backend_id: row for row in rows
+        }
         overlay = self.overlay
 
         effective_default_backend = overlay.get("default_backend", cfg.default_backend)
@@ -207,7 +211,10 @@ class ImageGenSettingsPanel(Vertical):
         with Horizontal(classes="settings-input-row settings-select-row"):
             yield Static("Default backend", classes="settings-input-label")
             yield Select(
-                [(BACKEND_LABELS[backend_id], backend_id) for backend_id in BACKEND_IDS],
+                [
+                    (BACKEND_LABELS[backend_id], backend_id)
+                    for backend_id in BACKEND_IDS
+                ],
                 value=(
                     effective_default_backend
                     if effective_default_backend in BACKEND_IDS
@@ -228,13 +235,16 @@ class ImageGenSettingsPanel(Vertical):
                 id=f"settings-imagegen-backend-{row.backend_id}",
                 classes="settings-imagegen-backend-row",
             ):
-                yield Static(row.label, classes="settings-input-label")
+                yield Static(
+                    row.label,
+                    classes="settings-input-label settings-imagegen-backend-label",
+                )
                 yield Static(
                     "Configured" if row.configured else "Not configured",
                     id=f"settings-imagegen-status-{row.backend_id}",
                     classes="settings-imagegen-badge",
                 )
-                yield Checkbox(
+                yield StateCheckbox(
                     switch_word(is_enabled),
                     value=is_enabled,
                     id=f"settings-imagegen-enabled-{row.backend_id}",
@@ -295,9 +305,13 @@ class ImageGenSettingsPanel(Vertical):
                                 )
                             else:
                                 raw_value = raw_backend.get(spec.toml_key)
-                                default_value = "" if raw_value is None else str(raw_value)
+                                default_value = (
+                                    "" if raw_value is None else str(raw_value)
+                                )
                                 yield Input(
-                                    value=str(overlay.get(field_overlay_key, default_value)),
+                                    value=str(
+                                        overlay.get(field_overlay_key, default_value)
+                                    ),
                                     id=f"settings-imagegen-field-{backend_id}-{spec.toml_key}",
                                     classes="settings-compact-input",
                                     placeholder=effective_placeholder(
@@ -305,15 +319,22 @@ class ImageGenSettingsPanel(Vertical):
                                     ),
                                 )
                         if spec.kind == "secret":
-                            source_classes = "settings-imagegen-hint settings-imagegen-key-source"
+                            source_classes = (
+                                "settings-imagegen-hint settings-imagegen-key-source"
+                            )
                             if row.secret_optional and key_source == "missing":
-                                source_classes += " settings-imagegen-key-source-neutral"
+                                source_classes += (
+                                    " settings-imagegen-key-source-neutral"
+                                )
                             yield Static(
                                 _key_source_line(key_source),
                                 id=f"settings-imagegen-key-source-{backend_id}",
                                 classes=source_classes,
                             )
-                        if backend_id == "openrouter" and spec.toml_key == "default_model":
+                        if (
+                            backend_id == "openrouter"
+                            and spec.toml_key == "default_model"
+                        ):
                             yield Static(
                                 "env OPENROUTER_IMAGE_MODEL overrides this",
                                 classes="settings-imagegen-hint",
@@ -325,7 +346,7 @@ class ImageGenSettingsPanel(Vertical):
                     )
 
         yield Static("Generation defaults", classes="destination-section")
-        yield Checkbox(
+        yield StateCheckbox(
             toggle_label(
                 "Context LLM",
                 bool(overlay.get("context_llm_enabled", bool(cfg.context_llm_enabled))),

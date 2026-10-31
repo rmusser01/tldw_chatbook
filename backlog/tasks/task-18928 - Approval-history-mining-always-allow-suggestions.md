@@ -41,3 +41,21 @@ Reason: extends the existing MCP permission-store surfaces; proposal-only, no au
 3. Settings surface with accept/dismiss, dismissal persistence
 4. No-runtime-change tests, mining tests, docs (mcp.md / settings guide)
 <!-- SECTION:PLAN:END -->
+
+## Deferral note (2026-10-11, dev `9f8533686c`)
+
+DEFERRED from the t2-hermes porting slice for capacity. Two sequencing facts
+for the next session:
+
+1. **The approval UX surface is under active rework**: tldw_chatbook PR
+   #3036 ("Clarify Console permission approvals and decision feedback",
+   draft) is open against the approval-card/decision-feedback test family —
+   a Settings suggestions surface that reads approval semantics should land
+   after that settles, per the slice's collision rule.
+2. **The data-source decision is still open**: verify where Approve
+   once/session decisions are durably recorded today (the permission
+   store's audit trail vs the approval card flow) before designing the
+   mining layer; the task's plan step 1 anticipates adding minimal durable
+   history if none exists — that schema decision plus the Settings surface
+   (MCP permissions area) plus the high-risk exclusion set shared with the
+   approval card's badge is a full session on its own.

@@ -93,8 +93,7 @@ class CharacterCardFormatDetector:
                     return parsed, format_name
                 except Exception as error:
                     logger.error(
-                        "Character card format parser failed "
-                        "(format={}, category={}).",
+                        "Character card format parser failed (format={}, category={}).",
                         format_name,
                         type(error).__name__,
                     )

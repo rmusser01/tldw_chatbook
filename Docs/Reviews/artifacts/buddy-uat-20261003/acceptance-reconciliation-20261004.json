@@ -1,0 +1,46 @@
+{
+  "recorded_utc": "2026-10-04T14:38:47.524113+00:00",
+  "change": "Reconcile existing acceptance; no repeat UAT.",
+  "revision_before_documentation": "71b3a536887899d70e3e432e17a7b6418de7b50a",
+  "recorded_unique_targeted_passes": 334,
+  "current_product_and_realtime_test_hashes_match_existing_receipt": true,
+  "new_tests_run": false,
+  "new_microphone_capture": false,
+  "new_playback": false,
+  "new_provider_request": false,
+  "credential_copied_or_saved_by_agent": false,
+  "isolated_openai_key_present_verified_without_outputting_value": true,
+  "human_voice_acceptance": {
+    "run_id": "microphone-20260905-587d0a8874",
+    "buddy_listening": true,
+    "reply_nonempty": true,
+    "human_heard_reply": "Yes, clearly.",
+    "acceptance_scope": "Prior local STT, DeepSeek and Kokoro route; original tested revision retained."
+  },
+  "native_geometry_acceptance": {
+    "move": "41,31 -> 69,25",
+    "resize": "28x15 -> 40x21",
+    "restored": "69,25,40,21",
+    "limits": "Prior native run; exact tested Git revision and native exit provenance remain qualified in its README."
+  },
+  "openai_provider_acceptance": {
+    "session_ready": true,
+    "reply_complete": true,
+    "output_audio_bytes": 105600,
+    "session_closed": true,
+    "limits": "Prior OAuth production-session probe; no microphone or physical playback."
+  },
+  "separate_coverage_item": "TASK-31585 AC9 retains its exact-native-revision and full application-configured OpenAI human realtime limits. Existing Buddy checks are not reopened.",
+  "prior_evidence_sha256": {
+    "qa/buddy-uat-2026-09-05/native-followup/README.md": "63b245bae6d88dfec80d729fe431a4798e4f7aa1e0814ecb51406df03d9c0b8f",
+    "qa/buddy-uat-2026-09-05/native-followup/move-evidence.json": "f6a66ff1e39b251ba204603bfd1c54118430fe96c2ab961985236154b5566228",
+    "qa/buddy-uat-2026-09-05/native-followup/resize-evidence.json": "737eb3063c8873c5ca980e9add3709c982c76765d96780afe4333d0d3a0edf5f",
+    "qa/buddy-uat-2026-09-05/native-followup/restart-evidence.json": "0df23da250a64b52ff9cd9b08f8a1095e60cf2d246ff8c0d41102a3e6b2c064f",
+    "qa/buddy-uat-2026-09-05/merged-live-uat/README.md": "bfa03c31731b5a3abdfdab89d9587edba5baf603625d30d432caf7c91321110c",
+    "qa/buddy-uat-2026-09-05/merged-live-uat/microphone-20260905-587d0a8874/microphone.json": "1c985111bbb03aa1d584bd3913c86e22bf8d45232877bcfebb9046a8da55411e",
+    "qa/buddy-uat-2026-09-05/merged-live-uat/microphone-20260905-587d0a8874/execution.json": "6837d03cfc5c78b207d56594c4e0f57f490944e0dad7dcb1b22415b5c62367c9",
+    "qa/buddy-uat-2026-09-05/merged-live-uat/microphone-20260905-587d0a8874/human-confirmation.json": "976de4d5359f1643ef5dfb53ad14d985b934cfe818172aea3058ca6212276bef",
+    "qa/buddy-uat-2026-09-05/merged-live-uat/codex-oauth-realtime-provider.json": "402b208e3a45c9be625b0446dac5e7daceb22cd03b263bcd1fa76ed76e34c8e7"
+  },
+  "existing_realtime_supplement_sha256": "ffe238f048db362e35bc367036752c4e686197199c83cd73d90e5409a040ffad"
+}

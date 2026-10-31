@@ -18,9 +18,46 @@ reads the same name, patch both modules.
 app-module patch that can only have been meant for code that moved out.
 """
 
+from . import app_skill_wiring as _skill_wiring
+from . import app_collections_wiring as _collections_wiring
+
+from .app_skill_wiring import (
+    _disabled_builtin_skills,  # noqa: F401 - retained original importing/patch slot
+    _read_app_disabled_builtin_skills,
+    _read_app_published_plugin_service,
+    _console_skill_metadata_current,  # noqa: F401 - retained original importing/patch slot
+    _console_skill_source_current,  # noqa: F401 - retained original importing/patch slot
+    _capture_console_skill_trust_source,  # noqa: F401 - retained original importing/patch slot
+    _capture_console_skill_trust_preparation,  # noqa: F401 - retained original importing/patch slot
+    _prepare_console_skill_trust_service,  # noqa: F401 - retained original importing/patch slot
+    _ConsoleSkillTrustSource,  # noqa: F401 - retained original importing/patch slot
+)
+
+from .app_collections_wiring import (
+    _external_reference_payload_id,  # noqa: F401 - retained original importing/patch slot
+    _external_reference_failure_reason,  # noqa: F401 - retained original importing/patch slot
+    _collections_reference_authority_kind,  # noqa: F401 - retained original importing/patch slot
+    _resolve_collections_media_reference,  # noqa: F401 - retained original importing/patch slot
+    _resolve_collections_note_reference,  # noqa: F401 - retained original importing/patch slot
+    _extract_collections_article,  # noqa: F401 - retained original importing/patch slot
+    _capture_deferred_collections_setup,  # noqa: F401 - retained original importing/patch slot
+    _require_collections_setup_current,  # noqa: F401 - retained original importing/patch slot
+    _build_deferred_collections_capture_parts,  # noqa: F401 - retained original importing/patch slot
+    _initialize_deferred_collections_capture,  # noqa: F401 - retained original importing/patch slot
+    _retire_deferred_collections_capture,  # noqa: F401 - retained original importing/patch slot
+    _collections_capture_scope,  # noqa: F401 - retained original importing/patch slot
+    _collections_capture_parts,  # noqa: F401 - retained original importing/patch slot
+    _local_collections_capture_service,  # noqa: F401 - retained original importing/patch slot
+    _publish_collections_capture_parts,  # noqa: F401 - retained original importing/patch slot
+    _DeferredCollectionsCaptureScope,  # noqa: F401 - retained original importing/patch slot
+    _CollectionsSetupObsolete,  # noqa: F401 - retained original importing/patch slot
+)
+
 import asyncio
-import functools
-import hashlib
+import contextlib
+import functools  # noqa: F401 - retained original importing/patch slot
+import hashlib  # noqa: F401 - retained original importing/patch slot
+import inspect
 import os
 import threading
 import time
@@ -28,6 +65,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Mapping  # noqa: UP035
 
 from loguru import logger
+from textual.app import ScreenStackError
 from textual.worker import Worker
 
 from tldw_chatbook.Actor_Packs.activation import ActorPackActivationService
@@ -85,8 +123,8 @@ from tldw_chatbook.Chat_Grammars_Interop import (
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Claims_Interop import ClaimsScopeService, ServerClaimsService
 from tldw_chatbook.Collections_Interop import (
-    CollectionsFeedsScopeService,
-    ServerCollectionsFeedsService,
+    CollectionsFeedsScopeService,  # noqa: F401 - retained original importing/patch slot
+    ServerCollectionsFeedsService,  # noqa: F401 - retained original importing/patch slot
 )
 from tldw_chatbook.Companion_Interop import (
     CompanionScopeService,
@@ -98,7 +136,7 @@ from tldw_chatbook.config import (
     get_chachanotes_db_path,
     get_cli_setting,
     get_dreams_db_path,
-    get_library_collections_db_path,
+    get_library_collections_db_path,  # noqa: F401 - retained original importing/patch slot
     get_media_db_path,
     get_notes_sync_recovery_capacity_bytes,
     get_notes_sync_state_db_path,
@@ -112,7 +150,7 @@ from tldw_chatbook.config import (
     get_workspaces_db_path,
     get_writing_db_path,
 )
-from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
+from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB  # noqa: F401 - retained original importing/patch slot
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
@@ -133,12 +171,14 @@ from tldw_chatbook.Feedback_Interop import (
 from tldw_chatbook.Home.active_work_adapter import (
     LocalNotificationHomeActiveWorkAdapter,
 )
-from tldw_chatbook.Kanban_Interop import (
-    KanbanScopeService,
-    LocalKanbanService,
-    ServerKanbanService,
-)
-from tldw_chatbook.Library import LocalLibraryCollectionsService
+# TASK-21107 / TASK-21239: Kanban_Interop is deliberately NOT imported at
+# module scope. `server_kanban_service.py`'s module-level 31-name import
+# from `..tldw_api` forces the 76-pydantic-model `kanban_schemas` module
+# through the package's otherwise-lazy PEP-562 facade, and the subsystem
+# has zero in-app consumers -- so both its construction and its import are
+# deferred to first property access (see the `kanban_scope_service`
+# property below).
+from tldw_chatbook.Library import LocalLibraryCollectionsService  # noqa: F401 - retained original importing/patch slot
 from tldw_chatbook.Library.library_local_rag_search_service import (
     LibraryLocalRagSearchService,
 )
@@ -159,7 +199,7 @@ from tldw_chatbook.MCP_Governance_Interop import (
     MCPGovernanceScopeService,
     ServerMCPGovernanceService,
 )
-from tldw_chatbook.Media.media_reading_scope_service import MediaReadingBackend
+from tldw_chatbook.Media.media_reading_scope_service import MediaReadingBackend  # noqa: F401 - retained original importing/patch slot
 from tldw_chatbook.Meetings_Interop import MeetingsScopeService, ServerMeetingsService
 from tldw_chatbook.Notes.notes_scope_service import ScopeType
 from tldw_chatbook.Notifications import (
@@ -220,7 +260,7 @@ from tldw_chatbook.runtime_policy.server_credentials import (
     build_default_server_credential_store,
 )
 from tldw_chatbook.runtime_policy.server_event_scope import (
-    event_principal_id_from_active_context,
+    event_principal_id_from_active_context,  # noqa: F401 - retained original importing/patch slot
 )
 from tldw_chatbook.Scheduling.constants import (
     HANDLER_TIMEOUT_SECONDS,
@@ -246,21 +286,21 @@ from tldw_chatbook.Server_Runtime_Interop import (
 )
 from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
 from tldw_chatbook.Skills_Interop import (
-    LocalSkillsService,
-    ServerSkillsService,
-    SkillsScopeService,
-    SkillTrustService,
-    default_local_skills_store_dir,
+    LocalSkillsService,  # noqa: F401 - retained original importing/patch slot
+    ServerSkillsService,  # noqa: F401 - retained original importing/patch slot
+    SkillsScopeService,  # noqa: F401 - retained original importing/patch slot
+    SkillTrustService,  # noqa: F401 - retained original importing/patch slot
+    default_local_skills_store_dir,  # noqa: F401 - retained original importing/patch slot
 )
 from tldw_chatbook.Skills_Interop.skill_trust_store import (
-    MARKER_FILENAME as _SKILL_TRUST_MARKER_FILENAME,
+    MARKER_FILENAME as _SKILL_TRUST_MARKER_FILENAME,  # noqa: F401 - retained original importing/patch slot
 )
 from tldw_chatbook.Skills_Interop.skill_trust_store import (
-    SkillTrustStore,
-    build_default_skill_trust_key_cache,
-    build_skill_trust_marker_store_with_fallback,
-    default_trust_store_dir,
-    skill_trust_account_scope,
+    SkillTrustStore,  # noqa: F401 - retained original importing/patch slot
+    build_default_skill_trust_key_cache,  # noqa: F401 - retained original importing/patch slot
+    build_skill_trust_marker_store_with_fallback,  # noqa: F401 - retained original importing/patch slot
+    default_trust_store_dir,  # noqa: F401 - retained original importing/patch slot
+    skill_trust_account_scope,  # noqa: F401 - retained original importing/patch slot
 )
 from tldw_chatbook.Study_Interop import (
     LocalQuizService,
@@ -318,9 +358,9 @@ from tldw_chatbook.Writing_Interop import (
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Library.collections_capture_models import (
-        ExternalMediaReference,
-        ExternalNoteReference,
-        ExternalReferenceAvailability,
+        ExternalMediaReference,  # noqa: F401 - retained original importing/patch slot
+        ExternalNoteReference,  # noqa: F401 - retained original importing/patch slot
+        ExternalReferenceAvailability,  # noqa: F401 - retained original importing/patch slot
     )
     from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRuntimeOwner
     from tldw_chatbook.Terminal.backend import TerminalBackend
@@ -356,13 +396,16 @@ def _read_app_raw_cli_permitted(app: object) -> bool:
     return isinstance(console, Mapping) and console.get("raw_cli_permitted") is True
 
 
-def _disabled_builtin_skills(config: Any) -> frozenset[str]:
-    """Built-in skills disabled in config; imported lazily (off boot path, ADR-097)."""
-    from tldw_chatbook.Skills_Interop.builtin_skills import (
-        disabled_builtins_from_config,
-    )
+_STOCK_DISABLED_BUILTINS_READER = (
+    _read_app_disabled_builtin_skills,
+    _read_app_disabled_builtin_skills.__code__,
+)
 
-    return disabled_builtins_from_config(config)
+
+_STOCK_PUBLISHED_PLUGIN_READER = (
+    _read_app_published_plugin_service,
+    _read_app_published_plugin_service.__code__,
+)
 
 
 def _build_terminal_backend() -> "TerminalBackend":
@@ -493,6 +536,112 @@ def _install_deferred_notes_sync_facades(app: Any) -> bool:
     return True
 
 
+def _notes_sync_state_db_has_configured_roots(state_path: Any) -> bool:
+    """Whether the notes-sync state DB on disk carries real configuration.
+
+    TASK-21240: the TASK-21112 start gate's second clause was a bare
+    ``state_path.exists()``, which an ABANDONED first-time setup satisfies
+    forever -- opening setup force-starts the runtime (creating and
+    schema-initializing the file), and abandoning it without configuring a
+    sync directory leaves an empty store that re-arms the gate on every
+    subsequent boot. The honest evidence is a configured ROOT in
+    ``notes_sync_roots``.
+
+    Side-effect free by construction (the TASK-21112 rule): read-only URI
+    open, SELECT only. Never creates the file, never opens for write, never
+    migrates. Raises on a corrupt/unopenable store -- callers treat that as
+    fail-open (start attempt), the same safe direction the runtime's own
+    ``_start_once`` probe handling takes.
+
+    Args:
+        state_path: The state DB path from ``get_notes_sync_state_db_path()``.
+
+    Returns:
+        True when at least one sync root is configured; False when the file
+        is absent, schema-only (the abandoned-setup case), or missing the
+        roots table entirely.
+    """
+    from pathlib import Path as _Path
+
+    path = _Path(state_path)
+    if not path.exists():
+        return False
+    import sqlite3
+
+    connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+    try:
+        row = connection.execute(
+            "SELECT 1 FROM notes_sync_roots LIMIT 1"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        # No such table: a store whose schema never reached root creation.
+        return False
+    finally:
+        connection.close()
+    return row is not None
+
+
+def _task_ended_without_result(task: "asyncio.Task[None]") -> bool:
+    """True when ``task`` is done and was cancelled or raised (TASK-34000.71 M-2)."""
+
+    if not task.done():
+        return False
+    if task.cancelled():
+        return True
+    return task.exception() is not None
+
+
+def _owner_still_starting(owner: Any) -> bool:
+    """True when the owner's projection still reports ``"starting"``."""
+
+    snapshot = getattr(owner, "snapshot", None)
+    if not callable(snapshot):
+        return False
+    try:
+        return getattr(snapshot(), "status", None) == "starting"
+    except Exception:  # noqa: BLE001 - a double's projection must not crash the gate
+        return False
+
+
+async def _await_notes_sync_start(pending: Any) -> None:
+    """Await a non-coroutine awaitable ``start()`` result (TASK-34000.71 M-3)."""
+
+    await pending
+
+
+def _notes_sync_boot_start_evidence(app: Any) -> bool:
+    """The TASK-21112 start gate, shared by start() and boot construction.
+
+    TASK-21247: the same predicate that decides whether the runtime should
+    START now also decides whether ``on_mount`` may CONSTRUCT it -- reading
+    the lazy property unconditionally relocated the ~15-module construction
+    chain from boot to just before first paint, paying it on every boot
+    including zero-profile ones. Both call sites must evaluate the SAME
+    evidence or construction and start drift apart.
+
+    Exceptions propagate: a broken probe must fail OPEN (a full start
+    attempt), never silently disable a configured user's sync -- the
+    runtime's ``_start_once`` catches and does exactly that, and the boot
+    caller wraps this the same way.
+
+    Args:
+        app: The ``TldwCli`` (or harness double) carrying ``app_config``.
+
+    Returns:
+        True when configuration evidence exists (legacy ``[notes]``
+        sync-directory key, or a configured root in the on-disk state DB).
+    """
+    from tldw_chatbook.Notes.notes_sync_legacy import (
+        legacy_sync_directory_configured,
+    )
+
+    if legacy_sync_directory_configured(app.app_config):
+        return True
+    return _notes_sync_state_db_has_configured_roots(
+        get_notes_sync_state_db_path()
+    )
+
+
 def _wire_notes_sync_services(app: Any) -> None:
     """Finish Notes Sync composition after both SQLite owners exist."""
 
@@ -607,152 +756,58 @@ def _wire_notes_sync_services(app: Any) -> None:
             )
 
 
-def _external_reference_payload_id(payload: Any, *keys: str) -> str | None:
-    """Read one owner identifier without trusting a response's concrete type."""
-    if payload is None:
-        return None
-    if isinstance(payload, Mapping):
-        values = payload
-    else:
-        model_dump = getattr(payload, "model_dump", None)
-        values = model_dump(mode="json") if callable(model_dump) else None
-    for key in keys:
-        value = values.get(key) if isinstance(values, Mapping) else getattr(payload, key, None)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return None
+def _collections_setup_sources_current(sources):
+    import inspect
+    import sys
+
+    for namespace, entries in sources:
+        module = sys.modules.get(namespace["__name__"])
+        if module is None or vars(module) is not namespace:
+            return False
+        for owner, name, expected, records in entries:
+            actual = (
+                owner.get(name)
+                if type(owner) is dict  # exact stock compatibility boundary
+                else inspect.getattr_static(owner, name, None)
+            )
+            if actual is not expected:
+                return False
+            for (
+                function,
+                code,
+                defining,
+                defaults,
+                keywords,
+                items,
+                closure,
+                cells,
+                wrapped,
+            ) in records:
+                defining_module = sys.modules.get(defining["__name__"])
+                if (
+                    defining_module is None
+                    or vars(defining_module) is not defining
+                    or function.__code__ is not code
+                    or function.__globals__ is not defining
+                    or function.__defaults__ is not defaults
+                    or function.__kwdefaults__ is not keywords
+                    or len(keywords or {}) != len(items)
+                    or any(
+                        key not in (keywords or {}) or keywords[key] is not value
+                        for key, value in items
+                    )
+                    or function.__closure__ is not closure
+                    or any(cell.cell_contents is not value for cell, value in cells)
+                    or vars(function).get("__wrapped__") is not wrapped
+                ):
+                    return False
+    return True
 
 
-def _external_reference_failure_reason(error: Exception, owner: str) -> str:
-    """Map owner failures to bounded provenance reasons."""
-    status_code = getattr(error, "status_code", None)
-    if status_code in {401, 403} or isinstance(error, PermissionError):
-        return f"{owner}_reference_unauthorized"
-    if status_code == 404 or isinstance(error, (KeyError, LookupError)):
-        return f"{owner}_reference_missing"
-    return "reference_resolution_retryable"
-
-
-def _collections_reference_authority_kind(app: Any, authority_key: str) -> str | None:
-    """Return the active owner kind for an exact opaque capture authority."""
-    for kind, attribute in (
-        ("local", "local_collections_capture_authority"),
-        ("server", "server_collections_capture_authority"),
-    ):
-        authority = getattr(app, attribute, None)
-        if authority is not None and getattr(authority, "key", None) == authority_key:
-            return kind
-    return None
-
-
-async def _resolve_collections_media_reference(
-    app: Any,
-    reference: "ExternalMediaReference",
-) -> "ExternalReferenceAvailability":
-    """Resolve a capture's stored backing-Media identity through its owner."""
-    from tldw_chatbook.Library.collections_capture_models import (
-        ExternalReferenceAvailability,
-    )
-
-    kind = _collections_reference_authority_kind(app, reference.authority_key)
-    if kind is None:
-        return ExternalReferenceAvailability(
-            "unavailable", "media_reference_authority_mismatch"
-        )
-    mode = (
-        MediaReadingBackend.LOCAL
-        if kind == "local"
-        else MediaReadingBackend.SERVER
-    )
-    try:
-        payload = await app.media_reading_scope_service.get_backing_media_item(
-            mode=mode,
-            media_id=reference.item_id,
-            include_content=False,
-            include_versions=False,
-        )
-    except Exception as exc:
-        return ExternalReferenceAvailability(
-            "unavailable", _external_reference_failure_reason(exc, "media")
-        )
-    resolved_id = _external_reference_payload_id(payload, "id", "media_id")
-    if resolved_id is None:
-        return ExternalReferenceAvailability("unavailable", "media_reference_missing")
-    if resolved_id != reference.item_id:
-        return ExternalReferenceAvailability(
-            "unavailable", "media_reference_identity_mismatch"
-        )
-    return ExternalReferenceAvailability("available")
-
-
-async def _resolve_collections_note_reference(
-    app: Any,
-    reference: "ExternalNoteReference",
-) -> "ExternalReferenceAvailability":
-    """Resolve a capture's note link through Local or Server Notes only."""
-    from tldw_chatbook.Library.collections_capture_models import (
-        ExternalReferenceAvailability,
-    )
-
-    kind = _collections_reference_authority_kind(app, reference.authority_key)
-    if kind is None:
-        return ExternalReferenceAvailability(
-            "unavailable", "note_reference_authority_mismatch"
-        )
-    scope = ScopeType.LOCAL_NOTE if kind == "local" else ScopeType.SERVER_NOTE
-    try:
-        payload = await app.notes_scope_service.get_note_detail(
-            scope=scope,
-            note_id=reference.note_id,
-            user_id=getattr(app, "notes_user_id", None) if kind == "local" else None,
-        )
-    except Exception as exc:
-        return ExternalReferenceAvailability(
-            "unavailable", _external_reference_failure_reason(exc, "note")
-        )
-    resolved_id = _external_reference_payload_id(payload, "id", "note_id")
-    if resolved_id is None:
-        return ExternalReferenceAvailability("unavailable", "note_reference_missing")
-    if resolved_id != reference.note_id:
-        return ExternalReferenceAvailability(
-            "unavailable", "note_reference_identity_mismatch"
-        )
-    return ExternalReferenceAvailability("available")
-
-
-def _extract_collections_article(url: str) -> Mapping[str, Any]:
-    """Fetch one capture through the existing guarded article extractor."""
-    from tldw_chatbook.Local_Ingestion.web_article_ingestion import (
-        extract_article_for_ingest,
-    )
-
-    return extract_article_for_ingest(url, {})
-
-
-class _DeferredCollectionsCaptureScope:
-    """Stable app seam that composes the real capture scope on first use."""
-
-    def __init__(self, owner: Any) -> None:
-        object.__setattr__(self, "_owner", owner)
-
-    def _resolve(self) -> Any:
-        owner = object.__getattribute__(self, "_owner")
-        scope = TldwCli.ensure_collections_capture_services(owner)
-        if scope is None or scope is self:
-            raise RuntimeError("collections_capture_scope_unavailable")
-        return scope
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._resolve(), name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        setattr(self._resolve(), name, value)
-
-    def __delattr__(self, name: str) -> None:
-        delattr(self._resolve(), name)
-
-
-class ServiceWiringMixin:
+class ServiceWiringMixin(
+    _skill_wiring.SkillServiceWiringMixin,
+    _collections_wiring.CollectionsServiceWiringMixin,
+):
     """TldwCli's service composition (clusters C, E and O; TASK-33011).
 
     A plain mixin: ``TldwCli.__init__`` still runs the ``_wire_*`` methods
@@ -845,42 +900,58 @@ class ServiceWiringMixin:
             build_notes_sync_runtime_owner,
         )
 
+        # TASK-21249: THE single read point for every value the owner is
+        # built from. All of them are captured HERE — inside the construct,
+        # under the property's lock — and flow only into the build call
+        # below; nothing is re-read at start() or at use time. That is what
+        # makes "moving the property's first access" (TASK-21247 gated the
+        # boot read; the Library screen reads it at its own mount) unable to
+        # change WHAT the owner is built with: whenever construction fires,
+        # it reads the same slots, once, atomically.
         notes_sync_state_path = get_notes_sync_state_db_path()
+        local_user_id = self.notes_user_id
+        app_config = self.app_config
+        notes_sync_watcher_interval, notes_sync_watcher_max_interval = (
+            get_notes_sync_watcher_intervals(app_config)
+        )
         notes_sync_migrator = build_notes_sync_legacy_migrator(
             database_path=notes_sync_state_path,
             legacy_connection=lambda: self.chachanotes_db.get_connection(),
-            settings=self.app_config,
+            settings=app_config,
             note_scope_id=ScopeType.LOCAL_NOTE.value,
             file_notes_binding=self._notes_sync_file_notes_binding,
             private_paths=(notes_sync_state_path, get_chachanotes_db_path()),
         )
-        notes_sync_watcher_interval, notes_sync_watcher_max_interval = (
-            get_notes_sync_watcher_intervals(self.app_config)
-        )
         return build_notes_sync_runtime_owner(
             notes_scope_service=self._notes_sync_scope_service,
             cutover_admitted=True,
+            # Read live here (the restart-cutover fence pins this shape):
+            # the sole-process flag is read once, at construction, under the
+            # property's lock -- part of the same single read point above.
             profile_process_is_sole=self._instance_lock_status.acquired,
             database_path=notes_sync_state_path,
             migrate_legacy=notes_sync_migrator,
             file_notes_binding=self._notes_sync_file_notes_binding,
-            local_user_id=self.notes_user_id,
+            local_user_id=local_user_id,
             recovery_capacity_bytes=get_notes_sync_recovery_capacity_bytes(
-                self.app_config
+                app_config
             ),
             # TASK-21112 boot gate: start only on actual configuration — the
             # legacy [notes] sync-directory key (one-time migration path) or
-            # a state DB already on disk. Path.exists() never opens or
-            # creates the database; a zero-profile boot therefore creates no
-            # notes-sync state at all. First-time setup (review_setup)
-            # force-starts the runtime on demand. On Python 3.12
-            # Path.exists() RAISES PermissionError (pathlib no longer
-            # swallows EACCES); on a sandboxed profile that deliberately
-            # rides the gate's fail-open path — one full start attempt,
-            # which is the safe direction and is memoized.
+            # a configured root in the state DB already on disk. The
+            # read-only roots probe never opens or creates the database for
+            # write; a zero-profile boot therefore creates no notes-sync
+            # state at all, and — TASK-21240 — neither does the EMPTY store
+            # an abandoned first-time setup leaves behind re-arm this gate.
+            # First-time setup (review_setup) force-starts the runtime on
+            # demand. On Python 3.12 Path.exists() RAISES PermissionError
+            # (pathlib no longer swallows EACCES); on a sandboxed profile
+            # that deliberately rides the gate's fail-open path — one full
+            # start attempt, which is the safe direction and is memoized.
             start_evidence=(
-                lambda settings=self.app_config, state_path=notes_sync_state_path: (
-                    legacy_sync_directory_configured(settings) or state_path.exists()
+                lambda settings=app_config, state_path=notes_sync_state_path: (
+                    legacy_sync_directory_configured(settings)
+                    or _notes_sync_state_db_has_configured_roots(state_path)
                 )
             ),
             watcher_interval_seconds=notes_sync_watcher_interval,
@@ -918,6 +989,195 @@ class ServiceWiringMixin:
         """
         with self._notes_sync_runtime_owner_lock:
             self._notes_sync_runtime_owner = owner
+            # A substituted double (tests, recovery) supersedes any recorded
+            # build failure -- the safe reader must not keep shadowing it.
+            self.__dict__.pop("_notes_sync_runtime_build_failure", None)
+
+    def _build_kanban_services(self) -> None:
+        """Construct the Kanban trio on first access (TASK-21239, keep path).
+
+        The owner decision recorded in that task: the Kanban interop surface
+        is KEPT (retiring a filed subsystem is the owner's call, not this
+        burn-down's), but its boot-time construction is deferred to first
+        use exactly like the other lazy stores, because nothing in the app
+        consumes it -- no screen reads these services, and the only other
+        references are the Backup/Recovery participant registry (module-path
+        strings) and tests. Building the trio also drags in
+        `tldw_api.kanban_schemas` (76 pydantic models, TASK-21107), which is
+        why the imports are function-local, not module-level: an unused
+        subsystem must cost neither construction nor import at boot.
+
+        Idempotent under the lock; the trio is built as ONE unit because
+        the scope service composes the other two.
+        """
+        with self._kanban_services_lock:
+            if self._kanban_scope_service is not None:
+                return
+            from tldw_chatbook.Kanban_Interop import (  # noqa: PLC0415
+                KanbanScopeService,
+                LocalKanbanService,
+                ServerKanbanService,
+            )
+
+            try:
+                server_service = ServerKanbanService.from_config(
+                    self.app_config,
+                    policy_enforcer=self.service_policy_enforcer,
+                )
+            except ValueError:
+                server_service = ServerKanbanService(
+                    client=None,
+                    policy_enforcer=self.service_policy_enforcer,
+                )
+            local_service = LocalKanbanService(
+                db_path=get_user_data_dir() / "tldw_chatbook_kanban.db",
+                policy_enforcer=self.service_policy_enforcer,
+            )
+            self._server_kanban_service = server_service
+            self._local_kanban_service = local_service
+            self._kanban_scope_service = KanbanScopeService(
+                local_service=local_service,
+                server_service=server_service,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+
+    @property
+    def kanban_scope_service(self) -> Any:
+        """The Kanban scope service, built lazily with its trio (TASK-21239)."""
+        if self._kanban_scope_service is None:
+            self._build_kanban_services()
+        return self._kanban_scope_service
+
+    @property
+    def server_kanban_service(self) -> Any:
+        """The server Kanban service, built lazily with its trio (TASK-21239)."""
+        if self._server_kanban_service is None:
+            self._build_kanban_services()
+        return self._server_kanban_service
+
+    @property
+    def local_kanban_service(self) -> Any:
+        """The local Kanban service, built lazily with its trio (TASK-21239).
+
+        First access creates `tldw_chatbook_kanban.db` in the user data dir
+        -- deliberately: only a consumer that actually touches Kanban pays
+        for the store, instead of every profile getting the file at boot.
+        """
+        if self._local_kanban_service is None:
+            self._build_kanban_services()
+        return self._local_kanban_service
+
+    def _read_notes_sync_runtime_owner_safe(self) -> "NotesSyncRuntimeOwner | None":
+        """Read the runtime owner WITHOUT letting a build failure vanish.
+
+        TASK-21249: the Library screen used to read this through
+        ``getattr(app, "notes_sync_runtime_owner", None)`` -- which is right
+        for harness doubles that lack the property, but once the name became
+        a lazily-BUILDING property the getattr default also swallowed an
+        exception raised INSIDE the build, painting a construction failure
+        to the user as "awaiting cutover" (feature not available yet).
+        This reader distinguishes the two: a real build failure is recorded
+        on ``_notes_sync_runtime_build_failure`` (and logged once) so the UI
+        can show a distinct, honest state; the owner slot stays None.
+
+        Returns:
+            The built (or substituted) owner, or None when the property is
+            absent, unbuildable, or previously failed to build.
+        """
+        if self.__dict__.get("_notes_sync_runtime_build_failure") is not None:
+            return None
+        descriptor = getattr(type(self), "notes_sync_runtime_owner", None)
+        if not isinstance(descriptor, property):
+            return getattr(self, "notes_sync_runtime_owner", None)
+        try:
+            return self.notes_sync_runtime_owner
+        except Exception as error:  # noqa: BLE001 - UI read must not crash
+            self._notes_sync_runtime_build_failure = error
+            logger.opt(exception=True).error(
+                "notes-sync runtime construction failed; the Library screen "
+                "will report a runtime error rather than feature-unavailable."
+            )
+            return None
+
+    def ensure_notes_sync_runtime_started(self) -> "asyncio.Task[None] | None":
+        """Schedule the owner's NON-forced ``start()`` when boot's gate skipped it.
+
+        TASK-34000.71: on a profile with no lasting-sync root, ``on_mount``
+        neither constructs nor starts the runtime (TASK-21247), and the
+        Library screen later builds the owner lazily without starting it --
+        so it sits at its constructor status ``"starting"``, which the setup
+        gate refuses, while the one force-start that would move it
+        (``review_setup``) is reachable only through the option that gate
+        refuses. The Library side calls this once it holds the owner. A
+        non-forced start runs the same TASK-21112 evidence probe boot would
+        have: with no root it defers to ``"not_configured"`` WITHOUT opening
+        the state store (the status first-time setup is offered from), and
+        with a configured root it is the full start boot would have run.
+
+        Idempotent, and a no-op in every case where there is nothing to do:
+        a start task already recorded (boot's own, or an earlier call here)
+        is returned as-is, so a configured user's in-flight boot start is
+        never doubled or re-reported; a build failure (``safe reader``) and
+        an owner double without ``start`` schedule nothing. The task slot is
+        written under the owner-construction lock, so a racing first reader
+        cannot schedule two starts over one owner, and it carries the boot
+        path's task name and done-callback (``_observe_notes_sync_runtime_
+        start``), which is what makes a lazily started runtime stop at exit
+        exactly like a boot-started one. Must be called on the event-loop
+        thread: without a running loop nothing is scheduled.
+
+        Fix round 1:
+
+        - M-1: a task THIS path scheduled is also recorded on
+          ``_notes_sync_runtime_lazy_start_task``; the Library's bounded
+          settle wait applies only to that one, never to boot's own.
+        - M-2: a recorded task that ended with an exception or was cancelled
+          (a ``RecoveryRequired`` refusal from a paused producer, say) while
+          the owner still reports ``"starting"`` is the original defect in
+          another coat -- setup would stay inert for the session -- so one
+          call re-arms exactly one new start. Bounded: a permanently failing
+          start retries once per call (one per user action), never in a
+          loop, and a task that failed after the owner settled elsewhere is
+          left as history.
+        - M-3: ``start()`` may be a synchronous double; a non-awaitable
+          result schedules nothing (the docstring's "doubles are a no-op" is
+          then true in code), and an awaitable that is not a coroutine is
+          awaited through a wrapper.
+
+        Returns:
+            The start task (new or existing), or None when nothing was
+            scheduled.
+        """
+        existing = getattr(self, "_notes_sync_runtime_start_task", None)
+        if existing is not None and not _task_ended_without_result(existing):
+            return existing
+        owner = self._read_notes_sync_runtime_owner_safe()
+        start = getattr(owner, "start", None)
+        if owner is None or not callable(start):
+            return existing
+        if existing is not None and not _owner_still_starting(owner):
+            return existing
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return existing
+        lock = getattr(self, "_notes_sync_runtime_owner_lock", None)
+        with lock if lock is not None else contextlib.nullcontext():
+            recorded = getattr(self, "_notes_sync_runtime_start_task", None)
+            if recorded is not existing:
+                # A racing caller already re-armed (or scheduled) under the
+                # lock; one new start per call is the bound.
+                return recorded
+            pending = start()
+            if not inspect.isawaitable(pending):
+                return existing
+            if not inspect.iscoroutine(pending):
+                pending = _await_notes_sync_start(pending)
+            task = loop.create_task(pending, name="start_notes_sync_runtime")
+            task.add_done_callback(self._observe_notes_sync_runtime_start)
+            self._notes_sync_runtime_start_task = task
+            self._notes_sync_runtime_lazy_start_task = task
+        return task
 
     def _build_rag_admin_services(self) -> None:
         """Construct the RAG admin service trio on first access (task-254).
@@ -1036,6 +1296,7 @@ class ServiceWiringMixin:
                 PersonaBuddyController,
                 load_local_persona_portrait,
             )
+            from .Persona_Buddy.interaction import parse_preferences
             from .Persona_Buddy.preferences import (  # noqa: PLC0415
                 parse_persona_buddy_preferences,
             )
@@ -1053,9 +1314,9 @@ class ServiceWiringMixin:
                 profile_root=get_user_data_dir(),
                 reduced_motion=lambda: bool(
                     self.app_config.get("appearance", {}).get("reduce_motion", False)
-                    or not self.app_config.get("buddy_interaction", {}).get(
-                        "animated", True
-                    )
+                    or not parse_preferences(
+                        self.app_config.get("buddy_interaction", {})
+                    ).animated
                 ),
                 scheduler=self.call_after_refresh,
                 on_change=self._notify_persona_buddy_changed,
@@ -1103,11 +1364,20 @@ class ServiceWiringMixin:
     def persona_buddy_controller(self, controller: Any | None) -> None:
         """Inject or clear the controller slot (tests and skeletal doubles).
 
+        TASK-21236: takes the SAME lock as the builder. An unlocked write
+        could interleave with a concurrent first build -- losing the
+        assignment, or replacing a controller another caller already holds
+        -- and that safety currently rests only on "every setter caller is
+        on the UI thread", a caller property nothing enforces. The lock is
+        non-reentrant-safe here because the build never assigns through
+        this property.
+
         Args:
             controller: The controller instance to install, or None to make
                 the lazy property construct anew on next enabled access.
         """
-        self._persona_buddy_controller = controller
+        with self._persona_buddy_controller_lock:
+            self._persona_buddy_controller = controller
 
     def _wire_server_context_provider(self) -> None:
         self.unified_mcp_target_store = ConfiguredServerTargetStore(
@@ -1122,136 +1392,12 @@ class ServiceWiringMixin:
             credential_profile_id=default_server_credential_profile_id(),
         )
 
-    def _build_local_skill_trust_service(self) -> Any:
-        """Build the skill trust service. Performs OS keyring discovery.
-
-        Split out of the eager wiring (TASK-21111(b)): it is the only part
-        of the local skills stack that touches the keyring -- twice, once
-        for the rollback marker store's secure-backend probe and once for
-        the trust key cache -- and nothing at startup asks a trust question.
-        Deferring the whole SERVICE was not enough on its own: the Console's
-        agent bridge takes the skills scope facade during Chat screen mount,
-        which merely relocated the discovery from ``__init__`` to mount.
-        ``LocalSkillsService`` therefore takes this as a FACTORY and calls it
-        on the first trust decision.
-        """
-        local_skills_store_dir = default_local_skills_store_dir(get_user_data_dir())
-        trust_store_dir = default_trust_store_dir(local_skills_store_dir)
-        from .Skills_Interop.recovery_activation import is_recovered
-
-        recovered_skills = is_recovered(
-            local_skills_store_dir / "skills", trust_store_dir
-        )
-        if recovered_skills:
-            from .Skills_Interop.skill_trust_store import (
-                FileSkillTrustGenerationMarkerStore,
-            )
-
-            skill_trust_marker_store = FileSkillTrustGenerationMarkerStore(
-                trust_store_dir / _SKILL_TRUST_MARKER_FILENAME, store_dir=trust_store_dir
-            )
-            reduced_rollback_protection = True
-            skill_key_cache = None
-        else:
-            trust_account_scope = skill_trust_account_scope(trust_store_dir)
-            skill_trust_marker_store, reduced_rollback_protection = (
-                build_skill_trust_marker_store_with_fallback(
-                    fallback_marker_path=trust_store_dir / _SKILL_TRUST_MARKER_FILENAME,
-                    store_dir=trust_store_dir,
-                    account_scope=trust_account_scope,
-                )
-            )
-            skill_key_cache = build_default_skill_trust_key_cache(
-                account_scope=trust_account_scope
-            )
-        return SkillTrustService(
-            skills_dir=local_skills_store_dir / "skills",
-            trust_store=SkillTrustStore(
-                store_dir=trust_store_dir,
-                marker_store=skill_trust_marker_store,
-            ),
-            key_cache=skill_key_cache,
-            keyring_convenience_enabled=False,
-            reduced_rollback_protection=reduced_rollback_protection,
-        )
-
-    def _build_plugin_service(self) -> Any:
-        """Build one IO-free facade; its worker starts on explicit plugin use."""
-        service = getattr(self, "_plugin_service", None)
-        if service is None:
-            from tldw_chatbook.Plugins.service import PluginService
-
-            service = PluginService(
-                get_user_data_dir(),
-                workspace_lookup=self.workspace_registry_service.get_workspace,
-                mcp_mapping_owner=self.local_mcp_control_service,
-            )
-            self._plugin_service = service
-        return service
-
-    def _build_local_skills_stack(self) -> None:
-        """Build the local skills service + scope facade. Idempotent.
-
-        Body moved out of ``_wire_watchlists_and_notifications_services``
-        (TASK-21111(b)). Keyring-free: the trust service is handed over as a
-        factory. The collaborators it reads were captured at construction
-        time, not re-read now, so deferring changes WHEN it runs and not
-        WHAT it binds (the TASK-21108 trap).
-
-        Each slot is filled only if still unset, so an injected double (a
-        test assigning one of them between construction and first read) is
-        never clobbered by a later sibling access.
-        """
-        if None not in (self._local_skills_service, self._skills_scope_service):
-            return
-        policy_enforcer, server_skills_service = self._local_skills_stack_inputs
-        if self._local_skills_service is None:
-            self._local_skills_service = LocalSkillsService(
-                store_dir=default_local_skills_store_dir(get_user_data_dir()),
-                policy_enforcer=policy_enforcer,
-                trust_service_factory=lambda: self.local_skill_trust_service,
-                plugin_service_factory=self._build_plugin_service,
-                # In-memory config read: this runs on every skills read,
-                # including the Console's per-send capture.
-                builtin_disabled_loader=lambda: _disabled_builtin_skills(
-                    getattr(self, "app_config", None)
-                ),
-            )
-        if self._skills_scope_service is None:
-            self._skills_scope_service = SkillsScopeService(
-                local_service=self._local_skills_service,
-                server_service=server_skills_service,
-                policy_enforcer=policy_enforcer,
-            )
-
     @property
     def local_skill_trust_service(self) -> Any:
         """Local skill trust service, built on first access (TASK-21111(b))."""
         if self._local_skill_trust_service is None:
             self._local_skill_trust_service = self._build_local_skill_trust_service()
         return self._local_skill_trust_service
-
-    async def ensure_local_skill_trust_service(self) -> Any:
-        """First-use trust service build, OFF the UI event loop (task-33081).
-
-        The build performs OS keyring backend discovery (SecretService/D-Bus
-        on Linux -- the deferred-wiring notes' timing figure never measured
-        that platform). The sync property keeps its contract for callers
-        already on worker threads; UI-loop callers must come here so the
-        discovery never blocks the loop.
-
-        Returns:
-            The shared local skill trust service, built once; concurrent
-            first callers await the same build under the build lock.
-        """
-        if self._local_skill_trust_service is not None:
-            return self._local_skill_trust_service
-        async with self._local_skill_trust_service_build_lock:
-            if self._local_skill_trust_service is None:
-                self._local_skill_trust_service = await asyncio.to_thread(
-                    self._build_local_skill_trust_service
-                )
-            return self._local_skill_trust_service
 
     @local_skill_trust_service.setter
     def local_skill_trust_service(self, service: Any) -> None:
@@ -1430,6 +1576,70 @@ class ServiceWiringMixin:
             server_service=self.server_chat_dictionary_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+
+    def _start_actor_pack_recovery_worker(self, callback: Callable[[], Any]) -> Worker:
+        # Keep this staggered callback off-loop, but retain its physical
+        # outcome before App shutdown retires its database creators.
+        async def recover() -> Any:
+            from contextvars import Context
+
+            from textual.worker import active_worker, get_current_worker
+
+            from .Chat.console_preparation_reads import run_preparation_read
+
+            gate = getattr(self, "_boot_worker_gate", None)
+            if (
+                self._exit
+                or getattr(self, "_shutting_down", False)
+                or (gate is not None and gate.is_closed)
+            ):
+                return None
+            worker = get_current_worker()
+
+            def invoke() -> Any:
+                def call() -> Any:
+                    token = active_worker.set(worker)
+                    try:
+                        return callback()
+                    finally:
+                        active_worker.reset(token)
+
+                # Match FreshContextExecutor + Textual's old run_callable:
+                # no loop ambient context, only the actual active Worker.
+                return Context().run(call)
+
+            def issued_current() -> None:
+                # The boot fence applies before issue, not to completion
+                # of an already issued original/custom synchronous call.
+                return None
+
+            return await run_preparation_read(
+                invoke,
+                creator=self,
+                session_id=None,
+                reads=self._actor_pack_recovery_reads,
+                require_current=issued_current,
+            )
+
+        return self.run_worker(
+            recover,
+            name="deferred_actor_pack_recovery",
+            group="actor_pack_recovery",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _shutdown_actor_pack_recovery(self) -> asyncio.CancelledError | None:
+        """Fence queued boot work and settle exact issued native recovery."""
+        self._close_boot_worker_gate("actor pack shutdown")
+        reads = getattr(self, "_actor_pack_recovery_reads", None)
+        if not reads:
+            return None
+        from .Chat.console_preparation_reads import drain_preparation_reads
+
+        if await drain_preparation_reads(reads):
+            return asyncio.CancelledError()
+        return None
 
     def ensure_actor_pack_recovery(self) -> None:
         """Run Actor Pack crash recovery once per app session (task-21106).
@@ -1960,241 +2170,6 @@ class ServiceWiringMixin:
             server_service=self.server_writing_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-
-    def _wire_library_collections_services(self) -> None:
-        try:
-            self.local_library_collections_db = LibraryCollectionsDB(
-                get_library_collections_db_path(),
-                CLI_APP_CLIENT_ID,
-            )
-            self.local_library_collections_service = LocalLibraryCollectionsService(
-                self.local_library_collections_db,
-            )
-            self.library_collections_service = self.local_library_collections_service
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Local Library Collections service unavailable during app wiring",
-            )
-            self.local_library_collections_db = None
-            self.local_library_collections_service = None
-            self.library_collections_service = None
-
-        # dreams phase 1: the Dreams DB itself is NOT constructed here --
-        # every Dreams import must stay off the `_ui_ready` module census
-        # (ADR-097 boot ratchet; the budget is at its limit), and a disabled
-        # Dreams must not create storage, so `get_dreams_db` builds it on
-        # first use while `[dreams] enabled` is set.
-        self.dreams_db = None
-        self._dreams_db_lock = threading.Lock()
-
-    def _wire_collections_capture_services(self) -> None:
-        """Compose the profile-owned Local capture authority and scope seam."""
-        from tldw_chatbook.Library.collections_capture_repository import (
-            CollectionsCaptureRepository,
-        )
-        from tldw_chatbook.Library.collections_capture_service import (
-            CollectionsCaptureScopeService,
-            LocalCollectionsCaptureService,
-            build_local_capture_authority,
-        )
-        from tldw_chatbook.Library.collections_legacy_recovery import (
-            LegacyCollectionsRecovery,
-            LegacyCollectionsRecoveryError,
-        )
-        from tldw_chatbook.Library.collections_offline_store import (
-            CollectionsOfflineStore,
-        )
-
-        TldwCli._reset_collections_capture_services(self)
-        self.collections_capture_scope_service = CollectionsCaptureScopeService(
-            resolve_media_reference=functools.partial(
-                _resolve_collections_media_reference, self
-            ),
-            resolve_note_reference=functools.partial(
-                _resolve_collections_note_reference, self
-            ),
-        )
-        try:
-            database_path = get_library_collections_db_path()
-            database = getattr(self, "local_library_collections_db", None)
-            if not isinstance(database, LibraryCollectionsDB):
-                database = LibraryCollectionsDB(database_path, CLI_APP_CLIENT_ID)
-                self.local_library_collections_db = database
-            data_root = get_user_data_dir()
-            authority = build_local_capture_authority(
-                profile_id=str(data_root.resolve()),
-                database_identity=str(database_path.resolve()),
-            )
-            repository = CollectionsCaptureRepository(
-                database,
-                authority_key=authority.key,
-            )
-            offline_store = CollectionsOfflineStore(
-                repository,
-                data_root=data_root,
-                authority_fingerprint=authority.fingerprint,
-            )
-            legacy_recovery = LegacyCollectionsRecovery(database)
-            try:
-                legacy_recovery.list_collections(page=1, size=1)
-                legacy_recovery_available = True
-            except LegacyCollectionsRecoveryError:
-                legacy_recovery_available = False
-            service = LocalCollectionsCaptureService(
-                authority,
-                repository,
-                offline_store=offline_store,
-                extractor=_extract_collections_article,
-                legacy_recovery_available=legacy_recovery_available,
-            )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Local Collections capture service unavailable during app wiring"
-            )
-            return
-
-        self.collections_capture_repository = repository
-        self.collections_offline_store = offline_store
-        self.collections_legacy_recovery_service = legacy_recovery
-        self.local_collections_capture_authority = authority
-        self.local_collections_capture_service = service
-        TldwCli._activate_collections_capture_authority(self)
-
-    def _reset_collections_capture_services(self) -> None:
-        """Install inert capture seams without importing their implementations."""
-        self.collections_capture_repository = None
-        self.collections_offline_store = None
-        self.collections_legacy_recovery_service = None
-        self.local_collections_capture_authority = None
-        self.local_collections_capture_service = None
-        self.server_collections_capture_authority = None
-        self.server_collections_capture_service = None
-        self.collections_capture_scope_service = _DeferredCollectionsCaptureScope(self)
-
-    def ensure_collections_capture_services(self) -> Any | None:
-        """Compose capture services once, after readiness or on first use."""
-        scope = getattr(self, "collections_capture_scope_service", None)
-        if scope is None or isinstance(scope, _DeferredCollectionsCaptureScope):
-            TldwCli._wire_collections_capture_services(self)
-            scope = getattr(self, "collections_capture_scope_service", None)
-        return scope
-
-    def _deferred_wire_collections_capture_services(self) -> None:
-        """Compose and reconcile capture services after the first frame."""
-        self.ensure_collections_capture_services()
-        if getattr(self, "collections_capture_repository", None) is not None:
-            self._create_deferred_startup_task(
-                self._reconcile_collections_capture_startup(),
-                name="deferred_collections_capture_reconciliation",
-            )
-
-    def _activate_collections_capture_authority(self) -> None:
-        """Activate the capture owner selected by the committed runtime source."""
-        scope = getattr(self, "collections_capture_scope_service", None)
-        if scope is None:
-            return
-        runtime_policy = getattr(self, "runtime_policy", None)
-        runtime_state = getattr(runtime_policy, "state", None)
-        source = str(getattr(runtime_state, "active_source", "local") or "local")
-        if source.strip().lower() != "server":
-            authority = getattr(self, "local_collections_capture_authority", None)
-            service = getattr(self, "local_collections_capture_service", None)
-            if authority is not None and service is not None:
-                scope.activate(authority, service)
-            else:
-                deactivate = getattr(scope, "deactivate", None)
-                if callable(deactivate):
-                    deactivate()
-            return
-
-        from tldw_chatbook.Library.collections_capture_service import (
-            build_server_capture_authority,
-        )
-        from tldw_chatbook.Library.server_collections_capture_service import (
-            ServerCollectionsCaptureService,
-        )
-
-        provider = getattr(self, "server_context_provider", None)
-        try:
-            context = provider.get_active_context()
-            profile_id = str(getattr(context, "active_server_id", "") or "").strip()
-            principal_id = event_principal_id_from_active_context(context) or ""
-            if not profile_id or not principal_id:
-                raise ValueError("server_capture_identity_unavailable")
-            authority = build_server_capture_authority(profile_id, principal_id)
-            client = provider.build_client()
-            token = str(getattr(context, "auth_token", "") or "")
-            credential_fingerprint = hashlib.sha256(
-                token.encode("utf-8")
-            ).hexdigest()[:24]
-            service = getattr(self, "server_collections_capture_service", None)
-            prior_fingerprint = getattr(
-                self, "_server_collections_credential_fingerprint", None
-            )
-            if not (
-                isinstance(service, ServerCollectionsCaptureService)
-                and service.authority == authority
-                and service.client is client
-                and prior_fingerprint == credential_fingerprint
-            ):
-                async def docs_info_provider() -> Any:
-                    get_docs_info = getattr(client, "get_server_docs_info", None)
-                    if not callable(get_docs_info):
-                        raise RuntimeError("server_docs_info_unavailable")
-                    return await get_docs_info()
-
-                service = ServerCollectionsCaptureService(
-                    authority,
-                    client,
-                    docs_info_provider=docs_info_provider,
-                    credential_fingerprint=credential_fingerprint,
-                )
-                self.server_collections_capture_authority = authority
-                self.server_collections_capture_service = service
-                self._server_collections_credential_fingerprint = (
-                    credential_fingerprint
-                )
-            scope.activate(authority, service)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Server Collections capture authority unavailable during activation"
-            )
-            deactivate = getattr(scope, "deactivate", None)
-            if callable(deactivate):
-                deactivate()
-
-    async def _reconcile_collections_capture_startup(self) -> None:
-        """Repair interrupted Local capture state outside the event loop."""
-        repository = getattr(self, "collections_capture_repository", None)
-        from .DB.base_db import operation_owned_connection
-
-        if repository is not None:
-            def interrupt_in_worker():
-                with operation_owned_connection(repository.db):
-                    return repository.interrupt_stale_extractions()
-
-            await asyncio.to_thread(interrupt_in_worker)
-        offline_store = getattr(self, "collections_offline_store", None)
-        if offline_store is not None:
-            def reconcile_in_worker():
-                with operation_owned_connection(offline_store.repository.db):
-                    return offline_store.reconcile_batch(limit=25)
-
-            await asyncio.to_thread(reconcile_in_worker)
-
-    async def _shutdown_collections_capture_runtime(self) -> None:
-        """Fence capture authority before cancelling app-owned extraction work."""
-        scope = getattr(self, "collections_capture_scope_service", None)
-        if scope is not None and not isinstance(
-            scope,
-            _DeferredCollectionsCaptureScope,
-        ):
-            deactivate = getattr(scope, "deactivate", None)
-            if callable(deactivate):
-                deactivate()
-        local_service = getattr(self, "local_collections_capture_service", None)
-        if local_service is not None:
-            await local_service.cancel_extractions()
 
     def _wire_workspace_registry_services(self) -> None:
         self.change_review_consent_service = None
@@ -2907,25 +2882,13 @@ class ServiceWiringMixin:
             server_service=self.server_prompt_studio_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        try:
-            self.server_kanban_service = ServerKanbanService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_kanban_service = ServerKanbanService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        self.local_kanban_service = LocalKanbanService(
-            db_path=get_user_data_dir() / "tldw_chatbook_kanban.db",
-            policy_enforcer=self.service_policy_enforcer,
-        )
-        self.kanban_scope_service = KanbanScopeService(
-            local_service=self.local_kanban_service,
-            server_service=self.server_kanban_service,
-            policy_enforcer=self.service_policy_enforcer,
-        )
+        # TASK-21239: the Kanban trio used to be constructed here, at boot,
+        # paying the module import chain (76 pydantic models in
+        # `tldw_api.kanban_schemas`, TASK-21107) and creating
+        # `tldw_chatbook_kanban.db` in the user data dir for a subsystem
+        # with zero in-app consumers. It is now a lazy property trio -- see
+        # `kanban_scope_service` -- so an unused subsystem costs nothing at
+        # boot and no Kanban DB file is created until first access.
         try:
             self.server_translation_service = ServerTranslationService.from_config(
                 self.app_config,
@@ -3045,23 +3008,7 @@ class ServiceWiringMixin:
             server_service=self.server_feedback_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        try:
-            self.server_collections_feeds_service = (
-                ServerCollectionsFeedsService.from_config(
-                    self.app_config,
-                    policy_enforcer=self.service_policy_enforcer,
-                )
-            )
-        except ValueError:
-            self.server_collections_feeds_service = ServerCollectionsFeedsService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        self.collections_feeds_scope_service = CollectionsFeedsScopeService(
-            local_service=self.local_watchlists_service,
-            server_service=self.server_collections_feeds_service,
-            policy_enforcer=self.service_policy_enforcer,
-        )
+        _collections_wiring._wire_collections_inputs(self)
         try:
             self.server_connectors_service = ServerConnectorsService.from_config(
                 self.app_config,
@@ -3076,35 +3023,7 @@ class ServiceWiringMixin:
             server_service=self.server_connectors_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        try:
-            self.server_skills_service = ServerSkillsService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_skills_service = ServerSkillsService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        # The local skills stack (trust service -> local service -> scope
-        # facade) is built on first access, not here: constructing the trust
-        # service performs OS keyring backend discovery TWICE (marker store +
-        # key cache) for a feature most boots never touch (TASK-21111(b)).
-        # Every consumer reads these through `getattr(app_instance, ...)` at
-        # UI time, so a property is a drop-in.
-        self._local_skill_trust_service: Any | None = None
-        # task-33081: serializes the off-loop first build above.
-        self._local_skill_trust_service_build_lock = asyncio.Lock()
-        self._local_skills_service: Any | None = None
-        self._skills_scope_service: Any | None = None
-        # Captured NOW, at the timing the eager build had: `_build_local_
-        # skills_stack` must not re-read collaborators that a test (or a
-        # later boot step) may reassign between construction and first use
-        # (the TASK-21108 deferral trap).
-        self._local_skills_stack_inputs = (
-            self.service_policy_enforcer,
-            self.server_skills_service,
-        )
+        _skill_wiring._wire_skill_inputs(self)
         try:
             self.server_tools_service = ServerToolsService.from_config(
                 self.app_config,
@@ -3410,6 +3329,10 @@ class ServiceWiringMixin:
         """
         from .Dreams.settings import dreams_setting
 
+        from .Backup_Recovery.activation import execution_allowed
+
+        if not execution_allowed(("db.dreams",), get_dreams_db_path()):
+            return None
         if not dreams_setting("enabled"):
             return getattr(self, "dreams_db", None)
         with self._dreams_db_lock:
@@ -3426,6 +3349,43 @@ class ServiceWiringMixin:
                     )
                     return None
             return self.dreams_db
+
+    def get_guardian_db(self) -> Any:  # guardian task 1
+        """The Guardian DB, created on first use while Guardian is enabled.
+
+        Returns ``None`` while ``[guardian] enabled`` is off (ADR-204
+        contract 1: an off-by-default feature must not create storage) or
+        when the database cannot open. Reachable from the UI thread and
+        from the checker's ``asyncio.to_thread`` record hops, hence the
+        lock around first construction. Every Guardian import is deferred
+        to this call site (ADR-097 boot-census ratchet); NOTHING calls
+        this builder until the Task 3 settings toggle flips the feature
+        on, so importing or mounting the app with Guardian off never
+        creates the file.
+        """
+        from .Guardian.settings import guardian_db_path, guardian_setting
+
+        if not guardian_setting("enabled"):
+            return None
+        from .Backup_Recovery.activation import execution_allowed
+
+        selected_path = guardian_db_path()
+        if not execution_allowed(("db.guardian",), selected_path):
+            return None
+        with self._guardian_db_lock:
+            if getattr(self, "guardian_db", None) is None:
+                try:
+                    from .DB.Guardian_DB import GuardianDB
+
+                    self.guardian_db = GuardianDB(
+                        selected_path, CLI_APP_CLIENT_ID
+                    )
+                except Exception:  # noqa: BLE001 - optional owner construction fails closed
+                    logger.opt(exception=True).warning(
+                        "Guardian DB unavailable",
+                    )
+                    return None
+            return self.guardian_db
 
     def _dreams_cycle_deps(self):  # dreams phase 1
         """Build ``CycleDeps`` for a scheduled or catch-up Dreams cycle.
@@ -3467,6 +3427,22 @@ class ServiceWiringMixin:
             # May raise RuntimeError when no provider resolves; run_cycle
             # catches that and degrades the cycle by design.
             chat_getter=resolve_dreams_chat,
+            # Dreams phase 2 (Qodo #1/#13, PR #2890): the track lifecycle
+            # sweep disables a retired wrapper's dream-created subscription
+            # and linked reminder through these seams. Same getter-lambda
+            # discipline as the rest of the bag -- resolved at sweep time,
+            # None degrades to the legacy sweep behavior, never an error.
+            subs_service_getter=lambda: getattr(
+                self, "local_watchlists_service", None
+            ),
+            scheduling_db_getter=lambda: getattr(
+                getattr(self, "scheduling_service", None), "db", None
+            ),
+            # guardian: the aggregate Dreams feed (ADR-204 contract 3) --
+            # resolved at cycle time so the enabled-gated builder returns
+            # None while Guardian is off, and the profile refresh skips
+            # the source silently.
+            guardian_db_getter=lambda: self.get_guardian_db(),
         )
 
     def _start_dreams_boot_catchup(self) -> None:  # dreams phase 1
@@ -3517,6 +3493,79 @@ class ServiceWiringMixin:
             self.get_dreams_db
         )
         self._start_dreams_boot_catchup()
+        from .Dreams.track_reconcile import first_dispatch_gate, reconcile_at_boot
+
+        gate = first_dispatch_gate(self.scheduler_loop)  # before either runs
+        self.run_worker(reconcile_at_boot(self, gate), exclusive=False, group="dreams")
+
+        # dreams phase 2: the track-check handler rides the same post-
+        # `_ui_ready` seam (ADR-097 boot-census ratchet: deferred import
+        # only, nothing Dreams-shaped at module scope). It reuses the SAME
+        # cycle deps getter with the notification dispatcher attached via
+        # `CycleDeps.dispatch_getter`, so a `changed` track verdict can
+        # reach the shared inbox; a missing dispatcher degrades to a run
+        # row without delivery inside `run_track_check`, never an error.
+        # The loop's handler dict is mutated in place, in the same slice
+        # as the projection attach above -- the scheduler worker cannot
+        # run before this slice yields, so a `dream_track_check` task can
+        # only ever dispatch after its handler exists.
+        from .Scheduling.scheduler.handlers.dream_track_handler import (
+            DreamTrackHandler,
+        )
+
+        def _dreams_track_deps():
+            deps = self._dreams_cycle_deps()
+            if deps is not None:
+                deps.dispatch_getter = (
+                    lambda: self.notification_dispatch_service
+                )
+            return deps
+
+        self.scheduler_loop.handlers["dream_track_check"] = DreamTrackHandler(
+            deps_getter=_dreams_track_deps
+        )
+
+    def _wire_guardian_scheduler_integration(self) -> None:  # guardian task 2
+        """Wire the Guardian daily trend task into the live scheduler.
+
+        Same post-``_ui_ready`` seam as the Dreams wiring above (ADR-097
+        boot-census ratchet: deferred imports only, nothing
+        Guardian-shaped at module scope; this method is imported-lazy at
+        its call site in ``_on_ui_ready``'s tail). The projection is built
+        unconditionally because its ``[guardian] enabled`` gate is read
+        live on every ``tasks()`` call; the Guardian store itself is built
+        lazily by the enabled-gated ``get_guardian_db`` builder, so a
+        default (disabled) install never creates ``guardian.sqlite``. The
+        handler's deps getter re-reads the gate and the store on every
+        dispatch, so a mid-session disable stops the daily runs without a
+        restart.
+        """
+        from .Scheduling.services.guardian_projection import GuardianProjection
+
+        self.scheduler_loop.queue.guardian_projection = GuardianProjection(
+            self.get_guardian_db
+        )
+
+        from .Guardian.settings import guardian_setting
+        from .Scheduling.scheduler.handlers.guardian_trend_handler import (
+            GuardianTrendDeps,
+            GuardianTrendHandler,
+        )
+
+        def _guardian_trend_deps():
+            if not guardian_setting("enabled"):
+                return None
+            db = self.get_guardian_db()
+            if db is None:
+                return None
+            return GuardianTrendDeps(
+                guardian_db=db,
+                dispatch_service=self.notification_dispatch_service,
+            )
+
+        self.scheduler_loop.handlers["guardian_trends"] = GuardianTrendHandler(
+            deps_getter=_guardian_trend_deps
+        )
 
     def _observe_notes_sync_runtime_start(self, task: asyncio.Task[None]) -> None:
         """Consume a detached startup failure without exposing private detail."""
@@ -3526,7 +3575,13 @@ class ServiceWiringMixin:
         if task.exception() is not None:
             logger.error("Notes sync runtime startup failed.")
             return
-        screen = self.screen
+        try:
+            screen = self.screen
+        except ScreenStackError:
+            # TASK-34000.71: the Library side can schedule a start on an app
+            # that is not running (a harness mounts the screen over an
+            # un-run app instance); a done-callback must not raise.
+            return
         refresh = getattr(screen, "refresh_notes_sync_runtime", None)
         if callable(refresh):
             self.call_after_refresh(refresh)
@@ -3614,3 +3669,22 @@ class ServiceWiringMixin:
     def llamacpp_snapshot_service(self, service: Any) -> None:
         """Preserve the public injection seam used by screens and tests."""
         self._llamacpp_snapshot_service = service
+
+
+# Defining factory identity; this observation never constructs a plugin facade.
+_STOCK_PLUGIN_SERVICE_FACTORY = (
+    ServiceWiringMixin._build_plugin_service,
+    ServiceWiringMixin._build_plugin_service.__code__,
+)
+
+
+from typing import NamedTuple  # noqa: F401, I001 - original definition-time importing slot
+
+
+
+
+
+import sys as _defining_sys
+
+_skill_wiring._install_skill_source(_defining_sys.modules[__name__])
+_collections_wiring._install_collections_source(_defining_sys.modules[__name__])

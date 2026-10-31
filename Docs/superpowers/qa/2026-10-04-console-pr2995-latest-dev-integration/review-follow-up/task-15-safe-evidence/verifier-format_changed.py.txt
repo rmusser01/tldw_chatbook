@@ -1,0 +1,33 @@
+import ast,difflib,subprocess,json,sys
+sys.path.insert(0,'/private/tmp/pr2995-task15')
+from verify import *
+R='/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff'
+report={}
+for p in OWN:
+ old=git('show',BASE+':'+p).decode();new=(W/p).read_text()
+ def fmt(s):
+  r=subprocess.run([R,'format','--stdin-filename',str(W/p),'-'],input=s,text=True,capture_output=True,cwd=W);assert r.returncode==0,r.stderr;return r.stdout
+ oldlines=old.splitlines(True);lines=new.splitlines(True);formatted=fmt(new).splitlines(True)
+ changed=[]
+ for tag,a,b,c,d in difflib.SequenceMatcher(None,oldlines,lines,autojunk=False).get_opcodes():
+  if tag!='equal':changed.append((c,d))
+ edits=[];debt=[]
+ for tag,a,b,c,d in difflib.SequenceMatcher(None,lines,formatted,autojunk=False).get_opcodes():
+  if tag=='equal':continue
+  if any(a<y and b>x or a==b and x<=a<y for x,y in changed):edits.append((a,b,formatted[c:d]))
+  else:debt.append({'before':''.join(lines[a:b]),'after':''.join(formatted[c:d])})
+ for a,b,v in reversed(edits):lines[a:b]=v
+ result=''.join(lines);assert ast.dump(ast.parse(new))==ast.dump(ast.parse(result))
+ (W/p).write_text(result)
+ # Remaining formatting debt must be exactly a pre-existing edit shape.
+ original_debt=[]
+ ol=fmt(old).splitlines(True)
+ for tag,a,b,c,d in difflib.SequenceMatcher(None,oldlines,ol,autojunk=False).get_opcodes():
+  if tag!='equal':original_debt.append({'before':''.join(oldlines[a:b]),'after':''.join(ol[c:d])})
+ remaining=[]
+ rl=result.splitlines(True);fl=fmt(result).splitlines(True)
+ for tag,a,b,c,d in difflib.SequenceMatcher(None,rl,fl,autojunk=False).get_opcodes():
+  if tag!='equal':remaining.append({'before':''.join(rl[a:b]),'after':''.join(fl[c:d])})
+ assert all(e in original_debt for e in remaining),(p,'unattributed formatter debt')
+ report[p]={'applied_changed_hunk_edits':len(edits),'inherited_remaining_edits':remaining,'original_debt_count':len(original_debt),'AST_preserved':True,'sha256_before':sha(new.encode()),'sha256_after':sha(result.encode()),'argv':[R,'format','--stdin-filename',str(W/p),'-']}
+dump('changed-hunk-format.json',report)

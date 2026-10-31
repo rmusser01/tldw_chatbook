@@ -144,7 +144,9 @@ async def test_single_recipe_copy_names_the_saved_recipe() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dirty_single_delete_warns_about_saved_artifact_and_unsaved_working_copy() -> None:
+async def test_dirty_single_delete_warns_about_saved_artifact_and_unsaved_working_copy() -> (
+    None
+):
     app = ModalHarness()
 
     async with app.run_test(size=(90, 30)) as pilot:
@@ -204,7 +206,9 @@ async def test_cancel_dismisses_typed_negative_decision() -> None:
         await pilot.click("#prompt-delete-cancel")
         await pilot.pause()
 
-    assert app.results == [PromptDeleteDecision(confirmed=False, fingerprint="editor:42")]
+    assert app.results == [
+        PromptDeleteDecision(confirmed=False, fingerprint="editor:42")
+    ]
 
 
 @pytest.mark.asyncio
@@ -217,7 +221,9 @@ async def test_confirm_dismisses_typed_positive_decision() -> None:
         await pilot.click("#prompt-delete-confirm")
         await pilot.pause()
 
-    assert app.results == [PromptDeleteDecision(confirmed=True, fingerprint="editor:42")]
+    assert app.results == [
+        PromptDeleteDecision(confirmed=True, fingerprint="editor:42")
+    ]
     assert type(app.results[0]) is PromptDeleteDecision
 
 
@@ -254,7 +260,9 @@ async def test_prompt_delete_library_modal_contract_exact_negative_once(
 
 
 @pytest.mark.asyncio
-async def test_prompt_delete_library_modal_contract_inside_and_non_primary_stay_open() -> None:
+async def test_prompt_delete_library_modal_contract_inside_and_non_primary_stay_open() -> (
+    None
+):
     app = ModalHarness()
     modal = PromptDeleteConfirmationModal(
         PromptDeleteRequest(items=(_item("Draft"),), fingerprint="editor:42")
@@ -317,7 +325,9 @@ async def test_markup_looking_names_render_literally() -> None:
 
 
 @pytest.mark.asyncio
-async def test_long_multiline_preview_keeps_delete_actions_visible_at_80_by_24() -> None:
+async def test_long_multiline_preview_keeps_delete_actions_visible_at_80_by_24() -> (
+    None
+):
     app = ModalHarness()
     long_name = ("very long artifact name " * 12 + "\n") * 5
 

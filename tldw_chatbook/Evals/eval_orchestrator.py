@@ -143,9 +143,7 @@ class EvaluationOrchestrator:
         return EvalsDB(db_path=str(selected), client_id=client_id)
 
     @staticmethod
-    def _safe_validate_existence_check_path(
-        path: Path, purpose: str
-    ) -> Optional[Path]:
+    def _safe_validate_existence_check_path(path: Path, purpose: str) -> Optional[Path]:
         """Validate a path through validate_path_simple before an existence check.
 
         This exists solely to decide whether to emit an informational warning
@@ -195,8 +193,10 @@ class EvaluationOrchestrator:
             Path("~/.local/share/tldw_cli").expanduser() / "default_user" / "evals.db"
         )
 
-        validated_resolved_path = EvaluationOrchestrator._safe_validate_existence_check_path(
-            resolved_path, "resolved Evals database"
+        validated_resolved_path = (
+            EvaluationOrchestrator._safe_validate_existence_check_path(
+                resolved_path, "resolved Evals database"
+            )
         )
         if validated_resolved_path is None:
             # Validation failed (e.g. TASK-838 over-rejection). This function
@@ -206,8 +206,10 @@ class EvaluationOrchestrator:
             return
         resolved_path = validated_resolved_path
 
-        validated_legacy_path = EvaluationOrchestrator._safe_validate_existence_check_path(
-            legacy_path, "legacy Evals database"
+        validated_legacy_path = (
+            EvaluationOrchestrator._safe_validate_existence_check_path(
+                legacy_path, "legacy Evals database"
+            )
         )
         if validated_legacy_path is None:
             return
@@ -270,6 +272,35 @@ class EvaluationOrchestrator:
                     is_retryable=False,
                 )
             )
+
+    async def _store_result_off_loop(self, **store_kwargs) -> None:
+        """Persist one sample result without blocking the event loop.
+
+        ``store_result`` is a synchronous sqlite write; it used to run inline
+        inside the awaited ``progress_wrapper`` for every completed sample.
+        EvalsDB keeps thread-local connections, so for a file-backed database
+        the worker thread opens its own connection to the same file and the
+        hop through ``asyncio.to_thread`` is safe. For ``:memory:`` databases
+        each thread's connection is a private, empty database (the same trap
+        documented in ``Subscriptions/db_offload.py``), so the write stays on
+        the calling thread there.
+
+        Args:
+            **store_kwargs: Keyword arguments forwarded to
+                ``db.store_result`` unchanged.
+
+        Raises:
+            Exception: Whatever ``db.store_result`` raises, unchanged, so the
+                run's error path sees storage failures exactly as before.
+        """
+        db = self.db
+        # `is True`, not truthiness: a Mock database answers every attribute
+        # with a truthy Mock, and treating those as in-memory would keep the
+        # write on the event loop (see Subscriptions/db_offload.py).
+        if getattr(db, "is_memory_db", None) is True:
+            db.store_result(**store_kwargs)
+            return
+        await asyncio.to_thread(db.store_result, **store_kwargs)
 
     async def create_task_from_file(
         self, task_file_path: str, format_type: str = "auto"
@@ -422,8 +453,13 @@ class EvaluationOrchestrator:
         self._maintenance_runs[task] = depth + 1
         try:
             return await self._run_admitted_evaluation(
-                task_id, model_id, run_name, max_samples, config_overrides,
-                progress_callback, run_started_callback,
+                task_id,
+                model_id,
+                run_name,
+                max_samples,
+                config_overrides,
+                progress_callback,
+                run_started_callback,
             )
         finally:
             if depth:
@@ -574,8 +610,9 @@ class EvaluationOrchestrator:
             async def progress_wrapper(
                 completed: int, total: int, result: EvalSampleResult
             ):
-                # Store individual result
-                self.db.store_result(
+                # Store individual result. The write hops off the event loop
+                # (file-backed DBs); see _store_result_off_loop.
+                await self._store_result_off_loop(
                     run_id=run_id,
                     sample_id=result.sample_id,
                     input_data={"input": result.input_text},
@@ -614,9 +651,7 @@ class EvaluationOrchestrator:
                             )
 
                 # Call user progress callback if provided
-                await _invoke_callback(
-                    progress_callback, completed, total, result
-                )
+                await _invoke_callback(progress_callback, completed, total, result)
 
                 # Log progress
                 if completed % 10 == 0 or completed == total:
@@ -733,8 +768,7 @@ class EvaluationOrchestrator:
                     self.db.update_run_status(run_id, "cancelled")
                 except Exception as status_error:
                     logger.error(
-                        f"Could not persist cancellation for {run_id}: "
-                        f"{status_error}"
+                        f"Could not persist cancellation for {run_id}: {status_error}"
                     )
             raise
 

@@ -41,6 +41,10 @@ def derive_dispatch_recovery_presentation(
 
     if recovery is None:
         return ConsoleDispatchRecoveryPresentation(False, "", "", ())
+    # TASK-34100.5 AC#3: a turn refused before dispatch reads "Not sent".
+    from tldw_chatbook.Chat.console_predispatch_block import presented_owner
+
+    recovery = presented_owner(recovery) or recovery
     return ConsoleDispatchRecoveryPresentation(
         visible=True,
         visible_copy=recovery.visible_copy,
@@ -103,6 +107,7 @@ class ConsoleDispatchRecoveryRegion(Widget):
     ) -> None:
         super().__init__(**kwargs)
         self._session_id = session_id
+        self._recovery_snapshot = recovery
         self._presentation = derive_dispatch_recovery_presentation(recovery)
         self._on_action = on_action
         self._assistant_message_id = (
@@ -146,11 +151,9 @@ class ConsoleDispatchRecoveryRegion(Widget):
         assistant_message_id = (
             recovery.assistant_message_id if recovery is not None else ""
         )
-        if (
-            session_id != self._session_id
-            or assistant_message_id != self._assistant_message_id
-        ):
+        if session_id != self._session_id or recovery is not self._recovery_snapshot:
             self._pending_intent = None
+        self._recovery_snapshot = recovery
         self._model_in_flight = recovery.in_flight if recovery is not None else False
         if (
             session_id == self._session_id

@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Navigation        Collapse     ││                                                                                                                        │ │
+│ │     Import…                    ││ This queue: 5 done                                                                                                     │ │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ ││                                                                                                                        │ │
+│ │ ▊ Search Library…         ▎▊x▎ ││ import-docs — 5 files · now · 5 done                                                                                   │ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ ││ ✓ done · podcast-transcript-ep12.txt · 3s                                                                              │ │
+│ │                                ││   Imported podcast-transcript-ep12.txt                                                                                 │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Browse                     ▾   ││     Open in Library                                                                                                    │ │
+│ │    Media (28) — your files     ││                                                                                                                        │ │
+│ │    Conversations (12)          ││ ✓ done · article-local-first.md · 2s                                                                                   │ │
+│ │    Notes (122)                 ││   Imported article-local-first.md                                                                                      │ │
+│ │    Prompts (10) — reuse        ││                                                                                                                        │ │
+│ │    Skills (4) — AI add-ons     ││     Open in Library                                                                                                    │ │
+│ │    Collections (6)             ││                                                                                                                        │ │
+│ │    Search / RAG — find all     ││ ✓ done · team-handbook.docx · 6s                                                                                     ▂ │ │
+│ │ ────────────────────────────── ││   Imported team-handbook.docx                                                                                          │ │
+│ │ Artifacts                  ▾   ││                                                                                                                        │ │
+│ │    All artifacts               ││     Open in Library                                                                                                    │ │
+│ │    Chatbooks                   ││                                                                                                                        │ │
+│ │    Reports                     ││ ✓ done · web-page-spaced-repetition.html · 1s                                                                          │ │
+│ │ ────────────────────────────── ││   Imported web-page-spaced-repetition.html                                                                             │ │
+│ │ Create                     ▾   ││                                                                                                                        │ │
+│ │    New note                    ││     Open in Library                                                                                                    │ │
+│ │    New prompt                  ││                                                                                                                        │ │
+│ │    New skill                   ││ ✓ done · paper-retrieval-practice.pdf · 3s                                                                             │ │
+│ │ ────────────────────────────── ││   Imported paper-retrieval-practice.pdf                                                                                │ │
+│ │ Study                      ▾   ││                                                                                                                        │ │
+│ │    Study decks (0)             ││     Open in Library                                                                                                    │ │
+│ │    Flashcards due: 0           ││                                                                                                                        │ │
+│ │    Quizzes (0)                 ││   Clear finished                                                                                                       │ │
+│ │ ────────────────────────────── ││ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │ │
+│ │ Import / Export            ▾   ││ │ ▶ Recent imports                                                                                                  │  │ │
+│ │  ▸ Import…                     ││ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │ │
+│ │    Export                      ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││   Retry this batch                                                                                                     │ │
+│ │ Details                    ▸   ││  ▼ more — scroll for the rest                                                                                          │ │
+│ └────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  typing in field | esc back | after esc: r retry · / search | enter check this path | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit

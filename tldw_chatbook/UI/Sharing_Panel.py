@@ -621,7 +621,7 @@ class SharingPanel(ScrollableContainer):
         max_uses = self._int_input("#sharing-token-max-uses", required=False)
         await self._run_operation(
             "Share token created",
-            "create_share_token",
+            "create_link",
             resource_type=str(
                 self.query_one("#sharing-resource-type", Select).value or "workspace"
             ),
@@ -636,29 +636,29 @@ class SharingPanel(ScrollableContainer):
         )
 
     async def list_share_tokens(self) -> None:
-        await self._run_operation("Share tokens", "list_share_tokens")
+        await self._run_operation("Share tokens", "list_links")
 
     async def revoke_share_token(self) -> None:
         await self._run_operation(
             "Share token revoked",
-            "revoke_share_token",
+            "revoke_link",
             token_id=int(self._int_input("#sharing-token-id")),
         )
 
     async def preview_public_share(self) -> None:
         await self._run_operation(
-            "Public share preview", "preview_public_share", token=self._public_token()
+            "Public share preview", "inspect_public_link", token=self._public_token()
         )
 
     async def verify_public_share_password(self) -> None:
         await self._run_operation(
             "Public share password verified",
-            "verify_public_share_password",
+            "verify_public_link_password",
             token=self._public_token(),
             password=self._input_value("#sharing-public-password"),
         )
 
     async def import_public_share(self) -> None:
         await self._run_operation(
-            "Public share imported", "import_public_share", token=self._public_token()
+            "Public share imported", "import_public_link", token=self._public_token()
         )

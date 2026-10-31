@@ -11,6 +11,8 @@ mouse events over a ~20 KB plain row -- the evidence-doc scenario
 
 import pytest
 from textual.app import App, ComposeResult
+
+from Tests.private_profile import private_profile_test
 from textual.events import MouseDown, MouseMove, MouseUp
 from textual.widgets import Static
 
@@ -25,9 +27,7 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
 )
 
 #: ~20 KB multi-line body (28 paragraphs that each wrap over several lines).
-_BIG_BODY = (
-    "lorem ipsum dolor sit amet consectetur adipiscing elit " * 13 + "\n"
-) * 28
+_BIG_BODY = ("lorem ipsum dolor sit amet consectetur adipiscing elit " * 13 + "\n") * 28
 assert 18_000 < len(_BIG_BODY) < 24_000
 
 
@@ -233,7 +233,10 @@ async def test_arm_time_sweep_still_clears_a_stale_highlight():
         )
         transcript.on_mouse_up(
             _mouse_event(
-                MouseUp, transcript, screen_x=body_a.region.x + 6, screen_y=body_a.region.y
+                MouseUp,
+                transcript,
+                screen_x=body_a.region.x + 6,
+                screen_y=body_a.region.y,
             )
         )
         await pilot.pause()
@@ -247,7 +250,150 @@ async def test_arm_time_sweep_still_clears_a_stale_highlight():
         assert row_a.get_selection_text() == ""
         transcript.on_mouse_up(
             _mouse_event(
-                MouseUp, transcript, screen_x=body_b.region.x + 2, screen_y=body_b.region.y
+                MouseUp,
+                transcript,
+                screen_x=body_b.region.x + 2,
+                screen_y=body_b.region.y,
             )
         )
         await pilot.pause()
+
+
+# --- TASK-21237: residue pins ---------------------------------------------------
+
+
+async def _await_armed_drag(pilot):
+    """``_armed_drag``, but AWAITS the (async) ``on_mouse_down`` handler.
+
+    TASK-21237: ``on_mouse_down`` became async (menu dismissal awaits);
+    calling it bare leaves the arming coroutine unrun. The four TASK-21114
+    tests above call it bare -- locally baseline-broken for this reason
+    among others (see the task file); new tests use this awaited variant.
+    """
+    app = pilot.app
+    transcript = app.query_one(ConsoleTranscript)
+    await transcript.refresh_messages()
+    await pilot.pause()
+    row = app.query_one("#console-message-big", ConsoleTranscriptMessage)
+    body = row.query_one(".console-transcript-message-body", Static)
+    await transcript.on_mouse_down(
+        _mouse_event(
+            MouseDown, row, screen_x=body.region.x + 2, screen_y=body.region.y + 1
+        )
+    )
+    await pilot.pause()
+    assert transcript.selection_manager.state.active is True
+    return transcript, row, body
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.asyncio
+async def test_keyboard_selection_mid_drag_leaves_no_ghost_highlight(request):
+    """TASK-21237 item 1: arming keyboard selection mid-drag sweeps the drag.
+
+    Pressing `s` while a mouse drag is active re-arms the manager on the
+    keyboard row; the drag's highlight on the ORIGIN row used to survive as
+    a ghost (TASK-21114 moved the sweep to arm time, and nothing swept on
+    the keyboard arm). The drag must also be cancelled so a late MouseUp
+    cannot finish the keyboard selection as a drag release.
+    """
+    app = _DragPerfApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        transcript, row, body = await _await_armed_drag(pilot)
+        # Paint a visible drag highlight on the origin row.
+        transcript.on_mouse_move(
+            _mouse_event(
+                MouseMove,
+                transcript,
+                screen_x=body.region.x + 30,
+                screen_y=body.region.y + 1,
+            )
+        )
+        assert row.get_selection_text() != ""
+
+        other = app.query_one("#console-message-other", ConsoleTranscriptMessage)
+        transcript.selected_message_id = "other"
+        entered = transcript._enter_keyboard_selection()
+
+        assert entered is True
+        assert row.get_selection_text() == "", (
+            "ghost highlight: the mid-drag origin row kept its drag paint"
+        )
+        assert transcript._selection_origin_row is other
+        selection = transcript.selection_manager.state.selection
+        assert selection is not None and selection.row_key == other.id
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.asyncio
+async def test_mouse_move_while_idle_returns_before_any_selection_work(request):
+    """TASK-21237 item 3, layer 1: the inactive-drag early return.
+
+    Deleting the `if not active: return` layer makes every hovering move
+    pay the selection path (and stops the event from other consumers). Pin:
+    no manager interaction and the event is NOT stopped.
+    """
+    app = _DragPerfApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await transcript.refresh_messages()
+        await pilot.pause()
+        assert transcript.selection_manager.state.active is False
+
+        extend_calls = 0
+        real_extend = transcript.selection_manager.extend_drag
+
+        def counting_extend(*args, **kwargs):
+            nonlocal extend_calls
+            extend_calls += 1
+            return real_extend(*args, **kwargs)
+
+        transcript.selection_manager.extend_drag = counting_extend
+        event = _mouse_event(MouseMove, transcript, screen_x=10, screen_y=5)
+        try:
+            transcript.on_mouse_move(event)
+        finally:
+            transcript.selection_manager.extend_drag = real_extend
+        assert extend_calls == 0, "an idle transcript must not touch the manager"
+        assert event._stop_propagation is False, (
+            "an idle transcript must not stop the move (other widgets see it)"
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.asyncio
+async def test_mouse_move_holds_last_position_when_origin_row_detaches(request):
+    """TASK-21237 item 3, layer 2: the origin-row invariant early return.
+
+    Deleting the invariant layer (origin gone / id mismatch) makes every
+    move re-drive `extend_drag` for a row that no longer exists. Pin: with
+    the origin row detached mid-drag, moves are inert.
+    """
+    app = _DragPerfApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        transcript, row, body = await _await_armed_drag(pilot)
+        extend_calls = 0
+        real_extend = transcript.selection_manager.extend_drag
+
+        def counting_extend(*args, **kwargs):
+            nonlocal extend_calls
+            extend_calls += 1
+            return real_extend(*args, **kwargs)
+
+        transcript.selection_manager.extend_drag = counting_extend
+        # Capture the body region BEFORE detaching: it collapses to zero
+        # after remove(), and _sweeping_moves derives modulo terms from it.
+        moves = _sweeping_moves(transcript, body, 5)
+        try:
+            await row.remove()
+            await pilot.pause()
+            for move in moves:
+                transcript.on_mouse_move(move)
+        finally:
+            transcript.selection_manager.extend_drag = real_extend
+        assert extend_calls == 0, (
+            "moves after the origin row detached re-drove the selection path"
+        )

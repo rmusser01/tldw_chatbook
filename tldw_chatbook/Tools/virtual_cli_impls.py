@@ -89,7 +89,9 @@ def _build_parsers() -> dict[str, _ArgumentParser]:
 
     grep_parser = _parser()
     grep_parser.add_argument("pattern")
-    grep_parser.add_argument("--mode", choices=("content", "files", "count"), default="content")
+    grep_parser.add_argument(
+        "--mode", choices=("content", "files", "count"), default="content"
+    )
     parsers["grep"] = grep_parser
 
     find_parser = _parser()
@@ -154,7 +156,9 @@ def validate_request(command: str, argv: Sequence[str]) -> VirtualCliRequest:
             raise VirtualCliArgumentError("argv must not contain NUL")
         size = len(item.encode("utf-8"))
         if size > MAX_ARG_BYTES:
-            raise VirtualCliArgumentError(f"argv item exceeds {MAX_ARG_BYTES} UTF-8 bytes")
+            raise VirtualCliArgumentError(
+                f"argv item exceeds {MAX_ARG_BYTES} UTF-8 bytes"
+            )
         total += size
         normalized.append(item)
     if total > MAX_ARGV_BYTES:
@@ -162,7 +166,9 @@ def validate_request(command: str, argv: Sequence[str]) -> VirtualCliRequest:
     return VirtualCliRequest(cast(VirtualCliCommand, command), tuple(normalized))
 
 
-def parse_request(command: str, argv: Sequence[str]) -> tuple[VirtualCliRequest, argparse.Namespace]:
+def parse_request(
+    command: str, argv: Sequence[str]
+) -> tuple[VirtualCliRequest, argparse.Namespace]:
     """Validate the outer request and its command-specific argv grammar."""
     request = validate_request(command, argv)
     try:

@@ -57,7 +57,7 @@ Each tab is a `Screen` registered in `UI/Navigation/screen_registry.py`. Note: `
 
 ### Business Logic
 
-- **`Chat/`** - `Chat_Functions.py` (conversation CRUD), `document_generator.py` (export formats)
+- **`Chat/`** - ~250 modules, not one bounded context: `console_*` files (the Console controller, store, bridge, gateway) are ~79% of the lines. `Chat_Functions.py` (`chat_api_call()` dispatcher, `API_CALL_HANDLERS`, `PROVIDER_PARAM_MAP`), `Chat_Deps.py` (`ChatAPIError` hierarchy), `chat_persistence_service.py` / `chat_conversation_service.py` (conversation persistence), `document_generator.py` (export formats). Chat imports the DB layer (42 files; see `Docs/Architecture/console.md`).
 - **`Character_Chat/`** - `Character_Chat_Lib.py`, `ccv3_parser.py` (card formats)
 - **`Notes/`** - `sync_engine.py` (bidirectional sync), template system
 - **`RAG_Search/`** - `simplified/` for streamlined implementation, `chunking_service.py`
@@ -116,9 +116,11 @@ def _heavy_task(self):
 ### Adding Features
 
 **New LLM Provider**:
-1. Add a `chat_with_<provider>()` function in `LLM_Calls/LLM_API_Calls.py`
-2. Register it in `API_CALL_HANDLERS` / `PROVIDER_PARAM_MAP` (dispatched by `chat_api_call()` in `Chat/Chat_Functions.py`)
-3. Add the provider's config section
+Every provider starts with a `ProviderRecord` in `provider_registry.py` (package root, stdlib-only; ADR-179) added to `ALL_RECORDS`. Then, by kind:
+- **OpenAI-compatible hosted provider (preset, preferred):** make the record `engine_driven` (base URL, env candidates, payload flags, `settings_defaults`) and add one `_LazyHostedChatHandler(<RECORD>)` line to `API_CALL_HANDLERS` plus `"<key>": ENGINE_PROVIDER_PARAM_MAP` in `PROVIDER_PARAM_MAP` (both in `Chat/Chat_Functions.py`). The shared engine, `LLM_Calls/hosted_provider_engine.py::build_hosted_chat_handler`, supplies the handler; no `chat_with_*` function is written. Copy the newest preset (`commandcode`) as a template.
+- **Bespoke provider:** add a `chat_with_<provider>()` in `LLM_Calls/LLM_API_Calls.py` (or a module such as `moonshot.py`), register it in `API_CALL_HANDLERS` / `PROVIDER_PARAM_MAP`, and add its `[api_settings.<provider>]` config section.
+- Registry parity tests (`Tests/test_provider_registry.py`) fail where a hand-kept list (config key lists, readiness sets, endpoint maps, `NATIVE_TOOLS_PROVIDERS`, `AUTO_REFRESH_PROVIDER_LIST_KEYS`) disagrees with the record. Registry-derived lists need no edit, but some sites still repeat record data by hand (the newest preset, `commandcode`, touched 13 sites in 9 files), so grep an existing preset's key before calling the provider done.
+- Credential order differs between provider families; see "Credential precedence" in `Docs/Architecture/llm-providers.md` before relying on the Configuration section's stored-key-first rule.
 
 **New Tab**:
 1. Create a `Screen` subclass in `UI/Screens/`
@@ -137,7 +139,7 @@ def _heavy_task(self):
    fields, so a row can no longer ship a blank switch -- the failure that
    cost TASK-16174's Task 2 a debugging round). Also know that the old hard-coded
    catalog-arity literals in tests now derive from
-   `len(_GATEABLE_BUILTINS)` (they used to break on every new row). A `_GATEABLE_BUILTINS` row surfaces automatically as a switch in the MCP hub (Servers mode ▸ built-in-source detail ▸ "Tool gates" group), via the single enumerator `all_tool_gates()` in `Agents/builtin_tool_gate.py` (task-3240) -- no manual UI wiring needed. Caveat: a config-gated `LocalToolSpec` tool that isn't a `_GATEABLE_BUILTINS` entry (e.g. `web_deep_search`, `Agents/local_tool_provider.py`) doesn't get a switch for free either way -- it needs one hand-added entry in `all_tool_gates()`'s own hand-list (see the `web_deep_search`/`WEB_DEEP_SEARCH_GATE_KEY` precedent there). Do not confuse this REGISTRATION-gate surface with the MCP screen's Tools/Permissions modes, which browse the catalog and set per-tool Allow/Ask/Off; those manage the PERMISSION layer, and a gate-off tool is absent from that surface entirely. The older `ToolsSettingsWindow` (`DEPRECATED (TASK-1346)`; its route resolves to the MCP screen) stays nav-unreachable and untouched -- it is not this enumerator's consumer.
+   `len(_GATEABLE_BUILTINS)` (they used to break on every new row). A `_GATEABLE_BUILTINS` row surfaces automatically as a switch in the MCP hub (Servers mode ▸ built-in-source detail ▸ "Tool gates" group), via the single enumerator `all_tool_gates()` in `Agents/builtin_tool_gate.py` (task-3240) -- no manual UI wiring needed. Caveat: a config-gated `LocalToolSpec` tool that isn't a `_GATEABLE_BUILTINS` entry (e.g. `web_deep_search`, `Agents/local_tool_provider.py`) doesn't get a switch for free either way -- it needs one hand-added entry in `all_tool_gates()`'s own hand-list (see the `web_deep_search`/`WEB_DEEP_SEARCH_GATE_KEY` precedent there). Do not confuse this REGISTRATION-gate surface with the MCP screen's Tools/Permissions modes, which browse the catalog and set per-tool Allow/Ask/Off; those manage the PERMISSION layer, and a gate-off tool is absent from that surface entirely. The older `ToolsSettingsWindow` was removed (TASK-33244); the hub is the only gate surface.
 5. Override `risk_tags` if the tool mutates or reads user data; a tagged tool is floored to `ask` and raises an approval card per call
 
 **UI changes:** PRs that change a screen's UI update the matching `Docs/User_Guide/`
@@ -154,19 +156,41 @@ at the same spot caused most User Guide sync conflicts in the 2026-09-27 CI spec
 
 These apply to admins too.
 
-- Re-sync a PR that is behind by **rebasing** it: `gh pr update-branch --rebase <n>`, or a local
-  `git rebase origin/dev` pushed with `--force-with-lease`. Never merge `dev` into the branch
-  (plain `gh pr update-branch` does exactly that). This is the owner's rule; a merge resolution
-  is where `dev` lines get silently dropped. Then merge the moment the required check is green,
-  because each merge to `dev` makes the other ready PRs behind again.
-- Re-sync only the PR you are about to merge, not every behind PR. Under strict, one PR merges
-  per CI cycle, so each extra re-sync is a full wasted run (2026-09-28: a watcher that re-synced
-  5-7 PRs after every merge spent 5-7 runs per merge).
-- `gh pr merge <n> --auto --merge` is allowed **only** when both hold:
+The merge queue (`.github/workflows/merge-queue.yml`, spec
+`Docs/superpowers/specs/2026-10-03-merge-queue-design.md`) runs in GitHub Actions. It works the same from any machine,
+session or tool. Check its mode with `gh variable get MERGE_QUEUE`; if that prints an error (variable not found), the
+variable is unset, which means off.
+
+**Queue `on`:**
+- Arm auto-merge (`gh pr merge <n> --auto --merge`) only when both of these hold:
   - Qodo has posted its review on the *current* head;
-  - every thread on that head is addressed and resolved.
-- Auto-merge stays armed across later pushes, so run `gh pr merge <n> --disable-auto` before
-  pushing any further work to that PR.
+  - every thread on that head is resolved.
+
+  Then walk away. The queue rebases the PR when it reaches the front, starts its CI, and lets auto-merge land it.
+- Never `gh pr update-branch` an armed PR, and never merge an armed PR by hand. Either one makes the front PR's CI run go
+  to waste.
+- Before pushing more work to an armed PR, run `gh pr merge <n> --disable-auto`. Then `git pull --rebase`, because the
+  queue may have rebased your branch, and push with `--force-with-lease`. Never use a plain force push.
+- A conflict-free queue rebase needs no fresh Qodo review, because CI tests the combined result. New Qodo threads on the
+  rebased head block the merge, and the queue evicts the PR with the reason.
+- After a queue rebase, GitHub holds the PR's `pull_request` runs for approval, and the queue approves them itself. Those
+  are the runs whose required check counts toward mergeability. Approving one by hand is harmless. Never dispatch the
+  required check by hand to unblock a PR: a `workflow_dispatch` run's check is not in the PR's status rollup, so the PR
+  stays BLOCKED (verified 2026-10-06; spec V4).
+- An evicted PR has auto-merge off and a comment saying why. Fix the cause and re-arm; it rejoins at the back.
+- When a PR and `dev` have both changed the same file under `.github/workflows/` since the PR's base, GitHub refuses
+  the queue's rebase (the built-in token may not rewrite workflow files), and the queue evicts the PR at once
+  (`evict-workflow-file`). Rebase it onto `dev` yourself (`git pull --rebase origin dev`, push with
+  `--force-with-lease`) and re-arm; after that the queue can rebase it again unless `dev` changes that file once more.
+  A PR that changes a workflow file `dev` has left alone is rebased normally (verified on #3062, 2026-10-10).
+  This rule is inferred from the cases seen so far (#3058 refused; #3062 and #2892 rebased); GitHub does not document it.
+
+**Queue `off` or `dry`:**
+- Re-sync a PR that is behind by **rebasing** it: `gh pr update-branch --rebase <n>`, or a local `git rebase origin/dev`
+  pushed with `--force-with-lease`. Never merge `dev` into the branch (plain `gh pr update-branch` does exactly that).
+- Re-sync only the PR you are about to merge. Under strict protection, one PR merges per CI cycle.
+- Arm auto-merge only under the same Qodo and threads rule as above, and run `gh pr merge <n> --disable-auto` before
+  pushing more work.
 
 ### Security Requirements
 
@@ -175,6 +199,25 @@ These apply to admins too.
 - SQL identifiers through `sql_validation.py`
 - API keys from env/config only, never logged
 - Sanitize HTML/Markdown content
+
+### Markup in notify / tooltips / Button labels (TASK-1513)
+
+`App.notify()`, widget `tooltip` strings, and `Button(label=…)` all parse Rich
+markup by default; an interpolated user-derived value containing `[/]` or
+`[b]` raises `MarkupError` at render time and can crash the app. One
+convention per seam:
+
+- `notify()` calls that interpolate runtime text pass `markup=False` (the
+  message renders literally; no escaping needed).
+- Tooltips and Button labels wrap every interpolated runtime value in
+  `escape_markup(...)` from `tldw_chatbook/Utils/input_validation.py` (they
+  have no `markup=False` seam).
+
+Guard: `python scripts/check_markup_interpolation.py` ratchets every
+remaining unescaped site in `scripts/markup_interpolation_census.tsv`; a NEW
+interpolated site fails preflight until it escapes (or passes
+`markup=False`). Existing pinned rows are migration work items, not
+approvals.
 
 ### Performance Rules
 

@@ -1,0 +1,8 @@
+...                                                                      [100%]
+============================= slowest 25 durations =============================
+2.18s call     Tests/UI/test_mcp_workbench.py::test_workbench_at_100x30_keeps_server_master_switch_reachable
+1.86s setup    Tests/UI/test_mcp_workbench.py::test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers
+1.19s call     Tests/UI/test_mcp_workbench.py::test_workbench_at_100x30_keeps_primary_content_reachable
+
+(6 durations < 1s hidden.)
+3 passed in 7.35s

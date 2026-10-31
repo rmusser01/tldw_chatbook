@@ -1,0 +1,7 @@
+{
+  "head": "149adb53f1d10b090e31a5f458e8c2ffcd3ca458",
+  "dev": "9b28ce1479efed6bca687cfbb33d261322f83abe",
+  "unmerged": false,
+  "production_overlap": "chat_screen.py one telemetry call argument",
+  "upstream_qa_whitespace": "Unchanged upstream terminal captures contain padding/trailing whitespace; the attempted full df81..merge diff-check printed these findings. This is not a passed whitespace receipt. Production/tests scoped check is performed separately."
+}

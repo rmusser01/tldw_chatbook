@@ -71,8 +71,6 @@ def db_instance(db_path, client_id):
     db.close_connection()
 
 
-
-
 # task-1463: hypothesis runs many examples against ONE function-scoped
 # `db_instance`, so tests that assume a fresh database per example accumulated
 # cross-example state (sync logs, name collisions, soft-deleted residue) and
@@ -218,9 +216,7 @@ class TestPromptProperties:
 
     @_db_settings()
     @given(prompt_data=st_prompt_data())
-    def test_soft_delete_makes_item_unfindable(
-        self, tmp_path: Path, prompt_data: dict
-    ):
+    def test_soft_delete_makes_item_unfindable(self, tmp_path: Path, prompt_data: dict):
         """
         Property: After soft-deleting a prompt, it should not be retrievable by
         default methods, but should exist in the DB with deleted=1.
@@ -312,9 +308,7 @@ class TestKeywordAndLinkingProperties:
 
     @_db_settings()
     @given(keyword=st_required_text)
-    def test_add_keyword_is_idempotent_on_undelete(
-        self, tmp_path: Path, keyword: str
-    ):
+    def test_add_keyword_is_idempotent_on_undelete(self, tmp_path: Path, keyword: str):
         """
         Property: Adding a keyword that was previously soft-deleted should reactivate
         it (not create a new one), and its version should be correctly incremented.
@@ -326,8 +320,7 @@ class TestKeywordAndLinkingProperties:
         # own comment admitted "wrong get method") — never caught because the
         # file never ran (task-1463). Assert on the keyword record instead.
         assert (
-            db_instance.get_active_keyword_by_text(keyword.strip().lower())
-            is not None
+            db_instance.get_active_keyword_by_text(keyword.strip().lower()) is not None
         )
         kw_v1 = db_instance.get_active_keyword_by_text(keyword.strip().lower())
         assert kw_v1["version"] == 1
@@ -404,9 +397,7 @@ class TestAdvancedProperties:
 
     @_db_settings()
     @given(prompt_data=st_prompt_data())
-    def test_soft_deleted_item_is_not_in_fts(
-        self, tmp_path: Path, prompt_data: dict
-    ):
+    def test_soft_deleted_item_is_not_in_fts(self, tmp_path: Path, prompt_data: dict):
         """
         Property: Once a prompt is soft-deleted, it must not appear in FTS search results.
         """
@@ -543,23 +534,29 @@ class TestDataIntegrityAndConcurrency:
         must raise a ConflictError.
         """
         db_instance = _fresh_example_db(tmp_path)
-        prompt_data = {"name": "Unique Prompt Name", "author": "Tester", "details": None}
+        prompt_data = {
+            "name": "Unique Prompt Name",
+            "author": "Tester",
+            "details": None,
+        }
         db_instance.add_prompt(**prompt_data)
 
         # Attempt to add again with the same name
         with pytest.raises(ConflictError):
             db_instance.add_prompt(**prompt_data, overwrite=False)
 
-    def test_update_prompt_to_conflicting_name_fails(
-        self, tmp_path: Path
-    ):
+    def test_update_prompt_to_conflicting_name_fails(self, tmp_path: Path):
         """
         Property: Updating a prompt's name to a name that is already used by
         another active prompt must raise a ConflictError.
         """
         db_instance = _fresh_example_db(tmp_path)
-        p1_id, _, _ = db_instance.add_prompt(name="Prompt One", author="A", details=None)
-        db_instance.add_prompt(name="Prompt Two", author="B", details=None)  # The conflicting name
+        p1_id, _, _ = db_instance.add_prompt(
+            name="Prompt One", author="A", details=None
+        )
+        db_instance.add_prompt(
+            name="Prompt Two", author="B", details=None
+        )  # The conflicting name
 
         update_payload = {"name": "Prompt Two"}
         with pytest.raises(ConflictError):

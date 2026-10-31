@@ -344,7 +344,11 @@ device.
 ### Notes list
 
 Library notes are presented as a folder tree rather than one flattened
-snapshot. Each level loads independently in fixed pages of 20:
+snapshot. The tree scrolls at every terminal width — with the mouse wheel,
+and as Down/Up or Tab move focus past the edge of the visible rows, which
+scrolls the focused row into view one row at a time — so every folder,
+note, "More notes" control and the "Recently deleted" row can be reached.
+Each level loads independently in fixed pages of 20:
 
 - A folder-row **More folders** control loads the next 20 direct children of
   that exact folder. The root has its own folder control.
@@ -378,11 +382,11 @@ both stay closed until you choose to reopen one.
 
 | Control | What it does |
 |---|---|
-| "Filter notes… (Enter)" | Type and press Enter to filter; the status line then reads "filter: \<text\> · N results". |
+| "Filter notes… (Enter)" | Type words in any order and press Enter; the last word may be the start of a word (`Lisb` finds "Trip planning: Lisbon"); every word must appear in the title, the body or one of the note's keywords; wrap words in double quotes to match them as an exact phrase. The status line then reads "filter: \<text\> · N results"; with no match it says "No notes match “\<text\>” in titles, bodies or keywords. Try fewer words, or clear the filter." |
 | "New" | Opens the **New note** view — the same destination as the rail's **New note** row: **Blank note**, or **From a template…**. (**Ctrl+N** skips the view and makes the blank note itself.) Disabled while another notes operation is running. |
 | "New folder" | Creates a folder in the tree beneath the toolbar. Disabled, with the reason in its tooltip, when the selected folder is sync-managed ("This folder is managed by sync; change its sync root instead.") or its branch is stale ("This branch may be out of date; retry it before changing it."). |
 | Folder selected: "Rename" / "Move" / "Remove" | Act on the selected folder. Same two disabled reasons as **New folder**. |
-| Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. The folder picker opens with nothing selected, and **Choose** does nothing until you pick a folder. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
+| Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. The folder picker opens with nothing selected, and **Choose** does nothing until you pick a folder. The picker lists the top-level folders the list has loaded (and the ones you have expanded); arriving through New note or the palette's New Note loads them the same way the Notes row does. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
 | "Restore folder" | Appears after a folder removal, to put it back. |
 | "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. **Newest is the default.** The value is the order the folder tree is paged in, so choosing a new one reloads the tree (open folders included). While a filter is showing the control cannot own the order, so it renders blocked ("○ Sort: Newest") and the line under the toolbar says why: "Sort unavailable — clear the filter" (task-32549). |
 | "Add from files…" | Choose **Import once** or **Keep a folder synced** before selecting a source. |
@@ -456,18 +460,18 @@ action so the list retains its row budget.
 | Control | What it does |
 |---|---|
 | "‹ Notes" / "‹ Back to list" | Returns to the list (your text is already saved — see autosave below). One wording across Edit, Preview, and Info: "‹ Notes" at wide sizes, "‹ Back to list" on a compact terminal. |
-| Where this note lives | One row under the title, on a terminal 80 columns or wider. A note that exists only in the Library database reads "In the Library database only — no file on disk". A note that lasting sync keeps in step with a file reads "In a synced folder", then that file's path, then when the file was last written — the file's own time, so an edit made in Obsidian counts too. The path is elided in the middle when the pane is narrower than the row, keeping the file name; the write time is dropped before the path is, and the first part is never shortened. Both facts are read fresh when the note opens, from the sync relationship and from the file itself rather than from anything stored on the note. The time is the file's last write, so just after you save it usually still shows the PREVIOUS one: a save schedules the write, and the folder pass that performs it runs a moment later. Reopen the note to see the new time. That is the row being accurate rather than reassuring — it is telling you the file has not been written yet (task-32640). |
+| Where this note lives | One row under the title, on a terminal 80 columns or wider. A note that exists only in the Library database reads "In the Library database only — no file on disk". A note that lasting sync keeps in step with a file reads "In a synced folder", then that file's path, then when the file was last written — the file's own time, so an edit made in Obsidian counts too. The path is elided in the middle when the pane is narrower than the row, keeping the file name; the write time is dropped before the path is, and the first part is never shortened. Both facts are read fresh when the note opens, from the sync relationship and from the file itself rather than from anything stored on the note. The time is the file's last write: a save schedules the write and the folder pass that performs it runs a moment later, so the row re-reads itself once that pass has landed (it waits up to five seconds for it) rather than on the save; reopen the note if it still names the previous write. That is the row being accurate rather than reassuring — it is telling you whether the file has been written (task-32640). When the note's sync folder is held for attention — an open sync entry, a conflict waiting for review, a failed pass — the row says so right after the world, "In a synced folder · ⚠ Sync needs attention · …", and the status line above the editor reads "Saved HH:MM in Notes · ⚠ Sync needs attention · Next: Open Manage sync folders." instead of a plain "Saved": your text is in Notes, but nothing reaches the file until the folder is resolved (TASK-34000.2). |
 | **Edit** | Shows the editable title, keywords and body. This is the default view when you open a note. Keywords sit on their own row under the title — comma-separated, edited in place, and reachable with one Tab from the title, so you no longer have to open **Info** to add one. It is the same shape as the Title field, which costs the body five rows at a wide size and one on a compact terminal. The same field appears in Info's Properties; whichever you type in, it is the same keywords. |
-| **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. If the body's first line is an H1 that exactly repeats the note's title (`# ` and the same words — the shape most exported Markdown files have), Preview shows it once, as the title line, instead of printing it twice. A rendered heading is left-aligned, where the rest of the body begins, rather than centred like a page banner — so a note whose title came from Obsidian frontmatter, which never matches its first heading exactly, shows a title and a heading rather than two titles. An Obsidian callout renders as a quoted block headed by its type, on its own line above the body — `> [!note] Title` becomes "Note: Title", `> [!warning]` on its own becomes "Warning" — rather than printing its `[!note]` marker or running the type into the first line of the callout; a callout written without the space (`>[!note]`), a folded one (`> [!note]-` / `+`), a nested one (`> > [!tip]`) and a capitalised type (`[!TODO]`) all render the same way, and an example inside a fenced code block is left exactly as you wrote it. Tab moves through the same controls Edit offers, and the footer names each one as you reach it. Escape leaves Preview for the **list**, not back to Edit — the footer says so, "esc back to notes" on a wide terminal and "esc notes" on a compact one (the same key, the same destination, shortened to fit). The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. |
+| **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. If the body's first line is an H1 that exactly repeats the note's title (`# ` and the same words — the shape most exported Markdown files have), Preview shows it once, as the title line, instead of printing it twice. A rendered heading is left-aligned, where the rest of the body begins, rather than centred like a page banner — so a note whose title came from Obsidian frontmatter, which never matches its first heading exactly, shows a title and a heading rather than two titles. An Obsidian callout renders as a quoted block headed by its type, on its own line above the body — `> [!note] Title` becomes "Note: Title", `> [!warning]` on its own becomes "Warning" — rather than printing its `[!note]` marker or running the type into the first line of the callout; a callout written without the space (`>[!note]`), a folded one (`> [!note]-` / `+`), a nested one (`> > [!tip]`) and a capitalised type (`[!TODO]`) all render the same way, and an example inside a fenced code block is left exactly as you wrote it. Tab moves through the same controls Edit offers, and the footer names each one as you reach it. Escape leaves Preview for the **list**, not back to Edit — the footer says so, "esc back to notes" on a wide terminal and "esc notes" on a compact one (the same key, the same destination, shortened to fit). The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. Clicking a note link in Preview opens that note; with the Preview focused, Enter follows the note's link or lists its links to choose from. Web links open in your browser; nothing else is handed to the operating system. |
 | **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. Each property is on its own row, labelled — Created, Modified, Version, Words — rather than joined into one sentence: on a wide terminal the values line up in a second column, and on a compact one the rows keep a single column so a timestamp is never cut off the pane. |
-| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Links you type by hand in the body count too, as long as they use the same `note://` form. The answer is looked up rather than searched for: each note records the links its body carries when it is saved or imported, so the lookup costs what a note's own inbound links cost rather than growing with the size of your vault. An existing library picks its links up the first time this version opens it — nothing to re-import. |
-| Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". Right after a save completes in this session the state names the time — "Saved 12:47" — **in your local time**, the same clock Info → Properties prints, so the two never disagree about when that save happened; leaving the note and reopening it later in the same session goes back to the bare "Saved". It does not carry a word count. Created/Modified/version details are under Info → Properties, one labelled row each, with an absolute local timestamp beside its relative age and the word count (e.g. a "Created" row reading "2026-09-08 21:14 · 3m ago", then "Modified", "Version" and "Words"). In Info, "Saved" appears once. |
+| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Type `[[` in the body to pick a note: the picker narrows as you type, Enter inserts the link, Esc leaves your text alone. Resizing the terminal closes the picker without inserting anything — keep typing to open it again. Only typing opens the picker: moving the caret with Home, the arrow keys or a click into a link you already have never opens it, so navigation keys alone can never change which note a link points to. A `[[Title]]` you type by hand counts too when exactly one note has that title (case is ignored for A–Z letters, so `[[weekly]]` finds "Weekly", but an accented letter must match exactly — `[[élan]]` does not find "Élan"); a title no note has, or two notes share, is left as plain text. Links are recorded when the note is saved, so a note written before this version picks up its typed `[[Title]]` links the next time it is saved. The answer is looked up rather than searched for: each note records the links its body carries when it is saved or imported, so the lookup costs what a note's own inbound links cost rather than growing with the size of your vault. The stored `[[title]](note://…)` links an existing library already holds are picked up the first time this version opens it — nothing to re-import; only the hand-typed `[[Title]]` form waits for the note's next save. |
+| Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". Its "Next: Keep editing; changes save automatically." appears only while a save is counting down, running, or paused behind an open dialog (or the note is clean, so your next keystroke starts one); a note with unsaved changes and no save pending reads "Next: Keep editing; press Save to save now." instead. Right after a save completes in this session the state names the time — "Saved 12:47" — **in your local time**, the same clock Info → Properties prints, so the two never disagree about when that save happened; leaving the note and reopening it later in the same session goes back to the bare "Saved". It does not carry a word count. Created/Modified/version details are under Info → Properties, one labelled row each, with an absolute local timestamp beside its relative age and the word count (e.g. a "Created" row reading "2026-09-08 21:14 · 3m ago", then "Modified", "Version" and "Words"). In Info, "Saved" appears once. |
 | Chrome strip | One row directly under the body, right-aligned: "N words · L:C" — the words in the note and the caret's line and column, both counted from 1. The count is the whole open note's, at any length: a 37 KB, 5,427-word note reads "5,427 words · 1:1" the moment it opens, whatever you had open before it, and the thousands separator is part of the number. It follows your typing and your arrow keys with no save and no reload. Nothing on it is a control; Tab never stops there. It appears while **Edit** is the open view on a terminal 80 columns or wider; **Preview** and **Info** have no caret, and a narrower terminal gives the row back to the body. The strip does not repeat the save state — that stays on the status line above the mode controls. The editor's Created/Modified/version line lives in one place, Info → Properties. |
-| **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
-| **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
+| **Save** | Saves immediately, without waiting for autosave. It remains visible at every terminal size: beside the mode controls when the editor pane is wide enough for the whole header on one row, otherwise on the row directly under Edit / Preview / Info, with the save state on its own line above them. The header never pushes Save past the pane's edge, and F6 only lands on a Save you can see. |
+| **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save** at every terminal size, with its whole label — never a clipped "Use in". On a new note you have not typed into, **Discard new note** sits beside it (worded "Discard" only where its row is too narrow for the full label — a 120-column terminal; wider stacked rows keep "Discard new note"); it keeps its place on the row when it does not apply, so Edit / Preview / Info never shift. |
 | **Copy** (Info) | Copies the note to the clipboard as Markdown — "Note copied to clipboard as markdown!" |
-| **Export Markdown** / **Export text** (Info) | Saves the note to a file you pick; success shows "Note exported successfully to \<name\>". |
-| **Delete** (Info → Danger) | Asks inline, in place — Info stays open and the prompt renders inside the Info box, on the row directly under the Delete button that raised it: "Delete this note? Undo will be available in the Notes list." Tab / Shift+Tab cycle only between **Cancel** and **Delete** while it is open, and the footer names whichever one is focused ("enter cancel" or "enter delete"). Every other Info action — including "‹ Notes" / "‹ Back to list" — is disabled until you choose Cancel or Delete. Cancelling puts focus back on Delete and leaves Info scrolled exactly where it was. A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
+| **Export Markdown** / **Export text** (Info) | Saves the note to a file you pick. The picker opens in the folder you last exported to this session (your home folder until then). If a file of that name already exists there, a "Replace existing file?" prompt names the file and its folder — `Replace "Reading list.md" in ~/exp?` — with **Cancel** focused; Escape, a click outside the prompt or **Cancel** leave the existing file exactly as it was, and only **Replace** writes. If the file you chose is a link to another file, the prompt names that file and its folder, and Replace writes through the link, leaving the link in place. The write is atomic (a temporary file in the same folder, then a rename), so a failed write never leaves a truncated file. Success shows "Note exported successfully to ~/exp/Reading list.md" — the folder and the file, not just the name. |
+| **Delete** (Info → Danger) | Asks inline, in place — Info stays open and the prompt renders inside the Info box, on the row directly under the Delete button that raised it, at every terminal size: "Delete this note? Undo will be available in the Notes list." Info scrolls to the prompt by itself, so its copy and both buttons are in view without a manual scroll, and stay in view if the terminal is resized while it is open. Tab / Shift+Tab cycle only between **Cancel** and **Delete** while it is open, and the footer names whichever one is focused ("enter cancel" or "enter delete"). Every other Info action — including "‹ Notes" / "‹ Back to list" — is disabled until you choose Cancel or Delete. Cancelling puts focus back on Delete and leaves Info scrolled exactly where it was. A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
 
 Opening a note shows "Loading note…" only while the note is being read. If a
 read takes longer than about three seconds the editor stops waiting and shows
@@ -477,10 +481,51 @@ Edit/Preview/Info) takes you back to the list, and opening another note still
 works.
 
 **Autosave** runs about two seconds after you stop typing; the meta line
-flips to "saving…" and back to "saved". If the same note was changed
-somewhere else while you were editing, a banner appears: "This note
-changed elsewhere — Overwrite saves your text; Reload discards it." —
-pick **Overwrite** or **Reload**.
+flips to "saving…" and back to "saved". If you keep typing without a
+two-second pause, it still saves at least every ten seconds, so a long
+burst of steady typing is never held back until you stop. A note in a synced
+folder saves on the same timings: a save never waits for the folder's previous
+sync, and a save that lands while that sync is still writing the file settles
+on its own (see "Add from files and lasting sync" below: typing in a synced
+note never holds its folder). Opening help (F1), a dialog such as Move note
+or Add to folder, or the command palette pauses the countdown while it is
+open — nothing saves behind a dialog — and the countdown resumes the moment
+the dialog closes, so an edit typed just before F1 is still saved within
+the normal delay after you close it. If an autosave is
+refused — a title with a leading or trailing space, unsafe markup, a
+duplicate keyword — or the write fails, the status line says why, and your
+cursor stays where it is, whether that is the field you are typing in, the
+Info pane or a button. Nothing jumps to another field or pane mid-sentence.
+The field that needs fixing is marked, with the reason directly under it.
+On a wide terminal the field is outlined. On a narrow one (under 120
+columns) the Title and Keywords boxes have no outline, so their text is
+shown in the error colour instead — a title that is only spaces has no
+text to colour, and shows its mark as the reason row alone — while the
+Body keeps its outline at every width. On the narrowest terminals that
+one-row reason may be cut short at its end; the status line above still
+carries all of it. The status line reads "Fix the marked field, or press
+Save to go to it", and it keeps saying so (never "changes save
+automatically") until you change the marked field; pressing **Save**
+takes you there. Leaving the Title field
+tidies a leading or trailing space, and leaving Keywords drops a duplicate
+that differs only in case ("x, X" becomes "x") and an empty entry ("a,,b"
+becomes "a, b"), so an ordinary slip like the duplicate never leaves the
+note unsaved; a list with nothing to drop is left exactly as you typed it
+("a,b" stays "a,b"). You see the edit in the field, and nothing is
+rewritten at save. Switching to another window and back does not count as leaving the
+field: what you typed stays exactly as it was. If the same note was changed somewhere else while you were editing,
+a banner appears: "This note changed elsewhere — Overwrite saves your text;
+Reload discards it." — pick **Overwrite** or **Reload**.
+
+**Quitting with unsaved changes.** **Ctrl+Q** saves the open note before
+Chatbook exits, so text typed in the last moments is kept, and a new note
+keeps the title and body you typed. If that save cannot finish — the title
+is one the save refuses, the note changed elsewhere, or the write fails —
+Chatbook does not exit. It asks 'Quit and discard unsaved changes to
+"<title>"?' with **Keep editing** selected: Keep editing (or Enter, or
+Escape) returns you to the editor with your text intact, and only **Discard
+and quit** exits without saving it. The same question covers an unsaved
+Prompt or Skill draft and a Folder files edit that could not be saved.
 
 While any editor field — the title, the body, or either keyword box — has
 keyboard focus, nothing repaints the editor underneath you: a refresh that
@@ -550,6 +595,11 @@ If a save is blocked — most commonly a title that starts or ends with a
 space — Escape does not leave silently: it notifies "Can't leave yet — fix
 the title or press Discard new note." so there is always a visible way
 forward, either fixing the field or discarding a still-new note.
+Clicking another destination in the nav bar while a save is blocked shows
+the same reason with the destination named ("Can't open Console yet: Title
+begins or ends with whitespace — remove it to save."), keeps Library
+highlighted, and the next click on that destination goes through once the
+field is fixed.
 
 After a confirmed delete, the receipt stays in the Notes list until you
 choose **Undo**, choose **Dismiss**, complete a newer note deletion, or leave
@@ -597,11 +647,12 @@ itself already exists at that point — it is in the list and in the rail's
 count — so its status reads "Empty note — type to keep it" rather than
 "Saved": what is not yet safe is not the note, but the fact that you have
 written nothing in it. If you leave again via "‹ Back to list" without typing
-anything, the blank note is quietly discarded rather than left behind as a
-stray "Untitled" row.
+anything, or quit Chatbook, the blank note is quietly discarded rather than
+left behind as a stray "Untitled" row.
 Pressing "Save" keeps it, and so does typing anything **that is not only
 whitespace** — a title of nothing but spaces, with an empty body and no
-keywords, still counts as blank and is discarded on the way out. Because
+keywords, still counts as blank and is discarded on the way out, quitting
+included (Chatbook does not ask about it). Because
 you did type something there, that discard is not silent: leaving says
 "Empty note discarded", and the note's row leaves the list at once rather
 than lingering as an "Untitled · now" row for a note that is already gone.
@@ -639,7 +690,9 @@ because Enter there goes back rather than creating anything.
 **Add from files…** first asks what relationship you want. Until you choose,
 the header names neither relationship — one heading, "Add files to Library
 notes.", over a status line that says nothing has been chosen yet, and its
-next action is to pick one.
+next action is to pick one. It opens on that chooser every time, whatever the
+previous Add from files or Manage sync folders step ended on; only a check or
+activation that is still running is shown instead, until it settles.
 
 Each option names the difference that matters most and is easiest to miss:
 **Import once** reproduces your folder structure as Library folders, while
@@ -680,21 +733,27 @@ see [File notes](file-notes.md).
 **What a folder has to be before it can be checked.** The folder itself must be
 a real folder (not a link to one) on a local disk, outside Chatbook's own data
 directory, not already connected as a sync folder, and not the Folder files
-root. Every `.md` file inside it must also pass, and one bad file stops the
-whole folder: each must be one you own or share a group with and can write,
-UTF-8 text, 10 MB or smaller, an ordinary file with a single name on disk, and
-consistent in its line endings — all Unix or all Windows, not a mix, and not
-the carriage-return-only style old Mac editors wrote.
+root. Every `.md` file inside it is checked too. A file the check can list but
+cannot read as note text is listed in the review as a skipped row that names it
+and says what to do — `notes.md · Mixed line endings — save it with one style`,
+`latin1.md · Not UTF-8 text — convert it to UTF-8 or move it out of the folder`,
+a file you cannot write or do not own, one with more than one name on disk, or
+one that changed while it was being read. The rest of the folder syncs as
+usual, and a skipped file is picked up by the next Check once it is fixed or
+removed. A migrated folder cannot be activated while one of its own notes'
+files is skipped; the review says which file and holds Activate until it is
+fixed.
 
-**Check changes** refuses anything else and names which rule it was, in the
-setup pane's status line, with the next action — for example "That folder is
-inside Chatbook's own data directory. Pick a folder outside it, then Check
-again", "Another Chatbook window is using that folder", "That folder is
-already connected", "Some files there use a mix of line endings. Save them
-with one style, then Check again", or "Some files there are larger than 10 MB".
-When several files fail for different reasons, the message names the most
-common one. A refusal changes nothing: pick a different folder, or fix the
-cause, and **Check changes** again in the same session.
+A few things still stop the whole folder before any file is read, because the
+folder listing itself refuses them: a file larger than 10 MB, a `.md` that is a
+link rather than a file, and an entry that is not an ordinary file (a pipe, a
+device). **Check changes** refuses a folder that fails its own rules and names
+which rule it was, in the setup pane's status line, with the next action — for
+example "That folder is inside Chatbook's own data directory. Pick a folder
+outside it, then Check again", "Another Chatbook window is using that folder",
+"That folder is already connected", or "Some files there are larger than 10
+MB". A refusal changes nothing: pick a different folder, or fix the cause, and
+**Check changes** again in the same session.
 
 If files or notes change after checking, activation is refused as stale and the
 nearest valid action is **Check again**. Conflicts and deletion choices are not
@@ -746,8 +805,8 @@ anywhere — superseded by task-32604 below.) **Review** also appears on its own
 when a root's changes need attention;
 legacy candidates use **Review migration**. **Pause** and **Resume** control an
 active root. **Resume** re-activates the root and runs the same check as
-**Check changes**: a root with nothing changed returns to "✓ Up to date · Next:
-Check changes", and edits made while it was paused surface as "◌ Changes
+**Check changes**: a root with nothing changed returns to "✓ Up to date as of
+HH:MM · Next: Check changes", and edits made while it was paused surface as "◌ Changes
 available" or "⚠ Needs attention · Next: Review changes" (task-32519). A check
 the app cannot run says so on the row itself: the row flips to "⚠ Needs
 attention · Check failed — <reason> · Next: <action>" and offers that action's
@@ -767,14 +826,22 @@ this release; nothing on disk or in Notes changes." (task-32545).
 A paused folder keeps its receipts: reading them is a read, so pausing one
 folder never blanks the list for the others (task-32534).
 
-**Every root here is titled "Sync folder (name unavailable before
-cutover)"**, whatever display name you gave it and however many roots you
-have — the row's title is a hard-coded string, not the name (task-32451,
-still open). The row carries no path either, so with two roots connected
-the only things telling their rows apart are their status lines and their
-order. What still names them is the Notes list: each root's managed folder
-there is named after its display name. This is a labelling defect only —
-each row's controls act on the root they belong to.
+**Every root here is titled with its folder's name** — the display name you
+typed when you set it up, which is also the name the Notes list shows for the
+root's managed folder ("Vault sync" in both places) — so two roots are told
+apart by their titles alone. The row still carries no path. A migrated legacy
+candidate has no typed name until you activate it: its row reads "Migrated
+notes — review to finish setup", and once activated it takes its new folder's
+"Migrated notes …" name. A root still being set up — no managed folder yet —
+reads "Sync folder (setting up)". A root that has a folder but no name to show
+says which: "Sync folder (missing from Notes)" when its folder is gone from
+Notes (or its name is blank), "Sync folder (name unavailable)" when the app
+could not read the name; the status line beside it says what to do. Names are
+read when the app starts and when a folder is set up: rename a sync-managed
+folder in the Notes tree and its row keeps the old title until the next start.
+(Was "Sync folder (name unavailable before cutover)" on every row,
+whatever you had named it, so two roots could only be told apart by their
+status lines and order — task-32451.)
 
 **Receipts**, under the root list, is where the writes lasting sync performs
 on its own show up: the newest 20 across every listed root, newest first, as
@@ -786,24 +853,132 @@ write left no trace anywhere in the app.
 Saving a note in Chatbook is enough to produce that "Wrote note to file" row:
 a note inside an active root that you save in the editor is written to its
 file on its own, on the same terms a file you edit on disk is read into its
-note — you do not have to run **Check changes**, and the row goes on saying
-"✓ Up to date" because by then it is (task-32604). This depends on lasting
+note — you do not have to run **Check changes**, and the row reads
+"✓ Up to date as of HH:MM", the minute that write was confirmed, because by
+then it is (task-32604). **Ctrl+Q** from the Library right after such a save waits for that
+write before Chatbook exits — up to five seconds; if the folder's sync takes
+longer than that, the file receives the edit when Chatbook next starts. This
+depends on lasting
 sync still running: if it has stopped, nothing is carrying changes either way
 and the root's row says so — "⚠ Sync stopped · Next: Check changes" — instead
-of claiming to be up to date. (The row says it the next time the list is
-drawn: on opening **Manage sync folders**, or on returning to the Library. A
-list you are already sitting on does not repaint itself.) Until this the note
-side
+of claiming to be up to date. (That one label still appears only on the next
+redraw — on opening **Manage sync folders**, or on returning to the Library:
+a runtime that has stopped publishes nothing, so a list you are already
+sitting on cannot learn it from a publication.) The same row also appears
+for one folder on its own when lasting sync is running but nothing is
+watching that folder — the fact is read each time the list is drawn, never
+remembered from the last status — and **Check changes** on that row starts
+watching it again; when watching resumes on its own (a backup finishing,
+say) the row returns to "✓ Up to date as of HH:MM" without a keypress
+(TASK-34000.50). Until this the note side
 produced no signal at all: Chatbook watches the folder, not the notes
 database, so a note you saved stayed in Notes only and its file kept its old
 bytes until something else touched the disk — with the row reading
 "✓ Up to date" the whole time.
 
+A folder that is **held for attention** — a sync entry that could not be
+completed, a conflict or deletion waiting for your review, a failed pass — is
+not syncing in either direction until you act, and every Notes surface says so
+rather than only Manage sync folders (TASK-34000.2, review finding N-02): the
+folder's tree row reads "⚠ Needs attention" in place of "⇄ Sync managed" (and
+"⚠ Sync stopped" for a folder that is healthy but not being watched -- the same
+row Manage sync folders shows for it, TASK-34000.50), the
+list's idle status reads "Library notes · ⚠ A sync folder needs attention ·
+Next: Open Manage sync folders." in place of "Ready", and the editor of any
+note in that folder says "Saved HH:MM in Notes · ⚠ Sync needs attention" with
+"In a synced folder · ⚠ Sync needs attention · …" under its title. These
+surfaces follow the folder as its state changes — a hold that a background pass
+produces while you sit idle (a disk edit colliding with a note edit, say)
+reaches them within a moment, without a keypress — and they return to the
+healthy wording the same way once the folder is resolved. Typing in a synced
+note never holds its folder: Chatbook saves the note while you type, and a save
+that lands while the folder is still writing the previous save to the file is
+settled on the next pass with no click -- the folder records the baseline it
+can prove (the journal's digest and the bytes on disk) and writes the newer
+text; while a long burst of typing is being caught up the row may briefly read
+"◌ Changes available" before it returns to "✓ Up to date", with nothing to
+press; a save never waits for a sync, on this folder
+or any other, so a note switch, Back or a rail switch is never delayed by a
+folder's pass (TASK-34000.51). The one thing that still waits is a change on
+both sides -- the file edited on disk while the note was edited in Chatbook --
+which is an ordinary "Both file and note changed" review, never a silent
+winner. A file's line-ending convention is kept across an edit that leaves
+no line ending at all -- a Windows-style CRLF file whose note shrinks to one
+line stays a CRLF file, the next multi-line edit is written CRLF, and a
+folder that an older build held on exactly this ("Recovery failed" after
+such an edit) is healed by **Recovery** (TASK-34000.48). Before this
+an ordinary edit — Ctrl+End, then a word without Enter, in a vault whose files
+end with a newline — left a `postcondition_failed` entry open on the folder
+while the tree, the list and the editor went on saying Sync managed, Ready and
+Saved, and later edits on both sides silently diverged. That edit now
+completes (the written file is compared with what the note writes, newline
+convention included), and the entry's row in **Manage sync folders** reads
+"⚠ Needs attention · Next: Resolve recovery" with **Recovery** first.
+**Recovery** closes the open entry at the baseline it can prove on disk and in
+Notes, mutating neither side, then checks the folder again: whatever changed
+on one side since is synced, and a change on both sides becomes an ordinary
+"Both file and note changed" review (Keep both / Keep file / Keep note / Skip
+for now) — never a silent winner, and never "Recovery failed — RuntimeError"
+next to a **Check changes** that refused the same entry. A folder already
+stuck that way by an earlier build is healed by the same button.
+
+**The healthy row is dated.** Because not every way of writing a note tells
+lasting sync about it yet (the list below), a root's healthy status names the
+minute it was last confirmed — "✓ Up to date as of 14:32 · Next: Check
+changes", in your local time; a confirmation from another day carries its
+date, "as of 2026-10-03 08:25" — rather than standing as an unqualified
+promise. The time comes from the runtime's own publication, so it moves when
+a pass finishes, and the rows in **Manage sync folders** follow the runtime
+while you are looking at them: a pass that finishes while you sit on the list
+repaints its row within a moment, without a keypress (TASK-32633, review
+finding N-03).
+
+**Deleting a synced note holds its folder until you restore the note.**
+Lasting sync never chooses a winner, and that includes a deletion: when you
+delete a note that lives in a sync folder, the file stays on disk, byte for
+byte, and the folder is held — the tree row reads "⚠ Needs attention", the
+list "Library notes · ⚠ A sync folder needs attention · Next: Open Manage sync
+folders.", and the root's row "⚠ Needs attention · Next: Review changes". The
+delete prompt says so before you confirm: "Delete this note? Its file stays
+on disk; the synced folder waits for review until the note is restored. Undo
+will be available in the Notes list." Know what "waits" means in this
+release: **Review changes** shows the deletion but cannot resolve it — every
+choice on that row is disabled ("Deletion review is unavailable in this
+release", TASK-34000.15) — and **nothing in that folder syncs in either
+direction** while it is held. The one way back is to restore the note:
+**Undo** on the receipt, or **Restore** in **Recently deleted**, in this
+session or a later one. The folder then returns to "✓ Up to date as of HH:MM"
+on its own, with no **Check changes**, and the file is unchanged throughout.
+(Two narrow exceptions, with the same way out. If a backup is capturing the
+profile at the moment you restore, the folder waits for your next change to
+one of its notes, or for **Check changes**. And **Ctrl+Q** right after a
+restore waits up to five seconds for the folder to be checked; on a folder
+that takes longer, the next session opens with it still held.)
+A folder that opens held — Chatbook was quit while it needed attention, so
+the next session starts with the row already reading "⚠ Needs attention" —
+is also healed by **Review** on that row once the cause is gone (the note
+restored, or the file back on disk), or by **Recovery** on an open entry,
+and either leaves the folder watched: the next edit on disk reaches the note
+and the next save in Chatbook reaches the file, with no **Check changes**
+(TASK-34000.50; before it, that row turned to "✓ Up to date as of HH:MM"
+while nothing was watching the folder, and only Check changes started it).
+The folder keeps syncing both ways after that: the first edit you make to
+that file *on disk* flows into the restored note on the next automatic pass,
+exactly as it did before the delete. (The same holds after a keywords-only
+save or a rename of the note in Chatbook — none of those count as a change to
+the note's text, and none of them stop the next file edit from landing.) If
+you edited the note's text in Chatbook *and* the file on disk, the folder
+stops for the ordinary "Both file and note changed" review instead; nothing
+is chosen for you. Before this, deleting a synced note left the row at "✓ Up
+to date" with the file still on disk and nothing to say the folder had
+anything to decide (TASK-32633 slice, N-03).
+
 **What this covers, exactly: editing an existing synced note in the Library
-note editor.** That is the one write into a note that tells lasting sync
-anything. These do not, and their files stay as they are until you run
-**Check changes**, until something changes on disk, or until the next start —
-while the row goes on reading "✓ Up to date":
+note editor, and deleting or restoring one through the Library.** Those are
+the writes into a note that tell lasting sync anything. These do not, and
+their files stay as they are until you run **Check changes**, until something
+changes on disk, or until the next start — while the row goes on reading
+"✓ Up to date as of <the last time it was confirmed>":
 
 - **New note**, including a new note created straight into a synced folder.
 - **Save as Note** in Console, and the same action on text you select inside a
@@ -812,7 +987,8 @@ while the row goes on reading "✓ Up to date":
   assistant's own `create_note` or `update_note` tool, by the Library
   `library_save_note` tool, by **Import once** over a note that already
   exists, or by a chatbook import.
-- Deleting or restoring a note.
+- Deleting a note from anywhere other than the Library (a Research quick
+  note's delete, for instance).
 
 None of those is new — none of them ever told lasting sync anything, and
 task-32604 changed only the editor — but none is fixed either, so if you need
@@ -1151,7 +1327,9 @@ The receipt is then on screen. Tab stays inside Import once throughout —
    again** instead. **Manage sync folders** appears in the notes toolbar once
    a root is active. The receipt reads "N applied · listed under Receipts" and
    names where to see them (task-32545; was "N applied · durable receipt
-   recorded"). Choosing **Back** returns to a Notes list that already
+   recorded"). The receipt's bar offers **Manage sync folders** and
+   **‹ Notes**; a second folder is set up from **Add from files…** again.
+   Choosing **‹ Notes** returns to a Notes list that already
    counts the synced notes and shows them under a **⇄ Sync managed** folder
    named after the display name — no restart needed (task-32518).
 
@@ -1265,14 +1443,18 @@ in the editor.
 
 A captured note carries three keywords: `console`, `conversation:<id>` and
 `message:<id>`. They are ordinary keywords, so filtering the list on
-`conversation:` finds every answer kept from one chat. Capturing is blocked
+`conversation:<id>` finds every answer kept from one chat. Capturing is blocked
 while the Console chat is temporary — a temporary chat promises nothing is
 written locally, and a note is a local write.
 
 ### Export a note as Markdown
 1. Open the note, choose **Info**, and click **Export Markdown**.
 2. Choose a destination in the "Export Note as Markdown" dialog — the
-   toast confirms "Note exported successfully to \<name\>".
+   toast confirms "Note exported successfully to ~/exp/\<name\>" with the
+   folder and the file.
+3. If that file already exists, the "Replace existing file?" prompt asks
+   first. **Cancel** is focused, so Enter or Escape keeps your file as it
+   is; choose **Replace** to overwrite it.
 
 ### Undo a deleted note
 
@@ -2132,8 +2314,9 @@ naming both, not "the same line repeated". **Preview's Escape chip** is
 "esc back to notes" wide and "esc notes" compact
 (`LIBRARY_NOTES_PREVIEW_SHORTCUTS(_COMPACT)`). Every **Manage sync folders**
 row is titled "Sync folder (name unavailable before cutover)" and carries no
-path (task-32451, open) — recorded in the body rather than left for a reader
-to discover.
+path (task-32451, open at that walk; since fixed — each row is titled with its
+folder's name, see Manage sync folders above) — recorded in the body rather
+than left for a reader to discover.
 
 Checked and TRUE, so left alone: the duplicate rows read
 "Reading list · Unfiled · 4m · #d3d7" / "#f24b" (`docs-04`); the chrome strip

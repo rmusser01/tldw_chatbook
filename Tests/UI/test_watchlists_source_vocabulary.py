@@ -152,9 +152,7 @@ async def test_the_assign_affordances_agree_with_each_other():
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         screen = await _mounted(host, pilot)
-        screen._apply_tree_scope(
-            TreeScope(kind="watchlist", watchlist_id=watchlist_id)
-        )
+        screen._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist_id))
         await pilot.pause(0.2)
 
         rail = _label(screen.query_one("#wl-tree-add-source", Button))
@@ -166,9 +164,9 @@ async def test_the_assign_affordances_agree_with_each_other():
             f"got {rail!r} and {inspector!r}"
         )
         for label in (rail, inspector):
-            assert any(
-                phrase in label.lower() for phrase in EXISTENCE_PHRASES
-            ), f"{label!r} does not say the source already exists"
+            assert any(phrase in label.lower() for phrase in EXISTENCE_PHRASES), (
+                f"{label!r} does not say the source already exists"
+            )
 
 
 # --- AC#2: the Inspector can assign -----------------------------------------
@@ -216,9 +214,9 @@ async def test_a_selected_source_can_be_filed_from_its_inspector():
             if app.watchlist_bundle_service.list_sources(watchlist_id):
                 break
 
-        assert app.watchlist_bundle_service.list_sources(watchlist_id) == [
-            source_id
-        ], "the source never joined the watchlist the user picked"
+        assert app.watchlist_bundle_service.list_sources(watchlist_id) == [source_id], (
+            "the source never joined the watchlist the user picked"
+        )
 
         # And the picker does not offer a watchlist it is already in (review
         # wave, M5: this is the single-query `list_watchlists_for_source`
@@ -235,8 +233,7 @@ async def test_a_selected_source_can_be_filed_from_its_inspector():
             f"{reopened.candidates}"
         )
         assert reopened.total_watchlists == 1, (
-            "the dialog cannot tell 'in all of them' from 'there are none' "
-            "without this"
+            "the dialog cannot tell 'in all of them' from 'there are none' without this"
         )
 
 
@@ -254,9 +251,7 @@ async def test_the_watchlist_inspector_opens_the_source_picker():
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         screen = await _mounted(host, pilot)
-        screen._apply_tree_scope(
-            TreeScope(kind="watchlist", watchlist_id=watchlist_id)
-        )
+        screen._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist_id))
         await pilot.pause(0.2)
 
         screen.query_one("#inspector-add-existing-source-button", Button).press()
@@ -292,14 +287,12 @@ async def test_neither_assign_path_writes_on_a_backend_that_cannot_take_it():
     async with host.run_test(size=(180, 50)) as pilot:
         screen = await _mounted(host, pilot)
         notices: list[str] = []
-        screen._notify_watchlists = (
-            lambda message, severity="information", **kwargs: notices.append(message)
+        screen._notify_watchlists = lambda message, severity="information", **kwargs: (
+            notices.append(message)
         )
         screen.runtime_backend = "server"
         await pilot.pause(0.3)
-        screen._apply_tree_scope(
-            TreeScope(kind="watchlist", watchlist_id=watchlist_id)
-        )
+        screen._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist_id))
         await pilot.pause(0.3)
 
         rail = screen.query_one("#wl-tree-add-source", Button)
@@ -387,9 +380,7 @@ async def test_both_inspector_assign_buttons_read_the_same_backend_gate():
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         screen = await _mounted(host, pilot)
-        screen._apply_tree_scope(
-            TreeScope(kind="watchlist", watchlist_id=watchlist_id)
-        )
+        screen._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist_id))
         screen.selected_entity = {
             "backend": "local",
             "entity_kind": "subscription",
@@ -399,12 +390,9 @@ async def test_both_inspector_assign_buttons_read_the_same_backend_gate():
         await pilot.pause(0.3)
 
         # Local: the source-side button is live, with its own copy.
-        source_side = screen.query_one(
-            "#inspector-add-to-watchlist-button", Button
-        )
+        source_side = screen.query_one("#inspector-add-to-watchlist-button", Button)
         assert not source_side.disabled, (
-            "the source-side assign action is disabled on a backend that can "
-            "service it"
+            "the source-side assign action is disabled on a backend that can service it"
         )
         assert "watchlist" in str(source_side.tooltip).lower()
 
@@ -419,9 +407,7 @@ async def test_both_inspector_assign_buttons_read_the_same_backend_gate():
         }
         await pilot.pause(0.3)
 
-        source_side = screen.query_one(
-            "#inspector-add-to-watchlist-button", Button
-        )
+        source_side = screen.query_one("#inspector-add-to-watchlist-button", Button)
         rail = screen.query_one("#wl-tree-add-source", Button)
         assert source_side.disabled, (
             "the source-side assign action is enabled on a backend whose "
@@ -435,8 +421,8 @@ async def test_both_inspector_assign_buttons_read_the_same_backend_gate():
         # Belt and braces stays: the handler still refuses a message posted
         # around the disabled render.
         notices: list[str] = []
-        screen._notify_watchlists = (
-            lambda message, severity="information", **kwargs: notices.append(message)
+        screen._notify_watchlists = lambda message, severity="information", **kwargs: (
+            notices.append(message)
         )
         screen.post_message(
             AssignSourceToWatchlistRequested(
@@ -476,8 +462,8 @@ async def test_the_inspector_offers_no_assign_action_for_a_server_source():
     async with host.run_test(size=(180, 50)) as pilot:
         screen = await _mounted(host, pilot)
         notices: list[str] = []
-        screen._notify_watchlists = (
-            lambda message, severity="information", **kwargs: notices.append(message)
+        screen._notify_watchlists = lambda message, severity="information", **kwargs: (
+            notices.append(message)
         )
         screen.selected_entity = {
             "backend": "server",
@@ -528,9 +514,7 @@ async def test_both_pickers_state_what_a_row_does_and_that_nothing_is_created():
             host.push_screen(dialog)
             await pilot.pause(0.2)
             text = str(
-                host.screen_stack[-1]
-                .query_one(f"#{instruction_id}", Static)
-                .renderable
+                host.screen_stack[-1].query_one(f"#{instruction_id}", Static).renderable
             )
             assert "Choose a" in text, (
                 f"{name}'s instruction does not say what to do: {text!r}"
@@ -602,12 +586,8 @@ async def test_first_run_guidance_names_the_button_that_is_on_screen():
             await pilot.pause(0.02)
             if screen.query("#overview-first-run-body"):
                 break
-        body = str(
-            screen.query_one("#overview-first-run-body", Static).renderable
-        )
-        hint = str(
-            screen.query_one("#inspector-first-run-hint", Static).renderable
-        )
+        body = str(screen.query_one("#overview-first-run-body", Static).renderable)
+        hint = str(screen.query_one("#inspector-first-run-hint", Static).renderable)
 
         screen.active_section = "sources"
         await pilot.pause(0.3)

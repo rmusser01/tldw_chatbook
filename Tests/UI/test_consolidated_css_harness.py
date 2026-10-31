@@ -297,6 +297,13 @@ _SPLIT_SHEET_OWNERS = {
         "WatchlistsCollectionsScreen",
         "DestinationHarness",
     ),
+    # Roleplay frame B1: NO owner exempts a harness from this sheet.
+    # PersonasScreen does not load it (TldwCli._SCREEN_OWNED_ROUTE_CSS does,
+    # on navigation), so naming it would exempt exactly the bundle-only
+    # harnesses that push it in on_mount. A styled Roleplay harness pins
+    # APP_STYLESHEETS (Tests/UI/roleplay_frame_harness.py), which the
+    # `sheet in pin` check already accepts.
+    "screen_feature_roleplay.tcss": (),
 }
 
 _SELECTOR_TOKEN_RE = re.compile(r"[#.]([A-Za-z][\w-]*)")

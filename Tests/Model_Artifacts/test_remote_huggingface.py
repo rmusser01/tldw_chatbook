@@ -46,7 +46,9 @@ def _model_info(
     return {"sha": commit, "siblings": siblings, "cardData": card_data}
 
 
-def _lfs_file(path: str, *, size: int = 123, digest: str = "b" * 64) -> dict[str, object]:
+def _lfs_file(
+    path: str, *, size: int = 123, digest: str = "b" * 64
+) -> dict[str, object]:
     """Return one complete LFS-backed GGUF sibling response entry."""
     return {"rfilename": path, "lfs": {"size": size, "sha256": digest}}
 
@@ -123,6 +125,7 @@ async def test_search_sanitizes_expected_http_errors(
 @pytest.mark.asyncio
 async def test_search_sanitizes_timeout() -> None:
     """Catches timeout leakage instead of a recoverable discovery failure."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("upstream secret", request=request)
 
@@ -339,9 +342,7 @@ async def test_search_parses_valid_bounded_metadata() -> None:
             likes=3,
             last_modified="2026-08-01T00:00:00Z",
         ),
-        RemoteModelSummary(
-            repository="acme/auto", private=False, gated="auto"
-        ),
+        RemoteModelSummary(repository="acme/auto", private=False, gated="auto"),
         RemoteModelSummary(
             repository="acme/manual",
             private=False,
@@ -470,7 +471,9 @@ async def test_resolve_rejects_repository_with_over_2048_files() -> None:
         client_factory=_client_factory(
             lambda _: httpx.Response(
                 200,
-                json=_model_info([_lfs_file(f"model-{index}.gguf") for index in range(2049)]),
+                json=_model_info(
+                    [_lfs_file(f"model-{index}.gguf") for index in range(2049)]
+                ),
             )
         )
     )
@@ -529,7 +532,9 @@ async def test_resolve_groups_complete_shards_and_keeps_single_files_sorted() ->
 
     resolved = await adapter.resolve("acme/model")
 
-    assert [(candidate.label, candidate.total_bytes) for candidate in resolved.candidates] == [
+    assert [
+        (candidate.label, candidate.total_bytes) for candidate in resolved.candidates
+    ] == [
         ("acme/model · a.gguf", 4),
         ("acme/model · nested/pack", 6),
         ("acme/model · z.gguf", 9),
@@ -542,7 +547,9 @@ async def test_resolve_groups_complete_shards_and_keeps_single_files_sorted() ->
 
 
 @pytest.mark.asyncio
-async def test_resolve_rejects_incomplete_shards_without_reintroducing_members() -> None:
+async def test_resolve_rejects_incomplete_shards_without_reintroducing_members() -> (
+    None
+):
     """Catches rejected shard members reappearing as independently installable files."""
     siblings = [
         _lfs_file("nested/pack-00001-of-00003.gguf"),
@@ -564,7 +571,9 @@ async def test_resolve_rejects_incomplete_shards_without_reintroducing_members()
 
 
 @pytest.mark.asyncio
-async def test_resolve_carries_incomplete_shard_warning_when_nothing_is_eligible() -> None:
+async def test_resolve_carries_incomplete_shard_warning_when_nothing_is_eligible() -> (
+    None
+):
     """Catches loss of actionable incomplete-shard context on empty resolution."""
     adapter = HuggingFaceRemoteAdapter(
         client_factory=_client_factory(
@@ -678,9 +687,9 @@ async def test_resolve_ignores_gguf_without_complete_lfs_metadata() -> None:
         )
     )
 
-    assert [item.label for item in (await adapter.resolve("acme/model")).candidates] == [
-        "acme/model · valid.gguf"
-    ]
+    assert [
+        item.label for item in (await adapter.resolve("acme/model")).candidates
+    ] == ["acme/model · valid.gguf"]
 
 
 @pytest.mark.asyncio
@@ -745,7 +754,11 @@ def test_build_remote_catalog_maps_a_candidate_to_one_inert_pinned_artifact() ->
     assert artifact.reference.artifact_id == (
         "hf-gguf-0cac08cf6bec99fb43ebc68340f029996d72b111ec52945b773fbae8d6005e05"
     )
-    assert (artifact.reference.revision, artifact.reference.variant, artifact.precision) == (
+    assert (
+        artifact.reference.revision,
+        artifact.reference.variant,
+        artifact.precision,
+    ) == (
         "a" * 40,
         "not-declared",
         "not-declared",
@@ -770,13 +783,15 @@ def test_build_remote_catalog_maps_a_candidate_to_one_inert_pinned_artifact() ->
     assert artifact.license_id == "apache-2.0"
     assert artifact.license_url == resolved.review_url
     assert artifact.source_url == (
-        "https://huggingface.co/acme/model/resolve/" + ("a" * 40)
+        "https://huggingface.co/acme/model/resolve/"
+        + ("a" * 40)
         + "/nested/pack-00001-of-00002.gguf"
     )
     assert catalog.sources[artifact.reference] == {
         "model-00001-of-00002.gguf": artifact.source_url,
         "model-00002-of-00002.gguf": (
-            "https://huggingface.co/acme/model/resolve/" + ("a" * 40)
+            "https://huggingface.co/acme/model/resolve/"
+            + ("a" * 40)
             + "/nested/pack-00002-of-00002.gguf"
         ),
     }
@@ -817,9 +832,7 @@ def test_build_remote_catalog_preserves_single_member_standard_shard_name() -> N
     """A valid one-of-one shard must retain the standard managed shard filename."""
     candidate = RemoteGGUFCandidate(
         label="acme/model · model",
-        files=(
-            RemoteGGUFFile("model-00001-of-00001.gguf", 9, "9" * 64),
-        ),
+        files=(RemoteGGUFFile("model-00001-of-00001.gguf", 9, "9" * 64),),
         total_bytes=9,
     )
     resolved = ResolvedRemoteModel(
@@ -865,14 +878,21 @@ async def test_remote_gguf_flows_through_managed_install_without_activation(
 
     def handler(request: httpx.Request) -> httpx.Response:
         received = (request.method, str(request.url))
-        if len(requests) >= len(expected_requests) or received != expected_requests[len(requests)]:
+        if (
+            len(requests) >= len(expected_requests)
+            or received != expected_requests[len(requests)]
+        ):
             pytest.fail(f"unexpected network request: {request.method} {request.url}")
         requests.append(received)
         if received == expected_requests[0]:
             return httpx.Response(
                 200,
                 json=_model_info(
-                    [_lfs_file("tiny-model.gguf", size=len(payload), digest=payload_sha256)],
+                    [
+                        _lfs_file(
+                            "tiny-model.gguf", size=len(payload), digest=payload_sha256
+                        )
+                    ],
                     commit=commit,
                     card_data=None,
                 ),

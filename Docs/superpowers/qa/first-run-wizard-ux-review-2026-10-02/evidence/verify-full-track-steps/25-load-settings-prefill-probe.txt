@@ -1,0 +1,5 @@
+# Probe on scratch HOME v-full-track-steps-1 (config.toml has [tools] read_file_enabled/glob_files_enabled = true, [splash_screen] card_selection = matrix)
+load_settings(): 'tools' present: False | splash_screen.card_selection: None | embedding_config.default_model_id: None
+read_wizard_prefill(load_settings()): WizardPrefill(provider_value='llama_cpp', model_id='llama-3.1-8b-instruct-q4_k_m.gguf', default_theme='textual-dark', tool_gates=(), card_selection='')
+full TOML [tools]: {'read_file_enabled': True, 'glob_files_enabled': True} | card_selection: matrix
+read_wizard_prefill(full TOML).tool_gates: (('read_file_enabled', True), ('glob_files_enabled', True))

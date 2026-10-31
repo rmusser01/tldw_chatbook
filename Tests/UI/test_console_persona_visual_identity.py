@@ -10,12 +10,14 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Character_Chat.visual_identity import VisualIdentityResolution
 from tldw_chatbook.UI.Console_Modules import session as session_module
 from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import ReactionOption
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _persona_record(*, revision: int = 2, active: bool = True) -> dict:
@@ -150,7 +152,12 @@ async def test_persona_picker_discards_inventory_after_local_service_replacement
 ) -> None:
     controller = _session_controller(_session())
     controller._screen = SimpleNamespace(app=SimpleNamespace(push_screen=Mock()))
-    store = SimpleNamespace(active_session_id="session-a")
+    store = ConsoleChatStore()
+    store.restore_state(
+        sessions=[_session()],
+        messages_by_session={"session-a": []},
+        active_session_id="session-a",
+    )
     controller._current_chat_store_accessor = lambda: store
     controller._visual_identity_db_accessor = lambda: db
     controller.app_instance.app_config = {
@@ -223,7 +230,12 @@ async def test_console_persona_expression_resolves_and_paints_active_asset() -> 
         prepare=lambda _key, _data: True,
         get_pil=lambda _key: "decoded-persona-frame",
     )
-    store = SimpleNamespace(active_session_id="session-a")
+    store = ConsoleChatStore()
+    store.restore_state(
+        sessions=[_session()],
+        messages_by_session={"session-a": []},
+        active_session_id="session-a",
+    )
     controller = ConsoleCharacterController(
         app_config_accessor=lambda: {
             "console": {"show_character_avatar": True},
@@ -236,6 +248,7 @@ async def test_console_persona_expression_resolves_and_paints_active_asset() -> 
         ensure_chat_store=lambda: None,
         provider_readiness_config_accessor=lambda: {},
         default_session_settings=lambda: None,
+        set_active_workspace_for_session=lambda _session_id: None,
         swap_session_character=lambda *_args, **_kwargs: False,
         sync_temporary_chip=lambda: None,
         sync_native_chat_ui=AsyncMock(),
@@ -265,7 +278,12 @@ async def test_persona_source_revision_binding_or_asset_change_drops_stale_decod
     None
 ):
     scope = ("session-a", "persona", "persona-alpha")
-    store = SimpleNamespace(active_session_id="session-a")
+    store = ConsoleChatStore()
+    store.restore_state(
+        sessions=[_session()],
+        messages_by_session={"session-a": []},
+        active_session_id="session-a",
+    )
     first = _resolution()
     changed = replace(
         first,
@@ -285,6 +303,7 @@ async def test_persona_source_revision_binding_or_asset_change_drops_stale_decod
         ensure_chat_store=lambda: None,
         provider_readiness_config_accessor=lambda: {},
         default_session_settings=lambda: None,
+        set_active_workspace_for_session=lambda _session_id: None,
         swap_session_character=lambda *_args, **_kwargs: False,
         sync_temporary_chip=lambda: None,
         sync_native_chat_ui=AsyncMock(),

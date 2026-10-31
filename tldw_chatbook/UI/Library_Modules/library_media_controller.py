@@ -455,7 +455,7 @@ import asyncio
 import dataclasses
 import time
 import webbrowser
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from functools import partial
 from typing import Any, Literal, TYPE_CHECKING
 
@@ -474,11 +474,13 @@ from ...Library.ingest_analysis import (
 )
 from ...Library.library_export_scope import ExportScope
 from ...Library.library_media_reader_state import (
+    MEDIA_FILTER_DEBOUNCE_SECONDS,
     SELECTION_SETTLE_SECONDS,
     LibraryMediaReaderSessionState,
     begin_selection,
     enter_external_detail,
     leave_external_detail,
+    reader_action_target,
     set_mode,
     set_more_open,
 )
@@ -496,8 +498,11 @@ from ...Library.library_media_state import (
     library_media_int_backing_id,
 )
 from ...Library.library_media_viewer_state import (
+    MEDIA_EDIT_FORM_FIELDS,
     build_library_media_highlight_rows,
     build_library_media_viewer_state,
+    media_analysis_dirty,
+    media_edit_form_dirty,
 )
 from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
@@ -532,6 +537,8 @@ from .screen_constants import (
     _ANALYZE_ORIGIN_MEDIA,
     _MEDIA_VIEW_LIST,
     _MEDIA_VIEW_VIEWER,
+    LIBRARY_MEDIA_ANALYSIS_DIRTY_VETO_COPY,
+    LIBRARY_MEDIA_EDIT_DIRTY_VETO_COPY,
     LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS,
     LIBRARY_MEDIA_PREVIEW_CACHE_LIMIT,
     LIBRARY_NOTES_SOURCE_DATABASE,
@@ -1940,6 +1947,8 @@ class LibraryMediaController:
                 else ""
             ),
             loaded_id=self._library_media_reader_session.loaded_id or "",
+            # TASK-34000.18: see ``_library_media_reader_holds_highlight``.
+            hold_reader_item=self._library_media_reader_holds_highlight(),
             # task-32350: the rail's unfiltered Media total, for the scope
             # line's "N of M".
             unfiltered_total=self._library_media_unfiltered_total,
@@ -2018,7 +2027,19 @@ class LibraryMediaController:
     def _library_media_canvas_presentation(self) -> dict[str, Any]:
         """Return controller-owned inputs shared by every Media canvas path."""
         controller = self._library_media_browse_controller
-        backing_id = self._library_media_selected_backing_id()
+        # TASK-34000.18 fix round 2 (minor): this is the LIST canvas's own
+        # presentation (its preview is ``show_preview: False`` below, so the
+        # value is inert today) -- it reads the list selection, not the
+        # Reader's target the viewer resolves through
+        # ``_library_media_selected_backing_id``.
+        raw_backing_id = (
+            self._library_media_backing_id(self._selected_media_id)
+            if self._selected_media_id
+            else None
+        )
+        backing_id = (
+            raw_backing_id if type(raw_backing_id) is int and raw_backing_id > 0 else None
+        )
         db = getattr(self.app_instance, "media_db", None)
         can_rename = self._library_media_can_rename_speakers(db, backing_id)
         return {
@@ -2185,10 +2206,20 @@ class LibraryMediaController:
         identity = self._library_media_reader_identity(media_id)
         if identity is None:
             return
-        self._capture_library_media_loaded_progress()
-        self._library_media_progress_restored_id = None
         canonical_id, backing_id = identity
         current = self._library_media_reader_session
+        # TASK-34000.22 fix round 2 (R2-2): the ONE guard, ahead of the
+        # preamble -- while an authoring form holds unsaved text the
+        # Reader's item is PINNED (I-2): no route (a user gesture, which
+        # says why at its own seam, or an automatic one: a focus move's
+        # settle select, a typed filter's select-first, a restored
+        # selection, a review-set walk) moves it off the form, and a refused
+        # move must not capture progress, re-arm the scroll restore or stop
+        # the settle timer either. Silent here; the gestures toast.
+        if canonical_id != current.selected_id and self._library_media_editor_dirty():
+            return
+        self._capture_library_media_loaded_progress()
+        self._library_media_progress_restored_id = None
         if (
             not immediate
             and current.selected_id == canonical_id
@@ -2198,8 +2229,23 @@ class LibraryMediaController:
         if self._library_media_selection_timer is not None:
             self._library_media_selection_timer.stop()
             self._library_media_selection_timer = None
+        if canonical_id != current.selected_id:
+            # TASK-34000.24: the "Use in Console" link receipt is per item --
+            # opening another item drops it (the conversation reader's
+            # per-load rule); a reload of the SAME item (retry, re-entry
+            # from Console) keeps a receipt that is still true.
+            self._library_media_link_receipt = None
+            # TASK-34000.22: the authoring drafts are per item too. A dirty
+            # one is refused just above; a CLEAN one (opened, untouched)
+            # must not be composed over the NEXT item's form, where it
+            # would read as that item's unsaved change.
+            self._library_media_edit_draft = None
+            self._library_media_analysis_draft = None
         self._selected_media_id = canonical_id
         self._library_media_view = "viewer"
+        # TASK-34000.18 fix round 2: selected for the Reader -- it holds the
+        # highlight until the user's next scope change.
+        self._library_media_highlight_held_by_reader = True
         self._library_media_reader_session = begin_selection(
             current,
             canonical_id,
@@ -2294,7 +2340,7 @@ class LibraryMediaController:
         """Debounce Media search through the authoritative browse controller."""
         self._stop_library_media_filter_timer()
         self._library_media_filter_timer = self.set_timer(
-            SELECTION_SETTLE_SECONDS,
+            MEDIA_FILTER_DEBOUNCE_SECONDS,
             partial(self._request_library_media_filter, event.value),
         )
 
@@ -3082,6 +3128,14 @@ class LibraryMediaController:
                 row-press behavior for a row missing its ``media_id``).
         """
         media_id = str(media_id or "")
+        # TASK-34000.22 fix round 2 (R2-1): every opener of the Reader
+        # respects a dirty authoring form at ONE guard each -- this one
+        # covers the row press, the browse summary's "Open in viewer", the
+        # review-set entry points and the auto-resume. Opening resets both
+        # forms below, so it refuses out loud instead.
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
+            return
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
         self._library_media_viewer_return = None
@@ -3117,15 +3171,22 @@ class LibraryMediaController:
         # the viewer and reappear (stale) on the way back.
         self._library_media_type_choices_visible = False
         self._library_media_editing = False
+        self._library_media_edit_draft = None
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
         self._library_media_editing_analysis = False
+        self._library_media_analysis_draft = None
         self._close_library_media_find()
         self._library_media_content_mode = "raw"
         self._sync_library_media_viewer_or_recompose()
 
     async def _open_library_external_media_detail(self, media_id: str) -> None:
         """Open one server detail without selecting or adding a local Items row."""
+        # TASK-34000.22 fix round 3: the same one-line refusal as every other
+        # Reader opener -- this one clears both forms below too.
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
+            return
         self._cancel_library_media_selection_settlement()
         self._library_media_reader_session = enter_external_detail(
             self._library_media_reader_session, media_id, f"Server media {media_id}"
@@ -3134,7 +3195,9 @@ class LibraryMediaController:
         self._library_media_composed_detail = None
         self._library_media_highlights = []
         self._library_media_editing = False
+        self._library_media_edit_draft = None
         self._library_media_editing_analysis = False
+        self._library_media_analysis_draft = None
         self._close_library_media_find()
         self._library_media_content_mode = "raw"
         self._library_media_view = "viewer"
@@ -3163,6 +3226,261 @@ class LibraryMediaController:
                 return f"local:media:{backing_id}", backing_id
         return None
 
+    def _adopt_library_media_highlight(self, media_state: Any) -> None:
+        """Write the list's resolved highlight into the selection -- unless
+        the Reader is showing an item the builder found no row for.
+
+        TASK-34000.18: the browse controller syncs once on ``request`` (no
+        page yet) and again when the page lands. The first sync built the
+        list from zero rows, resolved the highlight to "" and wrote that
+        over the selection the open-by-link had just set, so the landing
+        page then fell back to row 0 -- the ``▸`` on "team-handbook" beside
+        a Reader showing the opened item. Every highlight writer (the
+        browse-state sync, ``compose_content``, the canvas sync and
+        ``_build_library_media_active_child``) goes through this one seam.
+        While the Reader holds the highlight (``_library_media_reader_holds_
+        highlight``: the viewer view -- or any view while a Reader form is
+        dirty -- AND the ORDER-based ``highlight_held_by_reader`` flag, set at every open/select door and
+        released only at the user's scope-change seams), the selection
+        keeps naming the Reader's item -- the pending one while a selection
+        loads, else the loaded one -- when the page is still loading or
+        (owner Q2 (b)) that item is not on this page; the builder paints no
+        cue for it. Once the user changes scope after the open (a type
+        choice, a typed query, the filter Clear, a sort or page change) or
+        in the list view with no dirty form (final review C-1: a dirty
+        form keeps the hold in the list view too), the TASK-15457 contract
+        stands: the selection follows the canvas, "" included, so a
+        filtered-out row is never opened.
+        """
+        session = self._library_media_reader_session
+        held = (
+            session.selected_id
+            if session.pending_request is not None
+            else session.loaded_id
+        )
+        if (
+            media_state.selected_id
+            or not held
+            or not self._library_media_reader_holds_highlight()
+        ):
+            self._selected_media_id = media_state.selected_id
+
+    def _library_media_reader_holds_highlight(self) -> bool:
+        """Whether the list highlight belongs to the item the Reader holds.
+
+        TASK-34000.18 fix round 2: an ORDER fact. ``highlight_held_by_reader``
+        is set when an item is opened or selected for the Reader (open-by-
+        link, a row select, the receipt's Open, a restored selection) and
+        released only at the user's scope-change seams
+        (``_clear_library_media_selection_for_scope_change``), the Reader's
+        reset to no selection and the viewer exit. So an open made AFTER a
+        filter is the Reader moving on: no row wears the cue for an item
+        the page does not show, the selection equals the Reader's item and
+        the keys act on it (owner Q2 (b), the brief's Search/RAG route). A
+        filter applied AFTER the open is the list moving on: the selection
+        follows the canvas to row 0 (TASK-15457, its pin unchanged). The
+        scope itself is never read -- round 1's scope-based guess failed
+        under any sticky filter -- and the user's filter is never cleared
+        by an open. Meaningful while the viewer is the active view -- or,
+        final review (2026-10-22, C-1), while an authoring form holds
+        unsaved text in ANY view: the TASK-34000.22 "Reader pinned while
+        dirty" rule keeps the flag set through a scope change, and in the
+        three-pane shell the list view (Trash › "‹ Media") still paints the
+        Reader and its form, so the selection must keep naming the pinned
+        item there too instead of falling back to row 0 under the form.
+        """
+        return (
+            self._library_media_view == "viewer"
+            or bool(self._library_media_editor_dirty())
+        ) and bool(self._library_media_highlight_held_by_reader)
+
+    def _library_media_reader_target_id(self) -> str:
+        """The item a Reader-scoped action acts on (TASK-34000.18).
+
+        Read later, Move to trash, Edit metadata › Save, the analysis save
+        and the highlight writes act on the item the Reader SHOWS
+        (``reader_session.loaded_id``), never on the list highlight, which
+        can sit on row 0 after an open-by-link -- or, in the three-pane
+        shell's list view after Trash › "‹ Media", after a type filter
+        (final review C-1; the view is not a condition). See
+        ``library_media_reader_state.reader_action_target``.
+        """
+        return reader_action_target(
+            self._library_media_reader_session,
+            self._selected_media_id,
+        )
+
+    def _library_media_editor_baseline(self) -> tuple[Mapping[str, str], str]:
+        """The saved values the two authoring forms are compared against.
+
+        TASK-34000.22: ``edit_fields`` and ``analysis`` of the Reader's
+        display state for the loaded detail -- the same memoized state the
+        viewer composes from (``_library_media_viewer_state_cached``, one
+        build per detail arrival), so the predicate and the painted form
+        read one baseline.
+
+        Returns:
+            ``(edit_fields, analysis)``; both empty while nothing is loaded.
+        """
+        detail = (
+            self._library_media_detail
+            if isinstance(self._library_media_detail, Mapping)
+            else None
+        )
+        state = self._build_library_media_viewer_display_state(detail)
+        return state.edit_fields, state.analysis
+
+    def _library_media_editor_dirty(self) -> str:
+        """Name the Media authoring form holding unsaved text, or "".
+
+        TASK-34000.22 (ADR-055 Pattern D): the ONE predicate every exit reads
+        -- Escape (``action_library_media_viewer_back``), "‹ Back"
+        (``_exit_library_media_viewer``), another row (press and keyboard
+        walk), a rail row (``_select_library_rail_row_after_source_
+        admission``), the nav bar (``flush_pending_work``) and Ctrl+Q
+        (``library_pending_work._unsaved_names``) -- and what the footer
+        chip, the veto copy and the "Discard changes" label derive from.
+
+        Returns:
+            ``"edit"`` while the metadata form is open and its draft differs
+            from the saved values, ``"analysis"`` for the analysis form, ""
+            when neither is dirty (closed, untouched, or typed back to the
+            saved text). The metadata form is named first so copy can name
+            one form; the forms are both held only across a tab switch.
+        """
+        edit_fields, analysis = self._library_media_editor_baseline()
+        if self._library_media_editing and media_edit_form_dirty(
+            self._library_media_edit_draft, edit_fields
+        ):
+            return "edit"
+        if self._library_media_editing_analysis and media_analysis_dirty(
+            self._library_media_analysis_draft, analysis
+        ):
+            return "analysis"
+        return ""
+
+    def _notify_media_editor_dirty_veto(self) -> None:
+        """Say which Media form refused the exit, in the prompt veto's shape.
+
+        TASK-34000.22: the copy names the UNSAVED work (ADR-055 Pattern D);
+        ``markup=False`` because the sentence is fixed copy next to the
+        user's own typed text in the same Reader (TASK-1513's convention).
+        Silent when no form is dirty.
+        """
+        form = self._library_media_editor_dirty()
+        if not form:
+            return
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(
+                LIBRARY_MEDIA_EDIT_DIRTY_VETO_COPY
+                if form == "edit"
+                else LIBRARY_MEDIA_ANALYSIS_DIRTY_VETO_COPY,
+                severity="warning",
+                markup=False,
+            )
+        # Fix round 1 (M-4): the refusal shows the form it is about.
+        self._reveal_library_media_dirty_form()
+
+    def _reveal_library_media_dirty_form(self) -> None:
+        """Put the dirty authoring form, with its Save and Discard, on screen.
+
+        TASK-34000.22 fix rounds 1 and 2 (M-4, R2-4). The two forms live on
+        different Reader tabs (metadata on Info, the analysis on Analysis)
+        and both survive a tab switch, so a refusal for the one NOT on
+        screen switches the Reader to its tab. And the Reader must be the
+        view: a Trash round trip leaves ``view == "list"`` with the form
+        still mounted, and below 64 columns the list then fills the stage
+        over it -- so a refusal, and the Media rail press that returns to
+        the draft, restore the viewer (reclaiming its width exactly as a
+        row select does). No-op while no form is dirty.
+        """
+        form = self._library_media_editor_dirty()
+        if not form:
+            return
+        changed = False
+        # Fix round 3 (R3-1): flip ONLY from "list" -- the case R2-4 was for.
+        # Never set a view without that view's own enter/exit path: from
+        # "trash" the form is mounted beside the Trash list at every width
+        # Trash can be entered from, "‹ Media" returns to it, and a bare
+        # flip would leave the Trash canvas mounted under a viewer footer
+        # with its r/x keys dead and its repaints skipped.
+        if self._library_media_view == "list":
+            self._library_media_view = "viewer"
+            self._restore_library_media_reader_width_on_open()
+            changed = True
+        target_mode = "info" if form == "edit" else "analysis"
+        if self._library_media_reader_session.mode != target_mode:
+            self._library_media_reader_session = set_mode(
+                self._library_media_reader_session,
+                target_mode,  # type: ignore[arg-type]
+            )
+            changed = True
+        if changed:
+            self._sync_library_media_viewer_or_recompose()
+
+    def _record_library_media_editor_draft(self, write: Callable[[], None]) -> None:
+        """Apply one draft write, then resync only when the dirty state flipped.
+
+        TASK-34000.22: a keystroke writes state (cheap); the viewer sync --
+        which re-registers the footer chip and relabels Cancel in place --
+        runs only on the clean<->dirty transition, so typing never pays a
+        viewer sync per character and never recomposes the field being
+        typed in (the drafts are not compose-compare inputs).
+        """
+        before = self._library_media_editor_dirty()
+        write()
+        if self._library_media_editor_dirty() != before:
+            self._sync_library_media_viewer_or_recompose()
+
+    @on(Input.Changed, "#library-media-edit-title")
+    @on(Input.Changed, "#library-media-edit-author")
+    @on(Input.Changed, "#library-media-edit-url")
+    @on(Input.Changed, "#library-media-edit-keywords")
+    def handle_library_media_edit_field_changed(self, event: Input.Changed) -> None:
+        """Record a typed metadata value in the draft (TASK-34000.22).
+
+        Args:
+            event: Input change event from one of the four edit fields; its
+                id names the draft key.
+        """
+        field = str(event.input.id or "").removeprefix("library-media-edit-")
+        if field not in MEDIA_EDIT_FORM_FIELDS or not self._library_media_editing:
+            return
+        value = event.value
+
+        def write() -> None:
+            # A draft dropped by a reader-row change (another item) is
+            # re-seeded from THAT item's saved values before the keystroke
+            # lands in it, so the compare never crosses items.
+            draft = dict(
+                self._library_media_edit_draft
+                if self._library_media_edit_draft is not None
+                else self._library_media_editor_baseline()[0]
+            )
+            draft[field] = value
+            self._library_media_edit_draft = draft
+
+        self._record_library_media_editor_draft(write)
+
+    @on(TextArea.Changed, "#library-media-analysis-edit-text")
+    def handle_library_media_analysis_text_changed(
+        self, event: TextArea.Changed
+    ) -> None:
+        """Record the typed analysis in the draft (TASK-34000.22).
+
+        Args:
+            event: Text change event from the analysis edit ``TextArea``.
+        """
+        if not self._library_media_editing_analysis:
+            return
+        text = event.text_area.text
+
+        def write() -> None:
+            self._library_media_analysis_draft = text
+
+        self._record_library_media_editor_draft(write)
+
     def _navigate_to_media(self, media_id: str | int) -> None:
         """Open the Library media viewer for ``media_id``.
 
@@ -3177,18 +3495,55 @@ class LibraryMediaController:
         self._library_media_arrival_note = ""
         return note
 
+    def _snapshot_library_media_reader_side_effects(self) -> tuple[str, Any]:
+        """Capture the reader builder's one-shot side-effect state (TASK-21242).
+
+        ``_build_library_media_reader`` CONSUMES two pieces of state while
+        building: it pops the ingest "Matched an existing item" arrival
+        note (so the notice is shown exactly once) and marks
+        ``_library_media_composed_detail`` (so
+        ``_recompose_library_media_detail_if_unrendered`` can tell a
+        rendered detail from an unrendered one). A swap that builds the
+        reader and then FAILS or is SUPERSEDED discards the widget -- the
+        whole-screen fallback recompose rebuilds the reader from scratch,
+        but the note is already consumed and the composed marker already
+        advanced, so the notice is lost and the detail looks rendered.
+        Callers that can discard a freshly built reader snapshot BEFORE
+        the build and restore via the twin below on every non-applied
+        outcome.
+        """
+        return (self._library_media_arrival_note, self._library_media_composed_detail)
+
+    def _restore_library_media_reader_side_effects(
+        self, snapshot: tuple[str, Any]
+    ) -> None:
+        """Re-arm the side effects a discarded reader build had consumed.
+
+        The arrival note is restored only while the field is still empty:
+        a newer notice set after the snapshot wins. The composed-detail
+        marker is restored unconditionally -- the discarded build rendered
+        nothing, so whatever the marker said before the build is the
+        truthful "has this detail been composed" answer again, and the
+        worst case of the restore is one redundant (correct) repaint by
+        ``_recompose_library_media_detail_if_unrendered``.
+        """
+        note, composed = snapshot
+        if not self._library_media_arrival_note:
+            self._library_media_arrival_note = note
+        self._library_media_composed_detail = composed
+
     @on(Button.Pressed, "#library-media-export")
-    async def handle_library_media_export(self, event: Button.Pressed) -> None:
-        """Open the export canvas scoped to the media list's current type filter.
+    def handle_library_media_export(self, event: Button.Pressed) -> None:
+        """Open Export scoped to the list's type filter -- on the SCREEN's pump.
+
+        Never awaited here: the open removes the pressing canvas (TASK-34000.4).
 
         Args:
-            event: Button press event emitted by the media canvas's
-                "Export…" action.
+            event: Press of the media canvas's "Export…" action.
         """
         event.stop()
-        await self._open_library_export_canvas(
-            ExportScope(kind="media", media_type=self._library_media_type_filter)
-        )
+        scope = ExportScope(kind="media", media_type=self._library_media_type_filter)
+        self.call_next(self._open_library_export_canvas, scope)
 
     @on(Button.Pressed, "#library-media-back")
     def handle_library_media_back(self, event: Button.Pressed) -> None:
@@ -3274,6 +3629,13 @@ class LibraryMediaController:
             event: The "Review these" button press.
         """
         event.stop()
+        # TASK-34000.22 fix round 1 (C-1 audit): a review set opens its
+        # first item in the Reader -- refused out loud while an authoring
+        # form holds unsaved text (the central guard would otherwise drop
+        # the open silently and leave a dead button).
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
+            return
         self.run_worker(
             self._review_these_worker(),
             group="library_review_set",
@@ -3290,6 +3652,11 @@ class LibraryMediaController:
         """
         event.stop()
         if getattr(self, "_library_media_bulk_delete_in_flight", False):
+            return
+        # TASK-34000.22 fix round 1 (C-1 audit): same refusal as "Review
+        # these" -- the set would open its first item in the Reader.
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
             return
         selection = self._library_media_row_selection
         if not selection.count:
@@ -3319,6 +3686,12 @@ class LibraryMediaController:
             event: The "Sets" toolbar button press.
         """
         event.stop()
+        # TASK-34000.22 fix round 1 (C-1 audit): resuming or switching a
+        # set from the picker moves the Reader; refused out loud up front
+        # rather than opening a picker whose choices would go dead.
+        if self._library_media_editor_dirty():
+            self._notify_media_editor_dirty_veto()
+            return
         self.run_worker(
             self._review_set_picker_worker(),
             group="library_review_set",
@@ -3415,17 +3788,26 @@ class LibraryMediaController:
             self._library_media_reader_session, "info"
         )
         self._library_media_editing = True
+        # TASK-34000.22: the draft starts as the saved values, so a
+        # mount-time ``Changed`` (Textual may deliver one) is a no-op and
+        # ``media_edit_form_dirty`` reads clean until the user types.
+        self._library_media_edit_draft = dict(self._library_media_editor_baseline()[0])
         self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-edit-cancel")
     def handle_library_media_edit_cancel(self, event: Button.Pressed) -> None:
         """Discard in-progress metadata edits and return to the read-only viewer.
 
+        TASK-34000.22 (ADR-055 Pattern D): this press -- labelled "Discard
+        changes" while the draft is dirty -- is the ONE deliberate act that
+        drops typed metadata; every other exit refuses while it is dirty.
+
         Args:
             event: Button press event emitted by the edit form's "Cancel" action.
         """
         event.stop()
         self._library_media_editing = False
+        self._library_media_edit_draft = None
         self._sync_library_media_viewer_or_recompose()
 
     def _patch_local_media_record(
@@ -3486,7 +3868,7 @@ class LibraryMediaController:
                 highlight" action.
         """
         event.stop()
-        media_id = self._selected_media_id
+        media_id = self._library_media_reader_target_id()
         if not media_id:
             return
         try:
@@ -3571,7 +3953,7 @@ class LibraryMediaController:
                 action.
         """
         event.stop()
-        media_id = self._selected_media_id
+        media_id = self._library_media_reader_target_id()
         highlight_id = getattr(event.button, "highlight_id", "")
         if not media_id or not highlight_id:
             return
@@ -3690,14 +4072,73 @@ class LibraryMediaController:
                 id="library-media-trash-canvas",
             )
         media_state = self._build_library_media_state()
-        if media_state.selected_id or self._library_media_view == "list":
-            self._selected_media_id = media_state.selected_id
+        self._adopt_library_media_highlight(media_state)
         return LibraryMediaCanvas(
             media_state,
             actions=self,
             **self._library_media_canvas_presentation(),
             id="library-media-canvas",
         )
+
+    def library_media_link_receipt_block(self, media_id: str) -> str:
+        """Why the standing link receipt is withheld for ``media_id``, if it is.
+
+        Fix round 2 (item 4): the Undo handler has to tell a registry it
+        cannot read apart from a workspace that genuinely moved -- the
+        first gets the registry-unavailable sentence, only the second "no
+        longer active".
+
+        Args:
+            media_id: The membership id of the item the Reader is showing.
+
+        Returns:
+            ``""`` when the receipt stands; ``"no_receipt"``,
+            ``"other_item"``, ``"registry_unavailable"`` or
+            ``"workspace_inactive"`` otherwise.
+        """
+        receipt = self._library_media_link_receipt
+        if receipt is None:
+            return "no_receipt"
+        if not media_id or receipt.item_id != media_id:
+            return "other_item"
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return "registry_unavailable"
+        try:
+            active = registry.get_active_workspace()
+        except Exception:
+            # An unreadable current context cannot authorize a standing Undo.
+            return "registry_unavailable"
+        if active is None or active.workspace_id != receipt.workspace_id:
+            return "workspace_inactive"
+        return ""
+
+    def _library_media_visible_link_receipt(self, media_id: str) -> tuple[str, bool]:
+        """Project the "Use in Console" link receipt into the Reader (TASK-34000.24).
+
+        The receipt is shown only while its claim holds: the item it names is
+        the one the Reader shows AND the workspace it names is still the
+        active one (the conversation reader's rule, task-32107 fix rounds 1
+        and 2). After a workspace switch or archive the stale line -- and the
+        Undo that could only remove a membership of a workspace that is no
+        longer active -- is withheld; it reappears untouched if that
+        workspace is made active again, and the next press links into the
+        NEW active workspace with a fresh receipt.
+
+        Args:
+            media_id: The membership id of the item the Reader is showing
+                (``LibraryMediaViewerState.media_id``, the same id the
+                hand-off payload carries as ``source_id``).
+
+        Returns:
+            ``(line, undo_offered)``: the receipt sentence or ``""``, and
+            whether "Undo link" renders beside it.
+        """
+        if self.library_media_link_receipt_block(media_id):
+            return "", False
+        receipt = self._library_media_link_receipt
+        assert receipt is not None  # the block check above covers None
+        return receipt.line, receipt.undo_offered
 
     def _build_library_media_reader(self) -> LibraryMediaViewer:
         """Build the permanent Reader from loaded detail or its empty state."""
@@ -3716,16 +4157,23 @@ class LibraryMediaController:
             preview_available,
             preview_source,
         ) = self._library_media_image_preview_projection()
+        viewer_state = self._build_library_media_viewer_display_state(
+            detail, arrival_note=arrival_note
+        )
+        link_receipt, link_undo_offered = self._library_media_visible_link_receipt(
+            viewer_state.media_id
+        )
+        delete_target_title = self._library_media_delete_target_title(viewer_state)
         viewer = LibraryMediaViewer(
-            self._build_library_media_viewer_display_state(
-                detail, arrival_note=arrival_note
-            ),
+            viewer_state,
             editing=self._library_media_editing,
+            edit_draft=self._library_media_edit_draft,
             confirming_delete=self._library_media_confirming_delete,
             highlights=build_library_media_highlight_rows(
                 self._library_media_highlights
             ),
             editing_analysis=self._library_media_editing_analysis,
+            analysis_draft=self._library_media_analysis_draft,
             generating_analysis=self._library_media_generating_analysis,
             # Review I1: gated on the tab that renders it -- see the twin
             # gate in ``_sync_library_media_viewer_state``.
@@ -3769,10 +4217,38 @@ class LibraryMediaController:
             # persist a rename (harmless when the state says it cannot).
             media_db=getattr(self.app_instance, "media_db", None),
             speaker_rename_media_id=self._library_media_selected_backing_id(),
+            # TASK-34000.24: the "Use in Console" workspace-link receipt and
+            # whether its Undo is offered (see the twin read in
+            # ``_sync_library_media_viewer_state``).
+            link_receipt=link_receipt,
+            link_undo_offered=link_undo_offered,
+            # TASK-34000.18 AC#3: the trash confirm names the Reader's item.
+            delete_target_title=delete_target_title,
             id="library-media-viewer",
         )
         viewer._library_entry_arrival_note = arrival_note
         return viewer
+
+    def _library_media_delete_target_title(self, viewer_state: Any) -> str:
+        """The title the trash confirm names (TASK-34000.18 AC#3).
+
+        The loaded detail's title -- what ``#library-media-viewer-title``
+        paints, and what an Edit › Save just rewrote -- while the Reader
+        holds an item; "" (the "this item" fallback) when it holds none.
+        Not ``reader_session.loaded_title``: an open-by-link seeds that
+        slot with the bare record id, and an edit never updates it.
+
+        Final review (2026-10-22, C-1): derived from the SAME identity the
+        Delete press acts on (``_library_media_reader_target_id``), so the
+        confirm names exactly what Delete trashes. The title is the loaded
+        detail's, so it is offered only while that target IS the loaded
+        item; any other target gets the neutral fallback rather than a
+        name that belongs to a different record.
+        """
+        target = self._library_media_reader_target_id()
+        if not target or target != self._library_media_reader_session.loaded_id:
+            return ""
+        return str(getattr(viewer_state, "title", "") or "")
 
     def _library_media_image_preview_projection(
         self, *, build_widget: bool = True
@@ -3940,9 +4416,28 @@ class LibraryMediaController:
             if self._library_media_reader_session.mode == "analysis"
             else ""
         )
+        # TASK-34000.24: a compose input like any other -- the receipt's
+        # visibility depends on the ACTIVE workspace, which changes under a
+        # standing receipt, so it is re-read on every sync (a no-op read
+        # while no receipt stands).
+        link_receipt, link_undo_offered = self._library_media_visible_link_receipt(
+            viewer_state.media_id
+        )
+        delete_target_title = self._library_media_delete_target_title(viewer_state)
+        # TASK-34000.22: the drafts are handed over on BOTH paths and are
+        # not compared -- a keystroke must never recompose the field it
+        # lands in. The unchanged path relabels Cancel in place; the changed
+        # path's compose reads them.
+        viewer.sync_editor_drafts(
+            edit_draft=self._library_media_edit_draft,
+            analysis_draft=self._library_media_analysis_draft,
+        )
         unchanged = (
             (viewer.viewer is viewer_state or viewer.viewer == viewer_state)
             and viewer.review_banner == review_banner
+            and viewer.link_receipt == link_receipt
+            and viewer.link_undo_offered == link_undo_offered
+            and viewer.delete_target_title == delete_target_title
             and viewer.back_visible == back_visible
             and viewer.trash_list_open == trash_list_open
             and viewer.editing == self._library_media_editing
@@ -4023,6 +4518,9 @@ class LibraryMediaController:
             viewer.review_banner = review_banner
             viewer.back_visible = back_visible
             viewer.trash_list_open = trash_list_open
+            viewer.link_receipt = link_receipt
+            viewer.link_undo_offered = link_undo_offered
+            viewer.delete_target_title = delete_target_title
             # TASK-31745: the backing id follows the selection like any other
             # compose input (the state's own rename fields are in the compare
             # above, so a stale id here could never outlive them).
@@ -4200,7 +4698,13 @@ class LibraryMediaController:
         detail = self._library_media_detail
         url = self._safe_text(detail.get("url")) if isinstance(detail, Mapping) else ""
         if url.startswith(("http://", "https://")):
-            webbrowser.open(url)
+            # TASK-34937: OS spawn off the UI thread.
+            self.run_worker(
+                partial(webbrowser.open, url),
+                thread=True,
+                exit_on_error=False,
+                name="open-link",
+            )
 
     def _capture_library_media_focus_identity(self) -> str | None:
         """Record what holds focus just before a media-path recompose.
@@ -4537,7 +5041,7 @@ class LibraryMediaController:
         Shared by the "Read later" button and the ``l`` accelerator so both
         read the last-fetched saved state and dispatch the same worker.
         """
-        media_id = self._selected_media_id
+        media_id = self._library_media_reader_target_id()
         if not media_id:
             return
         detail = (
@@ -4614,11 +5118,17 @@ class LibraryMediaController:
         """
         event.stop()
         self._library_media_editing_analysis = True
+        # TASK-34000.22: seeded from the displayed analysis -- see the
+        # metadata twin in ``handle_library_media_edit``.
+        self._library_media_analysis_draft = self._library_media_editor_baseline()[1]
         self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-analysis-cancel")
     def handle_library_media_analysis_cancel(self, event: Button.Pressed) -> None:
         """Discard in-progress analysis edits and return to the read-only view.
+
+        TASK-34000.22 (ADR-055 Pattern D): "Discard changes" while dirty --
+        the one deliberate drop; see ``handle_library_media_edit_cancel``.
 
         Args:
             event: Button press event emitted by the analysis edit form's
@@ -4626,6 +5136,7 @@ class LibraryMediaController:
         """
         event.stop()
         self._library_media_editing_analysis = False
+        self._library_media_analysis_draft = None
         self._sync_library_media_viewer_or_recompose()
 
     @on(Button.Pressed, "#library-media-analysis-save")
@@ -4645,9 +5156,10 @@ class LibraryMediaController:
                 "Save" action.
         """
         event.stop()
-        media_id = self._selected_media_id
+        media_id = self._library_media_reader_target_id()
         if not media_id:
             self._library_media_editing_analysis = False
+            self._library_media_analysis_draft = None
             self.refresh(recompose=True)
             return
         try:
@@ -4656,6 +5168,7 @@ class LibraryMediaController:
             ).text
         except (NoMatches, QueryError):
             self._library_media_editing_analysis = False
+            self._library_media_analysis_draft = None
             self.refresh(recompose=True)
             return
         # Validate/sanitize the user-entered analysis at the UI boundary

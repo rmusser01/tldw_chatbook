@@ -17,6 +17,7 @@ from textual.widgets import (
     Checkbox,
     Collapsible,
     Input,
+    Label,
     OptionList,
     RadioButton,
     RadioSet,
@@ -41,6 +42,7 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     HandoffChannel,
     PendingHandoffStore,
 )
+from tldw_chatbook.UI.Wizards import first_run_voice_status as voice_status
 from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardNavigation,
     WizardProgress,
@@ -66,7 +68,6 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     is_untouched_default_session,
 )
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
-    CLOUD_PROBE_TIMEOUT_SECONDS,
     AppearanceStep,
     FirstRunSetupWizard,
     ModelStep,
@@ -81,10 +82,27 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     SummaryStep,
     ToolsStep,
     VoiceSetupStep,
+)
+from tldw_chatbook.UI.Wizards.first_run_provider_step import (
+    CLOUD_PROBE_TIMEOUT_SECONDS,
     _probe_first_run_provider_connection,
     _provider_group_option_id,
     _provider_options,
 )
+
+#: TASK-34100.1 AC#1 (the wizard slice of TASK-33621.36): the mounted steps
+#: read and write config through the ADR-126 admission (Model's curated
+#: fallback calls get_cli_providers_and_models, the provider-rotation tests
+#: call apply_settings_mutation_to_cli_config). Under the per-test sandbox the
+#: bound selection no longer matches, so 41 `-k provider` nodes (119 in the
+#: file) failed with RecoveryRequired('raw_source_selection_changed') before
+#: reaching an assertion. Keep the collection-time profile, the same per-file
+#: opt-in Tests/conftest.py documents for config participants. Re-selecting a
+#: fresh source per test (install_config_source) left 20 red, because the
+#: wizard's module-level config imports stay bound to the old module.
+#: Tests/Wizards/conftest.py restores the shared config.toml after each test,
+#: so one test's writes cannot leak into the next.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _first_chat_store_snapshot(store: ConsoleChatStore) -> list[dict[str, object]]:
@@ -136,6 +154,13 @@ class _HostApp(App):
                 ),
             )
         )
+
+
+async def _pick_pocket_tts(step, pilot) -> None:
+    """TASK-34100.8: a fresh Voice step starts on "No voice for now"; the
+    tests that exercise a service pick PocketTTS the way a user would."""
+    step._select_preset_button("setup-voice-preset-pocket")
+    await pilot.pause()
 
 
 class _StyledHostApp(_HostApp):
@@ -296,15 +321,23 @@ async def test_voice_step_compact_controls_are_ordered_and_default_is_opt_in():
 async def test_invalid_voice_sample_disables_only_test_and_preserves_configuration():
     from types import SimpleNamespace
 
+    class CapturingHost(_StepHost):
+        saved_event: STTSSettingsSaveEvent | None = None
+
+        @on(STTSSettingsSaveEvent)
+        def capture_save(self, event: STTSSettingsSaveEvent) -> None:
+            self.saved_event = event
+
     wizard = SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={})
     step = VoiceSetupStep(
         wizard=wizard,
         config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
     )
-    app = _StepHost(step)
+    app = CapturingHost(step)
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         endpoint = step.query_one("#setup-voice-endpoint", Input)
         model = step.query_one("#setup-voice-model", Input)
         voice = step.query_one("#setup-voice-voice", Input)
@@ -322,9 +355,13 @@ async def test_invalid_voice_sample_disables_only_test_and_preserves_configurati
         assert "0 / 500" in str(
             step.query_one("#setup-voice-sample-count", Static).renderable
         )
-        ok, error = await step.commit()
-        assert ok is False
-        assert "sample" in error.casefold()
+        # TASK-34100.8 (voice-speech-05): the sample only matters to the
+        # test; a blank one no longer blocks Next -- the save goes out.
+        commit = __import__("asyncio").create_task(step.commit())
+        await pilot.pause()
+        assert app.saved_event is not None
+        assert app.saved_event.settings["OPENAI_BASE_URL"] == endpoint.value
+        commit.cancel()
 
 
 @pytest.mark.asyncio
@@ -339,6 +376,7 @@ async def test_invalid_voice_speed_returns_inline_validation_instead_of_raising(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-speed", Input).value = "not-a-number"
 
         ok, error = await step.commit()
@@ -391,6 +429,7 @@ async def test_voice_save_result_uses_submitted_default_choice() -> None:
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-default", Checkbox).value = True
         await pilot.pause()
         commit = __import__("asyncio").create_task(step.commit())
@@ -416,10 +455,13 @@ async def test_voice_save_result_uses_submitted_default_choice() -> None:
 
 
 @pytest.mark.asyncio
-async def test_voice_save_waits_for_applied_runtime_when_default_is_opted_out() -> None:
+async def test_untouched_voice_step_commit_posts_nothing() -> None:
+    """TASK-34100.8 (voice-speech-01) replaces the TASK-32959-era pin that an
+    untouched Next with 'Use as default' unticked still saved (and waited for
+    the runtime). Next on an untouched step now writes nothing at all."""
     from types import SimpleNamespace
 
-    class DelayedSaveHost(_StepHost):
+    class CapturingHost(_StepHost):
         saved_event: STTSSettingsSaveEvent | None = None
 
         @on(STTSSettingsSaveEvent)
@@ -430,13 +472,50 @@ async def test_voice_save_waits_for_applied_runtime_when_default_is_opted_out() 
         wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
         config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
     )
+    app = CapturingHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert step._preset == "none"
+        assert step.query_one("#setup-voice-preset-none", RadioButton).value is True
+        assert step.query_one("#setup-voice-body").display is False
+
+        assert await step.commit() == (True, "")
+        await pilot.pause()
+        assert app.saved_event is None
+
+
+@pytest.mark.asyncio
+async def test_voice_save_waits_for_applied_runtime_when_default_is_opted_out() -> None:
+    from types import SimpleNamespace
+
+    class DelayedSaveHost(_StepHost):
+        saved_event: STTSSettingsSaveEvent | None = None
+
+        @on(STTSSettingsSaveEvent)
+        def capture_save(self, event: STTSSettingsSaveEvent) -> None:
+            self.saved_event = event
+
+    # TASK-34100.8 review round 1 (F1): "Use as default" can be unticked only
+    # while another provider reads replies; with nothing saved it is locked on.
+    app_config = {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"default_provider": "kokoro"}}}
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(
+            app_instance=MagicMock(app_config=app_config), wizard_data={}
+        ),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
     app = DelayedSaveHost(step)
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         commit = __import__("asyncio").create_task(step.commit())
         await pilot.pause()
         assert app.saved_event is not None
+        # TASK-34100.8: unticked writes no default selection.
+        assert app.saved_event.persist_default_preferences is False
+        assert app.saved_event.preferences is None
 
         step.receive_stts_settings_save_result(
             STTSSettingsSaveResult(
@@ -501,10 +580,52 @@ async def test_voice_resume_restores_all_non_secret_controls():
 
 
 @pytest.mark.asyncio
-async def test_voice_resume_restores_the_omnivoice_preset(monkeypatch):
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+async def test_voice_resume_restores_no_voice_for_now():
+    """Review round 2 (F8): resume restores the checkpointed Service choice;
+    a "No voice for now" checkpoint (saved beside PocketTTS field values)
+    must come back as "No voice for now", body hidden, posting no save."""
+    resume = SetupDraft(
+        version=SETUP_DRAFT_VERSION,
+        track=TRACK_QUICK,
+        active_step_id=STEP_VOICE,
+        values={
+            STEP_WELCOME: {"track": TRACK_QUICK},
+            STEP_VOICE: {
+                "preset": "none",
+                "endpoint": "http://127.0.0.1:8000/tts",
+                "authentication_mode": "none",
+                "model_id": "pocket-tts",
+                "voice_id": "alba",
+                "response_format": "wav",
+                "speed": 1.0,
+                "sample_text": "Hello from Chatbook.",
+                "use_as_default": False,
+            },
+        },
+    )
+    wizard = _make_wizard(resume_draft=resume)
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        container = wizard.query_one(SetupWizardContainer)
+        step = container.steps[container._step_index_for_id(STEP_VOICE)]
+        assert step._preset == "none"
+        assert step.query_one("#setup-voice-preset-none", RadioButton).value is True
+        assert step.query_one("#setup-voice-body").display is False
+        posted: list[object] = []
+        step.app.post_message = posted.append
+        assert await step.commit() == (True, "")
+        assert not [m for m in posted if isinstance(m, STTSSettingsSaveEvent)]
 
-    monkeypatch.setattr(wizard_module, "omnivoice_setup_state", lambda *_a, **_k: "ready")
+
+@pytest.mark.asyncio
+async def test_voice_resume_restores_the_omnivoice_preset(monkeypatch):
+    # TASK-34100.8: the OmniVoice half looks this up in its own module.
+    import tldw_chatbook.UI.Wizards.first_run_voice_omnivoice as voice_step_module
+
+    monkeypatch.setattr(
+        voice_step_module, "omnivoice_setup_state", lambda *_a, **_k: "ready"
+    )
     resume = SetupDraft(
         version=SETUP_DRAFT_VERSION,
         track=TRACK_QUICK,
@@ -546,11 +667,12 @@ async def test_voice_sample_failure_stays_locally_valid_and_needs_test(monkeypat
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-test", Button).press()
         await pilot.pause(0.1)
 
         status = str(step.query_one("#setup-voice-status", Static).renderable)
-        assert "Not tested yet" in status
+        assert status.startswith("Test failed — ")
         assert "server-owned" not in status
         assert step.query_one("#setup-voice-test", Button).disabled is False
         assert voice_state.validate_voice_setup_draft(
@@ -585,6 +707,7 @@ async def test_voice_late_sample_success_cannot_verify_changed_endpoint(monkeypa
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-test", Button).press()
         await asyncio.wait_for(started.wait(), timeout=1)
         step.query_one(
@@ -594,7 +717,7 @@ async def test_voice_late_sample_success_cannot_verify_changed_endpoint(monkeypa
         release.set()
         await pilot.pause(0.1)
 
-        assert "Not tested yet" in str(
+        assert "Optional — press Test and Hear" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
         assert step._verified_draft is None
@@ -664,6 +787,7 @@ async def test_voice_edit_cancels_inflight_sample_and_reenables_valid_test(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         button = step.query_one("#setup-voice-test", Button)
         button.press()
         await asyncio.wait_for(started.wait(), timeout=1)
@@ -674,7 +798,7 @@ async def test_voice_edit_cancels_inflight_sample_and_reenables_valid_test(
         await pilot.pause()
 
         assert button.disabled is False
-        assert "Not tested yet" in str(
+        assert "Optional — press Test and Hear" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -710,6 +834,7 @@ async def test_voice_auth_and_preset_changes_cancel_inflight_sample(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         button = step.query_one("#setup-voice-test", Button)
         button.press()
         await asyncio.wait_for(started.wait(), timeout=1)
@@ -724,7 +849,7 @@ async def test_voice_auth_and_preset_changes_cancel_inflight_sample(
         await pilot.pause()
 
         assert button.disabled is True
-        assert "API key required" in str(
+        assert "needs an OpenAI API key" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -751,6 +876,7 @@ async def test_voice_external_worker_cancel_restores_retry_state(monkeypatch) ->
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         button = step.query_one("#setup-voice-test", Button)
         button.press()
         await asyncio.wait_for(started.wait(), timeout=1)
@@ -759,7 +885,7 @@ async def test_voice_external_worker_cancel_restores_retry_state(monkeypatch) ->
         await pilot.pause(0.1)
 
         assert button.disabled is False
-        assert "Not tested yet" in str(
+        assert "Test cancelled" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -795,6 +921,7 @@ async def test_voice_lifecycle_cancels_sample_and_restores_retry_state(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         button = step.query_one("#setup-voice-test", Button)
         button.press()
         await asyncio.wait_for(started.wait(), timeout=1)
@@ -804,7 +931,7 @@ async def test_voice_lifecycle_cancels_sample_and_restores_retry_state(
         await pilot.pause()
 
         assert button.disabled is False
-        assert "Not tested yet" in str(
+        assert "Test cancelled" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -842,6 +969,7 @@ async def test_stale_voice_completion_cannot_overwrite_newer_testing_state(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         button = step.query_one("#setup-voice-test", Button)
         button.press()
         await asyncio.wait_for(started[0].wait(), timeout=1)
@@ -861,7 +989,7 @@ async def test_stale_voice_completion_cannot_overwrite_newer_testing_state(
         releases[1].set()
         await pilot.pause(0.1)
         assert button.disabled is False
-        assert "Verified" in str(
+        assert "Played the sample" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -878,11 +1006,15 @@ async def test_reselecting_current_voice_preset_preserves_user_edits() -> None:
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         model = step.query_one("#setup-voice-model", Input)
         model.value = "user-edited-pocket-model"
         await pilot.pause()
 
-        pressed = step.query_one("#setup-voice-preset-pocket", RadioButton)
+        # TASK-34100.8 (new-voice-speech-02): the edit made the service
+        # Custom; re-selecting the current one keeps the edit.
+        assert step._preset == "custom"
+        pressed = step.query_one("#setup-voice-preset-custom", RadioButton)
         step._on_preset(SimpleNamespace(pressed=pressed))
         await pilot.pause()
 
@@ -919,9 +1051,16 @@ async def test_official_voice_without_key_is_actionable_and_cannot_test_or_save(
         await pilot.pause()
 
         status = str(step.query_one("#setup-voice-status", Static).renderable)
-        assert "API key required" in status
+        # Review round 2 (F6): pin the words, not the constant, so the
+        # in-wizard escapes cannot be edited away unnoticed.
+        assert "Paste one below" in status  # the key field sits below it
+        assert "pick another service" in status
+        assert '"No voice for now"' in status
         assert len(status) <= 120
-        assert step.query_one("#setup-voice-add-key", Button).display is True
+        # TASK-34100.8 (voice-speech-04): an inline masked key field and the
+        # leave-for-Settings button, not a dead end.
+        assert step.query_one("#setup-voice-key-row").display is True
+        assert step.query_one("#setup-voice-api-key", Input).password is True
         assert step.query_one("#setup-voice-test", Button).disabled is True
 
         step.query_one("#setup-voice-test", Button).press()
@@ -930,8 +1069,40 @@ async def test_official_voice_without_key_is_actionable_and_cannot_test_or_save(
 
         ok, error = await step.commit()
         assert ok is False
-        assert "Add an API key in Settings" in error
+        # Review round 1 (G8-V1-F4): the refusal shows on the pinned strip at
+        # the bottom of the step, BELOW the key field.
+        assert "OpenAI API key field above" in error
+        assert "below" not in error
+        assert "pick another service" in error
+        assert '"No voice for now"' in error
         assert sample_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_a_refused_voice_next_without_a_key_offers_no_futile_retry(
+    monkeypatch,
+) -> None:
+    """G8-V1-F4 (SF3 stage 3): "Retry with Next" appears only when a retry
+    can succeed; Next without a key cannot."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        index = container._step_index_for_id(STEP_VOICE)
+        container.show_step(index)
+        await pilot.pause()
+        step = container.steps[index]
+        step._select_preset_button("setup-voice-preset-official")
+        await pilot.pause()
+
+        await container._advance()
+        await pilot.pause()
+        pinned = str(wizard.query_one("#setup-step-error-pinned", Static).render())
+        assert pinned.startswith("OpenAI voice needs an OpenAI API key.")
+        assert "Retry with Next" not in pinned
+        assert container.current_step == index
 
 
 @pytest.mark.asyncio
@@ -961,8 +1132,8 @@ async def test_official_voice_refreshes_after_configured_environment_key_added(
         await pilot.pause()
 
         assert step.query_one("#setup-voice-test", Button).disabled is False
-        assert step.query_one("#setup-voice-add-key", Button).display is False
-        assert "Not tested yet" in str(
+        assert step.query_one("#setup-voice-key-row").display is False
+        assert "Optional — press Test and Hear" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
         assert "sk-added-outside-draft" not in repr(step.get_step_data())
@@ -1002,7 +1173,7 @@ async def test_official_voice_recognizes_existing_settings_credential_locations(
         await pilot.pause()
 
         assert step.query_one("#setup-voice-test", Button).disabled is False
-        assert step.query_one("#setup-voice-add-key", Button).display is False
+        assert step.query_one("#setup-voice-key-row").display is False
         assert "synthetic-test-credential" not in repr(step.get_step_data())
 
 
@@ -1031,6 +1202,12 @@ async def test_missing_key_action_checkpoints_voice_and_routes_to_tts_settings(
         container.persist_current_checkpoint = persist
 
         step.query_one("#setup-voice-add-key", Button).press()
+        await pilot.pause(0.2)
+        # TASK-34100.8 (voice-speech-04): leaving setup asks first.
+        persist.assert_not_awaited()
+        message = app.screen.query_one(".dialog-message", Label)
+        assert "Setup will pick up at Voice" in str(message.render())
+        app.screen.query_one("#confirm-button", Button).press()
         await pilot.pause(0.2)
 
         persist.assert_awaited_once()
@@ -1063,6 +1240,8 @@ async def test_missing_key_action_without_callback_stays_bounded_and_does_not_cr
         step.query_one("#setup-voice-preset-official", RadioButton).value = True
         await pilot.pause()
         step.query_one("#setup-voice-add-key", Button).press()
+        await pilot.pause()
+        app.screen.query_one("#confirm-button", Button).press()
         await pilot.pause()
 
         status = str(step.query_one("#setup-voice-status", Static).renderable)
@@ -1097,13 +1276,19 @@ async def test_voice_playback_failure_cleans_new_file_and_keeps_verification(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-test", Button).press()
         await pilot.pause(0.1)
 
         status = str(step.query_one("#setup-voice-status", Static).renderable)
         assert step._verified_draft is not None
-        assert status == "Verified, playback failed. Retry playback/test."
-        assert len(status) <= 80
+        # TASK-34100.8: a playback failure is distinct from a test failure.
+        assert status == voice_status.PLAYBACK_FAILED_COPY
+        # Review round 2 (F7): a playback failure must not read as a failed
+        # test -- pin the words, not just the constant.
+        assert not status.startswith("Test failed")
+        assert "couldn't play" in status and "sound output" in status
+        assert len(status) <= 120
         assert list(tmp_path.glob("chatbook-voice-sample-*")) == []
         assert step._sample_audio_path is None
 
@@ -1142,6 +1327,7 @@ async def test_voice_playback_creates_the_app_audio_player_on_first_use(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-test", Button).press()
         await pilot.pause(0.1)
 
@@ -1179,11 +1365,16 @@ async def test_voice_playback_reports_failure_when_no_os_player_is_found(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-test", Button).press()
         await pilot.pause(0.1)
 
         status = str(step.query_one("#setup-voice-status", Static).renderable)
-        assert status == "Verified, playback failed. Retry playback/test."
+        assert status == voice_status.PLAYBACK_FAILED_COPY
+        # Review round 2 (F7): a playback failure must not read as a failed
+        # test -- pin the words, not just the constant.
+        assert not status.startswith("Test failed")
+        assert "couldn't play" in status and "sound output" in status
         assert list(tmp_path.glob("chatbook-voice-sample-*")) == []
 
 
@@ -1218,6 +1409,7 @@ async def test_voice_playback_cancellation_cleans_new_file(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-test", Button).press()
         await asyncio.wait_for(playback_started.wait(), timeout=1)
         app.workers.cancel_group(step, "setup-voice-sample")
@@ -1227,7 +1419,11 @@ async def test_voice_playback_cancellation_cleans_new_file(
         assert step._sample_audio_path is None
         assert step._verified_draft is not None
         status = str(step.query_one("#setup-voice-status", Static).renderable)
-        assert status == "Verified, playback failed. Retry playback/test."
+        assert status == voice_status.PLAYBACK_FAILED_COPY
+        # Review round 2 (F7): a playback failure must not read as a failed
+        # test -- pin the words, not just the constant.
+        assert not status.startswith("Test failed")
+        assert "couldn't play" in status and "sound output" in status
 
 
 @pytest.mark.asyncio
@@ -1432,8 +1628,11 @@ async def test_next_button_click_drives_quick_track_to_summary():
 
         seen_step_ids = []
         for _ in range(10):
+            before = container.current_step
             await pilot.click("#wizard-next")
-            await pilot.pause(0.2)
+            # TASK-33008 review round 2: a fixed 0.2 s read a half-done Next.
+            await _until(pilot, lambda left=before: container.current_step != left)
+            await pilot.pause(0.2)  # room for a second, double-dispatched advance
             step = container.steps[container.current_step]
             seen_step_ids.append(step.config.id if step.config else None)
             if isinstance(step, SummaryStep):
@@ -2612,7 +2811,8 @@ def test_settings_probe_outcomes_convert_to_exact_provider_probe_results(
 
 def test_a_listing_403_converts_to_the_non_blocking_listing_result():
     """Qodo #2958 follow-up (owner ruling): the wizard records a 403 listing as
-    every other surface does -- listing not permitted, never key rejected."""
+    every other surface does -- listing not permitted, never key rejected. It
+    keeps "forbidden" (owner decision 2026-10-17, PR #3144 D2)."""
     from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
     from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
         SettingsEndpointProbeOutcome,
@@ -2622,7 +2822,7 @@ def test_a_listing_403_converts_to_the_non_blocking_listing_result():
         state="unreachable", summary="unreachable: forbidden", category="forbidden"
     )
     assert ProviderStep._provider_probe_result_from_outcome(outcome) == (
-        ProviderProbeResult("model_listing_unavailable", (), "http_status")
+        ProviderProbeResult("model_listing_unavailable", (), "forbidden")
     )
 
 
@@ -3737,15 +3937,9 @@ async def test_mounted_models_404_then_manual_model_never_reports_verified(monke
         model_step = container.steps[model_index]
         assert isinstance(model_step, ModelStep)
         await pilot.pause(0.1)
-        status_rows = list(
-            model_step.query_one("#setup-model-choice", RadioSet).query(RadioButton)
-        )
-        assert len(status_rows) == 1
-        assert str(status_rows[0].label) == (
+        assert _model_status_line(model_step, "setup-model-listing-unavailable") == (
             "Model listing unavailable; enter the model ID used by this endpoint."
         )
-        assert status_rows[0].disabled
-        assert getattr(status_rows[0], "_model_id", None) is None
         assert not model_step.query_one("#setup-model-custom", Input).disabled
         model_step.query_one("#setup-model-custom", Input).value = "manual-model"
         await pilot.pause()
@@ -5277,7 +5471,9 @@ async def test_mounted_model_save_rejects_settings_changed_discovery_identity(
             assert model_step.selected_model_id == ""
             assert model_step._selection_discovery_key is None
             assert model_step._effective_model_id() == ""
-            error = str(container.query_one("#setup-step-error-pinned", Static).renderable)
+            error = str(
+                container.query_one("#setup-step-error-pinned", Static).renderable
+            )
             assert "connection settings changed" in error.lower()
 
             for _ in range(30):
@@ -8094,7 +8290,7 @@ async def test_provider_step_probe_budgets_cloud_vs_local(monkeypatch):
     from unittest.mock import AsyncMock
 
     from tldw_chatbook.UI.Screens import settings_endpoint_probe
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_provider_step import (
         _probe_first_run_provider_connection,
     )
 
@@ -8149,6 +8345,30 @@ def _model_step(wizard, discover_models=None):
         config=WizardStepConfig(id="model", title="Model", step_number=3),
         discover_models=discover_models or AsyncMock(return_value=[]),
     )
+
+
+def _model_status_line(step, line_id: str) -> str:
+    """The model step's status copy, pinned as one plain text line.
+
+    TASK-33008.5: a status used to be a disabled radio row, so a failure drew
+    like a choice. It is now the picker's only child and plain text: no radio
+    glyph, no focus, no pick, and never beside model rows. ``type(...) is``,
+    not ``isinstance``: RadioButton is itself a Static subclass. ``disabled``
+    is load-bearing inside the RadioSet -- an enabled non-radio child becomes
+    the set's highlighted node and Space then asserts inside Textual.
+
+    Returns the text ``render()`` produces, not ``renderable``: in this repo
+    that is a shim for the constructor's source string, which reads the same
+    whether or not markup consumed part of the copy.
+    """
+    children = list(step.query_one("#setup-model-choice", RadioSet).children)
+    assert len(children) == 1, children
+    [line] = children
+    assert type(line) is Static, type(line)
+    assert line.id == line_id, line.id
+    assert line.disabled and not line.can_focus
+    assert getattr(line, "_model_id", None) is None
+    return str(line.render())
 
 
 @pytest.mark.asyncio
@@ -8475,10 +8695,144 @@ async def test_model_step_no_provider_shows_pick_a_provider_copy():
         await pilot.pause()
         step.on_show()
         await pilot.pause(0.1)
+        assert _model_status_line(step, "setup-model-no-provider") == (
+            "Pick a provider first — or type a model name below"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("render_kwargs", "line_id", "expected_copy"),
+    [
+        ({"discovery_state": "loading"}, "setup-model-loading", "(loading models…)"),
+        (
+            {"no_provider": True},
+            "setup-model-no-provider",
+            "Pick a provider first — or type a model name below",
+        ),
+        ({}, "setup-model-empty", "(no models found — enter one below)"),
+        (
+            {"discovery_state": "listing_unavailable"},
+            "setup-model-listing-unavailable",
+            "Model listing unavailable; enter the model ID used by this endpoint.",
+        ),
+        (
+            {
+                "discovery_state": "connection_failed",
+                "failure_category": "authentication",
+            },
+            "setup-model-connection-failed",
+            "Authentication failed — this API key was rejected. Go Back to fix it, or enter a model ID below.",
+        ),
+        (
+            {"discovery_state": "connection_failed", "failure_category": "timeout"},
+            "setup-model-connection-failed",
+            "Couldn't reach the server (timeout). Check it's running, then Retry — or enter a model ID below.",
+        ),
+        (
+            # The copy embeds text the step did not write. With markup on,
+            # Textual consumes a bracketed word as a tag: "([bold]x)" would
+            # render as "(x)".
+            {"discovery_state": "connection_failed", "failure_category": "[bold]x"},
+            "setup-model-connection-failed",
+            "Couldn't reach the server ([bold]x). Check it's running, then Retry — or enter a model ID below.",
+        ),
+    ],
+)
+async def test_model_status_is_plain_text_that_space_and_enter_cannot_pick(
+    render_kwargs, line_id: str, expected_copy: str
+):
+    """TASK-33008.5: every status reads as text, and the picker's keys stay inert.
+
+    The line lives inside the RadioSet. While models load the set keeps its
+    Tab stop, and Space and Enter on it must neither pick the status nor
+    crash: Textual's ``RadioSet.action_toggle_button`` asserts its highlighted
+    child is a RadioButton, so an enabled text child there exits the app.
+    TASK-33008 review: any other status is no Tab stop (capture 06a drew the
+    box as a focused control around inert text), and a picker focused while
+    the list loaded hands focus to the model name field.
+    TASK-33008 (capture 06a): with the app's CSS the box hugs the line; it
+    kept the model list's five-row floor, two empty rows under the text.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    class _StyledStepHost(_StepHost):
+        CSS_PATH = _StyledHostApp.CSS_PATH
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={},  # no provider: the discovery key is None throughout
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard)
+    app = _StyledStepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        step.add_class("active")  # the wizard's CSS hides a step until it shows
+        await pilot.pause(0.1)
+        # Fence on_show's own no-provider render, so a slow one cannot land
+        # after the state under test and replace it.
+        step._cancel_model_discovery()
+        await step._render_models([], discovery_state="loading")
         radio_set = step.query_one("#setup-model-choice", RadioSet)
-        labels = [str(b.label) for b in radio_set.query(RadioButton)]
-        assert "(loading models…)" not in labels
-        assert any("pick a provider" in label.lower() for label in labels)
+        radio_set.focus()
+        await pilot.pause()
+        await step._render_models([], **render_kwargs)
+        await pilot.pause()
+        assert _model_status_line(step, line_id) == expected_copy
+
+        [line] = radio_set.children
+        assert radio_set.size.height == line.outer_size.height, (
+            "empty rows under the status line"
+        )
+        if render_kwargs.get("discovery_state") != "loading":
+            assert not radio_set.focusable
+            assert app.focused is step.query_one("#setup-model-custom", Input)
+            return
+        assert app.focused is radio_set
+        await pilot.press("space", "enter", "down", "space")
+        await pilot.pause()
+
+        assert app.is_running and app.focused is radio_set
+        assert radio_set.pressed_button is None
+        assert step._effective_model_id() == ""
+        assert _model_status_line(step, line_id) == expected_copy
+
+
+@pytest.mark.asyncio
+async def test_a_model_render_in_flight_at_quit_mounts_nothing(monkeypatch):
+    """TASK-33008.5 (final review): ``_render_models`` awaits the picker's
+    ``remove_children()`` and then mounts its rows or its status line. A quit
+    while the model list loads lands in that gap, Textual refuses a mount once
+    the app is exiting, and the wizard's worker raised ``MountError``. The
+    render stops after the removal instead."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={},  # no provider: the discovery key is None throughout
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.1)
+        step._cancel_model_discovery()
+        radio_set = step.query_one("#setup-model-choice", RadioSet)
+        real_remove = radio_set.remove_children
+
+        async def quit_while_the_rows_go():
+            await real_remove()
+            app.exit()
+
+        monkeypatch.setattr(radio_set, "remove_children", quit_while_the_rows_go)
+        await step._render_models([], discovery_state="loading")
+
+        assert not radio_set.is_attached
+        assert list(radio_set.children) == []
 
 
 @pytest.mark.asyncio
@@ -8793,18 +9147,16 @@ async def test_model_listing_unavailable_is_disabled_and_manual_entry_remains_en
 
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.1)
-        rows = list(step.query_one("#setup-model-choice", RadioSet).query(RadioButton))
-        assert len(rows) == 1
-        assert str(rows[0].label) == (
+        assert _model_status_line(step, "setup-model-listing-unavailable") == (
             "Model listing unavailable; enter the model ID used by this endpoint."
         )
-        assert rows[0].disabled
-        assert getattr(rows[0], "_model_id", None) is None
         manual = step.query_one("#setup-model-custom", Input)
         assert not manual.disabled and manual.focusable
         assert step.selected_model_id == ""
 
-        step.set_selected_model_from_button(rows[0])
+        step.set_selected_model_from_button(
+            step.query_one("#setup-model-listing-unavailable")
+        )
         assert step.selected_model_id == ""
 
 
@@ -8920,11 +9272,13 @@ async def test_mounted_provider_handoff_preserves_typed_discovery_outcome(
                 break
             await pilot.pause(0.05)
         assert status_matches, {
-            "rows": [
-                str(button.label)
-                for button in model_step.query_one(
+            # Every child, not only radio rows: when a different status
+            # rendered, this is what says which one is on screen.
+            "picker": [
+                (child.id, str(child.render()))
+                for child in model_step.query_one(
                     "#setup-model-choice", RadioSet
-                ).query(RadioButton)
+                ).children
             ],
             "owner_state": provider_step._selected_discovery_state,
             "owner_outcomes": provider_step._selected_provider_outcomes,
@@ -8933,11 +9287,10 @@ async def test_mounted_provider_handoff_preserves_typed_discovery_outcome(
             ),
             "calls": scope_service.discover_models.await_count,
         }
-        status = status_matches[0]
-        assert isinstance(status, RadioButton)
-        assert status.disabled
-        assert str(status.label) == expected_copy
-        assert getattr(status, "_model_id", None) is None
+        assert (
+            _model_status_line(model_step, status_selector.removeprefix("#"))
+            == expected_copy
+        )
         assert "curated-model-must-not-appear" not in app.export_screenshot()
         manual = model_step.query_one("#setup-model-custom", Input)
         assert not manual.disabled and manual.focusable
@@ -9077,10 +9430,10 @@ async def test_mounted_real_transport_preserves_404_server_and_payload_categorie
                     break
                 await pilot.pause(0.05)
 
-            row = model_step.query_one(status_selector, RadioButton)
-            assert row.disabled
-            assert str(row.label) == expected_copy
-            assert getattr(row, "_model_id", None) is None
+            assert (
+                _model_status_line(model_step, status_selector.removeprefix("#"))
+                == expected_copy
+            )
             assert "curated-must-not-appear" not in app.export_screenshot()
             manual = model_step.query_one("#setup-model-custom", Input)
             assert not manual.disabled and manual.focusable
@@ -9152,9 +9505,7 @@ async def test_model_connection_failure_shows_bounded_category_and_retry():
 
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.1)
-        failure = step.query_one("#setup-model-connection-failed", RadioButton)
-        failure_copy = str(failure.label)
-        assert failure.disabled
+        failure_copy = _model_status_line(step, "setup-model-connection-failed")
         assert "request failed" in failure_copy
         assert len(failure_copy) < 120
         assert "x" * 20 not in failure_copy and "y" * 20 not in failure_copy
@@ -9297,9 +9648,11 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
     from unittest.mock import AsyncMock
 
     import tldw_chatbook.config as config_module
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_model_discovery as model_discovery_module
 
-    monkeypatch.setattr(wizard_module, "MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(
+        model_discovery_module, "MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.05
+    )
     monkeypatch.setattr(
         config_module,
         "get_cli_providers_and_models",
@@ -9309,7 +9662,9 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
     cancelled = asyncio.Event()
     release_late_result = asyncio.Event()
     late_result_returned = asyncio.Event()
-    asyncio.get_running_loop().call_later(3, release_late_result.set)
+    # A safety valve only: the test releases the late result itself. It used
+    # to fire at 3 s, racing the failure line on a loaded machine.
+    asyncio.get_running_loop().call_later(30, release_late_result.set)
 
     async def cancellation_resistant_discovery(**_kwargs):
         started.set()
@@ -9351,8 +9706,18 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
         assert container.current_step == model_index
         model_step = container.steps[model_index]
         assert isinstance(model_step, ModelStep)
-        for _ in range(30):
-            if list(model_step.query("#setup-model-connection-failed")):
+        # Wait on the condition, not a fixed 30 x 0.05 s (1.5 s) window, which
+        # flaked under load (TASK-34100.1 review). The failure line mounts
+        # before Retry is unhidden, so wait for both.
+        def failure_rendered() -> bool:
+            retry_buttons = list(model_step.query("#setup-model-retry"))
+            return bool(list(model_step.query("#setup-model-connection-failed"))) and (
+                bool(retry_buttons) and "hidden" not in retry_buttons[0].classes
+            )
+
+        deadline = asyncio.get_running_loop().time() + 10
+        while asyncio.get_running_loop().time() < deadline:
+            if failure_rendered():
                 break
             await pilot.pause(0.05)
 
@@ -9360,11 +9725,9 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
             release_late_result.set()
             await asyncio.wait_for(late_result_returned.wait(), timeout=2)
             pytest.fail("Model owner timeout did not render bounded failure")
-        status = model_step.query_one("#setup-model-connection-failed", RadioButton)
-        assert str(status.label) == (
+        assert _model_status_line(model_step, "setup-model-connection-failed") == (
             "Couldn't reach the server (timeout). Check it's running, then Retry — or enter a model ID below."
         )
-        assert status.disabled
         assert cancelled.is_set()
         assert provider_step._selected_discovery_state == "cancelled"
         assert "curated-timeout-must-not-appear" not in app.export_screenshot()
@@ -9381,8 +9744,9 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
         assert provider_step._selected_provider_outcomes == {}
         assert container._first_run_selected_provider_models == {}
         assert container._first_run_selected_provider_outcomes == {}
-        status = model_step.query_one("#setup-model-connection-failed", RadioButton)
-        assert "timeout" in str(status.label)
+        assert "timeout" in _model_status_line(
+            model_step, "setup-model-connection-failed"
+        )
         assert "late-timeout-model" not in app.export_screenshot()
 
 
@@ -9512,7 +9876,7 @@ async def test_mounted_provider_handoff_is_fenced_after_model_navigation_and_unm
 
 
 def test_real_discovery_result_extracts_exact_safe_unique_model_ids():
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _model_ids_from_discovery_result,
     )
 
@@ -9528,7 +9892,7 @@ def test_real_discovery_result_rejects_malformed_or_unsafe_models(malformed):
     from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
         DiscoveredModel,
     )
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _model_ids_from_discovery_result,
     )
 
@@ -9626,9 +9990,11 @@ async def test_model_step_discovery_timeout_keeps_manual_entry_and_retry(monkeyp
     from types import SimpleNamespace
 
     import tldw_chatbook.config as config_module
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_model_discovery as model_discovery_module
 
-    monkeypatch.setattr(wizard_module, "MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(
+        model_discovery_module, "MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.05
+    )
     monkeypatch.setattr(
         config_module,
         "get_cli_providers_and_models",
@@ -9652,12 +10018,20 @@ async def test_model_step_discovery_timeout_keeps_manual_entry_and_retry(monkeyp
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         step.on_show()
-        await pilot.pause(0.3)
-        radio_set = step.query_one("#setup-model-choice", RadioSet)
-        [status] = list(radio_set.query(RadioButton))
-        assert status.disabled
-        assert "timeout" in str(status.label)
-        assert getattr(status, "_model_id", None) is None
+
+        # Wait on the condition, not one fixed 0.3 s pause, which flaked under
+        # load (TASK-34100.1 review round 2, as the owner-timeout test above).
+        def timeout_rendered() -> bool:
+            retry = step.query_one("#setup-model-retry", Button)
+            failed = bool(step.query("#setup-model-connection-failed"))
+            return failed and not retry.has_class("hidden")
+
+        deadline = asyncio_module.get_running_loop().time() + 10
+        while asyncio_module.get_running_loop().time() < deadline:
+            if timeout_rendered():
+                break
+            await pilot.pause(0.05)
+        assert "timeout" in _model_status_line(step, "setup-model-connection-failed")
         assert not step.query_one("#setup-model-custom", Input).disabled
         retry = step.query_one("#setup-model-retry", Button)
         assert retry.display and not retry.has_class("hidden")
@@ -9950,7 +10324,9 @@ async def test_protect_keys_failure_leaves_step_skippable_with_inline_error():
         assert ok2, error  # the step itself never blocks Next
 
 
-def test_protect_keys_password_worker_uses_dedicated_group_not_wizard_advance():
+def test_protect_keys_password_worker_uses_dedicated_group_not_wizard_advance(
+    monkeypatch,
+):
     """Parked Task-5 finding (deviation from the task-10 brief's pseudocode):
     "setup-wizard-advance" is the CONTAINER's own advance/finalize worker
     group. Reusing it here for the password-apply worker would let a slow
@@ -9973,11 +10349,15 @@ def test_protect_keys_password_worker_uses_dedicated_group_not_wizard_advance():
     )
     calls = []
 
-    def _fake_run_worker(coro, **kwargs):
+    def _fake_run_wizard_worker(node, coro, **kwargs):
+        # TASK-34100.1: the group is chosen at the run_wizard_worker call.
+        assert node is step
         coro.close()
         calls.append(kwargs)
 
-    step.run_worker = _fake_run_worker
+    import tldw_chatbook.UI.Wizards.first_run_protect_step as protect_module
+
+    monkeypatch.setattr(protect_module, "run_wizard_worker", _fake_run_wizard_worker)
     step._on_password_result("hunter2-long-password")
     assert calls, "expected a worker to be scheduled for the password result"
     assert calls[0]["group"] == "setup-protect-encrypt"
@@ -10038,7 +10418,12 @@ async def test_summary_step_reads_back_the_saved_voice():
         step.on_show()
         await app.workers.wait_for_complete()
         rendered = str(step.query_one("#setup-summary-rows", Static).render())
-        assert "✓ Voice — OmniVoice (default voice)" in rendered
+        assert "✓ Voice — OmniVoice" in rendered
+        # Review round 2 (F10): the whole row -- the old "(default voice)"
+        # suffix contains the expected text, so a substring check passed it.
+        [row] = [line for line in rendered.splitlines() if "Voice —" in line]
+        assert row.strip().endswith("✓ Voice — OmniVoice")
+        assert "(default voice)" not in row
 
 
 @pytest.mark.asyncio
@@ -10055,14 +10440,14 @@ async def test_summary_default_speech_check_skips_service_construction_when_stor
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_summary_step as summary_step_module
 
     absent_root = tmp_path / "never-created"
     monkeypatch.setattr(
-        wizard_module, "managed_model_artifact_root", lambda: absent_root
+        summary_step_module, "managed_model_artifact_root", lambda: absent_root
     )
     probe = MagicMock()
-    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", probe)
+    monkeypatch.setattr(summary_step_module, "active_managed_parakeet_dir", probe)
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
@@ -10099,15 +10484,15 @@ async def test_summary_default_speech_check_still_checks_when_store_root_exists(
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_summary_step as summary_step_module
 
     existing_root = tmp_path / "already-there"
     existing_root.mkdir()
     monkeypatch.setattr(
-        wizard_module, "managed_model_artifact_root", lambda: existing_root
+        summary_step_module, "managed_model_artifact_root", lambda: existing_root
     )
     probe = MagicMock(return_value=None)
-    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", probe)
+    monkeypatch.setattr(summary_step_module, "active_managed_parakeet_dir", probe)
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
@@ -10272,10 +10657,8 @@ async def test_summary_footer_shows_the_effective_config_path(monkeypatch, tmp_p
         # the rendered path is the head and tail of the real path joined by
         # a single ellipsis (or the full path when it fits).
         assert "Config file:" in footer
-        line = next(
-            ln for ln in footer.splitlines() if ln.startswith("Config file:")
-        )
-        rendered_path = line[len("Config file: "):]
+        line = next(ln for ln in footer.splitlines() if ln.startswith("Config file:"))
+        rendered_path = line[len("Config file: ") :]
         full_path = str(scratch_config)
         if rendered_path != full_path:
             assert "…" in rendered_path
@@ -10543,9 +10926,7 @@ async def test_ctrl_n_recovers_hidden_widget_focus_and_stops_at_summary():
             # (TASK-21146: Summary prefers its primary exit button), then
             # hidden (display:none / .hidden) widgets must never be focus
             # targets (TASK-1496/1498).
-            preferred = (
-                step.preferred_focus() if isinstance(step, SetupStep) else None
-            )
+            preferred = step.preferred_focus() if isinstance(step, SetupStep) else None
             if (
                 preferred is not None
                 and preferred.focusable
@@ -10652,7 +11033,7 @@ async def test_down_space_selects_provider_with_no_tab_presses():
         assert provider_step.selected_provider_key != ""
 
 
-def test_finalize_worker_uses_a_dedicated_group_not_wizard_advance():
+def test_finalize_worker_uses_a_dedicated_group_not_wizard_advance(monkeypatch):
     """F-B fix pin: _handle_complete() runs synchronously from inside
     complete_wizard(), itself called synchronously from _advance() -- the
     body of the CURRENTLY-RUNNING "setup-wizard-advance" worker whenever the
@@ -10668,11 +11049,15 @@ def test_finalize_worker_uses_a_dedicated_group_not_wizard_advance():
     real_container = SetupWizardContainer(app_instance)
     calls = []
 
-    def _fake_run_worker(coro, **kwargs):
+    def _fake_run_wizard_worker(node, coro, **kwargs):
+        # TASK-34100.1: the group is chosen at the run_wizard_worker call.
+        assert node is real_container
         coro.close()  # never actually scheduled; avoid a "never awaited" warning
         calls.append(kwargs)
 
-    real_container.run_worker = _fake_run_worker
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    monkeypatch.setattr(wizard_module, "run_wizard_worker", _fake_run_wizard_worker)
     real_container._handle_complete({"summary": {"exit_route": None}})
     assert calls, "expected _handle_complete to schedule the finalize worker"
     assert calls[0]["group"] == "setup-wizard-finalize"
@@ -10849,7 +11234,17 @@ def test_generation_advance_after_stage_before_consume_never_mutates_console(
 
     def stage_then_publish(channel, intent):
         revision = original_stage(channel, intent)
-        current[0] = RuntimeConfigSnapshot(54, current[0].values)
+        # TASK-34100.5: the handoff is fenced on the saved provider and model,
+        # so the publish that must never reach Console is one that CHANGES the
+        # saved pair (an unrelated write, such as Console's first-mount rail
+        # seed, now lets the handoff apply).
+        current[0] = RuntimeConfigSnapshot(
+            54,
+            {
+                "chat_defaults": {"provider": "openai", "model": "newer-model"},
+                "api_settings": {"openai": {"model": "newer-model"}},
+            },
+        )
         return revision
 
     monkeypatch.setattr(pending, "stage", stage_then_publish)
@@ -10861,10 +11256,12 @@ def test_generation_advance_after_stage_before_consume_never_mutates_console(
     assert console._session.consume_pending_console_first_chat_intent() is False
     assert store.active_session_id == session.id
     assert _first_chat_store_snapshot(store) == sessions_before
-    claim = pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
-    assert claim is not None
-    assert claim.value.config_revision == 53
-    assert pending.release(claim) is True
+    # The stale handoff is retired, not left pending for the whole session,
+    # and the notice names the model now in use rather than "Review setup".
+    assert pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT) is None
+    notice = app_instance.notify.call_args
+    assert notice is not None and "newer-model" in notice.args[0]
+    assert "Review setup" not in notice.args[0]
 
 
 @pytest.mark.asyncio
@@ -11001,7 +11398,12 @@ async def test_finalize_and_dismiss_screen_never_double_dismiss():
         summary = container.steps[container.current_step]
         assert isinstance(summary, SummaryStep)
         summary._exit_home()
-        await pilot.pause(0.3)
+        # Wait on the dismiss, not one fixed 0.3 s pause: the completion
+        # write took longer than that under load (TASK-34100.1 review round 2).
+        for _ in range(200):
+            if dismiss_calls:
+                break
+            await pilot.pause(0.05)
         assert len(dismiss_calls) == 1
         assert container._finalized is True
 
@@ -11514,6 +11916,78 @@ async def test_model_step_subtitle_display_cases_provider_and_marks_recommended(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("discover", "tested", "rows", "note"),
+    [
+        (AsyncMock(return_value=["model-alpha"]), None, True, True),
+        (AsyncMock(return_value=[]), None, True, False),
+        (AsyncMock(side_effect=RuntimeError("refused")), None, False, False),
+        (AsyncMock(return_value=[]), "empty", True, True),
+        (AsyncMock(return_value=[]), "connection_failed", True, True),
+    ],
+    ids=["listed", "saved-list", "failed", "tested-empty", "tested-failed"],
+)
+async def test_model_step_says_a_listed_pick_is_not_added_to_the_saved_model_list(
+    monkeypatch, discover, tested, rows, note
+):
+    """TASK-35578 AC#2: rows a server listed come with the saved-list note
+    on the subtitle; rows from the saved [providers] list (the fallback when
+    nothing was listed) and a failed listing come without it.
+
+    Review of 92334c2087: rows a Test connection listed count as listed even
+    when the Provider step's own discovery found none ("empty") or failed
+    ("connection_failed", as when it timed out)."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat.provider_catalog import listed_pick_note
+    from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        ModelDiscoveryResult,
+    )
+
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_providers_and_models",
+        lambda: {"Anthropic": ["saved-model"]},
+    )
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={
+            "provider": {"provider_key": "anthropic", "provider_value": "anthropic"}
+        },
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard, discover_models=discover)
+    if tested is not None:
+        key = step._current_discovery_key()
+        owner = _provider_step()
+        owner._test_evidence_for_discovery_key = lambda _key: ProviderProbeResult(
+            "reachable", ("tested-model",)
+        )
+        wizard._first_run_provider_discovery_owner = owner
+        if tested == "empty":  # the Provider step's listing found no models
+            wizard._first_run_selected_provider_outcomes = {
+                key: ModelDiscoveryResult("anthropic", None, None, "success")
+            }
+        else:  # the Provider step's listing failed
+            wizard._first_run_selected_provider_models = {key: []}
+            owner._selected_discovery_key = key
+            owner._selected_discovery_state = "failed"
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.3)
+        assert bool(list(step.query("#setup-model-option-0"))) is rows
+        subtitle = str(step.query_one("#setup-model-provider-line", Static).render())
+    line = "Models for Anthropic."
+    assert subtitle == (f"{line} {listed_pick_note()}" if note else line)
+    assert "(F4)" not in subtitle  # the wizard has no Settings key
+
+
+@pytest.mark.asyncio
 async def test_tools_step_rows_are_described_and_do_not_overlap():
     """TASK-1501: aligned rows with plain-language descriptions."""
     from types import SimpleNamespace
@@ -11596,6 +12070,10 @@ async def test_tools_step_copy_comes_from_the_shared_gate_table():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        gate_effect_scopes,
+        tool_gate_effect_suffix,
+    )
     from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
     from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
     from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ToolsStep
@@ -11613,19 +12091,66 @@ async def test_tools_step_copy_comes_from_the_shared_gate_table():
         wizard=wizard,
         config=WizardStepConfig(id="tools", title="Tools", step_number=5),
     )
+    scopes = gate_effect_scopes()
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         entries = list(gateable_builtin_tools())
         names = [str(label.render()) for label in step.query(".setup-tool-name")]
-        assert names == [entry.title for entry in entries]
+        assert names == [
+            entry.title + tool_gate_effect_suffix(scopes[("tools", entry.gate_key)])
+            for entry in entries
+        ]
         for entry in entries:
             rendered = str(
-                step.query_one(
-                    f"#setup-tool-desc-{entry.tool_name}", Static
-                ).render()
+                step.query_one(f"#setup-tool-desc-{entry.tool_name}", Static).render()
             )
             assert rendered == entry.blurb
+
+
+@pytest.mark.asyncio
+async def test_tools_step_names_carry_effect_scope_from_the_shared_table():
+    """task-35153: the first-run Tools step tells the user WHEN a gate takes
+    effect, from the SAME field the hub pane renders -- never its own copy
+    of the wording. Every gate shown here is next-chat scope (the Console
+    rebuilds its tool catalog each run), so every row's name carries the
+    next-chat suffix."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        EFFECT_SCOPE_NEXT_CHAT,
+        gate_effect_scopes,
+        tool_gate_effect_suffix,
+    )
+    from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ToolsStep
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = ToolsStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="tools", title="Tools", step_number=5),
+    )
+    scopes = gate_effect_scopes()
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        # The wizard renders the builtin group; pin that those rows' scope
+        # really is next-chat in the shared table...
+        assert all(
+            scopes[("tools", entry.gate_key)] == EFFECT_SCOPE_NEXT_CHAT
+            for entry in gateable_builtin_tools()
+        )
+        # ...then that every rendered name carries exactly that scope's suffix.
+        names = [str(label.render()) for label in step.query(".setup-tool-name")]
+        assert names, "the step must render one name row per gateable tool"
+        expected_suffix = tool_gate_effect_suffix(EFFECT_SCOPE_NEXT_CHAT)
+        assert all(name.endswith(expected_suffix) for name in names), names
 
 
 @pytest.mark.asyncio
@@ -11997,6 +12522,26 @@ async def test_key_hints_footer_and_test_button_probe():
         assert probe.await_count >= 1
 
 
+async def _until(pilot, predicate) -> None:
+    """Poll ``predicate`` for up to 5 s instead of trusting a fixed pause.
+
+    TASK-33008 review: under xdist a full GC pause in this file (340-600 ms)
+    landed in the old fixed windows, and the tests read a half-done step.
+    """
+    for _ in range(100):
+        if predicate():
+            return
+        await pilot.pause(0.05)
+
+
+async def _press_next(pilot, container) -> None:
+    """Ctrl+N, then wait for the step to change (the old 0.2 s fell short)."""
+    before = container.current_step
+    await pilot.press("ctrl+n")
+    await _until(pilot, lambda: container.current_step != before)
+    await pilot.pause(0.2)
+
+
 @pytest.mark.asyncio
 async def test_provider_reentry_with_visible_discovery_button_focuses_list():
     """Review finding: after discovery unhides the pinned button, re-entering
@@ -12013,8 +12558,7 @@ async def test_provider_reentry_with_visible_discovery_button_focuses_list():
         container = wizard.query_one(SetupWizardContainer)
         container.select_track(TRACK_QUICK)
         await pilot.pause(0.1)
-        await pilot.press("ctrl+n")  # Welcome -> Provider
-        await pilot.pause(0.2)
+        await _press_next(pilot, container)  # Welcome -> Provider
         provider_step = container.steps[container.current_step]
         # Simulate discovery having found a server: banner + button visible.
         provider_step.query_one("#setup-provider-detected").remove_class("hidden")
@@ -12022,8 +12566,7 @@ async def test_provider_reentry_with_visible_discovery_button_focuses_list():
             "hidden"
         )
         await pilot.pause(0.1)
-        await pilot.press("ctrl+n")  # Provider -> Model
-        await pilot.pause(0.2)
+        await _press_next(pilot, container)  # Provider -> Model
         await pilot.press("ctrl+b")  # back to Provider (re-entry)
         await pilot.pause(0.2)
         choices = provider_step.query_one("#setup-provider-choice", OptionList)
@@ -12144,8 +12687,7 @@ class TestComposeCrashPolicy:
             assert failed_step.compose_failure.reason_code == "compose_failed"
             assert STEP_PROVIDER in container.active_ids
 
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.2)
+            await _press_next(pilot, container)
             assert container.steps[container.current_step] is failed_step
             assert len(failed_step.query("#setup-step-retry")) == 1
             assert len(failed_step.query("#setup-step-manual")) == 1
@@ -12188,8 +12730,15 @@ class TestComposeCrashPolicy:
                 step for step in container.steps if isinstance(step, SummaryStep)
             )
             container.show_step(container.steps.index(summary))
-            await pilot.pause(0.4)
-            rendered = str(summary.query_one("#setup-summary-rows", Static).render())
+            rows = summary.query_one("#setup-summary-rows", Static)
+            # Wait on the rows, not a fixed 0.4 s. A full GC pause in this
+            # 400-test file runs 340-600 ms, and one landing in that window
+            # left the rows empty once TASK-33008.5 added tests upstream.
+            for _ in range(200):
+                if str(rows.render()):
+                    break
+                await pilot.pause(0.05)
+            rendered = str(rows.render())
             assert "RAG" in rendered
             assert "couldn't be shown" in rendered
 
@@ -12209,8 +12758,7 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.2)
+            await _press_next(pilot, container)
             failed_step = container.steps[container.current_step]
             unchanged_steps = {
                 step.config.id: step
@@ -12220,7 +12768,12 @@ class TestComposeCrashPolicy:
 
             monkeypatch.setattr(ProviderStep, "compose_step", original_compose)
             failed_step.query_one("#setup-step-retry", Button).press()
-            await pilot.pause(0.6)
+            await _until(
+                pilot,
+                lambda: container.steps[container.current_step] is not failed_step
+                and not container._failure_action_running
+                and isinstance(app.focused, OptionList),
+            )
 
             replacement = container.steps[container.current_step]
             assert replacement is not failed_step
@@ -12251,15 +12804,20 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.3)
+            await _press_next(pilot, container)
 
             retired = []
             for _ in range(3):
                 failed_step = container.steps[container.current_step]
                 retired.append(failed_step)
                 failed_step.query_one("#setup-step-retry", Button).press()
-                await pilot.pause(0.3)
+                await _until(
+                    pilot,
+                    lambda retired_step=failed_step: (
+                        container.steps[container.current_step] is not retired_step
+                        and not container._failure_action_running
+                    ),
+                )
                 assert len(container.query(ProviderStep)) == 1
                 assert len(container.query("#setup-step-retry")) == 1
                 assert len(container.query("#setup-step-manual")) == 1
@@ -12282,8 +12840,7 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.2)
+            await _press_next(pilot, container)
             failed_index = container.current_step
             failed_step = container.steps[failed_index]
             parent = failed_step.parent
@@ -12329,7 +12886,12 @@ class TestComposeCrashPolicy:
 
             monkeypatch.setattr(ProviderStep, "compose_step", original_compose)
             failed_step.query_one("#setup-step-retry", Button).press()
-            await pilot.pause(0.8)
+            await _until(
+                pilot,
+                lambda: injected
+                and container.steps[failed_index] is not failed_step
+                and not container._failure_action_running,
+            )
 
             assert injected is True
             assert container._failure_action_running is False
@@ -12352,7 +12914,11 @@ class TestComposeCrashPolicy:
             )
 
             recovery_step.query_one("#setup-step-retry", Button).press()
-            await pilot.pause(0.8)
+            await _until(
+                pilot,
+                lambda: container.steps[failed_index] is not recovery_step
+                and not container._failure_action_running,
+            )
 
             replacement = container.steps[failed_index]
             assert replacement is not recovery_step
@@ -12386,8 +12952,7 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.2)
+            await _press_next(pilot, container)
             failed_step = container.steps[container.current_step]
             failed_index = container.current_step
             started = asyncio.Event()
@@ -12453,7 +13018,14 @@ class TestComposeCrashPolicy:
                 assert checkpoint.await_count == 1
 
             release.set()
-            await pilot.pause(0.8)
+            await _until(
+                pilot,
+                lambda: app.wizard_results
+                or (
+                    container.steps[failed_index] is not failed_step
+                    and not container._failure_action_running
+                ),
+            )
 
             if outcome == "retry":
                 replacement = container.steps[failed_index]
@@ -12497,8 +13069,7 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.2)
+            await _press_next(pilot, container)
             failed_step = container.steps[container.current_step]
             failed_index = container.current_step
             started = asyncio.Event()
@@ -12540,12 +13111,18 @@ class TestComposeCrashPolicy:
             monkeypatch.setattr(app, "post_message", capture_posted_message)
             recovery_tasks = []
 
-            def independently_run_worker(coroutine, **_kwargs):
+            def independently_run_worker(node, coroutine, **_kwargs):
+                assert node is container
                 task = asyncio.create_task(coroutine)
                 recovery_tasks.append(task)
                 return task
 
-            monkeypatch.setattr(container, "run_worker", independently_run_worker)
+            # TASK-34100.1: recovery work starts through run_wizard_worker.
+            import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+            monkeypatch.setattr(
+                wizard_module, "run_wizard_worker", independently_run_worker
+            )
 
             wizard.query_one(action_selector, Button).press()
             await asyncio.wait_for(started.wait(), timeout=2)
@@ -12583,14 +13160,13 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.3)
+            await _press_next(pilot, container)
             saved_data = dict(container.wizard_data)
             persist = AsyncMock(return_value=True)
             container.persist_current_checkpoint = persist
 
             wizard.query_one("#setup-step-manual", Button).press()
-            await pilot.pause(0.3)
+            await _until(pilot, lambda: app.wizard_result != "UNSET")
 
             persist.assert_awaited_once()
             assert app.wizard_result == {
@@ -12618,13 +13194,12 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.3)
+            await _press_next(pilot, container)
             persist = AsyncMock(return_value=True)
             container.persist_current_checkpoint = persist
 
             wizard.query_one("#setup-step-later", Button).press()
-            await pilot.pause(0.3)
+            await _until(pilot, lambda: app.wizard_result != "UNSET")
 
             persist.assert_awaited_once()
             assert app.wizard_result is None
@@ -12644,8 +13219,7 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.3)
+            await _press_next(pilot, container)
             container.persist_current_checkpoint = AsyncMock(return_value=False)
 
             wizard.query_one("#setup-step-later", Button).press()
@@ -12671,8 +13245,7 @@ class TestComposeCrashPolicy:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.2)
             container = wizard.query_one(SetupWizardContainer)
-            await pilot.press("ctrl+n")
-            await pilot.pause(0.3)
+            await _press_next(pilot, container)
 
             for _ in range(5):
                 wizard.query_one("#wizard-next", Button).press()
@@ -12874,7 +13447,7 @@ async def test_nav_text_total_is_stable_when_a_key_is_entered():
 # ---------------------------------------------------------------------------
 # TASK-21143 (UAT S-1/M-2/M-1/N-7/P-5): the provider trust chain. A failed
 # discovery probe must reach every surface that previously said "✓":
-# the model step's failure row (auth points Back, Retry hidden), the
+# the model step's failure line (auth points Back, Retry hidden), the
 # Next gate (explicit "Continue anyway"), the tracker (attention state),
 # the Provider step on return (pinned notice), and the Summary
 # (row overlay + review_provider primary).
@@ -12906,9 +13479,7 @@ async def test_auth_failed_probe_drives_row_gate_tracker_and_provider_notice(
             recovery_hint="fix the key",
         ),
     )
-    scope_service = MagicMock(
-        discover_models=AsyncMock(return_value=auth_failed)
-    )
+    scope_service = MagicMock(discover_models=AsyncMock(return_value=auth_failed))
     wizard = _make_wizard()
     wizard.app_instance.app_config = {
         "api_settings": {
@@ -12928,6 +13499,9 @@ async def test_auth_failed_probe_drives_row_gate_tracker_and_provider_notice(
         model_step = container.steps[model_index]
         container.show_step(provider_index)
         provider_step.select_provider("custom")
+        # TASK-33008: a key is sent, so the 401 is a rejected key (with none
+        # sent it asks for one; see the test below).
+        provider_step.query_one("#setup-provider-api-key", Input).value = "sk-wrong"
         await pilot.pause(0.1)
         await container._advance()
         for _ in range(40):
@@ -12937,12 +13511,11 @@ async def test_auth_failed_probe_drives_row_gate_tracker_and_provider_notice(
 
         # M-1/M-4: auth copy points Back; Retry is hidden (it cannot fix a
         # rejected key).
-        row = model_step.query_one("#setup-model-connection-failed")
-        row_text = str(row.label)
-        assert "Authentication failed" in row_text and "Back" in row_text
-        assert model_step.query_one("#setup-model-retry", Button).has_class(
-            "hidden"
+        assert _model_status_line(model_step, "setup-model-connection-failed") == (
+            "Authentication failed — this API key was rejected. Go Back to fix it, "
+            "or enter a model ID below."
         )
+        assert model_step.query_one("#setup-model-retry", Button).has_class("hidden")
         assert container.provider_probe_failure() == "authentication"
 
         # M-2: Next gates behind an explicit confirmation; cancel keeps
@@ -12980,9 +13553,7 @@ async def test_auth_failed_probe_drives_row_gate_tracker_and_provider_notice(
             SetupWizardProgress,
         )
 
-        items = container.query_one(
-            ".wizard-progress", SetupWizardProgress
-        ).items
+        items = container.query_one(".wizard-progress", SetupWizardProgress).items
         states = {item.step_id: item.state for item in items}
         assert states[STEP_PROVIDER] == "attention"
 
@@ -12992,6 +13563,802 @@ async def test_auth_failed_probe_drives_row_gate_tracker_and_provider_notice(
         strip = wizard.query_one("#setup-step-error-pinned", Static)
         assert "rejected" in str(strip.renderable)
         assert not strip.has_class("hidden")
+
+
+@pytest.mark.asyncio
+async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -> None:
+    """TASK-33008 capture 06a: llama.cpp with an empty Authentication section
+    answered the model listing with a 401. No key was sent, yet the Model step
+    said "this API key was rejected" while the Provider step said only that it
+    "Couldn't discover models". Every surface that reads the failed listing
+    now says the server needs a key and none was set (a failed Test: see
+    test_a_401_to_a_test_reads_as_a_key_problem_after_next)."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+
+    monkeypatch.setattr(config_module, "get_cli_providers_and_models", dict)
+    needs_key = ModelDiscoveryResult(
+        provider="llama_cpp",
+        provider_list_key="llama_cpp",
+        endpoint_fingerprint="safe-fingerprint",
+        status="error",
+        error=ModelDiscoveryError(
+            kind="missing_credentials",
+            message="The models endpoint rejected the configured credentials.",
+            recovery_hint="Check the API key configured for this provider.",
+            category="unauthorized",
+        ),
+    )
+    wizard = _make_wizard()
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(return_value=needs_key)
+    )
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        provider_step = container.steps[provider_index]
+        model_step = container.steps[container._step_index_for_id(STEP_MODEL)]
+        provider_step._local_discover = AsyncMock(return_value=())
+        container.show_step(provider_index)
+        provider_step.select_provider("llama_cpp")
+        auth = provider_step.query_one("#setup-provider-auth-toggle", Collapsible)
+        assert str(auth.title) == "Authentication (optional)"
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if provider_step._selected_discovery_state == "failed":
+                break
+        status = provider_step.query_one("#setup-provider-probe-status", Static)
+        assert str(status.render()) == (
+            "llama.cpp needs an API key and none was set. Add one under "
+            "Authentication, or continue anyway."
+        )
+        # Capture 06b: the section that line points at is not optional now.
+        assert str(auth.title) == "Authentication"
+
+        await container._advance()
+        # The line mounts before the step records the outcome, and the step's
+        # repeated show can re-render the list once more: wait for both.
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if container.provider_probe_failure() and model_step.query(
+                "#setup-model-connection-failed"
+            ):
+                break
+        assert _model_status_line(model_step, "setup-model-connection-failed") == (
+            "llama.cpp needs an API key and none was set. Go Back to add one, or "
+            "enter a model ID below."
+        )
+        assert model_step.query_one("#setup-model-retry", Button).has_class("hidden")
+        assert model_step.confirm_before_advance() == (
+            "The server needs an API key and none was set, so this model setup "
+            "is unverified. Continue anyway?"
+        )
+        assert wizard_state.probe_failure_summary_detail(
+            container.provider_probe_failure()
+        ) == ("saved, but the server needs an API key and none was set")
+
+        # show_step pins the notice before it returns. No pause: Provider's
+        # show rebuilds widgets, and a pilot wait that lands on a removed one
+        # times out (Textual drops its call_later; the app is idle).
+        container.show_step(provider_index)
+        strip = wizard.query_one("#setup-step-error-pinned", Static)
+        assert str(strip.render()) == (
+            "The last connection check failed: the server needs an API key and "
+            "none was set. Add one under Authentication, or continue anyway."
+        )
+        assert str(auth.title) == "Authentication"
+
+
+@pytest.mark.asyncio
+async def test_a_401_to_a_test_that_sent_no_key_asks_for_a_key() -> None:
+    """TASK-33008: the Provider step's own Test button is the sibling path of
+    the case above. llama.cpp with an empty Authentication section answered
+    Test with a 401; the line said the server "rejected this API key" while
+    nothing was sent."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        SettingsEndpointProbeOutcome,
+    )
+
+    probe = AsyncMock(
+        return_value=SettingsEndpointProbeOutcome(
+            state="unreachable", summary="401 unauthorized", category="unauthorized"
+        )
+    )
+    app_instance = MagicMock(app_config={})
+    app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(
+            return_value=ModelDiscoveryResult(
+                provider="llama_cpp",
+                provider_list_key="llama_cpp",
+                endpoint_fingerprint="safe-fingerprint",
+                status="success",
+                models=(),
+            )
+        )
+    )
+    wizard = SimpleNamespace(
+        app_instance=app_instance,
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, probe=probe)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("llama_cpp")
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if step._selected_discovery_state in {"failed", "complete"}:
+                break
+        auth = step.query_one("#setup-provider-auth-toggle", Collapsible)
+        assert str(auth.title) == "Authentication (optional)"
+        step.query_one("#setup-provider-test", Button).press()
+        status = step.query_one("#setup-provider-probe-status", Static)
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if str(status.render()).startswith("✗"):
+                break
+
+        assert probe.await_args.kwargs["credential_source"] == "none"
+        assert str(status.render()) == (
+            "✗ llama.cpp needs an API key and none was set. Add one under "
+            "Authentication, or continue anyway."
+        )
+        # Capture 06b: the section that line points at was still titled
+        # "Authentication (optional)".
+        assert str(auth.title) == "Authentication"
+        # A key typed there is still for the same server: the title holds.
+        step.query_one("#setup-provider-api-key", Input).value = "sk-local"
+        await pilot.pause()
+        assert str(auth.title) == "Authentication"
+        # Another server has not asked for one.
+        endpoint = step.query_one("#setup-provider-endpoint", Input)
+        checked_at = endpoint.value
+        endpoint.value = "http://localhost:9090"
+        await pilot.pause()
+        assert str(auth.title) == "Authentication (optional)"
+        # Capture fix 2 round 1 finding 3: back on the server that asked, the
+        # mark held for good, even once a Test that sent no key got through
+        # (the server restarted without --api-key).
+        endpoint.value = checked_at
+        step.query_one("#setup-provider-api-key", Input).value = ""
+        await pilot.pause()
+        assert str(auth.title) == "Authentication"
+        probe.return_value = SettingsEndpointProbeOutcome(
+            state="reachable", summary="reachable (1 models)", model_ids=("m",)
+        )
+        step.query_one("#setup-provider-test", Button).press()
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if str(status.render()).startswith("✓"):
+                break
+        assert probe.await_args.kwargs["credential_source"] == "none"
+        assert str(status.render()).startswith("✓")
+        assert str(auth.title) == "Authentication (optional)"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_key_is_told_as_checked_and_the_section_not_optional() -> None:
+    """TASK-33008 review round 2 (capture 06d): after Test sent a key and a
+    llama.cpp server answered 401, the key line still promised "it will be
+    checked when you continue" and the section still read "Authentication
+    (optional)". A server that refuses a key wants one, as one that asks for
+    a key does (06b), and the key line says what the last check found."""
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        SettingsEndpointProbeOutcome,
+    )
+
+    probe = AsyncMock(
+        return_value=SettingsEndpointProbeOutcome(
+            state="unreachable", summary="401 unauthorized", category="unauthorized"
+        )
+    )
+    listing = AsyncMock(
+        return_value=ModelDiscoveryResult(
+            provider="llama_cpp",
+            provider_list_key="llama_cpp",
+            endpoint_fingerprint="safe-fingerprint",
+            status="success",
+            models=(),
+        )
+    )
+    app_instance = MagicMock(app_config={})
+    app_instance.llm_provider_catalog_scope_service = MagicMock(discover_models=listing)
+    wizard = SimpleNamespace(
+        app_instance=app_instance,
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, probe=probe)
+    staged = "Key staged — it will be checked when you continue."
+    rejected = "Key staged — the server rejected it; update it above."
+
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("llama_cpp")
+        await _until(pilot, lambda: step._selected_discovery_state == "complete")
+        auth = step.query_one("#setup-provider-auth-toggle", Collapsible)
+        key = step.query_one("#setup-provider-api-key", Input)
+        key_line = step.query_one("#setup-provider-key-status", Static)
+        status = step.query_one("#setup-provider-probe-status", Static)
+        key.value = "sk-wrong"
+        await pilot.pause()
+        assert (str(key_line.render()), str(auth.title)) == (
+            staged,
+            "Authentication (optional)",
+        )
+
+        step.query_one("#setup-provider-test", Button).press()
+        await _until(pilot, lambda: str(status.render()).startswith("✗"))
+        assert probe.await_args.kwargs["credential_source"] == "draft"
+        # Review round 3: worded as the listing's 401, not the shared verdict.
+        assert str(status.render()) == (
+            "✗ llama.cpp rejected this API key. Update it, or continue anyway."
+        )
+        assert (str(key_line.render()), str(auth.title)) == (rejected, "Authentication")
+
+        # A new key is unchecked again; the server still wants one.
+        key.value = "sk-right"
+        await pilot.pause()
+        assert (str(key_line.render()), str(auth.title)) == (staged, "Authentication")
+        probe.return_value = SettingsEndpointProbeOutcome(
+            state="reachable", summary="reachable (1 models)", model_ids=("m",)
+        )
+        step.query_one("#setup-provider-test", Button).press()
+        await _until(pilot, lambda: str(status.render()).startswith("✓"))
+        assert str(key_line.render()) == "Key staged — the server did not refuse it."
+
+        # The model listing is a check of the key too, when no Test was.
+        key.value = "sk-listed"
+        listing.return_value = ModelDiscoveryResult(
+            provider="llama_cpp",
+            provider_list_key="llama_cpp",
+            endpoint_fingerprint="safe-fingerprint",
+            status="error",
+            error=ModelDiscoveryError(
+                kind="missing_credentials",
+                message="The models endpoint rejected the configured credentials.",
+                recovery_hint="Check the API key configured for this provider.",
+                category="unauthorized",
+            ),
+        )
+        await pilot.pause()
+        step._begin_selected_provider_discovery(step._effective_provider_draft())
+        await _until(pilot, lambda: step._selected_discovery_state == "failed")
+        assert str(key_line.render()) == rejected
+
+
+@pytest.mark.asyncio
+async def test_a_listing_that_refused_a_sent_key_makes_the_key_required() -> None:
+    """TASK-33008 review round 3: only a Test was shown to drop "(optional)"
+    after a 401 to a key that was sent. The model listing that runs with a
+    typed key, no Test first, is the same check and marks the section too."""
+    listing = AsyncMock(
+        return_value=ModelDiscoveryResult(
+            provider="llama_cpp",
+            provider_list_key="llama_cpp",
+            endpoint_fingerprint="safe-fingerprint",
+            status="success",
+            models=(),
+        )
+    )
+    app_instance = MagicMock(app_config={})
+    app_instance.llm_provider_catalog_scope_service = MagicMock(discover_models=listing)
+    wizard = SimpleNamespace(
+        app_instance=app_instance,
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, probe=AsyncMock())
+
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("llama_cpp")
+        await _until(pilot, lambda: step._selected_discovery_state == "complete")
+        auth = step.query_one("#setup-provider-auth-toggle", Collapsible)
+        status = step.query_one("#setup-provider-probe-status", Static)
+        step.query_one("#setup-provider-api-key", Input).value = "sk-wrong"
+        await pilot.pause()
+        assert str(auth.title) == "Authentication (optional)"
+
+        listing.return_value = ModelDiscoveryResult(
+            provider="llama_cpp",
+            provider_list_key="llama_cpp",
+            endpoint_fingerprint="safe-fingerprint",
+            status="error",
+            error=ModelDiscoveryError(
+                kind="missing_credentials",
+                message="The models endpoint rejected the configured credentials.",
+                recovery_hint="Check the API key configured for this provider.",
+                category="unauthorized",
+            ),
+        )
+        step._begin_selected_provider_discovery(step._effective_provider_draft())
+        await _until(pilot, lambda: step._selected_discovery_state == "failed")
+        assert step._test_evidence_for_discovery_key(
+            step._model_discovery_key(step._effective_provider_draft())
+        ) is None  # no Test ran
+        assert str(status.render()) == (
+            "llama.cpp rejected this API key. Update it, or continue anyway."
+        )
+        assert str(auth.title) == "Authentication"
+
+
+@pytest.mark.asyncio
+async def test_a_403_to_a_listing_of_a_sent_key_does_not_reject_it() -> None:
+    """TASK-33008: a 403 to the listing of a typed key read as a rejected
+    key, marked Authentication required and said "the server rejected it".
+    Only a 401 rejects a key (owner ruling 2026-10-02, PR #2958 review): a
+    403 means this key may not list models, as after a 403 to Test. Review
+    round 4: a 403 to Test is told in the listing's words on this step."""
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        SettingsEndpointProbeOutcome,
+    )
+    from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+
+    probe = AsyncMock(
+        return_value=SettingsEndpointProbeOutcome(
+            state="unreachable", summary="unreachable: forbidden", category="forbidden"
+        )
+    )
+    listing = AsyncMock(
+        return_value=ModelDiscoveryResult(
+            provider="llama_cpp",
+            provider_list_key="llama_cpp",
+            endpoint_fingerprint="safe-fingerprint",
+            status="success",
+            models=(),
+        )
+    )
+    app_instance = MagicMock(app_config={})
+    app_instance.llm_provider_catalog_scope_service = MagicMock(discover_models=listing)
+    wizard = SimpleNamespace(
+        app_instance=app_instance,
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, probe=probe)
+
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("llama_cpp")
+        await _until(pilot, lambda: step._selected_discovery_state == "complete")
+        auth = step.query_one("#setup-provider-auth-toggle", Collapsible)
+        status = step.query_one("#setup-provider-probe-status", Static)
+        key_line = step.query_one("#setup-provider-key-status", Static)
+        step.query_one("#setup-provider-api-key", Input).value = "sk-list-only"
+        await pilot.pause()
+
+        listing.return_value = ModelDiscoveryResult(
+            provider="llama_cpp",
+            provider_list_key="llama_cpp",
+            endpoint_fingerprint="safe-fingerprint",
+            status="error",
+            error=ModelDiscoveryError(
+                kind="missing_credentials",
+                message="The models endpoint rejected the configured credentials.",
+                recovery_hint="Check the API key configured for this provider.",
+                category="forbidden",
+            ),
+        )
+        step._begin_selected_provider_discovery(step._effective_provider_draft())
+        await _until(pilot, lambda: step._selected_discovery_state == "failed")
+        assert str(status.render()) == wizard_state.PROVIDER_LISTING_UNAVAILABLE_LINE
+        assert str(auth.title) == "Authentication (optional)"
+        staged = "Key staged — it will be checked when you continue."
+        assert str(key_line.render()) == staged
+
+        # Review round 4: after a 401, a 403 to the same key and address left
+        # "the server rejected it" under the key; a failed check redraws it.
+        forbidden = listing.return_value
+        for category, line in (
+            ("unauthorized", "Key staged — the server rejected it; update it above."),
+            ("forbidden", staged),
+        ):
+            listing.return_value = replace(
+                forbidden, error=replace(forbidden.error, category=category)
+            )
+            step._begin_selected_provider_discovery(step._effective_provider_draft())
+            await _until(pilot, lambda: step._selected_discovery_state == "failed")
+            assert str(key_line.render()) == line
+        assert str(status.render()) == wizard_state.PROVIDER_LISTING_UNAVAILABLE_LINE
+
+        # The same 403 to Test read "…; chat endpoint not tested." here.
+        step.query_one("#setup-provider-test", Button).press()
+        await _until(
+            pilot, lambda: probe.await_count and str(status.render()) != "Testing…"
+        )
+        assert probe.await_args.kwargs["credential_source"] == "draft"
+        assert str(status.render()) == wizard_state.PROVIDER_LISTING_UNAVAILABLE_LINE
+        assert str(key_line.render()) == staged
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("typed_key", "failure"), [("", "key_required"), ("sk-wrong", "authentication")]
+)
+async def test_a_401_to_a_test_reads_as_a_key_problem_after_next(
+    monkeypatch, typed_key, failure
+) -> None:
+    """TASK-33008 review: after a Test that got a 401, the Model line, Retry,
+    confirm, Summary and the pinned notice said the server "isn't reachable".
+    The Test's "unauthorized" never reached the "authentication" category the
+    listing path uses, so only the Provider line said a key was needed."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        SettingsEndpointProbeOutcome,
+    )
+    from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+
+    monkeypatch.setattr(config_module, "get_cli_providers_and_models", dict)
+    wizard = _make_wizard()
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(return_value=_typed_model_discovery_result("llama_cpp"))
+    )
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        step = container.steps[provider_index]
+        model_step = container.steps[container._step_index_for_id(STEP_MODEL)]
+        step._local_discover = AsyncMock(return_value=())
+        step._probe = AsyncMock(
+            return_value=SettingsEndpointProbeOutcome(
+                state="unreachable", summary="401 unauthorized", category="unauthorized"
+            )
+        )
+        container.show_step(provider_index)
+        await pilot.pause()
+        step.select_provider("llama_cpp")
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if step._selected_discovery_state in {"failed", "complete"}:
+                break
+        step.query_one("#setup-provider-api-key", Input).value = typed_key
+        await pilot.pause()
+        status = step.query_one("#setup-provider-probe-status", Static)
+        step.query_one("#setup-provider-test", Button).press()
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if str(status.render()).startswith("✗"):
+                break
+        assert str(status.render()).startswith("✗")
+
+        await container._advance()
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if container.provider_probe_failure() and model_step.query(
+                "#setup-model-connection-failed"
+            ):
+                break
+        copy = wizard_state.PROBE_FAILURE_COPY[failure]
+        assert container.provider_probe_failure() == failure
+        assert _model_status_line(
+            model_step, "setup-model-connection-failed"
+        ) == copy.model_line.format(display="llama.cpp")
+        assert model_step.query_one("#setup-model-retry", Button).has_class("hidden")
+        assert model_step.confirm_before_advance() == copy.confirm
+
+        container.show_step(provider_index)
+        strip = wizard.query_one("#setup-step-error-pinned", Static)
+        assert str(strip.render()) == copy.provider_notice
+
+
+@pytest.mark.asyncio
+async def test_a_claude_subscription_is_never_told_to_add_an_api_key(monkeypatch):
+    """TASK-33008 review: discovery never carries a Claude subscription, so
+    Anthropic refuses the keyless model list. Both steps said the server
+    "needs an API key and none was set", for a sign-in that works for chat.
+    The listing reads as unavailable, and no failed check is recorded.
+    Review round 2: Provider said "Couldn't discover models for Anthropic.
+    You can continue anyway." for that cause; both steps now name it. Round 3:
+    each with its own action, as Provider has no model ID field."""
+    import tldw_chatbook.config as config_module
+    import tldw_chatbook.LLM_Calls.anthropic_subscription as subscription
+
+    monkeypatch.setattr(config_module, "get_cli_providers_and_models", dict)
+    monkeypatch.setattr(
+        subscription, "subscription_credential_status", lambda **_kw: "ready"
+    )
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    refused = ModelDiscoveryResult(
+        provider="anthropic",
+        provider_list_key="anthropic",
+        endpoint_fingerprint="safe-fingerprint",
+        status="error",
+        error=ModelDiscoveryError(
+            kind="missing_credentials",
+            message="The models endpoint rejected the configured credentials.",
+            recovery_hint="Check the API key configured for this provider.",
+            category="unauthorized",
+        ),
+    )
+    wizard = _make_wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {"anthropic": {"auth_source": "claude_subscription"}}
+    }
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(return_value=refused)
+    )
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        step = container.steps[provider_index]
+        model_step = container.steps[container._step_index_for_id(STEP_MODEL)]
+        step._local_discover = AsyncMock(return_value=())
+        container.show_step(provider_index)
+        await pilot.pause()
+        step.select_provider("anthropic")
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if step._selected_discovery_state in {"failed", "complete"}:
+                break
+        assert step._current_provider_readiness().subscription_status == "ready"
+        status = step.query_one("#setup-provider-probe-status", Static)
+        # One cause, each step's own action: Provider has no model ID field.
+        assert str(status.render()) == (
+            "Model listing unavailable; you can enter the model ID on the next step."
+        )
+
+        await container._advance()
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if model_step.query("#setup-model-listing-unavailable"):
+                break
+        assert _model_status_line(model_step, "setup-model-listing-unavailable") == (
+            "Model listing unavailable; enter the model ID used by this endpoint."
+        )
+        assert container.provider_probe_failure() == ""
+        assert model_step.confirm_before_advance() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("check", ["listing", "test"])
+async def test_a_keyless_403_reads_as_unavailable_with_a_key_hint_on_both_steps(check):
+    """The owner's decision of 2026-10-17 (PR #3144, D2): a 403 to a check
+    that sent no key keeps "Model listing unavailable" on both steps (only a
+    401 rejects a key) and adds that the server may want a key, where each
+    step's key field is: under Authentication on Provider, one step Back from
+    Model. Driven through the listing and through Test, which reach Model by
+    the handed-over outcome and by the Test's evidence. No failed check is
+    recorded. A 403 to a key that was sent gets no hint
+    (``test_a_403_to_a_listing_of_a_sent_key_does_not_reject_it``)."""
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        SettingsEndpointProbeOutcome,
+    )
+
+    forbidden = ModelDiscoveryResult(
+        provider="llama_cpp",
+        provider_list_key="llama_cpp",
+        endpoint_fingerprint="safe-fingerprint",
+        status="error",
+        error=ModelDiscoveryError(
+            kind="missing_credentials",
+            message="The models endpoint rejected the configured credentials.",
+            recovery_hint="Check the API key configured for this provider.",
+            category="forbidden",
+        ),
+    )
+    listing = forbidden if check == "listing" else _typed_model_discovery_result(
+        "llama_cpp"
+    )
+    wizard = _make_wizard()
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(return_value=listing)
+    )
+    app = _HostApp(wizard)
+    provider_line = (
+        "Model listing unavailable; you can enter the model ID on the next step. "
+        "If this server needs a key, add one under Authentication."
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        step = container.steps[provider_index]
+        model_step = container.steps[container._step_index_for_id(STEP_MODEL)]
+        step._local_discover = AsyncMock(return_value=())
+        step._probe = AsyncMock(
+            return_value=SettingsEndpointProbeOutcome(
+                state="unreachable", summary="unreachable: forbidden", category="forbidden"
+            )
+        )
+        container.show_step(provider_index)
+        await pilot.pause()
+        step.select_provider("llama_cpp")
+        await _until(
+            pilot, lambda: step._selected_discovery_state in {"failed", "complete"}
+        )
+        status = step.query_one("#setup-provider-probe-status", Static)
+        if check == "test":
+            step.query_one("#setup-provider-test", Button).press()
+            await _until(pilot, lambda: str(status.render()) == provider_line)
+            assert step._probe.await_args.kwargs["credential_source"] == "none"
+        assert str(status.render()) == provider_line
+
+        await container._advance()
+        await _until(
+            pilot, lambda: bool(model_step.query("#setup-model-listing-unavailable"))
+        )
+        assert _model_status_line(model_step, "setup-model-listing-unavailable") == (
+            "Model listing unavailable; enter the model ID used by this endpoint. "
+            "If this server needs a key, go Back to add one."
+        )
+        assert container.provider_probe_failure() == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("check", ["test", "listing"])
+async def test_a_check_that_asks_for_a_key_brings_authentication_into_view(check):
+    """TASK-33008 capture 06b at 211x44: Test said "Add one under
+    Authentication" while that section sat below the step's fold, only its
+    top border showing. The model listing that runs on picking the provider
+    says the same line and goes through the same mark."""
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        SettingsEndpointProbeOutcome,
+    )
+
+    needs_key = ModelDiscoveryResult(
+        provider="llama_cpp",
+        provider_list_key="llama_cpp",
+        endpoint_fingerprint="safe-fingerprint",
+        status="error",
+        error=ModelDiscoveryError(
+            kind="missing_credentials",
+            message="The models endpoint rejected the configured credentials.",
+            recovery_hint="Check the API key configured for this provider.",
+            category="unauthorized",
+        ),
+    )
+    listing = needs_key if check == "listing" else _typed_model_discovery_result(
+        "llama_cpp"
+    )
+    wizard = _make_wizard()
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(return_value=listing)
+    )
+    app = _StyledHostApp(wizard)  # the step's fold comes from the app's CSS
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        step = container.steps[provider_index]
+        step._local_discover = AsyncMock(return_value=())
+        step._probe = AsyncMock(
+            return_value=SettingsEndpointProbeOutcome(
+                state="unreachable", summary="401 unauthorized", category="unauthorized"
+            )
+        )
+        container.show_step(provider_index)
+        await pilot.pause()
+        step.select_provider("llama_cpp")
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if step._selected_discovery_state in {"failed", "complete"}:
+                break
+        status = step.query_one("#setup-provider-probe-status", Static)
+        if check == "test":
+            test_button = step.query_one("#setup-provider-test", Button)
+            test_button.focus()
+            test_button.press()
+            for _ in range(40):
+                await pilot.pause(0.05)
+                if str(status.render()).startswith("✗"):
+                    break
+        await pilot.pause(0.1)
+
+        assert "needs an API key and none was set" in str(status.render())
+        auth = step.query_one("#setup-provider-auth-toggle", Collapsible)
+        assert str(auth.title) == "Authentication"
+        assert step.scrollable_content_region.contains_region(auth.region), (
+            auth.region,
+            step.scrollable_content_region,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model_ids", "line"),
+    [
+        (("m",), "Found 1 model(s) for"),
+        ((), "no models were reported."),
+    ],
+    ids=["lists-a-model", "lists-none"],
+)
+async def test_a_listing_that_sent_no_key_and_got_through_makes_the_key_optional(
+    model_ids, line
+):
+    """Capture fix 2 round 1 finding 3, discovery's half: a 401 to a listing
+    that sent no key drops '(optional)'. Next asks a failed listing again;
+    once the server answers it with no key (restarted without --api-key),
+    the section is optional again, whether or not a model is loaded
+    (round 2: an empty list got through too, as Test's 'reachable' does)."""
+    from types import SimpleNamespace
+
+    needs_key = ModelDiscoveryResult(
+        provider="llama_cpp",
+        provider_list_key="llama_cpp",
+        endpoint_fingerprint="safe-fingerprint",
+        status="error",
+        error=ModelDiscoveryError(
+            kind="missing_credentials",
+            message="The models endpoint rejected the configured credentials.",
+            recovery_hint="Check the API key configured for this provider.",
+            category="unauthorized",
+        ),
+    )
+    listed = _typed_model_discovery_result("llama_cpp", *model_ids)
+    app_instance = MagicMock(app_config={})
+    app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(side_effect=[needs_key, listed])
+    )
+    wizard = SimpleNamespace(
+        app_instance=app_instance,
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("llama_cpp")
+        auth = step.query_one("#setup-provider-auth-toggle", Collapsible)
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if step._selected_discovery_state == "failed":
+                break
+        assert str(auth.title) == "Authentication"
+
+        assert await step.commit() == (True, "")
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if step._selected_discovery_state == "complete":
+                break
+        assert step._selected_discovery_key.credential_source == "none"
+        status = step.query_one("#setup-provider-probe-status", Static)
+        assert line in str(status.render())
+        assert str(auth.title) == "Authentication (optional)"
+
+
+@pytest.mark.asyncio
+async def test_the_pinned_notice_keeps_clear_of_the_frame():
+    """TASK-33008 capture 06b: the pinned notice strip drew its text against
+    the wizard's frame, with no room on either side."""
+    wizard = _make_wizard()
+    app = _StyledHostApp(wizard)  # the app's own CSS draws the strip
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.steps[container.current_step].show_step_error("Fix this first.")
+        await pilot.pause()
+        strip = wizard.query_one("#setup-step-error-pinned", Static)
+        assert strip.content_region.x > strip.region.x
+        assert strip.content_region.right < strip.region.right
 
 
 @pytest.mark.asyncio
@@ -13224,11 +14591,15 @@ async def test_show_all_rebuilds_keep_the_selected_theme_and_card_pressed():
         assert appearance.selected_theme == chosen_theme_name
         assert appearance.selected_splash_card == chosen_card_name
 
-        theme_pressed = appearance.query_one("#setup-theme-choice", RadioSet).pressed_button
+        theme_pressed = appearance.query_one(
+            "#setup-theme-choice", RadioSet
+        ).pressed_button
         assert theme_pressed is not None, "no theme row pressed after show-all"
         assert getattr(theme_pressed, "_theme_name", "") == chosen_theme_name
 
-        card_pressed = appearance.query_one("#setup-splash-choice", RadioSet).pressed_button
+        card_pressed = appearance.query_one(
+            "#setup-splash-choice", RadioSet
+        ).pressed_button
         assert card_pressed is not None, "no card row pressed after show-all"
         assert getattr(card_pressed, "_card_name", "") == chosen_card_name
 
@@ -13341,7 +14712,7 @@ def test_real_sized_provider_catalog_reaches_the_picker_intact():
     from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
         DISCOVERED_MODEL_MAX_COUNT,
     )
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _model_ids_from_discovery_result,
     )
 
@@ -13378,7 +14749,7 @@ def test_typed_catalog_over_the_discovery_ceiling_is_rejected():
     from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
         DISCOVERED_MODEL_MAX_COUNT,
     )
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _model_ids_from_discovery_result,
     )
 
@@ -13395,7 +14766,7 @@ def test_malformed_entry_in_the_tail_is_still_rejected():
     """Every entry is validated, not just those before a truncation point."""
     from dataclasses import replace
 
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _model_ids_from_discovery_result,
     )
 
@@ -13447,15 +14818,15 @@ def test_handed_off_auth_failure_keeps_its_authentication_category():
     user needs (the key lives one step Back).
     """
     from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _handed_off_failure_category,
     )
 
     key = object()
     owner = SimpleNamespace(
-        _selected_provider_outcomes={key: _errored_discovery_result(
-            "missing_credentials"
-        )}
+        _selected_provider_outcomes={
+            key: _errored_discovery_result("missing_credentials")
+        }
     )
 
     category = _handed_off_failure_category(owner, key)
@@ -13470,21 +14841,22 @@ def test_handed_off_auth_failure_keeps_its_authentication_category():
 def test_handed_off_failure_without_a_recorded_outcome_stays_generic():
     """Without a typed outcome there is nothing more specific to say."""
     from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _handed_off_failure_category,
     )
 
     for owner in (None, SimpleNamespace(_selected_provider_outcomes={})):
         category = _handed_off_failure_category(owner, object())
         assert category == "request failed"
-        assert wizard_state.classify_discovery_failure(
-            "connection_failed", category
-        ) == wizard_state.PROVIDER_PROBE_CONNECTION
+        assert (
+            wizard_state.classify_discovery_failure("connection_failed", category)
+            == wizard_state.PROVIDER_PROBE_CONNECTION
+        )
 
 
 def test_handed_off_failure_category_survives_a_malformed_outcome():
     """A junk recorded outcome degrades to the generic wording, never raises."""
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _handed_off_failure_category,
     )
 
@@ -13501,7 +14873,7 @@ def test_provider_connection_ui_draft_cannot_be_pickled():
     """
     import pickle
 
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_provider_step import (
         _ProviderConnectionUiDraft,
     )
 

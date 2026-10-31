@@ -61,7 +61,10 @@ class _FakeApp:
         self.notify_calls = []
         self.library_rag_search_service = object()
 
-    def notify(self, message, severity="information", timeout=None):
+    def notify(self, message, severity="information", timeout=None,
+               markup=True):
+        # ``markup`` mirrors Textual's ``App.notify``; the notification
+        # helper passes False for runtime text (TASK-34803).
         self.notify_calls.append(
             {"message": message, "severity": severity, "timeout": timeout}
         )

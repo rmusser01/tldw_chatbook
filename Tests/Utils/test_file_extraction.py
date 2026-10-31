@@ -2,6 +2,8 @@
 Unit tests for file extraction functionality.
 """
 
+import re
+
 import pytest
 
 from tldw_chatbook.Utils.file_extraction import FileExtractor, ExtractedFile
@@ -310,6 +312,98 @@ content
         assert extractor._sanitize_filename("file:name|test.txt") == "filenametest.txt"
         assert extractor._sanitize_filename("file name.txt") == "file_name.txt"
         assert extractor._sanitize_filename("a" * 200 + ".txt")[:100] == "a" * 100
+
+
+class TestFindFilenameHintWindow:
+    """TASK-34394: `_find_filename_hint` scans only the last few lines
+    before a code block (windowed backward `rfind` walk) instead of
+    slicing + splitting the whole text prefix."""
+
+    CODE_BLOCK_START = len("prefix")
+
+    @pytest.fixture
+    def extractor(self):
+        """Create a FileExtractor instance for testing."""
+        return FileExtractor()
+
+    def _text_with_block_at(self, prefix: str) -> "tuple[str, int]":
+        """Return (text, code_block_start) for a code block directly
+        after `prefix`."""
+        return prefix + "```python\n", len(prefix)
+
+    def test_hint_on_immediately_preceding_line(self, extractor):
+        """A hint on the line right before the block is found."""
+        prefix = "some prose\nfilename: app.py\n"
+        text, start = self._text_with_block_at(prefix)
+        assert extractor._find_filename_hint(text, start) == "app.py"
+
+    def test_hint_within_window_lines_above(self, extractor):
+        """A hint several lines above the block (but inside the 5-line
+        window) is still found."""
+        prefix = "line1\nfilename: helper.py\nline3\nline4\nline5\n"
+        text, start = self._text_with_block_at(prefix)
+        assert extractor._find_filename_hint(text, start) == "helper.py"
+
+    def test_hint_on_first_line_of_exact_window(self, extractor):
+        """With exactly `search_lines` newline-separated segments of
+        prefix, the first segment is inside the window."""
+        prefix = "# top.py\nb\nc\nd\n"
+        text, start = self._text_with_block_at(prefix)
+        assert extractor._find_filename_hint(text, start) == "top.py"
+
+    def test_no_hint_returns_none(self, extractor):
+        """No hint anywhere in the window returns None."""
+        prefix = "just some prose\nwith no filenames at all\n"
+        text, start = self._text_with_block_at(prefix)
+        assert extractor._find_filename_hint(text, start) is None
+
+    def test_hint_outside_window_is_not_found(self, extractor):
+        """A hint more than `search_lines` lines above the block falls
+        outside the window and is not found (same bound as the old
+        `lines[-search_lines:]` slice)."""
+        prefix = "filename: old.py\nl2\nl3\nl4\nl5\nl6\nl7\n"
+        text, start = self._text_with_block_at(prefix)
+        assert extractor._find_filename_hint(text, start) is None
+
+    def test_empty_prefix_returns_none(self, extractor):
+        """A code block at position 0 has no preceding text."""
+        text = "```python\npass\n```\n"
+        assert extractor._find_filename_hint(text, 0) is None
+
+    @pytest.mark.parametrize(
+        "prefix",
+        [
+            "filename: a.py\n",
+            "x\nfilename: b.py\n",
+            "a\nb\nc\n",
+            "a\nb\nc\nd\ne\nf\nfilename: g.py\n",
+            "no hint here\n",
+            "",
+            "l1\nl2\nl3\nl4\n# tail.py\n",
+        ],
+    )
+    def test_window_matches_legacy_full_prefix_slice(self, extractor, prefix):
+        """The windowed scan must match the legacy whole-prefix behavior:
+        the last `search_lines` newline-separated segments of the prefix.
+        Computes the legacy slice independently and compares verdicts."""
+        text, start = self._text_with_block_at(prefix)
+
+        # Legacy reference: slice + split + join of the last N lines.
+        before_text = text[:start]
+        lines = before_text.split("\n")
+        legacy_search_text = (
+            "\n".join(lines[-5:]) if len(lines) >= 5 else before_text
+        )
+        legacy_hint = None
+        for pattern in FileExtractor.FILENAME_HINTS:
+            matches = re.findall(pattern, legacy_search_text)
+            if matches:
+                candidate = matches[-1].strip()
+                if extractor._is_valid_filename(candidate):
+                    legacy_hint = candidate
+                    break
+
+        assert extractor._find_filename_hint(text, start) == legacy_hint
 
 
 if __name__ == "__main__":

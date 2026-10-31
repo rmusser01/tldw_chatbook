@@ -103,8 +103,7 @@ async def test_voice_destination_strip_has_computed_desktop_and_narrow_layout(
             assert pane.has_class("studio-tts-settings-stacked")
             assert len({button.region.y for button in buttons}) == len(buttons)
             assert all(
-                button.region.width == strip.content_region.width
-                for button in buttons
+                button.region.width == strip.content_region.width for button in buttons
             )
         else:
             assert not pane.has_class("studio-tts-settings-stacked")
@@ -113,9 +112,7 @@ async def test_voice_destination_strip_has_computed_desktop_and_narrow_layout(
 
 
 def test_voice_destination_css_selector_is_synced_to_bundle() -> None:
-    source = (
-        _BUNDLE.parent / "features" / "_lab.tcss"
-    ).read_text(encoding="utf-8")
+    source = (_BUNDLE.parent / "features" / "_lab.tcss").read_text(encoding="utf-8")
     bundle = _BUNDLE.read_text(encoding="utf-8")
     for stylesheet in (source, bundle):
         assert "#studio-tts-voice-destination-actions" in stylesheet

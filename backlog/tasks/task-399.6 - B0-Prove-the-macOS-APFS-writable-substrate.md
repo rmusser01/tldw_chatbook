@@ -1,9 +1,10 @@
 ---
 id: TASK-399.6
 title: B0 Prove the macOS APFS writable substrate
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-07-23 14:23'
+updated_date: '2026-10-04'
 labels:
   - notes
   - filesystem
@@ -38,3 +39,16 @@ Establish a finite, release-blocking executable and packaged go/no-go contract f
 - [ ] #10 Runtime eligibility requires both an allowed installed manifest entry and a successful fresh probe of the actual root and primitives. The final B1 release candidate reruns the two-release qualification against its exact packaged adapter/probe before controls can ship; any later adapter change or rolling support-set update requires new probe, power-cut evidence, manifest update, and release review rather than automatic inference.
 - [ ] #11 No create, save, rename, move, restore, or delete control is implemented or exposed by this task, and write controls remain hidden outside the approved matrix.
 <!-- AC:END -->
+
+## Closeout 2026-10-04
+
+Closed superseded, not implemented as written. ADR-029 explicitly deferred the
+APFS writable-substrate programme: saves ship as hash-checked atomic writes on
+ordinary filesystem primitives (TASK-969 implementation notes; PR #992), so
+the two-release go/no-go probe matrix, the versioned manifest resource
+(`file_notes_apfs_capabilities.v1.json`), and the packaged native
+mutation-adapter qualification were never built. The surviving kernel of this
+task — fsync-parent / F_FULLFSYNC durability hardening of the atomic write
+helper — is already filed as TASK-32896.
+
+Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).

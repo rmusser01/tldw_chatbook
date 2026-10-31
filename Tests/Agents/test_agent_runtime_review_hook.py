@@ -163,8 +163,9 @@ def test_idless_call_gets_unique_review_identity_away_from_tool_name():
         [CALC],
         make_deps(
             turns,
-            invoke=lambda call: invoked.append(call.args["v"])
-            or ToolResult(ok=True, content="ok"),
+            invoke=lambda call: (
+                invoked.append(call.args["v"]) or ToolResult(ok=True, content="ok")
+            ),
             review=review,
         ),
     )
@@ -763,11 +764,15 @@ def test_deny_guard_covers_calls_without_permission_review(preauthorized):
     assert result.status == RUN_DONE
     assert invoked == []
     assert reviewed == []
-    assert any(s.result == "hook: denied" for s in result.steps if s.kind == STEP_TOOL_RESULT)
+    assert any(
+        s.result == "hook: denied" for s in result.steps if s.kind == STEP_TOOL_RESULT
+    )
 
 
 def test_deny_guard_failure_cannot_allow_tool_dispatch():
-    deps = make_deps([_native_turn([ToolCall("calculator", {}, "c1")]), ModelTurn(text="done")])
+    deps = make_deps(
+        [_native_turn([ToolCall("calculator", {}, "c1")]), ModelTurn(text="done")]
+    )
     invoked = []
     deps.invoke_tool = lambda c: invoked.append(c) or ToolResult(ok=True)
 
@@ -789,31 +794,52 @@ def test_guard_cannot_override_permission_denial():
     deps.guard_tool_calls = lambda calls: {"c1": "proceed"}
     result = run_agent_loop(CFG, [], [CALC], deps)
     assert invoked == []
-    assert any(s.result == "permission denied" for s in result.steps if s.kind == STEP_TOOL_RESULT)
+    assert any(
+        s.result == "permission denied"
+        for s in result.steps
+        if s.kind == STEP_TOOL_RESULT
+    )
 
 
 def test_service_binds_deny_guard_to_firing_run(db):
     guarded = []
-    chat = ScriptedChat([
-        {"content": None, "tool_calls": [native_call("calculator", {"expression": "2+2"}, "a")]},
-        "done",
-    ])
+    chat = ScriptedChat(
+        [
+            {
+                "content": None,
+                "tool_calls": [native_call("calculator", {"expression": "2+2"}, "a")],
+            },
+            "done",
+        ]
+    )
 
     def guard(calls, run_id):
         guarded.append(run_id)
         return {calls[0].call_id: "hook: service denial"}
 
-    service = AgentService(db=db, registry=_registry(), chat_call=chat, guard_tool_calls=guard)
+    service = AgentService(
+        db=db, registry=_registry(), chat_call=chat, guard_tool_calls=guard
+    )
     run_id, outcome = service.run_turn(
-        conversation_id="c", messages=[{"role": "user", "content": "go"}],
-        config=SVC_CFG, api_endpoint="openai", should_cancel=lambda: False,
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=SVC_CFG,
+        api_endpoint="openai",
+        should_cancel=lambda: False,
     )
     assert guarded == [run_id]
-    assert any(s.result == "hook: service denial" for s in outcome.steps if s.kind == STEP_TOOL_RESULT)
+    assert any(
+        s.result == "hook: service denial"
+        for s in outcome.steps
+        if s.kind == STEP_TOOL_RESULT
+    )
 
 
 def test_guard_refusal_survives_permission_review_exception_for_sibling():
-    calls = [ToolCall("calculator", {"v": 1}, "a"), ToolCall("calculator", {"v": 2}, "b")]
+    calls = [
+        ToolCall("calculator", {"v": 1}, "a"),
+        ToolCall("calculator", {"v": 2}, "b"),
+    ]
     invoked = []
 
     def review(survivors):
@@ -821,10 +847,13 @@ def test_guard_refusal_survives_permission_review_exception_for_sibling():
         raise RuntimeError("review unavailable")
 
     deps = make_deps(
-        [_native_turn(calls), ModelTurn(text="done")], review=review,
+        [_native_turn(calls), ModelTurn(text="done")],
+        review=review,
         invoke=lambda c: invoked.append(c.call_id) or ToolResult(ok=True),
     )
     deps.guard_tool_calls = lambda batch: {"a": "hook: denied"}
     result = run_agent_loop(CFG, [], [CALC], deps)
     assert "a" not in invoked
-    assert any(s.result == "hook: denied" for s in result.steps if s.kind == STEP_TOOL_RESULT)
+    assert any(
+        s.result == "hook: denied" for s in result.steps if s.kind == STEP_TOOL_RESULT
+    )

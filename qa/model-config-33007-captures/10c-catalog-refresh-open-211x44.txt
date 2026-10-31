@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: No changes · edits save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)    │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │   ▼ Catalog refresh · applies immediately · startup refresh Off · per-provider choices not in effect                       │  │  │                                         │
+│  category search             │  │  │   applies immediately · no Save needed                                                                                     │  │  │ Selected category: Providers & Models   │
+│                              │  │  │  ▐ ▌ Refresh on startup Off                                                                                                │  │  │ No unsaved changes                      │
+│  Core                        │  │  │   Refresh on startup is Off, so the per-provider choices below are not in effect.                                          │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │  Refresh after (hours)   │ 24                                                                                              │  │  │  Save (s) — no changes                  │
+│    > Providers & Models      │  │  │                                                                                                                            │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │  ▐✓▌ OpenAI: refresh On ▐ ▌ save to config Off                                                                             │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │  ▐✓▌ Anthropic: refresh On ▐ ▌ save to config Off                                                                          │  │  │ file.                                   │
+│  Interface                   │  │  │  ▐✓▌ Mistral AI: refresh On ▐ ▌ save to config Off                                                                         │  │  │ Applies to                              │
+│      Appearance              │  │  │  ▐✓▌ Moonshot AI: refresh On ▐ ▌ save to config Off                                                                        │  │  │  New chats: yes (Ctrl+T, temporary,     │
+│      Theme                   │  │  │  ▐✓▌ OpenRouter: refresh On ▐ ▌ save to config Off                                                                         │  │  │  workspace)                             │
+│      Splash Screen           │  │  │  ▐✓▌ QwenCloud: refresh On ▐ ▌ save to config Off                                                                          │  │  │  Unused open chats: follow the saved    │
+│      Console Behavior        │  │  │  ▐✓▌ Z.ai: refresh On ▐ ▌ save to config Off                                                                               │  │  │  default                                │
+│  Data & Privacy              │  │  │  ▐✓▌ Databricks: refresh On ▐ ▌ save to config Off                                                                         │  │  │  Chats with work: keep their own;       │
+│      Storage                 │  │  │  ▐✓▌ Together: refresh On ▐ ▌ save to config Off                                                                           │  │  │  switch there with Alt+M                │
+│      Workspaces              │  │  │  ▐✓▌ Fireworks: refresh On ▐ ▌ save to config Off                                                                          │  │  │  Model defaults: chats that switch to   │
+│      Tool Profiles           │  │  │  ▐✓▌ Cerebras: refresh On ▐ ▌ save to config Off                                                                           │  │  │  this model pick them up                │
+│      Privacy & Security      │  │  │  ▐✓▌ SambaNova: refresh On ▐ ▌ save to config Off                                                                          │  │  │ Next new chat will use                  │
+│      Network                 │  │  │  ▐✓▌ NVIDIA NIM: refresh On ▐ ▌ save to config Off                                                                         │  │  │  llama.cpp · qwen3-8b-q4                │
+│      My Profile              │  │  │  ▐✓▌ DeepInfra: refresh On ▐ ▌ save to config Off                                                                          │  │  │  T 0.6 · max 4096 · stream On           │
+│  Troubleshooting             │  │  │  ▐✓▌ Nebius Token Factory: refresh On ▐ ▌ save to config Off                                                               │  │  │ Focused field guide                   ▃ │
+│      Diagnostics (view)      │  │  │  ▐✓▌ Novita AI: refresh On ▐ ▌ save to config Off                                                                          │  │  │  Focused setting: None — Tab to a       │
+│      About (view)            │  │  │  ▐✓▌ Tencent TokenHub: refresh On ▐ ▌ save to config Off                                                                   │  │  │  setting                                │
+│      Agents                  │  │  │  ▐✓▌ StepFun: refresh On ▐ ▌ save to config Off                                                                            │  │  │  Purpose: Configure the default         │
+│  Expert                      │  │  │  ▐✓▌ Vercel AI Gateway: refresh On ▐ ▌ save to config Off                                                                  │  │  │  provider, model, endpoint, and         │
+│      Hooks                   │  │  │  ▐✓▌ ZenMux: refresh On ▐ ▌ save to config Off                                                                             │  │  │  credential source.                     │
+│      Internal Prompts        │  │  │  ▐✓▌ Kilo Gateway: refresh On ▐ ▌ save to config Off                                                                       │  │  │  Save: edits save with s · r reverts    │
+│      Advanced Config         │  │  │  ▐✓▌ SiliconFlow: refresh On ▐ ▌ save to config Off                                                                        │  │  │  Validation: test provider readiness    │
+│   Domain Defaults ▸ (11)     │  │  │  ▐✓▌ Baseten: refresh On ▐ ▌ save to config Off                                                                            │  │  │  before saving these defaults           │
+│                              │  │  │  ▐✓▌ GMI Cloud: refresh On ▐ ▌ save to config Off                                                                          │  │  │  ▶ config key                           │
+│                              │  │  │  ▐✓▌ Ollama Cloud: refresh On ▐ ▌ save to config Off                                                                       │  │  │ Key                                     │
+│                              │  │  │  ▐✓▌ Arcee AI: refresh On ▐ ▌ save to config Off                                                                           │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

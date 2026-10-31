@@ -1,0 +1,493 @@
+{
+  "source": {
+    "path": "Tests/UI/test_library_media_actions_target_opened_item.py",
+    "sha256": "66241205a4ef70430e4fb0feda973fde267febcdab939cebc0d162b7add33567",
+    "head": "012ca47c39a16c10aa9b9b0a2298287945e22a89"
+  },
+  "changed_original_functions": [
+    "test_read_later_and_edit_save_target_the_opened_item_not_row_1"
+  ],
+  "red03_to_green_changed_functions": [
+    "_edit_save_has_published"
+  ],
+  "original_journey_assertions_unchanged": true,
+  "new_functions": [
+    "_edit_save_has_published",
+    "test_edit_save_observer_waits_for_replacement_rows_before_checking_cue"
+  ],
+  "ruff_check": {
+    "args": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "-m",
+      "ruff",
+      "check",
+      "--no-cache",
+      "Tests/UI/test_library_media_actions_target_opened_item.py"
+    ],
+    "exit_code": 0,
+    "stdout": "All checks passed!\n",
+    "stderr": ""
+  },
+  "ruff_format_check": {
+    "args": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "-m",
+      "ruff",
+      "format",
+      "--check",
+      "--no-cache",
+      "Tests/UI/test_library_media_actions_target_opened_item.py"
+    ],
+    "exit_code": 1,
+    "stdout": "Would reformat: Tests\\UI\\test_library_media_actions_target_opened_item.py\n1 file would be reformatted\n",
+    "stderr": ""
+  },
+  "formatter_baseline_debt": [
+    {
+      "before": "    return [row for row in _rows(screen) if getattr(row, \"_library_media_selected\", False)]\n",
+      "after": "    return [\n        row for row in _rows(screen) if getattr(row, \"_library_media_selected\", False)\n    ]\n"
+    },
+    {
+      "before": "            lambda: str(\n                screen.query_one(\"#library-media-read-later\", Button).label\n            )\n",
+      "after": "            lambda: str(screen.query_one(\"#library-media-read-later\", Button).label)\n"
+    },
+    {
+      "before": "        title_input = await _wait_for_selector(screen, pilot, \"#library-media-edit-title\")\n",
+      "after": "        title_input = await _wait_for_selector(\n            screen, pilot, \"#library-media-edit-title\"\n        )\n"
+    },
+    {
+      "before": "            \"space\", \"left_parenthesis\", \"e\", \"d\", \"i\", \"t\", \"e\", \"d\",\n",
+      "after": "            \"space\",\n            \"left_parenthesis\",\n            \"e\",\n            \"d\",\n            \"i\",\n            \"t\",\n            \"e\",\n            \"d\",\n"
+    },
+    {
+      "before": "        copy = await _wait_for_selector(screen, pilot, \"#library-media-delete-confirm-copy\")\n",
+      "after": "        copy = await _wait_for_selector(\n            screen, pilot, \"#library-media-delete-confirm-copy\"\n        )\n"
+    },
+    {
+      "before": "    await _wait_for_condition(pilot, landed, message=f\"open of {record_id!r} never settled\")\n",
+      "after": "    await _wait_for_condition(\n        pilot, landed, message=f\"open of {record_id!r} never settled\"\n    )\n"
+    },
+    {
+      "before": "            f\"{index}\" for index in range(1, 26) if f\"local:media:{index}\" not in page_ids\n",
+      "after": "            f\"{index}\"\n            for index in range(1, 26)\n            if f\"local:media:{index}\" not in page_ids\n"
+    },
+    {
+      "before": "            raise AssertionError(f\"job never reached DONE: {harness.library_ingest_jobs.jobs()}\")\n",
+      "after": "            raise AssertionError(\n                f\"job never reached DONE: {harness.library_ingest_jobs.jobs()}\"\n            )\n"
+    },
+    {
+      "before": "            assert screen.query_one(\"#library-ingest-open-ingest-job-1\") is not open_button\n",
+      "after": "            assert (\n                screen.query_one(\"#library-ingest-open-ingest-job-1\") is not open_button\n            )\n"
+    },
+    {
+      "before": "                    current = screen.query_one(\"#library-ingest-open-ingest-job-1\", Button)\n",
+      "after": "                    current = screen.query_one(\n                        \"#library-ingest-open-ingest-job-1\", Button\n                    )\n"
+    }
+  ],
+  "formatter_final_debt": [
+    {
+      "before": "    return [row for row in _rows(screen) if getattr(row, \"_library_media_selected\", False)]\n",
+      "after": "    return [\n        row for row in _rows(screen) if getattr(row, \"_library_media_selected\", False)\n    ]\n"
+    },
+    {
+      "before": "            lambda: str(\n                screen.query_one(\"#library-media-read-later\", Button).label\n            )\n",
+      "after": "            lambda: str(screen.query_one(\"#library-media-read-later\", Button).label)\n"
+    },
+    {
+      "before": "        title_input = await _wait_for_selector(screen, pilot, \"#library-media-edit-title\")\n",
+      "after": "        title_input = await _wait_for_selector(\n            screen, pilot, \"#library-media-edit-title\"\n        )\n"
+    },
+    {
+      "before": "            \"space\", \"left_parenthesis\", \"e\", \"d\", \"i\", \"t\", \"e\", \"d\",\n",
+      "after": "            \"space\",\n            \"left_parenthesis\",\n            \"e\",\n            \"d\",\n            \"i\",\n            \"t\",\n            \"e\",\n            \"d\",\n"
+    },
+    {
+      "before": "        copy = await _wait_for_selector(screen, pilot, \"#library-media-delete-confirm-copy\")\n",
+      "after": "        copy = await _wait_for_selector(\n            screen, pilot, \"#library-media-delete-confirm-copy\"\n        )\n"
+    },
+    {
+      "before": "    await _wait_for_condition(pilot, landed, message=f\"open of {record_id!r} never settled\")\n",
+      "after": "    await _wait_for_condition(\n        pilot, landed, message=f\"open of {record_id!r} never settled\"\n    )\n"
+    },
+    {
+      "before": "            f\"{index}\" for index in range(1, 26) if f\"local:media:{index}\" not in page_ids\n",
+      "after": "            f\"{index}\"\n            for index in range(1, 26)\n            if f\"local:media:{index}\" not in page_ids\n"
+    },
+    {
+      "before": "            raise AssertionError(f\"job never reached DONE: {harness.library_ingest_jobs.jobs()}\")\n",
+      "after": "            raise AssertionError(\n                f\"job never reached DONE: {harness.library_ingest_jobs.jobs()}\"\n            )\n"
+    },
+    {
+      "before": "            assert screen.query_one(\"#library-ingest-open-ingest-job-1\") is not open_button\n",
+      "after": "            assert (\n                screen.query_one(\"#library-ingest-open-ingest-job-1\") is not open_button\n            )\n"
+    },
+    {
+      "before": "                    current = screen.query_one(\"#library-ingest-open-ingest-job-1\", Button)\n",
+      "after": "                    current = screen.query_one(\n                        \"#library-ingest-open-ingest-job-1\", Button\n                    )\n"
+    }
+  ],
+  "no_new_formatter_debt": true,
+  "diff_check": {
+    "args": [
+      "git",
+      "-c",
+      "safe.directory=C:/Users/GDesktop-1/.codex/worktrees/textual-settings-patterns/tldw_tui",
+      "-c",
+      "gc.auto=0",
+      "diff",
+      "--check",
+      "--",
+      "Tests/UI/test_library_media_actions_target_opened_item.py"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "production_diff": {
+    "args": [
+      "git",
+      "-c",
+      "safe.directory=C:/Users/GDesktop-1/.codex/worktrees/textual-settings-patterns/tldw_tui",
+      "-c",
+      "gc.auto=0",
+      "diff",
+      "--name-only",
+      "HEAD",
+      "--",
+      "tldw_chatbook"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "run_receipts": [
+    {
+      "label": "media-37235-red-20261028-01",
+      "verification": {
+        "exit_code": 1,
+        "private_profile_root": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-67b2081f6c49448396727421f80dd3ca",
+        "reports": [
+          {
+            "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-37235-red-20261028-01\\result.xml",
+            "sha256": "b7855218f239cee99e4863aeeb5ba0cee6ad518f32e33eef000ed476006d42af",
+            "cases": 2,
+            "failures": 2,
+            "errors": 0,
+            "skips": 0
+          }
+        ]
+      },
+      "actual_reports": [
+        {
+          "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-37235-red-20261028-01\\result.xml",
+          "sha256": "b7855218f239cee99e4863aeeb5ba0cee6ad518f32e33eef000ed476006d42af",
+          "cases": [
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_edit_save_observer_waits_for_replacement_rows_before_checking_cue[native-mount]",
+                "time": "41.300"
+              },
+              "failure": [
+                {
+                  "message": "AssertionError: the post-save observer settled before native replacement rows published\nassert not True\n +  where True = _edit_save_has_published(LibraryScreen(classes='shell-header-normal'), 'local:media:3', 'Meeting notes (edited)')",
+                  "text": "Tests\\UI\\test_library_media_actions_target_opened_item.py:311: in test_edit_save_observer_waits_for_replacement_rows_before_checking_cue\n    assert not _edit_save_has_published(screen, canonical, title), (\nE   AssertionError: the post-save observer settled before native replacement rows published\nE   assert not True\nE    +  where True = _edit_save_has_published(LibraryScreen(classes='shell-header-normal'), 'local:media:3', 'Meeting notes (edited)')"
+                }
+              ],
+              "errors": [],
+              "skips": []
+            },
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_edit_save_observer_waits_for_replacement_rows_before_checking_cue[missing-cue]",
+                "time": "53.665"
+              },
+              "failure": [
+                {
+                  "message": "textual.pilot.WaitForScreenTimeout: Timed out while waiting for widgets to process pending messages.",
+                  "text": "Tests\\UI\\test_library_media_actions_target_opened_item.py:300: in test_edit_save_observer_waits_for_replacement_rows_before_checking_cue\n    await _wait_for_condition(\nTests\\UI\\test_library_shell.py:4044: in _wait_for_condition\n    await pilot.pause(interval)\n..\\..\\..\\..\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\pilot.py:542: in pause\n    await self._wait_for_screen()\n..\\..\\..\\..\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\pilot.py:524: in _wait_for_screen\n    raise WaitForScreenTimeout(\nE   textual.pilot.WaitForScreenTimeout: Timed out while waiting for widgets to process pending messages."
+                }
+              ],
+              "errors": [],
+              "skips": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "media-37235-red-20261028-02",
+      "verification": {
+        "exit_code": 1,
+        "private_profile_root": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-8a1597452fdd4f059b7abe7a5bbf9df0",
+        "reports": [
+          {
+            "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-37235-red-20261028-02\\result.xml",
+            "sha256": "eb04fd1656ec519f1840732c5706118fb6c14567fa28f9c0897d0609add050ea",
+            "cases": 2,
+            "failures": 2,
+            "errors": 0,
+            "skips": 0
+          }
+        ]
+      },
+      "actual_reports": [
+        {
+          "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-37235-red-20261028-02\\result.xml",
+          "sha256": "eb04fd1656ec519f1840732c5706118fb6c14567fa28f9c0897d0609add050ea",
+          "cases": [
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_edit_save_observer_waits_for_replacement_rows_before_checking_cue[native-mount]",
+                "time": "28.866"
+              },
+              "failure": [
+                {
+                  "message": "textual.css.query.NoMatches: No nodes match '#library-media-viewer-title' on LibraryScreen(classes='shell-header-normal')",
+                  "text": "Tests\\UI\\test_library_media_actions_target_opened_item.py:306: in test_edit_save_observer_waits_for_replacement_rows_before_checking_cue\n    await asyncio.wait_for(reader_saved(), 15)\nC:\\Python312\\Lib\\asyncio\\tasks.py:520: in wait_for\n    return await fut\nTests\\UI\\test_library_media_actions_target_opened_item.py:303: in reader_saved\n    while screen._media_state.editing or _reader_title(screen) != title:\nTests\\UI\\test_library_media_actions_target_opened_item.py:146: in _reader_title\n    return str(screen.query_one(\"#library-media-viewer-title\", Static).renderable)\n..\\..\\..\\..\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\textual\\dom.py:1505: in query_one\n    raise NoMatches(f\"No nodes match {query_selector!r} on {base_node!r}\")\nE   textual.css.query.NoMatches: No nodes match '#library-media-viewer-title' on LibraryScreen(classes='shell-header-normal')"
+                }
+              ],
+              "errors": [],
+              "skips": []
+            },
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_edit_save_observer_waits_for_replacement_rows_before_checking_cue[missing-cue]",
+                "time": "19.856"
+              },
+              "failure": [
+                {
+                  "message": "AssertionError: the post-save observer settled before native replacement rows published\nassert not True\n +  where True = _edit_save_has_published(LibraryScreen(classes='shell-header-normal'), 'local:media:3', 'Meeting notes (edited)')",
+                  "text": "Tests\\UI\\test_library_media_actions_target_opened_item.py:313: in test_edit_save_observer_waits_for_replacement_rows_before_checking_cue\n    assert not _edit_save_has_published(screen, canonical, title), (\nE   AssertionError: the post-save observer settled before native replacement rows published\nE   assert not True\nE    +  where True = _edit_save_has_published(LibraryScreen(classes='shell-header-normal'), 'local:media:3', 'Meeting notes (edited)')"
+                }
+              ],
+              "errors": [],
+              "skips": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "media-37235-red-20261028-03",
+      "verification": {
+        "exit_code": 1,
+        "private_profile_root": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-531902b211d04111a7e1e6003d3fdf3c",
+        "reports": [
+          {
+            "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-37235-red-20261028-03\\result.xml",
+            "sha256": "a45a9c9c0816e06684b4caddf208d0499d8c87e6ebdb47d695fa9d984667d854",
+            "cases": 2,
+            "failures": 2,
+            "errors": 0,
+            "skips": 0
+          }
+        ]
+      },
+      "actual_reports": [
+        {
+          "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-37235-red-20261028-03\\result.xml",
+          "sha256": "a45a9c9c0816e06684b4caddf208d0499d8c87e6ebdb47d695fa9d984667d854",
+          "cases": [
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_edit_save_observer_waits_for_replacement_rows_before_checking_cue[native-mount]",
+                "time": "29.757"
+              },
+              "failure": [
+                {
+                  "message": "AssertionError: the post-save observer settled before native replacement rows published\nassert not True\n +  where True = _edit_save_has_published(LibraryScreen(classes='shell-header-normal'), 'local:media:3', 'Meeting notes (edited)')",
+                  "text": "Tests\\UI\\test_library_media_actions_target_opened_item.py:319: in test_edit_save_observer_waits_for_replacement_rows_before_checking_cue\n    assert not _edit_save_has_published(screen, canonical, title), (\nE   AssertionError: the post-save observer settled before native replacement rows published\nE   assert not True\nE    +  where True = _edit_save_has_published(LibraryScreen(classes='shell-header-normal'), 'local:media:3', 'Meeting notes (edited)')"
+                }
+              ],
+              "errors": [],
+              "skips": []
+            },
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_edit_save_observer_waits_for_replacement_rows_before_checking_cue[missing-cue]",
+                "time": "19.380"
+              },
+              "failure": [
+                {
+                  "message": "AssertionError: the post-save observer settled before native replacement rows published\nassert not True\n +  where True = _edit_save_has_published(LibraryScreen(classes='shell-header-normal'), 'local:media:3', 'Meeting notes (edited)')",
+                  "text": "Tests\\UI\\test_library_media_actions_target_opened_item.py:319: in test_edit_save_observer_waits_for_replacement_rows_before_checking_cue\n    assert not _edit_save_has_published(screen, canonical, title), (\nE   AssertionError: the post-save observer settled before native replacement rows published\nE   assert not True\nE    +  where True = _edit_save_has_published(LibraryScreen(classes='shell-header-normal'), 'local:media:3', 'Meeting notes (edited)')"
+                }
+              ],
+              "errors": [],
+              "skips": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "media-37235-green-20261028-01",
+      "verification": {
+        "exit_code": 0,
+        "private_profile_root": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-29626541e53d4b7280122e4837d9031e",
+        "reports": [
+          {
+            "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-37235-green-20261028-01\\result.xml",
+            "sha256": "1d2d7269a0cb19ca0f9a22e7f37a683a899fd459ae34f2f3b8c9c05069485477",
+            "cases": 12,
+            "failures": 0,
+            "errors": 0,
+            "skips": 0
+          }
+        ]
+      },
+      "actual_reports": [
+        {
+          "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-37235-green-20261028-01\\result.xml",
+          "sha256": "1d2d7269a0cb19ca0f9a22e7f37a683a899fd459ae34f2f3b8c9c05069485477",
+          "cases": [
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_open_by_bare_id_highlights_that_row_after_the_browse_lands",
+                "time": "37.784"
+              },
+              "failure": [],
+              "errors": [],
+              "skips": []
+            },
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_read_later_and_edit_save_target_the_opened_item_not_row_1",
+                "time": "49.853"
+              },
+              "failure": [],
+              "errors": [],
+              "skips": []
+            },
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_edit_save_observer_waits_for_replacement_rows_before_checking_cue[native-mount]",
+                "time": "52.506"
+              },
+              "failure": [],
+              "errors": [],
+              "skips": []
+            },
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_edit_save_observer_waits_for_replacement_rows_before_checking_cue[missing-cue]",
+                "time": "64.138"
+              },
+              "failure": [],
+              "errors": [],
+              "skips": []
+            },
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_trash_confirm_names_the_opened_item_and_trashes_it",
+                "time": "47.525"
+              },
+              "failure": [],
+              "errors": [],
+              "skips": []
+            },
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_use_in_console_payload_names_the_opened_item",
+                "time": "42.980"
+              },
+              "failure": [],
+              "errors": [],
+              "skips": []
+            },
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_a_landing_recent_open_and_a_rag_open_land_on_the_same_identity",
+                "time": "42.137"
+              },
+              "failure": [],
+              "errors": [],
+              "skips": []
+            },
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_an_off_page_open_after_an_on_page_item_paints_no_highlight_and_read_later_targets_it",
+                "time": "55.769"
+              },
+              "failure": [],
+              "errors": [],
+              "skips": []
+            },
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_speaker_rename_id_follows_the_reader_during_a_pending_selection",
+                "time": "38.324"
+              },
+              "failure": [],
+              "errors": [],
+              "skips": []
+            },
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_receipt_open_in_library_then_l_saves_the_opened_item[none]",
+                "time": "34.991"
+              },
+              "failure": [],
+              "errors": [],
+              "skips": []
+            },
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_receipt_open_in_library_then_l_saves_the_opened_item[before_scroll]",
+                "time": "39.253"
+              },
+              "failure": [],
+              "errors": [],
+              "skips": []
+            },
+            {
+              "attributes": {
+                "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+                "name": "test_receipt_open_in_library_then_l_saves_the_opened_item[during_click]",
+                "time": "34.045"
+              },
+              "failure": [],
+              "errors": [],
+              "skips": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "source_snapshots": [
+    {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-37235-evidence\\green-source.py.txt",
+      "sha256": "66241205a4ef70430e4fb0feda973fde267febcdab939cebc0d162b7add33567"
+    },
+    {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-37235-evidence\\red-source.py.txt",
+      "sha256": "e9db755837283f2c6a9595491d325878822b35f5905334e093e78b9b33606d54"
+    },
+    {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-37235-evidence\\red02-source.py.txt",
+      "sha256": "43e1280bfe6e2745f43c06df07095187899892ce57f0567b1c8f8df7eaabef54"
+    },
+    {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-37235-evidence\\red03-source.py.txt",
+      "sha256": "8b5d6a5695497304ff0ed291448f6ae1aa8c201336040cccd2275dc6eb5704fb"
+    }
+  ]
+}

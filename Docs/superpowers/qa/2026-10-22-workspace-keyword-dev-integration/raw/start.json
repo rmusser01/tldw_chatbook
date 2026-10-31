@@ -1,0 +1,9 @@
+{
+  "original_head": "8ee6bd9aea0e18dfc095b07a0e1dc26ddfad45a1",
+  "fetched_dev": "2a5afa03b31f60e00bdcd10a161e3e351fad023b",
+  "merge_base": "69771c1811e734421f0bdf31ed90969f8c1f0c63",
+  "backup_branch": "codex/keyword-before-dev-rebase-8ee6bd9aea",
+  "source_branch": "codex/workspace-project-keyword-index",
+  "merge_queue": "on",
+  "user_authorization": "Create PR against latest dev, rebase, fresh requesting-code-review, address all issues, merge; then optional folder-bound semantic indexing using subagents, preserving Library and embedding-independent keyword."
+}

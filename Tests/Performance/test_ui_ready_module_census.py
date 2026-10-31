@@ -159,12 +159,26 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: against it at ~50 sites, so deferring it is lazy-import surgery in hot
 #: Console code for a microsecond-scale import -- the 1022 -> 1023 reasoning.
 #: The SSH locator module WAS deferred off this path (registry_service).
-MAX_TLDW_MODULES_AT_UI_READY = 1033
+# TASK-22504 (2026-10-11): `console_voice_input` (2,260 LOC) was deferred
+# off the Chat first-paint leg (dictation/hands_free/realtime lazy-load it
+# on first voice use; the composer's STATE_* constants and the app's
+# speech-stack diagnostic load past ready). Measured 1033 -> 1031: the
+# module itself plus `Utils.local_stt_providers`. Its heavier closure
+# (STT coordinator/registry/routing, Backup_Recovery, config) was already
+# resident through other boot legs, honestly attributed in the task notes.
+MAX_TLDW_MODULES_AT_UI_READY = 1031
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the
 #: trajectory family TASK-22213 took off the Chat leg.
 ABSENT_AT_READY_PREFIXES = (
+    # TASK-21239: the Kanban interop trio is a zero-consumer subsystem
+    # built lazily on first property access; its import chain (including
+    # the 76-model `tldw_api.kanban_schemas`, TASK-21107) must stay off the
+    # whole first-paint window, not just the import phase.
+    "tldw_chatbook.Kanban_Interop",
+    # Resend execution is first-use work; pure row eligibility is already resident.
+    "tldw_chatbook.Chat.console_turn_resend",
     "tldw_chatbook.Chunking",
     # Personal Context is user/setup/settings/send work. Its encrypted store,
     # interview coordinator, and agent tools must not delay the first frame.
@@ -175,6 +189,20 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # Schema composition is first-send work; its frozen data type is already resident.
+    "tldw_chatbook.Agents.first_request_schemas",
+    # Local transcription failure attribution is first-failure work.
+    "tldw_chatbook.STT.failure_diagnostics",
+    # Empty Console has neither persisted markers nor assistant token rates.
+    "tldw_chatbook.Chat.console_change_review_read",
+    "tldw_chatbook.Chat.console_token_rate",
+    # TASK-22504: the 2,260-LOC voice-input module is first-voice-use work;
+    # the three Console_Modules seams and the composer's STATE_* constants
+    # lazy-load it, and the app's speech-stack diagnostic waits for ready.
+    "tldw_chatbook.Chat.console_voice_input",
+    # Compaction failure copy is needed only when a compaction fails. Shed
+    # this interaction-only edge to cover the chat-start resident (ADR-097).
+    "tldw_chatbook.Chat.console_compaction_failure",
     # Resend eligibility and dispatch load with transcript rows or an action,
     # never while mounting an empty Console (TASK-33803, ADR-097).
     "tldw_chatbook.Chat.console_turn_resend",
@@ -182,6 +210,11 @@ ABSENT_AT_READY_MODULES = (
     # Delete action, an armed or shown confirmation, or the Inspector's
     # pending-delete copy), never before first paint.
     "tldw_chatbook.Chat.console_message_delete",
+    # TASK-33628.5: its plan/write/apply phases, imported by the first delete;
+    # the registry app exit waits on, and the store teardown (app exit only).
+    "tldw_chatbook.Chat.console_subtree_delete",
+    "tldw_chatbook.Chat.console_durable_writes",
+    "tldw_chatbook.Chat.console_store_teardown",
     "tldw_chatbook.UI.Console_Modules.message_delete",
     "tldw_chatbook.Widgets.Console.console_transcript_delete_confirmation",
     "tldw_chatbook.Widgets.Console.console_message_delete_receipt",
@@ -211,6 +244,25 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.Chat.console_voice_trace_gateway",
     "tldw_chatbook.Chat.console_voice_trace_promotion",
     "tldw_chatbook.Widgets.Console.console_voice_preview",
+    # TASK-21247: the notes-sync runtime CONSTRUCTION chain. A zero-profile
+    # boot must neither construct the owner nor import what constructing it
+    # pulls in -- on_mount gates the lazy property read on the same
+    # TASK-21112 start evidence start() uses. Deliberately NOT listed
+    # (measured still resident, 2026-10-11): notes_sync_legacy (imported by
+    # the gate predicate itself) + filesystem it pulls, and
+    # conflicts/models/reconciler (module-level imports of the Library
+    # notes-sync controller, pre-existing boot cost unrelated to
+    # construction).
+    "tldw_chatbook.Notes.notes_sync_authority",
+    "tldw_chatbook.Notes.notes_sync_coordinator",
+    "tldw_chatbook.Notes.notes_sync_executor",
+    "tldw_chatbook.Notes.notes_sync_runtime",
+    "tldw_chatbook.Notes.notes_sync_watcher",
+    # TASK-21107: the 76-pydantic-model kanban schema module rides the
+    # Kanban_Interop prefix above; named separately so a re-eagering that
+    # bypasses the package (a direct `..tldw_api` import elsewhere) still
+    # fails with this module named.
+    "tldw_chatbook.tldw_api.kanban_schemas",
     # PCM wrapping belongs to requested playback, not Console first paint.
     "tldw_chatbook.TTS.pcm_playback",
     # Inspect's Environment implementation is first-open work, not closed-rail boot.

@@ -35,7 +35,7 @@ that made it hard to change.
 from __future__ import annotations
 
 import ast
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -87,7 +87,136 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured on top of dev (dev had grown the file to 25375 lines
     #: against its own 25363 row): the combined tree measures 25218/759,
     #: still under dev's 25363/762, so nothing rises.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 25218, 759),
+    #: TASK-34415 moves checked config refresh into Console_Modules: the
+    #: original tree measures 25204/759. The latest-dev replay also retires
+    #: two unreferenced control helpers and the one-use widget lookup:
+    #: combined tree measures 25204/756; no ceiling rises.
+    #: TASK-34918 brought the file back under this row after dev had grown
+    #: it to 25349/762: dead code (a never-run first copy of
+    #: `on_button_pressed`, a byte-identical second copy of
+    #: `_restore_collapsible_states`, four uncalled methods) and two moved
+    #: helpers. Lowered to the exact measurement: 24985/754.
+    #: PR3023 current-dev integration measured 24369/740 after rebase;
+    #: lower both ceilings to retain the decomposition gain.
+    #: Model-config Phase 9 adds no line here: TASK-35190's own-pair memory
+    #: went to Chat/console_settings_apply.py::remember_session_pair (with the
+    #: draft builder, now ::initial_settings_draft), TASK-33006.20's rail-focus
+    #: footer to Console_Modules/left_rail.py::rail_focus_shortcuts and
+    #: TASK-33005.7's composer setup copy to Chat/console_display_state.py::
+    #: console_setup_blocked_reason. Dev 69771c1811 measured 24378/737 (over
+    #: this row); with Phase 9, 24332/736, and the row comes down to that so
+    #: the decomposition gain is kept. Rebased onto dev 8e879de639, whose
+    #: #3177 (TASK-35640) removes 2 lines: 24330/736.
+    #: Raised 24330 -> 24335 (methods unchanged) 2026-10-20, owner decision
+    #: (a genuine fix raises the row rather than contorting code): TASK-34720's
+    #: P0 crash fix checks the Console owns the screen stack right before
+    #: three dialog pushes (scope picker, character picker, Conversation
+    #: Inspector), two lines each. Dev 2d071d6d71 measured 24329/736; with the
+    #: fix, 24335/736, the exact measurement.
+    #: 2026-10-20, TASK-33620.15.3: owner decision (2026-10-04 ruling: a fix
+    #: over a size ratchet raises the row to the measured value; never move
+    #: or reflow code to make it fit). This task adds 6 lines and no method:
+    #: the idle heap re-freeze's two request points (a conversation painted,
+    #: the transcript poll's stop edge) and their import. Rebased 2026-10-22
+    #: onto dev 7700c63a68 (24335/736, the TASK-34720 row above): 24341/736,
+    #: the exact measurement, never above it.
+    #: Raised 2026-10-20 by TASK-33620.15.1 (owner rule: a fix over a size
+    #: ratchet raises the row with a dated comment rather than contorting
+    #: code): dev 2d071d6d71 measures 24329; the config-sync cadence's hooks
+    #: add 3 (the sync's entry mark, the poll's mark, the stop render and the
+    #: module's import, net of the function-local import it replaces), whose
+    #: logic lives in Console_Modules/config_sync.py. Rebased 2026-10-22 onto
+    #: dev 7700c63a68, which measures 24335 (TASK-34720's row above): 24338,
+    #: the row's new exact measurement.
+    #: Rebased 2026-10-23 onto dev, which measures 24341 (TASK-33620.15.3's row
+    #: above): +3 for the cadence hooks; the row is the exact measurement.
+    #: Lowered by TASK-33620.15.7 (run-tick layout requests): the avatar
+    #: caption sync moved to Console_Modules/left_rail.py::
+    #: sync_character_caption and the blank-avatar test to
+    #: ::character_avatar_spec_is_blank, so the screen's new equality gates
+    #: cost no line. Dev 906497d9b4 measured 24335/736; with the change,
+    #: 24312/736, the exact measurement.
+    #: Rebased 2026-10-23 onto dev 24341/736 (TASK-33620.15.3's row above); the row is
+    #: this branch's exact measurement after the rebase.
+    #: Re-measured 2026-10-23 after rebasing onto dev 5b5920b8e2+ (the cadence's
+    #: +3 landed via #3191): 24321/736, this branch's exact measurement.
+    #: Rebased 2026-10-25 onto dev 7a5e2513c5, which measures 24345 against
+    #: its own 24344 row (the +1 overrun dev commit 9688ac373f, PR #3244,
+    #: left without moving the row): this row stays dev's row - 23 (the branch's
+    #: net removal) and does not absorb dev's line. Re-checked on dev
+    #: e554f25812, which does not touch chat_screen.py.
+    #: 2026-10-25 owner rule (raise the row to the exact measurement): dev itself
+    #: measures one line over its own row (24345 vs 24344); rebased onto it this
+    #: branch measures 24322.
+    #: Raised 24344 -> 24345 (methods unchanged) 2026-10-23 by TASK-33620.15.4,
+    #: owner rule (a fix over a size ratchet raises the row with a dated
+    #: comment; never move or reflow code to make it fit): the run poll's
+    #: start warms the checked config display (one call; the logic lives in
+    #: Console_Modules/config_sync.py::warm_run_presentation). Dev 5b5920b8e2
+    #: measures 24344/736; with the fix, 24345/736, the exact measurement.
+    #: Rebased 2026-10-25 onto dev e554f25812, which measures 24345 against
+    #: its own 24344 row (9688ac373f's line, TASK-36960): this row stays dev's
+    #: row + 1 and does not absorb dev's line.
+    #: 2026-10-25 owner rule (raise the row to the exact measurement): dev itself
+    #: measures one line over its own row (24345 vs 24344); rebased onto it this
+    #: branch measures 24346.
+    #: Lowered 2026-10-26 by TASK-36012 (send-transition layout requests):
+    #: the rail handles' (selector, label, badge) table moved to
+    #: Chat/console_rail_state.py::console_rail_handle_copy, so a badge-only
+    #: rail change can repaint the handles alone at no line cost. Dev
+    #: 0d7e418db1 measured 24323/736; with the change, 24319/736, the exact
+    #: measurement.
+    #: Raised 24319 -> 24322 (methods unchanged) 2026-10-27 by TASK-37000,
+    #: owner rule (a fix over a size ratchet raises the row with a dated
+    #: comment; never move or reflow code to make it fit): the rail cascade's
+    #: opening runs the rebuild a hidden Inspector widget held back (+3, one of
+    #: them its comment), and the Agents section's display write goes through
+    #: the cascade-aware helper (-1, +1 for its import). The deferral itself
+    #: lives in Widgets/Console/console_inspector_section.py and
+    #: console_run_inspector.py. Dev 3be493413a measured 24319/736; with the
+    #: fix, 24322/736, the exact measurement.
+    #: Raised 24322 -> 24324 (methods unchanged) 2026-10-27 by TASK-37000,
+    #: same owner rule: the readiness card's MCP row, written by a chat's
+    #: first agent run, re-writes its copy without a layout inside the
+    #: collapsed rail (+1 comment, +1 import; the call stays one line).
+    #: Rebased onto dev 0923ec0ca2 (24319/736); with the fix, 24324/736.
+    #: Raised 24324 -> 24325 (methods unchanged) 2026-10-27 by TASK-37000's
+    #: review, same owner rule: the rail cascade names its marker through the
+    #: shared CONSOLE_RAIL_PRIOR_DISPLAY constant instead of four string
+    #: literals (+1 for the import). Dev 773cc9729c measured 24319/736.
+    #: Raised 24319 -> 24321 (methods unchanged) 2026-10-27 by
+    #: TASK-33620.15.1.6, owner rule (a fix over a size ratchet raises the row
+    #: with a dated comment; never move or reflow code to make it fit): the
+    #: Environment controller gets the screen's scope stamp (one keyword and
+    #: its import; the stamp lives in Console_Modules/wiring.py::
+    #: environment_scope_stamp). Dev 416feb50ee measures 24319/736; with the
+    #: fix, 24321/736, the exact measurement.
+    #: Raised 24319/736 -> 24321/737 2026-10-27 by TASK-33620.15.17, owner
+    #: rule (a fix over a size ratchet raises the row with a dated comment;
+    #: never move or reflow code to make it fit): keys typed before the
+    #: composer's first focus now land in the draft. The logic lives in
+    #: Console_Modules/composer_run_controls.py (arm_arrival_focus,
+    #: claim_arrival_key, and the restore's fallback-pane order as
+    #: workbench_restore_target, which saved 6 lines); the screen keeps one
+    #: call in on_key and a ScreenResume handler (+1 method), which arms
+    #: only on a real activation, never on the attach reconcile's direct
+    #: replay of on_screen_resume. Dev 0923ec0ca2 measured 24319/736; with
+    #: the fix, 24321/737, the exact measurement.
+    #: Raised 24319 -> 24320 (methods unchanged) 2026-10-27 by TASK-33620.15.22,
+    #: owner rule (a fix over a size ratchet raises the row with a dated
+    #: comment; never move or reflow code to make it fit): the composer is
+    #: built with the send gate's attachment predicate, so Send's readiness
+    #: has one owner (ConsoleComposerBar.has_sendable_payload). Dev 3be493413a
+    #: measures 24319/736; with the fix, 24320/736, the exact measurement.
+    #: Raised 24320 -> 24321 (methods unchanged) 2026-10-27 by the same task's
+    #: review follow-up, same owner rule: the Workbench `send` action's
+    #: readiness now reads has_sendable_payload and the vision block too, so
+    #: it no longer disagrees with Send for a staged image. With it,
+    #: 24321/736, the exact measurement.
+    #: Re-measured 2026-10-29 after rebasing onto dev 3efe8476ce, whose own row
+    #: is 24329/737 (dev grew by itself): with this branch, 24331/737, the
+    #: exact measurement (same owner rule).
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
@@ -902,7 +1031,110 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: between decomposition moves. Re-set to the exact measurement (never
     #: above it); decomposition tracked in TASK-32809.3. 33204/1276 ->
     #: 35793/1330.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35855, 1330),
+    #: 2026-10-09, TASK-34000.8: 35855/1330 -> 36726/1337, owner decision
+    #: (2026-10-04 ruling: a fix over a size ratchet raises the row to the
+    #: measured value; never move or reflow code to make it fit). The row
+    #: was already red on the base on BOTH counts (36701 lines and 1337
+    #: methods of feature work landed since the 35855/1330 pin); this task
+    #: adds 25 lines and no method: the work pane receives the shell's
+    #: resolved reader width (`apply_work_width`) and the footer's Enter
+    #: chip is withheld for a task-row control with no visible region.
+    #: Re-set to the exact measurement, never above it.
+    #: 2026-10-09, TASK-34000.25: 36726/1337 -> 36956/1343, owner decision
+    #: (same 2026-10-04 ruling). This task's code, +230 lines / +6 methods:
+    #: the rail seam keeps a settled local Media item and a New-note note
+    #: across a rail press (`_rail_switch_keeps_media_reader`, the S-02
+    #: reset-block rewrite, the return-leg restore), the Reader's Note action
+    #: (`handle_/action_/_take_library_media_note` and two one-line
+    #: delegators), the `library_media_take_note` gate, key and footer chip,
+    #: and the restore owner's layout-signal wait. Re-set to the exact
+    #: measurement, never above it.
+    #: 2026-10-09, TASK-34000.25 fix round 1: 36956 -> 36965 (+9), same
+    #: owner decision: the Reader's `n` names the veto when a retained
+    #: note's exit flush refuses (review M-2) and the restore budget's
+    #: comment says what it counts (M-3). No new method.
+    #: 2026-10-09, PR #3055 review (Minor 5): 36965 -> 36968 (+3), same
+    #: owner decision: the Reader's Note action titles an untitled document
+    #: with the source line's own `MEDIA_SOURCE_UNTITLED_TITLE` (one import
+    #: line, one two-line comment). No new method.
+    #: 2026-10-09, TASK-34000.21: 36968 -> 36972 (+4), same owner decision
+    #: (2026-10-04: raise the row to the measured value rather than move
+    #: unrelated code to fit): the panel-state builder forwards the gate's
+    #: model (`provider_model=provider_gate.model`, one kwarg and a
+    #: three-line comment) so the quiet line names the model that will be
+    #: billed. No new method.
+    #: 2026-10-09, TASK-34000.23 review 1: 36972/1343 -> 36992/1344 (+20 /
+    #: +1), same owner decision: Escape dismisses the Reports "Set up a
+    #: daily brief…" consent block -- one `check_action`-gated escape
+    #: binding (with its declaration-order comment), its `check_action`
+    #: branch, and the one-line delegating action method
+    #: (`action_library_artifacts_demo_cancel`). Re-set to the exact
+    #: measurement, never above it.
+    #: 2026-10-09, TASK-34000.27: 36992 -> 37008 (+16), same owner decision:
+    #: `flush_pending_work` takes the clicked destination's label and
+    #: says why every refusing draft vetoed the switch (the Notes veto
+    #: through the pure `library_note_flush_veto_notice`, the two formerly
+    #: silent vetoes through their own sentences) -- one kwarg, its Args
+    #: entry, a three-line nested `say`, and the comment. No new method.
+    #: Review 1: 37008 -> 37014 (+6), one click says at most one toast
+    #: (the `spoken` guard). No new method.
+    #: 2026-10-19, TASK-34000.24: the row moved 37014 -> 37134 (+120); the
+    #: FILE grew 36968 -> 37134 (+166) in this task (it was 46 under the row
+    #: before). Same owner decision: the Media reader's hand-off links the
+    #: item on use through the shared seam's one decision
+    #: (`_open_selected_media_handoff`, a screen-resident wiring exclusion,
+    #: rewritten in place), the receipt setter
+    #: `_set_library_media_link_receipt`, the `#library-media-link-undo`
+    #: handler (screen-resident: it needs the depth-state invalidation the
+    #: media controller does not bind; fix round 1 made it say why a stale
+    #: Undo cannot act and clear an already-removed link), two imports and
+    #: the two lambdas that inject the depth state into the Search/RAG
+    #: controller.
+    #: 2026-10-20, fix round 2 (item 4): 37134 -> 37137 (+3), the Undo
+    #: handler says the registry-unavailable sentence for a registry it
+    #: cannot read and "no longer active" only for a moved workspace.
+    #: 2026-10-20, rebased onto dev 2d071d6d71 (same owner decision): dev's own
+    #: file is 36929 there (+7 since the last base); this branch's net
+    #: +215 is unchanged: 37137 -> 37144.
+    #: 2026-10-22, rebased onto dev 7700c63a68 (same owner decision): dev's own
+    #: file is 37062 there (+133 since the last base); this branch's net
+    #: +215 is unchanged: 37144 -> 37277.
+    #: 2026-10-22, TASK-34000 P1-A (.18/.22/.9/.10/.19), owner decision ("expand
+    #: the limits, don't modify other code to make it fit", 2026-10-04): rebased
+    #: onto dev after #3184, whose row is 37277; this batch nets +282 (+355/-73)
+    #: -- the Reader target accessor, the order-based highlight hold, the
+    #: dirty-form refusals at every Reader exit, the autosave resume hook and
+    #: the veto-in-place status: 37277 -> 37559.
+    #: 2026-10-22, P1-A final review C-1 (same owner decision): 37559 -> 37560
+    #: (+1), the ``_library_media_selected_backing_id`` docstring says the
+    #: Reader target is the loaded item whatever the view. Methods 1354.
+    #: 2026-10-23, TASK-34000.20 (owner decision 2026-10-04: a fix over a size
+    #: ratchet raises the row to the measured value). dev `d0d926e11b` was
+    #: ALREADY over this row before the P1-C batch (measured 37586 vs 37560).
+    #: This task adds the ``expand_user_path`` import, the ``path`` pass-through
+    #: from the pre-flight worker into the apply, and the one-expansion-rule
+    #: block in ``_resolve_ingest_source``: 37560 -> 37593 (measured). Methods
+    #: unchanged at 1354.
+    #: 2026-10-23, TASK-34000.20 fix round 2 (same owner decision): ``on_screen_
+    #: suspend`` drops a waiting ingest Enter/Start (any suspend -- another
+    #: tab, a modal, the Browse picker -- is "not a yes"): 37593 -> 37600.
+    #: 2026-10-24, TASK-34000.26 (same owner decision 2026-10-04): the list-
+    #: entry picker never offers a ``_pruning`` row, filter or Media fallback
+    #: control, and the retry tick returns on a detached screen (review S-10,
+    #: the dead keyboard): 37600 -> 37623 (measured). Methods unchanged at 1354.
+    #: 2026-10-24, TASK-34000.26 fix round 1 (same owner decision): the Media
+    #: empty-list fallback stops at a pruning preferred control and the picker
+    #: retries instead of falling through to a lower-preference one (M-4):
+    #: 37623 -> 37630 (measured). Methods unchanged at 1354.
+    #: 2026-10-24, TASK-34000.26 P1-C final fix round (same owner decision):
+    #: the picker retries when every row the query found is being replaced
+    #: instead of parking entry focus on the live filter (M5):
+    #: 37630 -> 37635 (measured). Methods unchanged at 1354.
+    # TASK-36454..36458: completion helpers and pure option projection reduce this owner.
+    #: 2026-10-24, TASK-34000 P1-B rebased onto dev 96cae7eec0 (owner decision,
+    #: expand-the-limits rule): P1-B's .17/.14/.12/.11/.71 screen work on top of
+    #: dev's decomposed screen: 37542 -> 37759 lines, 1354 -> 1361 methods (measured).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37759, 1361),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
@@ -913,7 +1145,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
 # (20099/633, red for months) added no signal the _BUDGETS row does not.
 
 
-@lru_cache(maxsize=None)
+@cache
 def _measure(rel_path: str, class_name: str) -> tuple[int, int]:
     """Line count of a module and method count of one class inside it.
 
@@ -1015,4 +1247,3 @@ def test_budget_is_not_left_slack_after_a_wave(rel_path: str) -> None:
         f"{class_name} is {max_methods - methods} methods under its budget "
         f"({methods} vs {max_methods}). Set it to {methods}."
     )
-

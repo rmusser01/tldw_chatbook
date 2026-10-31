@@ -20,6 +20,7 @@ Everything here runs through the REAL navigation API
 `ChatScreen`, a real on-disk ChaChaNotes DB, and the production
 `ChatPersistenceService` for the out-of-band appends.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -149,8 +150,7 @@ async def test_probe_p1_db_rows_written_while_console_is_unmounted(tmp_path):
 
         # ...and in the actual rendered DOM?
         dom_text = " ".join(
-            str(getattr(node, "renderable", ""))
-            for node in chat2.query("*")
+            str(getattr(node, "renderable", "")) for node in chat2.query("*")
         )
         findings.append(
             "(a-dom) headless rows in rendered widgets: "
@@ -160,9 +160,7 @@ async def test_probe_p1_db_rows_written_while_console_is_unmounted(tmp_path):
 
         # (b) are they in the next send's provider payload?
         controller2 = chat2._ensure_console_chat_controller()
-        session2 = next(
-            s for s in store2.sessions() if s.id == session_id
-        )
+        session2 = next(s for s in store2.sessions() if s.id == session_id)
         findings.append(
             "post-return session persisted_conversation_id="
             f"{session2.persisted_conversation_id}"
@@ -286,9 +284,7 @@ async def test_probe_p1_variant_headless_writer_also_moves_the_active_leaf(tmp_p
         chat2 = app.screen
         await _wait_for_selector(chat2, pilot, "#console-native-composer")
         store2 = chat2._console_chat_store
-        restored = "\n".join(
-            m.content for m in store2.messages_for_session(session_id)
-        )
+        restored = "\n".join(m.content for m in store2.messages_for_session(session_id))
         findings.append(
             "headless rows in the restored transcript (leaf maintained): "
             f"system={HEADLESS_SYSTEM in restored} "
@@ -369,9 +365,7 @@ async def test_probe_p1_control_rows_written_while_console_is_mounted(tmp_path):
         )
         gateway.payloads.clear()
         await controller.submit_draft("second user message", session_id=session_id)
-        payload_text = "\n".join(
-            str(m["content"]) for m in gateway.payloads[-1]
-        )
+        payload_text = "\n".join(str(m["content"]) for m in gateway.payloads[-1])
         findings.append(
             "mounted-Console DB append visible in the next payload: "
             f"{HEADLESS_ASSISTANT in payload_text}"

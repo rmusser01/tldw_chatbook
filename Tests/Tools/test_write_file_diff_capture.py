@@ -63,7 +63,9 @@ class TestWriteFileDiffCapture:
         assert result["new_content"] == "line one\nchanged\n"
 
     @pytest.mark.asyncio
-    async def test_append_captures_combined_new_content(self, tool, _sandbox_only_roots):
+    async def test_append_captures_combined_new_content(
+        self, tool, _sandbox_only_roots
+    ):
         target = _sandbox_only_roots / "append.txt"
         target.write_text("start\n", encoding="utf-8")
 
@@ -77,7 +79,9 @@ class TestWriteFileDiffCapture:
         assert result["new_content"] == "start\nmore\n"
 
     @pytest.mark.asyncio
-    async def test_undecodable_old_content_skips_capture(self, tool, _sandbox_only_roots):
+    async def test_undecodable_old_content_skips_capture(
+        self, tool, _sandbox_only_roots
+    ):
         """Binary (undecodable) pre-existing files omit the capture keys —
         a fabricated "before" state would render a misleading diff."""
         target = _sandbox_only_roots / "binary.bin"
@@ -105,7 +109,9 @@ class TestWriteFileDiffCapture:
         assert "new_content" not in result
 
     @pytest.mark.asyncio
-    async def test_oversized_existing_file_skips_capture(self, tool, _sandbox_only_roots):
+    async def test_oversized_existing_file_skips_capture(
+        self, tool, _sandbox_only_roots
+    ):
         """Pre-existing files over DIFF_CAPTURE_MAX_BYTES are not captured."""
         target = _sandbox_only_roots / "big.txt"
         target.write_text("x" * (DIFF_CAPTURE_MAX_BYTES + 1), encoding="utf-8")
@@ -143,7 +149,9 @@ class TestWriteFileDiffCapture:
         assert result["new_content"] == content
 
     @pytest.mark.asyncio
-    async def test_append_combined_size_over_cap_skips_capture(self, tool, _sandbox_only_roots):
+    async def test_append_combined_size_over_cap_skips_capture(
+        self, tool, _sandbox_only_roots
+    ):
         """Append mode materializes new_content as old + appended, so the
         combined size (not just the appended chunk) must stay within the cap."""
         target = _sandbox_only_roots / "append_big.txt"

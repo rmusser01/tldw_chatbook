@@ -53,7 +53,9 @@ from Tests.UI.test_destination_visual_parity_correction import (
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Subscriptions import briefing_cast, briefing_service
-from tldw_chatbook.Subscriptions import watchlists_operation_coordinator as coordinator_module
+from tldw_chatbook.Subscriptions import (
+    watchlists_operation_coordinator as coordinator_module,
+)
 from tldw_chatbook.Subscriptions.watchlists_operation_coordinator import (
     WatchlistsOperationCoordinator,
 )
@@ -254,9 +256,9 @@ async def _press_generate(screen, pilot, app, watchlist_id, *, timeout: float = 
         await pilot.pause(0.02)
     while time.monotonic() < deadline:
         await pilot.pause(0.02)
-        table = screen.query_one(
-            "#watchlists-artifacts-pane", ArtifactsPane
-        ).query_one("#artifacts-table", DataTable)
+        table = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane).query_one(
+            "#artifacts-table", DataTable
+        )
         if table.row_count == len(db.list_briefings(watchlist_id)):
             return
 
@@ -271,9 +273,7 @@ def _seeded_item_rows(app) -> list[sqlite3.Row]:
     rather than a number invented in the test itself.
     """
     db = app.watchlist_bundle_service.db
-    return list(
-        db.conn.execute("SELECT id, title FROM subscription_items ORDER BY id")
-    )
+    return list(db.conn.execute("SELECT id, title FROM subscription_items ORDER BY id"))
 
 
 # --- Task 5: casting a script ------------------------------------------
@@ -692,6 +692,8 @@ async def test_detached_audio_does_not_request_artifacts_refresh(monkeypatch):
 
     assert not screen.is_attached
     screen._request_briefings_refresh.assert_not_called()
+
+
 async def test_leaving_artifacts_stops_following_but_generation_continues(monkeypatch):
     app = _build_test_app()
     app.notify = Mock()
@@ -775,7 +777,9 @@ async def test_a_stuck_generating_row_is_refused_then_recovered(monkeypatch):
         in_flight_at_call: list[bool] = []
         real_fail = screen_module.fail_interrupted_briefings
 
-        def _recording_fail(db, watchlist_id=None, *, exclude=(), exclude_watchlists=()):
+        def _recording_fail(
+            db, watchlist_id=None, *, exclude=(), exclude_watchlists=()
+        ):
             in_flight_at_call.append(bool(screen._briefing_in_flight))
             return real_fail(
                 db, watchlist_id, exclude=exclude, exclude_watchlists=exclude_watchlists
@@ -801,7 +805,9 @@ async def test_a_stuck_generating_row_is_refused_then_recovered(monkeypatch):
         assert kwargs.get("markup") is False, (
             "toast bodies carrying counts and names must not be parsed as markup"
         )
-        statuses = {row["id"]: row["status"] for row in _briefing_rows(app, watchlist_id)}
+        statuses = {
+            row["id"]: row["status"] for row in _briefing_rows(app, watchlist_id)
+        }
         assert "complete" not in statuses.values()
 
         # Second press: the zombie has been recovered, so this one proceeds.
@@ -1118,9 +1124,9 @@ async def test_two_fast_presses_generate_exactly_once(monkeypatch):
     _use_fake_chat(monkeypatch, chat)
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
-        button = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane).query_one(
-            "#artifacts-generate-button", Button
-        )
+        button = screen.query_one(
+            "#watchlists-artifacts-pane", ArtifactsPane
+        ).query_one("#artifacts-generate-button", Button)
         # Both in one tick, with nothing awaited between them.
         button.press()
         button.press()
@@ -1263,8 +1269,7 @@ async def test_a_failed_generation_toasts_its_reason_without_row_selection(monke
 
         rows = _briefing_rows(app, watchlist_id)
         assert any(row["status"] == "failed" for row in rows), (
-            "the generation must actually have failed for this test to mean "
-            "anything"
+            "the generation must actually have failed for this test to mean anything"
         )
 
         assert app.notify.called, (
@@ -1274,9 +1279,7 @@ async def test_a_failed_generation_toasts_its_reason_without_row_selection(monke
         args, kwargs = app.notify.call_args
         message = args[0]
         assert kwargs.get("severity") == "error"
-        assert kwargs.get("markup") is False, (
-            "a provider's own error text is untrusted"
-        )
+        assert kwargs.get("markup") is False, "a provider's own error text is untrusted"
         assert "OpenAI" in message, "must name the provider actually attempted"
         assert "API Key is required but not found" in message, (
             "must carry the provider's own reason"
@@ -1328,8 +1331,7 @@ async def test_a_failed_generation_toast_bounds_a_long_or_multiline_provider_rea
 
         rows = _briefing_rows(app, watchlist_id)
         assert any(row["status"] == "failed" for row in rows), (
-            "the generation must actually have failed for this test to mean "
-            "anything"
+            "the generation must actually have failed for this test to mean anything"
         )
         # The row itself keeps the server-side-capped-but-still-long text --
         # only the unconditional TOAST is bounded further. Confirms the
@@ -1346,8 +1348,7 @@ async def test_a_failed_generation_toast_bounds_a_long_or_multiline_provider_rea
         assert kwargs.get("markup") is False
 
         assert "\n" not in message, (
-            "a multi-line provider dump must never reach the toast as "
-            "multiple lines"
+            "a multi-line provider dump must never reach the toast as multiple lines"
         )
         assert len(message) < 400, (
             f"the toast must stay a short, bounded line, not echo the "
@@ -1382,8 +1383,7 @@ async def test_the_provider_is_visible_before_generating():
         scope_note = screen.query_one("#artifacts-scope-note", Static)
         painted = str(scope_note.renderable)
         assert pane.default_provider_display in painted, (
-            f"the always-visible scope line must name the provider -- got "
-            f"{painted!r}"
+            f"the always-visible scope line must name the provider -- got {painted!r}"
         )
 
 
@@ -1551,7 +1551,9 @@ async def test_the_list_the_button_and_the_body_are_all_on_screen(size, monkeypa
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
-    long_body = "\n\n".join(f"Paragraph {index} of the briefing." for index in range(40))
+    long_body = "\n\n".join(
+        f"Paragraph {index} of the briefing." for index in range(40)
+    )
     _use_fake_chat(monkeypatch, _FakeChat(reply=long_body))
 
     async with _open_artifacts(app, watchlist_id, size=size, visual=True) as (
@@ -2315,12 +2317,10 @@ async def test_the_kill_switch_off_disables_the_cadence_select_and_states_schedu
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         cadence_select = pane.query_one("#artifacts-cadence-select", Select)
         assert cadence_select.disabled is True, (
-            "the flag being off must disable the cadence picker, not "
-            "merely explain it"
+            "the flag being off must disable the cadence picker, not merely explain it"
         )
         assert cadence_select.value == 43_200, (
-            "the stored cadence must still be shown, inert, never silently "
-            "cleared"
+            "the stored cadence must still be shown, inert, never silently cleared"
         )
         assert "off for this app" in pane.scope_label
         assert "scheduled every 12 hours while the app is open" not in pane.scope_label
@@ -2403,8 +2403,7 @@ async def test_every_24_hours_receipt_is_painted_in_each_attention_state(
             "get_cli_setting",
             lambda section, key, default=None: (
                 False
-                if section == "scheduling"
-                and key == "briefing_schedules_enabled"
+                if section == "scheduling" and key == "briefing_schedules_enabled"
                 else default
             ),
         )
@@ -2465,8 +2464,7 @@ def test_cadence_scope_phrase_states_scheduling_is_off_when_the_kill_switch_is_o
     # The flag defaults to `True`, so every pre-task-1812 caller (and every
     # OTHER existing test of this function) reads unchanged.
     assert (
-        cadence_scope_phrase(43_200)
-        == "scheduled every 12 hours while the app is open"
+        cadence_scope_phrase(43_200) == "scheduled every 12 hours while the app is open"
     )
 
 
@@ -2711,8 +2709,7 @@ async def test_casting_refuses_before_dispatch_when_the_default_preset_is_dangli
         # drops the row.
         assert screen._briefing_default_preset_id == preset_id
         assert all(
-            preset.get("id") != preset_id
-            for preset in screen._loaded_briefing_presets
+            preset.get("id") != preset_id for preset in screen._loaded_briefing_presets
         )
 
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
@@ -3115,7 +3112,8 @@ async def test_the_briefings_table_keeps_at_least_three_usable_rows(monkeypatch)
     ):
         briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
         _use_fake_cast_chat(
-            monkeypatch, _FakeChat(reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}]))
+            monkeypatch,
+            _FakeChat(reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}])),
         )
         await _press_cast(screen, pilot, app, briefing_id)
 
@@ -3160,7 +3158,8 @@ async def test_switching_the_selected_briefing_clears_stale_scripts_before_the_r
         # First briefing, with a real cast script attached to it.
         first_id = await _prepare_cast(screen, pilot, app, watchlist_id)
         _use_fake_cast_chat(
-            monkeypatch, _FakeChat(reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}]))
+            monkeypatch,
+            _FakeChat(reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}])),
         )
         await _press_cast(screen, pilot, app, first_id)
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
@@ -3241,10 +3240,16 @@ async def test_a_complete_briefings_citations_table_lists_each_cited_id_with_its
     cited = _seeded_item_rows(app)[0]
     _use_fake_chat(
         monkeypatch,
-        _FakeChat(reply=f"## This week\n\n{cited['title']} happened [item {cited['id']}].\n"),
+        _FakeChat(
+            reply=f"## This week\n\n{cited['title']} happened [item {cited['id']}].\n"
+        ),
     )
 
-    async with _open_artifacts(app, watchlist_id, visual=True) as (screen, pilot, _host):
+    async with _open_artifacts(app, watchlist_id, visual=True) as (
+        screen,
+        pilot,
+        _host,
+    ):
         await _press_generate(screen, pilot, app, watchlist_id)
         # `_press_generate` only waits for the briefings TABLE's row count to
         # agree with the database -- but setting `pane.selected_briefing`
@@ -3297,7 +3302,11 @@ async def test_a_citation_to_a_pruned_item_degrades(monkeypatch):
         _FakeChat(reply=f"## This week\n\nSomething happened [item {pruned_id}].\n"),
     )
 
-    async with _open_artifacts(app, watchlist_id, visual=True) as (screen, pilot, _host):
+    async with _open_artifacts(app, watchlist_id, visual=True) as (
+        screen,
+        pilot,
+        _host,
+    ):
         await _press_generate(screen, pilot, app, watchlist_id)
         # Settle the `BriefingSelected` reload cascade -- see the comment on
         # the identical call in `test_a_complete_briefings_citations_table_
@@ -3363,10 +3372,16 @@ async def test_activating_an_available_citation_opens_it_in_the_reader_and_marks
     assert db.get_item_status(cited["id"]) == "new", "fixture precondition"
     _use_fake_chat(
         monkeypatch,
-        _FakeChat(reply=f"## This week\n\n{cited['title']} happened [item {cited['id']}].\n"),
+        _FakeChat(
+            reply=f"## This week\n\n{cited['title']} happened [item {cited['id']}].\n"
+        ),
     )
 
-    async with _open_artifacts(app, watchlist_id, visual=True) as (screen, pilot, _host):
+    async with _open_artifacts(app, watchlist_id, visual=True) as (
+        screen,
+        pilot,
+        _host,
+    ):
         await _press_generate(screen, pilot, app, watchlist_id)
         # Settle the `BriefingSelected` reload cascade -- see the comment on
         # the identical call in `test_a_complete_briefings_citations_table_
@@ -3416,7 +3431,9 @@ async def test_activating_an_available_citation_opens_it_in_the_reader_and_marks
 
 
 @pytest.mark.asyncio
-async def test_keyboard_browsing_the_citations_table_does_not_activate_a_row(monkeypatch):
+async def test_keyboard_browsing_the_citations_table_does_not_activate_a_row(
+    monkeypatch,
+):
     """Review fix round 1 (Important), confirmed live by the reviewer:
     focusing the citations table and pressing an arrow key must not
     activate anything. `highlight_is_user_driven` (`table_selection.py`)
@@ -3440,7 +3457,11 @@ async def test_keyboard_browsing_the_citations_table_does_not_activate_a_row(mon
     )
     _use_fake_chat(monkeypatch, _FakeChat(reply=body))
 
-    async with _open_artifacts(app, watchlist_id, visual=True) as (screen, pilot, _host):
+    async with _open_artifacts(app, watchlist_id, visual=True) as (
+        screen,
+        pilot,
+        _host,
+    ):
         await _press_generate(screen, pilot, app, watchlist_id)
         # Settle the `BriefingSelected` reload cascade -- see the comment on
         # the identical call in `test_a_complete_briefings_citations_table_
@@ -3497,10 +3518,16 @@ async def test_pressing_enter_on_a_citation_activates_it_through_the_real_table(
     cited = _seeded_item_rows(app)[0]
     _use_fake_chat(
         monkeypatch,
-        _FakeChat(reply=f"## This week\n\n{cited['title']} happened [item {cited['id']}].\n"),
+        _FakeChat(
+            reply=f"## This week\n\n{cited['title']} happened [item {cited['id']}].\n"
+        ),
     )
 
-    async with _open_artifacts(app, watchlist_id, visual=True) as (screen, pilot, _host):
+    async with _open_artifacts(app, watchlist_id, visual=True) as (
+        screen,
+        pilot,
+        _host,
+    ):
         await _press_generate(screen, pilot, app, watchlist_id)
         await screen._load_briefings()
         await pilot.pause()
@@ -3554,7 +3581,9 @@ async def test_citations_do_not_shrink_the_briefings_table_below_its_pinned_mini
     cited = _seeded_item_rows(app)[0]
     _use_fake_chat(
         monkeypatch,
-        _FakeChat(reply=f"## This week\n\n{cited['title']} happened [item {cited['id']}].\n"),
+        _FakeChat(
+            reply=f"## This week\n\n{cited['title']} happened [item {cited['id']}].\n"
+        ),
     )
 
     async with _open_artifacts(app, watchlist_id, visual=True) as (
@@ -3564,7 +3593,8 @@ async def test_citations_do_not_shrink_the_briefings_table_below_its_pinned_mini
     ):
         briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
         _use_fake_cast_chat(
-            monkeypatch, _FakeChat(reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}]))
+            monkeypatch,
+            _FakeChat(reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}])),
         )
         await _press_cast(screen, pilot, app, briefing_id)
 
@@ -3723,7 +3753,9 @@ def _seed_complete_script(app, watchlist_id, *, roster=None) -> tuple[int, int]:
     return briefing_id, script_id
 
 
-async def _select_briefing_and_script(screen, pilot, host, briefing_id, script_id) -> None:
+async def _select_briefing_and_script(
+    screen, pilot, host, briefing_id, script_id
+) -> None:
     """Select a briefing then its script through the real pane, waiting
     for both of the `_load_briefings` reloads either selection dispatches
     (`handle_briefing_selected`/`handle_script_selected`) to actually land.
@@ -3848,9 +3880,7 @@ async def test_synthesizing_a_non_complete_script_refuses_naming_the_status():
         assert app.notify.called, "a refusal must be visible, not silent"
         args, kwargs = app.notify.call_args
         message = args[0] if args else str(kwargs.get("message", ""))
-        assert "failed" in message, (
-            "the toast must name the script's actual status"
-        )
+        assert "failed" in message, "the toast must name the script's actual status"
         assert kwargs.get("markup") is False
         assert db.list_briefing_audio(script_id) == [], (
             "a pre-flight refusal must never write a row"
@@ -4094,8 +4124,7 @@ async def test_a_database_error_during_synthesis_does_not_exit_the_app(monkeypat
             "the in-flight guard must clear even when synthesis raises"
         )
         assert db.list_briefing_audio(script_id) == [], (
-            "a pre-flight database error must not leave a `generating` "
-            "row behind"
+            "a pre-flight database error must not leave a `generating` row behind"
         )
 
         # The guard is genuinely re-armed. Asserted on the SERVICE, not on
@@ -4335,9 +4364,7 @@ def _seed_briefing_with_three_script_audio_states(app, watchlist_id) -> dict[str
     failed_audio_id = db.create_briefing_audio(
         failed_script_id, voice_snapshot_json="[]"
     )
-    db.update_briefing_audio(
-        failed_audio_id, status="failed", error="synthesis failed"
-    )
+    db.update_briefing_audio(failed_audio_id, status="failed", error="synthesis failed")
 
     none_script_id = _script("No audio")
 
@@ -4598,8 +4625,7 @@ async def test_stop_does_not_silence_a_different_currently_playing_file(monkeypa
         screen.handle_stop_audio_requested(StopAudioRequested())
 
         assert fake_player.stopped is False, (
-            "Stop must not touch a DIFFERENT file the player is currently "
-            "playing"
+            "Stop must not touch a DIFFERENT file the player is currently playing"
         )
 
 
@@ -4723,7 +4749,9 @@ def test_audio_file_path_is_safe_rejects_a_path_outside_the_audio_dir(
     assert audio_file_path_is_safe("/etc/passwd") is False
 
 
-def test_audio_file_path_is_safe_rejects_a_traversal_path(monkeypatch, tmp_path) -> None:
+def test_audio_file_path_is_safe_rejects_a_traversal_path(
+    monkeypatch, tmp_path
+) -> None:
     """A path that is textually rooted at `briefing_audio_dir()` but
     escapes it via `..` segments must still be rejected -- a naive
     "starts with the audio dir string" check would wrongly accept this,
@@ -4774,7 +4802,9 @@ def test_audio_file_is_playable_never_probes_the_filesystem_for_an_unsafe_path(
     assert calls == [], "an unsafe path must never be probed with .exists()"
 
 
-def test_audio_file_is_playable_true_for_a_real_in_dir_file(monkeypatch, tmp_path) -> None:
+def test_audio_file_is_playable_true_for_a_real_in_dir_file(
+    monkeypatch, tmp_path
+) -> None:
     """Positive control: `_audio_file_is_playable` still works for the
     ordinary case once path validation is in place."""
     _patch_audio_dir(monkeypatch, tmp_path)
@@ -4819,8 +4849,7 @@ async def test_handle_play_audio_requested_refuses_an_unsafe_path_with_no_probe_
 
         assert play_calls == [], "an unsafe path must never reach the player"
         assert not app.notify.called, (
-            "an unsafe path is treated exactly like a missing file: silent, "
-            "not a toast"
+            "an unsafe path is treated exactly like a missing file: silent, not a toast"
         )
 
 
@@ -4900,23 +4929,23 @@ async def test_export_button_is_disabled_without_a_complete_selection():
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         export_button = pane.query_one("#artifacts-export-button", Button)
         assert export_button.disabled is True, "no selection -> disabled"
-        assert export_button.compact, "a bordered button costs 3 rows in a height:1 strip"
+        assert export_button.compact, (
+            "a bordered button costs 3 rows in a height:1 strip"
+        )
 
         pane.select_briefing_by_id(str(failed_id))
         await host.workers.wait_for_complete()
         await pilot.pause()
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
-        assert (
-            pane.query_one("#artifacts-export-button", Button).disabled is True
-        ), "a failed briefing has no body worth exporting"
+        assert pane.query_one("#artifacts-export-button", Button).disabled is True, (
+            "a failed briefing has no body worth exporting"
+        )
 
         pane.select_briefing_by_id(str(complete_id))
         await host.workers.wait_for_complete()
         await pilot.pause()
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
-        assert (
-            pane.query_one("#artifacts-export-button", Button).disabled is False
-        )
+        assert pane.query_one("#artifacts-export-button", Button).disabled is False
 
 
 @pytest.mark.asyncio
@@ -4972,7 +5001,9 @@ async def test_pressing_export_pushes_a_file_save_dialog_seeded_with_the_default
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resolve_via", ["a real path", "cancel"])
 async def test_a_second_export_press_while_the_dialog_is_open_is_refused_then_rearms(
-    monkeypatch, tmp_path, resolve_via,
+    monkeypatch,
+    tmp_path,
+    resolve_via,
 ):
     """Review round 1 (Important #1): an earlier draft argued Textual
     "refuses to stack" a second `FileSave`. A live repro of two rapid
@@ -5104,7 +5135,9 @@ async def test_write_briefing_export_file_cancelled_writes_nothing():
 
 
 @pytest.mark.asyncio
-async def test_write_briefing_export_file_rejects_an_invalid_path(monkeypatch, tmp_path):
+async def test_write_briefing_export_file_rejects_an_invalid_path(
+    monkeypatch, tmp_path
+):
     """A `FileSave`-returned path that fails `validate_path_simple` is
     rejected with a quiet warning toast -- no write, no crash -- rather
     than trusting the dialog's returned path unconditionally.
@@ -5322,9 +5355,7 @@ async def test_export_feed_button_is_disabled_without_any_complete_audio_episode
         await pilot.pause()
 
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
-        assert (
-            pane.query_one("#artifacts-export-feed-button", Button).disabled is False
-        )
+        assert pane.query_one("#artifacts-export-feed-button", Button).disabled is False
 
 
 @pytest.mark.asyncio
@@ -5358,8 +5389,7 @@ async def test_export_feed_button_is_visible_and_enabled_with_no_script_selected
         assert pane.selected_script is None
         export_feed_button = pane.query_one("#artifacts-export-feed-button", Button)
         assert export_feed_button.disabled is False, (
-            "Export Feed must be reachable without selecting a briefing "
-            "or script first"
+            "Export Feed must be reachable without selecting a briefing or script first"
         )
 
 
@@ -5443,7 +5473,9 @@ async def test_pressing_export_feed_pushes_a_select_directory_dialog(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resolve_via", ["a real path", "cancel"])
 async def test_a_second_export_feed_press_while_the_dialog_is_open_is_refused_then_rearms(
-    monkeypatch, tmp_path, resolve_via,
+    monkeypatch,
+    tmp_path,
+    resolve_via,
 ):
     """Mirrors Task 1's own `test_a_second_export_press_while_the_dialog_
     is_open_is_refused_then_rearms`: two presses in one tick must push
@@ -5657,9 +5689,7 @@ async def test_export_feed_directory_partial_export_caps_inlined_reasons(
     # file no longer exists" reason, naming a distinct `audio_id`.
     for index in range(5):
         missing_file = briefing_audio.briefing_audio_dir() / f"missing-{index}.wav"
-        missing_audio_id = db.create_briefing_audio(
-            script_id, voice_snapshot_json="[]"
-        )
+        missing_audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
         db.update_briefing_audio(
             missing_audio_id,
             status="complete",
@@ -5852,7 +5882,9 @@ async def test_serve_starts_disabled_and_stop_is_absent_with_nothing_exported_or
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         serve_button = pane.query_one("#artifacts-serve-feed-button", Button)
         assert serve_button.disabled is True, "nothing exported yet -> disabled"
-        assert serve_button.compact, "a bordered button costs 3 rows in a height:1 strip"
+        assert serve_button.compact, (
+            "a bordered button costs 3 rows in a height:1 strip"
+        )
         assert not pane.query("#artifacts-stop-feed-button"), (
             "nothing running -> Stop Serving has nothing to explain by "
             "staying visible, so it is not rendered at all"
@@ -6121,8 +6153,7 @@ async def test_keep_button_disabled_without_a_complete_selection_or_chachanotes(
         await pilot.pause()
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         assert pane.query_one("#artifacts-keep-button", Button).disabled is True, (
-            "a complete selection alone is not enough without a ChaChaNotes "
-            "handle"
+            "a complete selection alone is not enough without a ChaChaNotes handle"
         )
 
         chacha_db = _chachanotes_db(tmp_path)
@@ -6136,9 +6167,7 @@ async def test_keep_button_disabled_without_a_complete_selection_or_chachanotes(
             await screen._load_briefings()
             await pilot.pause()
             pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
-            assert (
-                pane.query_one("#artifacts-keep-button", Button).disabled is False
-            )
+            assert pane.query_one("#artifacts-keep-button", Button).disabled is False
         finally:
             chacha_db.close_connection()
 
@@ -6400,9 +6429,7 @@ async def test_kept_briefings_button_enabled_regardless_of_watchlist_scope(tmp_p
             assert (
                 pane.query_one("#artifacts-generate-button", Button).disabled is True
             ), "the fixture must have no watchlist in scope"
-            kept_button = pane.query_one(
-                "#artifacts-kept-briefings-button", Button
-            )
+            kept_button = pane.query_one("#artifacts-kept-briefings-button", Button)
             assert kept_button.disabled is False
     finally:
         chacha_db.close_connection()

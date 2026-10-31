@@ -1,0 +1,12 @@
+[
+  "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+  "-m",
+  "pytest",
+  "Tests/UI/test_study_quiz_start_responsiveness.py",
+  "Tests/UI/test_study_quiz_attempt_retry.py",
+  "Tests/UI/test_study_screen.py::test_quizzes_controller_preflights_start_attempt_before_scope_service_dispatch",
+  "-q",
+  "--tb=short",
+  "--basetemp=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\task2-green\\pytest",
+  "--junitxml=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\task2-green\\result.xml"
+]

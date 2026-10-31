@@ -1,0 +1,264 @@
+--- Tests/CI/test_derived_artifacts_workflow.py
++++ Tests/CI/test_derived_artifacts_workflow.py
+@@ -254,9 +254,9 @@
+     checker_steps = [step for step in _steps() if "python " in step.get("run", "")]
+     assert len(checker_steps) == len(CHECKERS)
+     for step in checker_steps:
+-        assert "cancelled()" in str(
+-            step.get("if", "")
+-        ), f"step {step.get('name')!r} would be skipped after an earlier failure"
++        assert "cancelled()" in str(step.get("if", "")), (
++            f"step {step.get('name')!r} would be skipped after an earlier failure"
++        )
+ 
+ 
+ def test_job_installs_nothing():
+
+--- Tests/UI/test_console_composer_cursor.py
++++ Tests/UI/test_console_composer_cursor.py
+@@ -6,7 +6,6 @@
+ and word boundaries.
+ """
+ 
+-
+ import pytest
+ from rich.cells import cell_len
+ from textual.screen import ModalScreen
+
+--- Tests/UI/test_console_environment_controller.py
++++ Tests/UI/test_console_environment_controller.py
+@@ -751,8 +751,7 @@
+ 
+ def _unbound_landings(fx) -> list:
+     return [
+-        s for s in fx.snapshots
+-        if s.git.availability is EnvSourceAvailability.UNBOUND
++        s for s in fx.snapshots if s.git.availability is EnvSourceAvailability.UNBOUND
+     ]
+ 
+ 
+
+--- Tests/UI/test_console_runtime_ownership.py
++++ Tests/UI/test_console_runtime_ownership.py
+@@ -847,10 +847,12 @@
+     view = _WeakView(
+         {
+             "project_project_instruction_binding": lambda decision_id, _options: (
+-                decision_ids.append(decision_id),
+-                first_presented.set(),
++                (
++                    decision_ids.append(decision_id),
++                    first_presented.set(),
++                )
++                and True
+             )
+-            and True
+         }
+     )
+     generation = runtime.attach_view(view)
+@@ -871,10 +873,12 @@
+     successor = _WeakView(
+         {
+             "project_project_instruction_binding": lambda decision_id, _options: (
+-                decision_ids.append(decision_id),
+-                second_presented.set(),
++                (
++                    decision_ids.append(decision_id),
++                    second_presented.set(),
++                )
++                and True
+             )
+-            and True
+         }
+     )
+     successor_generation = runtime.attach_view(successor)
+@@ -888,8 +892,7 @@
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_project_binding_selection_closes_when_owning_session_closes(
+-):
++async def test_project_binding_selection_closes_when_owning_session_closes():
+     sessions = [SimpleNamespace(id="session-a")]
+     runtime = ConsoleRuntime(SimpleNamespace())
+     runtime._chat_store = SimpleNamespace(
+@@ -974,10 +977,12 @@
+     view = _WeakView(
+         {
+             "project_project_instruction_dispatch": lambda decision_id, _notice: (
+-                decision_ids.append(decision_id),
+-                first_projected.set(),
++                (
++                    decision_ids.append(decision_id),
++                    first_projected.set(),
++                )
++                and True
+             )
+-            and True
+         }
+     )
+     generation = runtime.attach_view(view)
+@@ -1003,10 +1008,12 @@
+     successor = _WeakView(
+         {
+             "project_project_instruction_dispatch": lambda decision_id, _notice: (
+-                decision_ids.append(decision_id),
+-                second_projected.set(),
++                (
++                    decision_ids.append(decision_id),
++                    second_projected.set(),
++                )
++                and True
+             )
+-            and True
+         }
+     )
+     successor_generation = runtime.attach_view(successor)
+@@ -1179,10 +1186,12 @@
+     view = _WeakView(
+         {
+             "project_project_instruction_binding": lambda decision_id, _options: (
+-                decision_ids.append(decision_id),
+-                projected.set(),
+-            )
+-            and True,
++                (
++                    decision_ids.append(decision_id),
++                    projected.set(),
++                )
++                and True
++            ),
+             "dismiss_project_instruction_decision": (
+                 lambda decision_id: dismissed.append(decision_id) or True
+             ),
+@@ -1225,10 +1234,12 @@
+     view = _WeakView(
+         {
+             "project_project_instruction_binding": lambda decision_id, options: (
+-                projections.append((decision_id, options[0].binding_id)),
+-                projected.set(),
+-            )
+-            and True,
++                (
++                    projections.append((decision_id, options[0].binding_id)),
++                    projected.set(),
++                )
++                and True
++            ),
+             "dismiss_project_instruction_decision": (
+                 lambda decision_id: dismissed.append(decision_id) or True
+             ),
+@@ -2293,6 +2304,7 @@
+ 
+         reached: list[tuple[str, ConsoleRunStatus]] = []
+         original = chat._notify_console_run_outcome
++
+         def broken_dead_view_notification(session_id, status):
+             reached.append((session_id, status))
+             raise RuntimeError("injected dead-view notification failure")
+
+--- tldw_chatbook/Chat/console_chat_controller.py
++++ tldw_chatbook/Chat/console_chat_controller.py
+@@ -8291,8 +8291,7 @@
+             return self._cancel_temporary_capture_preparation(preparation)
+         if (
+             preparation.state is ConsoleTurnPreparationState.PAUSED
+-            and preparation.pause_kind
+-            is ConsolePreparationPauseKind.CONTEXT_COMPACTION
++            and preparation.pause_kind is ConsolePreparationPauseKind.CONTEXT_COMPACTION
+         ):
+             return self._cancel_context_compaction_hold(preparation)
+         if (
+@@ -8414,7 +8413,10 @@
+     def _consume_compaction_hold_answer(self, preparation_id: str | None) -> bool:
+         """Whether this send's compaction hold was answered; clears it."""
+ 
+-        if preparation_id is None or preparation_id not in self._compaction_hold_answered:
++        if (
++            preparation_id is None
++            or preparation_id not in self._compaction_hold_answered
++        ):
+             return False
+         self._compaction_hold_answered.discard(preparation_id)
+         return True
+@@ -8443,9 +8445,7 @@
+             return self._prepared_action_refusal(
+                 self._preparation_by_id(preparation_id)
+             )
+-        compacted, visible_copy = await self.compact_context_now(
+-            preparation.session_id
+-        )
++        compacted, visible_copy = await self.compact_context_now(preparation.session_id)
+         if not compacted:
+             return self._prepared_action_refusal(
+                 self._preparation_by_id(preparation_id), visible_copy
+@@ -8454,9 +8454,7 @@
+         # even if the summary leaves it near the threshold.
+         return await self._resume_compaction_hold(preparation_id)
+ 
+-    async def send_without_compacting(
+-        self, preparation_id: str
+-    ) -> ConsoleSubmitResult:
++    async def send_without_compacting(self, preparation_id: str) -> ConsoleSubmitResult:
+         """Send the held message once without compacting the chat.
+ 
+         Args:
+@@ -8472,9 +8470,7 @@
+             )
+         return await self._resume_compaction_hold(preparation_id)
+ 
+-    async def _resume_compaction_hold(
+-        self, preparation_id: str
+-    ) -> ConsoleSubmitResult:
++    async def _resume_compaction_hold(self, preparation_id: str) -> ConsoleSubmitResult:
+         preparation = self._held_for_compaction(preparation_id)
+         if preparation is None:
+             return self._prepared_action_refusal(
+@@ -29296,6 +29292,3 @@
+             # of one lost race.
+             visible_copy=visible_copy,
+         )
+-
+-
+-
+
+--- tldw_chatbook/Widgets/Chat_Widgets/chat_question_card.py
++++ tldw_chatbook/Widgets/Chat_Widgets/chat_question_card.py
+@@ -311,7 +311,9 @@
+         remaining = self._remaining_seconds()
+         if remaining is None:
+             self._stop_deadline_timer()
+-            label.update(format_question_deadline((self._payload or {}).get("timeout_seconds")))
++            label.update(
++                format_question_deadline((self._payload or {}).get("timeout_seconds"))
++            )
+             return
+         label.update(format_question_deadline(remaining) or "Auto-continues now")
+         if remaining <= 0:
+@@ -338,7 +340,9 @@
+         description = str(option.get("description") or "")
+         return f"{label} — {description}" if description else label
+ 
+-    def _build_section(self, key: str, index: int, question: dict[str, Any]) -> Vertical:
++    def _build_section(
++        self, key: str, index: int, question: dict[str, Any]
++    ) -> Vertical:
+         options = question.get("options") or []
+         picker: RadioSet | SelectionList
+         if question.get("multiSelect"):
+@@ -355,8 +359,12 @@
+                 classes="question-options",
+             )
+         return Vertical(
+-            Static(str(question.get("header", "")), classes="question-header", markup=False),
+-            Static(str(question.get("question", "")), classes="question-text", markup=False),
++            Static(
++                str(question.get("header", "")), classes="question-header", markup=False
++            ),
++            Static(
++                str(question.get("question", "")), classes="question-text", markup=False
++            ),
+             picker,
+             Input(placeholder="Other…", classes="question-other"),
+             id=f"question-{key}-{index}",
+

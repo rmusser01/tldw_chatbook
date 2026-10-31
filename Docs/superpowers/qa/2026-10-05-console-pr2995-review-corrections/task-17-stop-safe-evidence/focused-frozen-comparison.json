@@ -1,0 +1,62 @@
+{
+  "current_head": "06cfe2f6a30236dcd8f81893ebf49bc3d0b78036",
+  "task14_head": "3e769facf8e72dd7fbace382b900f9b5616d2339",
+  "task16_head": "6cd44c72ffef6d19fca21eab3a05bdcade7c1811",
+  "paths": {
+    "Tests/UI/test_console_runtime_ownership.py": {
+      "current_sha256": "48bfe2f95a6fad7b9be0920e210b894ba8ccb8264267fb08762867a81ca98932",
+      "task14_sha256": "48bfe2f95a6fad7b9be0920e210b894ba8ccb8264267fb08762867a81ca98932",
+      "task14_exact_match": true,
+      "task16_sha256": "48bfe2f95a6fad7b9be0920e210b894ba8ccb8264267fb08762867a81ca98932",
+      "task16_exact_match": true
+    },
+    "tldw_chatbook/Chat/console_chat_start.py": {
+      "current_sha256": "3d628d4394da0ecad3a4d04166623608116e709a434dab204b13ab71e6b5b2e0",
+      "task14_sha256": "d0cd0a4da8dd3a4cd2f185b2323d26a3517a975bc2860cf815f8437cea300c0a",
+      "task14_exact_match": false,
+      "task16_sha256": "3d628d4394da0ecad3a4d04166623608116e709a434dab204b13ab71e6b5b2e0",
+      "task16_exact_match": true
+    },
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "current_sha256": "5d9df3acc6ff2caa5d03e425d13f8ff23f6109c0c78300aa7a36dcae53b26c94",
+      "task14_sha256": "5d9df3acc6ff2caa5d03e425d13f8ff23f6109c0c78300aa7a36dcae53b26c94",
+      "task14_exact_match": true,
+      "task16_sha256": "5d9df3acc6ff2caa5d03e425d13f8ff23f6109c0c78300aa7a36dcae53b26c94",
+      "task16_exact_match": true
+    },
+    "tldw_chatbook/UI/Screens/chat_screen.py": {
+      "current_sha256": "056ecad8b39f7c9d5e3869768884b336f02120269779297fd5f5a39492762be2",
+      "task14_sha256": "056ecad8b39f7c9d5e3869768884b336f02120269779297fd5f5a39492762be2",
+      "task14_exact_match": true,
+      "task16_sha256": "056ecad8b39f7c9d5e3869768884b336f02120269779297fd5f5a39492762be2",
+      "task16_exact_match": true
+    },
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": {
+      "current_sha256": "7186f5a96ac30cb92bdb8ed619f644dba5c216ca1e41706725a450f175e8e700",
+      "task14_sha256": "7186f5a96ac30cb92bdb8ed619f644dba5c216ca1e41706725a450f175e8e700",
+      "task14_exact_match": true,
+      "task16_sha256": "7186f5a96ac30cb92bdb8ed619f644dba5c216ca1e41706725a450f175e8e700",
+      "task16_exact_match": true
+    }
+  },
+  "start_path_method_AST_matches": {
+    "task14": {
+      "start": true,
+      "accept": true,
+      "confirm_receipt": true,
+      "run_provider_worker": true,
+      "is_accepted": true,
+      "authorizes": true
+    },
+    "task16": {
+      "start": true,
+      "accept": true,
+      "confirm_receipt": true,
+      "run_provider_worker": true,
+      "is_accepted": true,
+      "authorizes": true
+    }
+  },
+  "incoming_origin_dev": "8c4dfe59a243ce0cec8e131aff3935646c64b298",
+  "incoming_stop_path_touched": false
+}

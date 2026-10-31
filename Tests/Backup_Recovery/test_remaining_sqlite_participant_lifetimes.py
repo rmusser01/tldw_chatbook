@@ -19,6 +19,28 @@ from Tests.Backup_Recovery.test_participant_lifetimes import local_root
 CACHED = (EvalsDB, SubscriptionsDB, FileNotesReplica)
 FRESH = (NoteImportReceiptRepository, LocalKanbanService)
 
+pytestmark = pytest.mark.bootstrap_profile
+
+
+def native_owner(owner):
+    return owner._store if isinstance(owner, NoteImportReceiptRepository) else owner
+
+
+def source_participant(owner):
+    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+
+    return _repository_participant(native_owner(owner))
+
+
+def fresh_scope(owner):
+    # Receipt transactions now retain the shared Notes connection. The raw
+    # getter remains a finite fresh connection and owns these close controls.
+    if isinstance(owner, NoteImportReceiptRepository):
+        from contextlib import closing
+
+        return closing(owner._connect())
+    return scope(owner)
+
 
 def make(owner_type, path):
     return (
@@ -41,8 +63,9 @@ def get(owner):
 
 
 def close(owner):
-    if hasattr(owner, "close"):
-        owner.close()
+    source = native_owner(owner)
+    if hasattr(source, "close"):
+        source.close()
 
 
 @pytest.mark.parametrize("owner_type", CACHED)
@@ -101,7 +124,7 @@ def test_real_source_is_bound_to_installed_participant(tmp_path, owner_type):
 
     owner = make(owner_type, tmp_path / "store.sqlite")
     try:
-        participant = _repository_participant(owner)
+        participant = source_participant(owner)
         participant.close_admission()
         with pytest.raises(bootstrap.RecoveryRequired, match="storage_locally_paused"):
             if owner_type is FileNotesReplica:
@@ -119,7 +142,7 @@ def test_site_setup_source_refuses_paused_schema_before_allocation(tmp_path):
 
     owner = SiteConfigManager(str(tmp_path / "hybrid.sqlite"))
     try:
-        participant = _repository_participant(owner)
+        participant = source_participant(owner)
         participant.close_admission()
         with pytest.raises(bootstrap.RecoveryRequired, match="storage_locally_paused"):
             owner._initialize_site_configs()
@@ -149,7 +172,7 @@ def test_fixed_managed_scope_continues_but_new_raw_borrower_refuses(
     from tldw_chatbook.Backup_Recovery.participants import _repository_participant
 
     owner = make(owner_type, tmp_path / "scope.sqlite")
-    participant = _repository_participant(owner)
+    participant = source_participant(owner)
     try:
         with scope(owner) as native:
             participant.close_admission()
@@ -222,8 +245,11 @@ def test_fresh_transaction_closes_native_on_commit_and_rollback(tmp_path, owner_
     with scope(owner) as conn:
         conn.execute("CREATE TABLE phase6_result(value)")
         conn.execute("INSERT INTO phase6_result VALUES (42)")
-    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
-        conn.execute("SELECT 1")
+    if owner_type is NoteImportReceiptRepository:
+        assert conn.execute("SELECT 1").fetchone()[0] == 1
+    else:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            conn.execute("SELECT 1")
     with pytest.raises(ValueError, match="rollback"):
         with scope(owner) as conn:
             conn.execute("INSERT INTO phase6_result VALUES (43)")
@@ -232,6 +258,11 @@ def test_fresh_transaction_closes_native_on_commit_and_rollback(tmp_path, owner_
         assert [row[0] for row in conn.execute("SELECT value FROM phase6_result")] == [
             42
         ]
+
+    close(owner)
+    if owner_type is NoteImportReceiptRepository:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            conn.execute("SELECT 1")
 
 
 @pytest.mark.parametrize("owner_type", CACHED + FRESH)
@@ -245,14 +276,14 @@ def test_native_allocation_and_setup_races_retire_only_new_native(
 
     owner = make(owner_type, tmp_path / "race.sqlite")
     close(owner)
-    participant = _repository_participant(owner)
+    participant = source_participant(owner)
     if owner_type is SubscriptionsDB:
         target, name = BaseDB, "_get_connection"
     else:
         module = (
             "tldw_chatbook.Kanban_Interop.local_kanban_db"
             if owner_type is LocalKanbanService
-            else owner_type.__module__
+            else native_owner(owner).__class__.__module__
         )
         target, name = importlib.import_module(module), "connect_private_sqlite"
     original = getattr(target, name)
@@ -285,9 +316,12 @@ def test_native_allocation_and_setup_races_retire_only_new_native(
         )
         with pytest.raises(expected):
             native_get(owner)
-        assert len(allocated) == 1
-        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
-            allocated[0].execute("SELECT 1")
+        # Kanban may initialize its schema with a first finite connection.
+        # Every allocation from this paused attempt must positively retire.
+        assert allocated
+        for conn in allocated:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                conn.execute("SELECT 1")
     finally:
         for conn in allocated:
             conn.close()
@@ -383,7 +417,7 @@ def test_subscriptions_schema_tail_stays_in_original_scope(tmp_path, monkeypatch
     from tldw_chatbook.Backup_Recovery.participants import _repository_participant
 
     owner = SubscriptionsDB(tmp_path / "schema.sqlite")
-    participant = _repository_participant(owner)
+    participant = source_participant(owner)
     original = owner._ensure_watchlists_schema
 
     def tail(conn=None):
@@ -436,7 +470,7 @@ def test_actual_worker_retirement_and_escaped_native_reference(
     assert ready.wait(4)
     assert not errors
     owner = owners[0]
-    participant = _repository_participant(owner)
+    participant = source_participant(owner)
     participant.close_admission()
     child = launch(local_root / "admission", "maintenance", ("bootstrap.unbound",))
     try:
@@ -468,15 +502,15 @@ def test_separate_same_path_sources_cannot_steal_native_association(
     conn = native_get(left)
     try:
         with pytest.raises(bootstrap.RecoveryRequired, match="provenance"):
-            _register_core_connection(right, conn)
+            _register_core_connection(native_owner(right), conn)
         with scope(right) as native:
             assert native.execute("SELECT 42").fetchone()[0] == 42
         with scope(left):
-            _repository_participant(right).close_admission()
+            source_participant(right).close_admission()
             with pytest.raises(bootstrap.RecoveryRequired):
                 with scope(right):
                     pytest.fail("independent paused scope admitted")
-        _repository_participant(right).resume()
+        source_participant(right).resume()
     finally:
         if owner_type in FRESH:
             conn.close()
@@ -511,7 +545,7 @@ def test_memory_remains_ordinary_uninstalled_during_pause(tmp_path, owner_type):
     pause = storage._begin_local_pause()
     try:
         with pytest.raises(ValueError, match="not_installed"):
-            _repository_participant(owner)
+            source_participant(owner)
         if owner_type is NoteImportReceiptRepository:
             with pytest.raises(ValueError, match="memory is not allowed"):
                 with scope(owner):
@@ -552,7 +586,7 @@ def test_failed_fresh_native_close_keeps_real_maintenance_blocker(
     owner = make(owner_type, tmp_path / "close.sqlite")
     held = []
     with pytest.raises(sqlite3.OperationalError, match="injected close"):
-        with scope(owner) as conn:
+        with fresh_scope(owner) as conn:
             held.append((conn, conn.close))
             monkeypatch.setattr(
                 conn,
@@ -587,7 +621,7 @@ def test_site_setup_does_not_borrow_core_native_authority(tmp_path):
     path = tmp_path / "hybrid.sqlite"
     owner = SiteConfigManager(str(path))
     try:
-        setup = _repository_participant(owner)
+        setup = source_participant(owner)
         core = _repository_participant(owner.db)
         assert setup is not core and setup.path == core.path
         assert not setup.connections
@@ -632,7 +666,7 @@ names = {
  "tldw_chatbook.DB.Evals_DB": "EvalsDB",
  "tldw_chatbook.DB.Subscriptions_DB": "SubscriptionsDB",
  "tldw_chatbook.Notes.file_notes_replica": "FileNotesReplica",
- "tldw_chatbook.Notes.note_import_receipts": "NoteImportReceiptRepository",
+ "tldw_chatbook.Notes.notes_device_state_store": "NotesDeviceStateStore",
  "tldw_chatbook.Kanban_Interop.local_kanban_service": "LocalKanbanService",
 }
 class NoAddedSources(importlib.abc.MetaPathFinder):
@@ -648,7 +682,7 @@ for number, (module, name) in enumerate(names.items()):
  assert cls in _repository_types()
  path = Path(sys.argv[1]) / (str(number) + ".sqlite")
  owner = cls(db_path=path) if name == "LocalKanbanService" else cls(path)
- if name == "NoteImportReceiptRepository":
+ if name == "NotesDeviceStateStore":
   with owner.transaction() as conn: conn.execute("SELECT 1")
  if hasattr(owner, "close"): owner.close()
 assert "tldw_chatbook.Subscriptions.site_config_manager" not in sys.modules
@@ -744,11 +778,13 @@ assert not pause.drain(time.monotonic() + .02)
 print("uncertain-live", flush=True)
 sys.stdin.readline()
 """
+    error_log = tmp_path / "uncertain-directory-child.stderr.log"
+    error_stream = error_log.open("w")
     owner_process = subprocess.Popen(
         [sys.executable, "-c", script, str(tmp_path)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=error_stream,
         text=True,
     )
     try:
@@ -758,13 +794,15 @@ sys.stdin.readline()
         owner_process.stdin.write("exit\n")
         owner_process.stdin.flush()
         _, errors = owner_process.communicate(timeout=10)
-        assert owner_process.returncode == 0, errors
+        error_stream.flush()
+        assert owner_process.returncode == 0, error_log.read_text()
         assert line(child) == "entered"
         release(child)
     finally:
         if owner_process.poll() is None:
             owner_process.kill()
         owner_process.communicate(timeout=10)
+        error_stream.close()
 
 
 def test_subscriptions_cold_config_default_resolves_before_database_scope(
@@ -823,7 +861,7 @@ def test_subscription_pause_after_config_input_refuses_database_mutation(
     from tldw_chatbook.Backup_Recovery.participants import _repository_participant
 
     owner = SubscriptionsDB(tmp_path / "paused-input.sqlite")
-    participant = _repository_participant(owner)
+    participant = source_participant(owner)
 
     def input_value():
         participant.close_admission()
@@ -847,7 +885,7 @@ def test_file_notes_participant_uses_installed_semantic_owner(tmp_path):
 
     owner = FileNotesReplica(tmp_path / "replica.sqlite")
     try:
-        assert _repository_participant(owner).owner_id == "notes.file_notes"
+        assert source_participant(owner).owner_id == "notes.file_notes"
     finally:
         owner.close()
 
@@ -863,7 +901,7 @@ def test_kanban_source_pause_after_allocation_precedes_journal_mutation(
     with sqlite3.connect(path) as check:
         assert check.execute("PRAGMA journal_mode = DELETE").fetchone()[0] == "delete"
     check.close()
-    participant = _repository_participant(owner)
+    participant = source_participant(owner)
     original = local_kanban_db.connect_private_sqlite
     allocated = []
 

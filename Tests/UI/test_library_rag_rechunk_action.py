@@ -190,7 +190,9 @@ def _clean_guard_slots():
 @pytest.mark.asyncio
 async def test_control_renders_beside_report_line_and_hides_with_it(tmp_path):
     service = _FakeDiagnosticsScopeService(None)
-    app = _RechunkHost(_panel_state(), service, MediaDatabase(tmp_path / "m.db", client_id="t"))
+    app = _RechunkHost(
+        _panel_state(), service, MediaDatabase(tmp_path / "m.db", client_id="t")
+    )
     async with app.run_test() as pilot:
         # Report present -> the pair renders together.
         service.diagnostics_payload = {"legacy_chunk_report": REPORT_COPY}
@@ -339,9 +341,7 @@ async def test_second_rechunk_press_refused_first_run_survives():
         )
 
         # The first run SURVIVES the second press and completes.
-        await _wait_for_run_summary(
-            app, what="the surviving first run's summary"
-        )
+        await _wait_for_run_summary(app, what="the surviving first run's summary")
         assert not bulk_rag_slot_in_flight(RECHUNK_SLOT)
 
 
@@ -390,6 +390,7 @@ async def test_backfill_trigger_refuses_while_rechunk_runs(monkeypatch):
 
 # --- task-14 / spec AC 47: the control's design-token state contract -----
 
+
 def _rule_bodies(bundle_text: str, selector: str) -> list[str]:
     """Minimal CSS block reader (the guard-test idiom, e.g.
     test_non_obscuring_focus_contract.css_blocks)."""
@@ -416,9 +417,7 @@ def test_rechunk_control_class_defines_all_states_with_ds_tokens():
         "rest": _rule_bodies(text, ".library-rag-recovery-action"),
         "hover": _rule_bodies(text, ".library-rag-recovery-action:hover"),
         "focus": _rule_bodies(text, "Button.library-rag-recovery-action:focus"),
-        "disabled": _rule_bodies(
-            text, "Button.library-rag-recovery-action:disabled"
-        ),
+        "disabled": _rule_bodies(text, "Button.library-rag-recovery-action:disabled"),
     }
     for state, bodies in rules.items():
         assert bodies, f"missing {state} rule for .library-rag-recovery-action"

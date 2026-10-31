@@ -1097,9 +1097,16 @@ def build_hosted_chat_payload(
     if reasoning_effort is not None:
         toggle_key = thinking_toggle_key(record, resolution.model)
         if record.reasoning_effort:
-            payload[record.reasoning_effort_key or "reasoning_effort"] = (
-                _bounded_identifier(record, "reasoning effort", reasoning_effort)
-            )
+            level = _bounded_identifier(record, "reasoning effort", reasoning_effort)
+            level = record.reasoning_effort_map.get(level, level)
+            if (
+                record.reasoning_effort_values is not None
+                and level not in record.reasoning_effort_values
+            ):
+                raise bad_request(
+                    f"{record.display_name} does not accept that reasoning effort level."
+                )
+            payload[record.reasoning_effort_key or "reasoning_effort"] = level
         elif toggle_key is not None:
             # A boolean switch cannot pass an unknown level through for the
             # provider to reject, so validate against the shared set (Qodo).
@@ -1166,7 +1173,12 @@ def _normalize_messages(
             if call_id != pending_ids[0] or not isinstance(content, str):
                 raise bad_request(f"{display} tool result ordering is invalid.")
             pending_ids.pop(0)
-            result.append(deepcopy(dict(raw_message)))
+            # Tool-result messages carry exactly {role, tool_call_id,
+            # content}, and every leaf was validated immutable (role and
+            # tool_call_id equal validated strings, content a string), so
+            # a fresh shallow dict fully isolates the payload from the
+            # caller-owned message (perf remediation, wave 3).
+            result.append(dict(raw_message))
             continue
         if pending_ids:
             raise bad_request(f"{display} tool call batch is incomplete.")
@@ -1229,7 +1241,21 @@ def _normalize_tools(
         ):
             raise bad_request(f"{display} function tool is malformed.")
         names.add(name)
-        result.append(deepcopy(dict(raw_tool)))
+        # Fresh dicts at the type/function levels (name/description are
+        # validated strings); ``parameters`` is a caller-owned JSON schema
+        # whose leaves may nest arbitrarily, so exactly that key path
+        # keeps its deepcopy (perf remediation, wave 3 -- pinned by
+        # Tests/LLM_Calls/test_hosted_streaming_copy_tax.py).
+        result.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": function["description"],
+                    "parameters": deepcopy(parameters),
+                },
+            }
+        )
     return result
 
 
@@ -1666,6 +1692,7 @@ def normalize_hosted_provider_response(
             allowed_choice_keys=record.choice_allowances,
             allowed_message_keys=record.message_allowances,
             tolerant_top_level_extras=record.tolerant_response_extras,
+            allowed_tool_call_keys=record.tool_call_allowances,
         )
     except ChatProviderError:
         raise
@@ -1724,11 +1751,18 @@ class HostedProviderStream(Iterator[dict[str, Any]]):
     def __next__(self) -> dict[str, Any]:
         """Return the next visible chunk.
 
-        The underlying validated event is deep-copied and projected for
-        visibility: ``reasoning_content`` is stripped from deltas unless
-        the record's disposition is ``"displayable"``, and reasoning/
-        control frames carry an explicit empty ``content`` so generic
-        consumers do not render fallback diagnostics.
+        The underlying validated event is projected for visibility:
+        ``reasoning_content`` is stripped from deltas unless the record's
+        disposition is ``"displayable"``, and reasoning/control frames
+        carry an explicit empty ``content`` so generic consumers do not
+        render fallback diagnostics.
+
+        No copy is taken here: the boundary stream parses each SSE record
+        fresh and its ``_filtered_event`` chain already returns newly
+        allocated dicts at every level (validated immutable leaves), so
+        mutating the deltas below only touches this wrapper's own frame.
+        The isolation contract is pinned by
+        ``Tests/LLM_Calls/test_hosted_streaming_copy_tax.py``.
 
         Returns:
             One caller-visible stream event.
@@ -1738,7 +1772,7 @@ class HostedProviderStream(Iterator[dict[str, Any]]):
                 or state violation, propagated from the shared boundary.
             StopIteration: After the clean terminal frame.
         """
-        event = deepcopy(next(self._stream))
+        event = next(self._stream)
         for choice in event.get("choices", ()):
             if isinstance(choice, dict) and isinstance(choice.get("delta"), dict):
                 delta = choice["delta"]
@@ -2081,6 +2115,18 @@ def build_hosted_chat_handler(
     return chat_with_hosted_provider
 
 
+def _engine_read_timeout(record: ProviderRecord, configured: float) -> float:
+    """A self-hosted record's read timeout outlasts the first-token window.
+
+    TASK-34100.5 review (B-F1): see ``self_hosted_read_timeout``.
+    """
+    if record.classification != "local":
+        return configured
+    from tldw_chatbook.Chat.stream_stall_watchdog import self_hosted_read_timeout
+
+    return self_hosted_read_timeout(configured)
+
+
 def _send_hosted_chat_request(
     record: ProviderRecord,
     *,
@@ -2159,11 +2205,12 @@ def _send_hosted_chat_request(
                 provider=record.key,
                 base_url=resolution.base_url,
                 api_key=resolution.api_key,
-                timeout=resolution.timeout,
+                timeout=_engine_read_timeout(record, resolution.timeout),
                 retries=resolution.retries,
                 retry_delay=resolution.retry_delay,
                 auth_scheme=record.auth_scheme,
                 extra_headers=resolution.extra_headers,
+                display_name=record.display_name,
             ),
             route="chat/completions",
             payload=payload,

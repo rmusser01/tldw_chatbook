@@ -286,9 +286,7 @@ def combined_truncation(a: CellCapture, b: CellCapture) -> float:
     return pa[-1] + pb[-1]
 
 
-def resolve_probe(
-    cap: CellCapture, probe: str, *, ever_observed: bool
-) -> ProbeReading:
+def resolve_probe(cap: CellCapture, probe: str, *, ever_observed: bool) -> ProbeReading:
     """Read one probe out of a cell's top-K.
 
     Args:

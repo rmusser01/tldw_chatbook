@@ -1,0 +1,16 @@
+import pathlib,subprocess,json,hashlib,os,time,sys
+W=pathlib.Path('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook')
+S=W/'.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge'; O=S/'task-14-safe-evidence'
+P='/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python'
+R='/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff'
+BASE='f932709de8f552ebc78d719327569cc766ddb2f0'; PUB='b1efc37ae8f481c1df01e2f253d5878ba68e35a4'; OLD='a7d9bca5da7f0d6be95cb9c3b7ab81602987051c'; NEW='49206beea90d35ea9e6842ffa44e4b274db29d8a'
+def sha(b):return hashlib.sha256(b).hexdigest()
+def git(*a):return subprocess.check_output(['git','-c','gc.auto=0',*a],cwd=W)
+def dump(n,v):(O/n).write_text(json.dumps(v,indent=2)+'\n')
+def blob(r,p):return git('show',r+':'+p)
+def tree(r):return {x.split('\t',1)[1]:x.split('\t',1)[0].split()[2] for x in git('ls-tree','-r',r).decode().splitlines()}
+def snapshot():return {p:sha((W/p).read_bytes()) for p in git('ls-files','-z').decode().split('\0') if p and (p.startswith(('tldw_chatbook/','Tests/','scripts/')) or p in ('pytest.ini','pyproject.toml')) and (W/p).is_file()}
+def run(n,a,env_extra=None):
+ env=dict(os.environ,PYTHONPATH=str(W),**(env_extra or {}));before=snapshot();h=git('rev-parse','HEAD').decode().strip();dump(n+'-argv.json',{'argv':a,'cwd':str(W),'environment_override':{'PYTHONPATH':str(W),**(env_extra or {})},'recorded_before_execution':True,'head':h,'source_hashes':before});t=time.monotonic()
+ with (O/(n+'.log')).open('w') as f:r=subprocess.run(a,cwd=W,env=env,stdout=f,stderr=subprocess.STDOUT)
+ after=snapshot();v={'exit':r.returncode,'seconds':time.monotonic()-t,'head_before':h,'head_after':git('rev-parse','HEAD').decode().strip(),'source_hashes_stable':before==after,'changed_hashes':[p for p in before.keys()|after.keys() if before.get(p)!=after.get(p)]};dump(n+'-result.json',v);print(json.dumps(v));print((O/(n+'.log')).read_text()[-5500:]);return r.returncode

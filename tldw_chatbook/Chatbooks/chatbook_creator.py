@@ -45,7 +45,7 @@ from ..Chat.thinking_blocks import (
 )
 from ..config import load_console_library_migration_seed
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
-from ..DB.Client_Media_DB_v2 import MediaDatabase
+from ..DB.Client_Media_DB_v2 import MediaDatabase, fetch_keywords_for_media_batch
 from ..DB.Prompts_DB import PromptsDatabase
 from ..Prompt_Management.prompt_chatbook_record import encode_chatbook_prompt_record
 from ..STT.persistence import load_transcription_provenance_document
@@ -63,6 +63,13 @@ from .chatbook_models import (
     Relationship,
 )
 from tldw_chatbook.Utils.timestamps import utc_now_iso
+
+#: Ids per keyword batch read (``_read_keywords_in_slices``). Each reader
+#: binds one SQL variable per id and SQLite caps bound variables (32,766;
+#: 999 before 3.32), so a Library with more items than that used to fail
+#: the whole export on ``too many SQL variables`` (TASK-34000.19 fix round
+#: 1, I-2). Same figure as ``ChaChaNotes_DB._ID_LIST_BATCH_CAP``.
+_KEYWORD_READ_BATCH_CAP = 500
 
 CITATION_MESSAGE_EXPORT_KEYS = ("citation_validation", "evidence_bundle", "citations")
 MAX_CITATION_REPORT_SNIPPET_CHARS = 1000
@@ -499,7 +506,7 @@ class ChatbookCreator:
                     canvas_db.close_connection()
                 if canvas_archive is not None:
                     manifest.canvas_archive = canvas_archive
-                    manifest.version = ChatbookVersion.V3
+                    manifest.version = ChatbookVersion.V4
 
             # Write manifest
             manifest_path = work_dir / "manifest.json"
@@ -525,7 +532,7 @@ class ChatbookCreator:
                     work_dir,
                     output_path,
                     partial_path,
-                    deterministic=manifest.version is ChatbookVersion.V3,
+                    deterministic=manifest.version is ChatbookVersion.V4,
                 )
             except OSError as error:
                 # task-32251 AC#4, narrowed by review F6: ONLY the packaging
@@ -665,11 +672,13 @@ class ChatbookCreator:
             )
             return
 
-        db = own_database(CharactersRAGDB(
-            db_path,
-            "chatbook_creator",
-            console_library_migration_seed=load_console_library_migration_seed(),
-        ))
+        db = own_database(
+            CharactersRAGDB(
+                db_path,
+                "chatbook_creator",
+                console_library_migration_seed=load_console_library_migration_seed(),
+            )
+        )
         try:
             self._collect_conversations_with_database(
                 conversation_ids,
@@ -696,13 +705,22 @@ class ChatbookCreator:
 
         conversation_service, _, _ = build_local_citation_conversation_service(
             db,
-            sidecar_path=get_user_data_dir()
-            / "tldw_chatbook_chat_rag_context.json",
+            sidecar_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",
         )
         conv_dir = work_dir / "content" / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
         logger.info(
             f"ChatbookCreator._collect_conversations: Created conversations directory at {conv_dir}"
+        )
+        # TASK-34000.19 (L-04): one batch read of the active keyword
+        # membership for the whole selection -- ADR-057's shape for Prompts.
+        # It rides in the conversation's own JSON (``keywords``) and in the
+        # manifest item's ``tags``; a conversation with none carries ``[]``
+        # in both. The reader pre-seeds every requested id with ``[]`` and
+        # returns keyword ROW dicts, so the text is ``row["keyword"]``.
+        keywords_by_conversation = self._read_keywords_in_slices(
+            [str(conv_id) for conv_id in conversation_ids],
+            db.get_keywords_for_conversations,
         )
 
         total = len(conversation_ids)
@@ -801,6 +819,10 @@ class ChatbookCreator:
                     if active_leaf is not None
                     else None,
                     "messages": exported_messages,
+                    "keywords": [
+                        row["keyword"]
+                        for row in keywords_by_conversation.get(str(conv_id), [])
+                    ],
                 }
                 conv_data["selected_path_message_ids"] = self._selected_path_ids(
                     exported_messages,
@@ -844,6 +866,7 @@ class ChatbookCreator:
                         title=title,
                         created_at=datetime.fromisoformat(conv_data["created_at"]),
                         updated_at=datetime.fromisoformat(conv_data["updated_at"]),
+                        tags=list(conv_data["keywords"]),
                         metadata=citation_metadata,
                         file_path=f"content/conversations/{conv_file.name}",
                     )
@@ -867,6 +890,45 @@ class ChatbookCreator:
     # Messages per get_attachments_for_messages call during export: batches
     # queries while bounding how many attachment BLOBs sit in memory at once.
     _ATTACHMENT_FETCH_CHUNK = 50
+
+    @staticmethod
+    def _read_keywords_in_slices(
+        ids: Sequence[Any],
+        reader: Callable[[list[Any]], Mapping[Any, Any]],
+    ) -> dict[Any, Any]:
+        """Run one keyword batch reader over ``ids`` in bounded slices.
+
+        Each reader binds one SQL variable per id, so an unsliced read of a
+        selection larger than SQLite's variable limit raised ``too many SQL
+        variables`` before the per-item loop and failed the whole export
+        (TASK-34000.19 fix round 1, I-2). ``_KEYWORD_READ_BATCH_CAP`` ids
+        per slice, the shape of ``ChaChaNotes_DB._ID_LIST_BATCH_CAP``.
+
+        Args:
+            ids: The whole selection, already in the reader's own id type.
+            reader: One of the three batch readers, taking a list of ids.
+
+        Returns:
+            The merged per-id result of every slice.
+        """
+        merged: dict[Any, Any] = {}
+        cap = max(1, int(_KEYWORD_READ_BATCH_CAP))
+        for start in range(0, len(ids), cap):
+            merged.update(reader(list(ids[start : start + cap])))
+        return merged
+
+    @staticmethod
+    def _frontmatter_safe_keyword(keyword: str) -> bool:
+        """Whether ``keyword`` can sit on a note's frontmatter ``tags:`` line.
+
+        The line is plain text inside a ``---`` fence that the importer
+        splits on, so a keyword holding a line break or ``---`` would
+        corrupt the imported body. Such keywords stay in the manifest (the
+        record) and are left out of this one line (fix round 1, M-6).
+        """
+        return (
+            "---" not in keyword and "\n" not in keyword and "\r" not in keyword
+        )
 
     @staticmethod
     def _conversation_graph_messages(
@@ -943,11 +1005,7 @@ class ChatbookCreator:
             citation_messages: Accumulator for citation-bearing messages.
         """
         for order, msg in enumerate(chunk, start=len(exported_messages)):
-            timestamp = (
-                msg.get("timestamp")
-                or msg.get("created_at")
-                or utc_now_iso()
-            )
+            timestamp = msg.get("timestamp") or msg.get("created_at") or utc_now_iso()
             if hasattr(timestamp, "isoformat"):
                 timestamp = timestamp.isoformat()
             message_id = msg.get("id")
@@ -1417,13 +1475,25 @@ class ChatbookCreator:
         if not db_path:
             return
 
-        db = own_database(CharactersRAGDB(
-            db_path,
-            "chatbook_creator",
-            console_library_migration_seed=load_console_library_migration_seed(),
-        ))
+        db = own_database(
+            CharactersRAGDB(
+                db_path,
+                "chatbook_creator",
+                console_library_migration_seed=load_console_library_migration_seed(),
+            )
+        )
         notes_dir = work_dir / "content" / "notes"
         notes_dir.mkdir(parents=True, exist_ok=True)
+        # TASK-34000.19 (L-04): the notes table has no keyword column, so the
+        # old ``note.get("keywords")`` was always empty and every note shipped
+        # ``"tags": []``. One batch read of the active membership instead
+        # (ADR-057's shape for Prompts); the frontmatter ``tags:`` line and
+        # the manifest item's ``tags`` both carry it. Ids with no keywords are
+        # absent from the result, so a note with none carries ``[]``.
+        keywords_by_note = self._read_keywords_in_slices(
+            [str(note_id) for note_id in note_ids],
+            db.get_keywords_for_notes_batch,
+        )
 
         total = len(note_ids)
         for idx, note_id in enumerate(note_ids):
@@ -1451,9 +1521,7 @@ class ChatbookCreator:
                     "content": note["content"],
                     "created_at": created_at,
                     "updated_at": last_modified,
-                    "tags": note.get("keywords", "").split(",")
-                    if note.get("keywords")
-                    else [],
+                    "tags": list(keywords_by_note.get(str(note["id"]), [])),
                 }
 
                 # Write markdown file
@@ -1465,8 +1533,13 @@ class ChatbookCreator:
                     f.write(f"title: {note['title']}\n")
                     f.write(f"created_at: {note_data['created_at']}\n")
                     f.write(f"updated_at: {note_data['updated_at']}\n")
-                    if note_data["tags"]:
-                        f.write(f"tags: {', '.join(note_data['tags'])}\n")
+                    frontmatter_tags = [
+                        tag
+                        for tag in note_data["tags"]
+                        if self._frontmatter_safe_keyword(tag)
+                    ]
+                    if frontmatter_tags:
+                        f.write(f"tags: {', '.join(frontmatter_tags)}\n")
                     f.write("---\n\n")
 
                     # Write content
@@ -1504,11 +1577,13 @@ class ChatbookCreator:
         if not db_path:
             return
 
-        db = own_database(CharactersRAGDB(
-            db_path,
-            "chatbook_creator",
-            console_library_migration_seed=load_console_library_migration_seed(),
-        ))
+        db = own_database(
+            CharactersRAGDB(
+                db_path,
+                "chatbook_creator",
+                console_library_migration_seed=load_console_library_migration_seed(),
+            )
+        )
         chars_dir = work_dir / "content" / "characters"
         chars_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1582,6 +1657,24 @@ class ChatbookCreator:
         metadata_dir = media_dir / "metadata"
         metadata_dir.mkdir(exist_ok=True)
 
+        # TASK-34000.19 (L-04): the Media row has no ``media_keywords`` column
+        # (keywords live in Keywords/MediaKeywords), so reading that key off
+        # the row wrote ``null`` into every metadata JSON. One batch read of
+        # the active membership (the MODULE function: ordered, and it filters
+        # deleted media as well as deleted keywords); the importer already
+        # accepts a list here. An id that is not an integer is left to the
+        # per-item loop below, which reports it as not found.
+        requested_media_ids: list[int] = []
+        for media_id in media_ids:
+            try:
+                requested_media_ids.append(int(media_id))
+            except (TypeError, ValueError):
+                continue
+        keywords_by_media = self._read_keywords_in_slices(
+            requested_media_ids,
+            lambda chunk: fetch_keywords_for_media_batch(db, chunk),
+        )
+
         total = len(media_ids)
         for idx, media_id in enumerate(media_ids):
             self._check_cancel()
@@ -1617,7 +1710,9 @@ class ChatbookCreator:
                     "updated_at": media_item.get("last_modified"),
                     "metadata": {
                         "ingestion_date": media_item.get("ingestion_date"),
-                        "media_keywords": media_item.get("media_keywords"),
+                        "media_keywords": list(
+                            keywords_by_media.get(int(media_item["id"]), [])
+                        ),
                         "prompt": media_item.get("prompt"),
                         "summary": media_item.get("summary"),
                         "transcription_model": media_item.get("transcription_model"),
@@ -1668,6 +1763,7 @@ class ChatbookCreator:
                             media_item.get("last_modified")
                         )
                         or datetime.now(),
+                        tags=list(media_data["metadata"]["media_keywords"]),
                         metadata={
                             "media_type": media_item.get("type"),
                             "quality": quality,
@@ -1807,11 +1903,13 @@ class ChatbookCreator:
             )
             return
 
-        db = own_database(CharactersRAGDB(
-            db_path,
-            "chatbook_creator",
-            console_library_migration_seed=load_console_library_migration_seed(),
-        ))
+        db = own_database(
+            CharactersRAGDB(
+                db_path,
+                "chatbook_creator",
+                console_library_migration_seed=load_console_library_migration_seed(),
+            )
+        )
         kept_dir = work_dir / "content" / "kept_briefings"
         kept_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1885,9 +1983,7 @@ class ChatbookCreator:
 
                 title = kept.get("watchlist_name") or f"Kept briefing {kept_id}"
                 report_file = kept_dir / f"kept_briefing_{kept_id}.md"
-                self._write_kept_briefing_report(
-                    report_file, kept_id, title, kept_data
-                )
+                self._write_kept_briefing_report(report_file, kept_id, title, kept_data)
 
                 content.kept_briefings.append(kept_data)
 
@@ -1913,9 +2009,7 @@ class ChatbookCreator:
                 )
 
             except Exception as e:
-                logger.error(
-                    f"Error collecting kept briefing {kept_id_raw}: {e}"
-                )
+                logger.error(f"Error collecting kept briefing {kept_id_raw}: {e}")
 
     def _write_kept_briefing_report(
         self,
@@ -1932,9 +2026,7 @@ class ChatbookCreator:
         with open(report_file, "w", encoding="utf-8") as f:
             f.write(f"# Kept Briefing: {self._markdown_report_text(title)}\n\n")
             f.write(f"- Kept briefing id (local): {kept_id}\n")
-            f.write(
-                f"- Source briefing id: {kept_data['source_briefing_id']}\n"
-            )
+            f.write(f"- Source briefing id: {kept_data['source_briefing_id']}\n")
             f.write(f"- Origin: {self._markdown_report_text(kept_data['origin'])}\n")
             if kept_data.get("model_used"):
                 f.write(
@@ -1999,11 +2091,13 @@ class ChatbookCreator:
                 )
                 return
 
-            db = own_database(CharactersRAGDB(
-                db_path,
-                "chatbook_creator",
-                console_library_migration_seed=load_console_library_migration_seed(),
-            ))
+            db = own_database(
+                CharactersRAGDB(
+                    db_path,
+                    "chatbook_creator",
+                    console_library_migration_seed=load_console_library_migration_seed(),
+                )
+            )
 
             try:
                 # Get character card (which includes all details)
@@ -2223,9 +2317,10 @@ class ChatbookCreator:
                             info.compress_type = zipfile.ZIP_DEFLATED
                             info.create_system = 3
                             info.external_attr = 0o100600 << 16
-                            with file_path.open("rb") as source, archive.open(
-                                info, "w"
-                            ) as destination:
+                            with (
+                                file_path.open("rb") as source,
+                                archive.open(info, "w") as destination,
+                            ):
                                 while chunk := source.read(64 * 1024):
                                     destination.write(chunk)
                         else:

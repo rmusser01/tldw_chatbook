@@ -1,0 +1,4 @@
+Auto packing the repository in background for optimum performance.
+See "git help gc" for manual housekeeping.
+[codex/console-chat-starts-dev 07e7c23cb5] fix(console): preserve accepted handoffs through composer navigation
+ 10 files changed, 172 insertions(+), 15 deletions(-)

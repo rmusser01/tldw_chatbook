@@ -35,6 +35,16 @@ _STATE_NAMES = (
 )
 
 
+def checked_config_identity(source: object, active: object) -> tuple[int, str]:
+    """Tag data with its active checked config generation and selected path."""
+    from . import raw_participants as raw
+
+    state = raw._check(active)
+    if state.source is not source or state.route not in {"config", "config_snapshot"}:
+        raise bootstrap.RecoveryRequired("config_operation_source_invalid")
+    return source._CONFIG_GENERATION, str(state.selected)
+
+
 def binding(source):
     module = sys.modules.get("tldw_chatbook.config")
     if module is not None and source is module:
@@ -156,19 +166,77 @@ def companion_guard(operation, attempt):
     guard = ExitStack()
     try:
         parent = guard.enter_context(hold.authority._directory())
-        guard.enter_context(hold.authority._lock(
-            parent, "registry.lock", fcntl.LOCK_SH, cancel=attempt.cancel
-        ))
+        guard.enter_context(
+            hold.authority._lock(
+                parent, "registry.lock", fcntl.LOCK_SH, cancel=attempt.cancel
+            )
+        )
         attempt.check()
-        pending, profiles = bootstrap._records(root)
-        record = next((row for row in profiles if row["selector"] == str(selected)), None)
-        if record is None or tuple(record["namespaces"]) != hold.names:
+        key = ("companions", str(selected))
+        before = storage._derived_before(hold, key)
+        stock = _companion_metadata_current()
+        eligible = (
+            stock
+            and storage._ordinary_hold(hold.authority) is hold
+            and storage.effective_config_path() == selected
+            and hold.authority.control_root == root / "admission"
+            and state.pinned
+        )
+        reused, metadata = (
+            storage._derived_reuse(hold, key, before)
+            if eligible else (False, None)
+        )
+        stock = stock and _companion_metadata_current()
+        if not stock:
+            eligible = False
+            reused = False
+            storage._note_derived(hold, key, None, None, before)
+        if reused:
+            record, registry = metadata
+            pending = ()
+        else:
+            pending, profiles = bootstrap._records(root)
+            record = next(
+                (row for row in profiles if row["selector"] == str(selected)), None
+            )
+        if record is None:
+            evidence = (
+                storage._metadata_evidence(
+                    hold, (selected, selected.parent)
+                )
+                if eligible and not reused and not pending else None
+            )
+            if evidence is not None and not any(
+                path == selected for path, _ in evidence.content
+            ):
+                evidence = None
+            # A successful missing result grants no companion authority. The
+            # caller still takes its independent full-member fallback lease.
+            # Close every temporary context before publishing passive absence.
+            guard.close()
+            attempt.check()
+            if not reused:
+                storage._note_derived(
+                    hold,
+                    key,
+                    evidence if (
+                        stock
+                        and _companion_metadata_current()
+                        and storage.effective_config_path() == selected
+                    ) else None,
+                    (None, None),
+                    before,
+                )
+            return None
+        if tuple(record["namespaces"]) != hold.names:
             guard.close()
             return None
         if (
             pending
             or hold.authority.control_root != root / "admission"
-            or storage._scope(root, selected, selected, authority=hold.authority) != hold.names
+            or not reused
+            and storage._scope(root, selected, selected, authority=hold.authority)
+            != hold.names
             or (
                 sibling_selector(state.source, state.route, state.selected) != selected
                 if state.config_anchor is not None
@@ -178,7 +246,8 @@ def companion_guard(operation, attempt):
             or not state.pinned
         ):
             raise bootstrap.RecoveryRequired("config_companion_scope_changed")
-        registry = bootstrap._registry(root)
+        if not reused:
+            registry = bootstrap._registry(root)
         directory = guard.enter_context(pinned_directory(selected.parent))
         info = os.fstat(directory)
         if info.st_uid != os.geteuid() or info.st_mode & 0o077:
@@ -198,13 +267,16 @@ def companion_guard(operation, attempt):
             else:
                 if not stat.S_ISREG(member_info.st_mode) or member_info.st_nlink != 1:
                     raise bootstrap.RecoveryRequired("config_companion_scope_changed")
-                tokens.add(f"inode:{member_info.st_dev}:{member_info.st_ino}")
+                tokens.add(bootstrap.inode_token(member_info))
             if any(
-                tokens.intersection(entry["historical"])
-                or any(bootstrap._overlap(member, Path(path)) for path in entry["roots"])
+                tokens.intersection(bootstrap.identity_view(entry["historical"]))
+                or any(
+                    bootstrap._overlap(member, Path(path)) for path in entry["roots"]
+                )
                 or any(
                     bootstrap._overlap(member, Path(token[5:]))
-                    for token in entry["historical"] if token.startswith("path:")
+                    for token in entry["historical"]
+                    if token.startswith("path:")
                 )
                 for entry in foreign
             ):
@@ -212,8 +284,20 @@ def companion_guard(operation, attempt):
         # Existing parent posture is verified, never delegated for creation.
         state.directories = ()
         state.companion_roots = tuple(Path(path) for path in record["roots"])
+        if not reused:
+            evidence = storage._metadata_evidence(
+                hold, (selected, selected.parent), registry=registry
+            )
+            storage._note_derived(
+                hold, key, evidence if stock and _companion_metadata_current() else None,
+                (record, registry), before,
+            )
         return guard
     except BaseException:
+        # No later call may reuse evidence after this attempt's uncertain close
+        # or cancellation. Original native cleanup/error custody stays below.
+        with storage._lock:
+            hold.derived_evidence.pop(("companions", str(selected)), None)
         guard.close()
         raise
 
@@ -394,7 +478,7 @@ def guarded(function):
         "_get_runtime_config_snapshot_guarded",
         "get_user_data_dir",
         "get_model_cache_dir",
-        "replace_cli_config_serialized",
+        "_replace_cli_config_serialized_guarded",
     }
     if function.__name__ not in allowed:
         raise ValueError("config_source_not_supported")
@@ -440,3 +524,86 @@ def check_lock_wait(source, operation):
         for hold in state.holds
     ):
         raise bootstrap.RecoveryRequired("storage_locally_paused")
+
+
+# Finite defining readers for the optional companion metadata observation.
+# The ordinary None/two-lease route remains available to custom readers.
+def _companion_metadata_current():
+    if (
+        bootstrap is not _COMPANION_METADATA_SOURCE[0][0]
+        or storage is not _COMPANION_METADATA_SOURCE[1][0]
+        or profile_paths is not _COMPANION_METADATA_SOURCE[2][0]
+    ):
+        return False
+    for module, namespace, filename, spec, origin, callbacks in _COMPANION_METADATA_SOURCE:
+        if (
+            sys.modules.get(namespace["__name__"]) is not module
+            or vars(module) is not namespace
+            or namespace.get("__file__") != filename
+            or namespace.get("__spec__") is not spec
+            or getattr(spec, "origin", None) != origin
+        ):
+            return False
+        for owner, name, original, code, defining_globals, defaults, keywords, items, cells, values in callbacks:
+            if (
+                owner.get(name) is not original
+                or original.__code__ is not code
+                or original.__globals__ is not defining_globals
+                or original.__defaults__ is not defaults
+                or original.__kwdefaults__ is not keywords
+                or keywords is not None and (
+                    len(keywords) != len(items)
+                    or any(key not in keywords or keywords[key] is not value for key, value in items)
+                )
+                or original.__closure__ is not cells
+                or any(cell.cell_contents is not value for cell, value in values)
+            ):
+                return False
+    return True
+
+
+_COMPANION_METADATA_SOURCE = tuple(
+    (
+        module,
+        vars(module),
+        module.__file__,
+        module.__spec__,
+        getattr(module.__spec__, "origin", None),
+        tuple(
+            (
+                owner,
+                name,
+                function,
+                function.__code__,
+                function.__globals__,
+                function.__defaults__,
+                function.__kwdefaults__,
+                tuple((function.__kwdefaults__ or {}).items()),
+                function.__closure__,
+                tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            )
+            for name in names
+            for original in (vars(module)[name],)
+            for owner, name, function in (
+                (vars(module), name, original),
+                *(
+                    ((vars(original), "__wrapped__", original.__wrapped__),)
+                    if hasattr(original, "__wrapped__") else ()
+                ),
+            )
+        ),
+    )
+    for module, names in (
+        (bootstrap, (
+            "_records", "_control_records", "_registry", "_registry_read_lock",
+            "pinned_directory", "_read", "_strings", "_paths", "_key",
+            "_activation_witness", "_validate_ancestry_record",
+            "_open_verified_parent", "_native_close",
+        )),
+        (storage, ("_metadata_evidence", "_selector_evidence", "effective_config_path")),
+        (profile_paths, ("effective_config_path", "lexical_path", "default_config_path")),
+        (sys.modules[__name__], (
+            "companion_guard", "binding", "sibling_selector", "_companion_metadata_current",
+        )),
+    )
+)

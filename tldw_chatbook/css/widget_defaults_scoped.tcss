@@ -14,1623 +14,1631 @@
 
 
 
-    ConsolePromptQueueRegion #console-prompt-queue-summary {
-        width: auto;
-        min-width: 20;
-        height: 1;
-        color: $warning;
-    }
+ConsolePromptQueueRegion #console-prompt-queue-summary {
+    width: auto;
+    min-width: 20;
+    height: 1;
+    color: $warning;
+}
 
-    ConsolePromptQueueRegion #console-prompt-queue-preview {
-        width: 1fr;
-        height: 1;
-        color: $text-muted;
-        text-overflow: ellipsis;
-    }
+ConsolePromptQueueRegion #console-prompt-queue-preview {
+    width: 1fr;
+    height: 1;
+    color: $text-muted;
+    text-overflow: ellipsis;
+}
 
-    ConsolePromptQueueRegion #console-prompt-queue-manage {
-        width: 8;
-        min-width: 8;
-        height: 1;
-        padding: 0 1;
-    }
+ConsolePromptQueueRegion #console-prompt-queue-manage {
+    min-width: 8;
+    height: 1;
+    padding: 0 1;
+}
 
-    ConsolePromptQueueRegion #console-prompt-queue-pause {
-        width: 15;
-        min-width: 15;
-        height: 1;
-        padding: 0 1;
-    }
+ConsolePromptQueueRegion #console-prompt-queue-pause {
+    min-width: 15;
+    height: 1;
+    padding: 0 1;
+}
 
 /* ===== WIDGET: LLMManagementWindow (UI/LLM_Management_Window.py) ===== */
 
 
 
-    LLMManagementWindow #llm-main-content {
-        width: 1fr;
-        height: 100%;
-        background: $background;
-        padding: 1 2;
-    }
+LLMManagementWindow #llm-main-content {
+    width: 1fr;
+    height: 100%;
+    background: $background;
+    padding: 1 2;
+}
 
-    LLMManagementWindow .prereq-hint {
-        color: $text-muted;
-        margin: 0 0 1 0;
-        height: auto;
-    }
+LLMManagementWindow .prereq-hint {
+    color: $text-muted;
+    margin: 0 0 1 0;
+    height: auto;
+}
 
-    LLMManagementWindow .llm-view {
-        display: none;
-        height: 100%;
-        width: 100%;
-    }
+LLMManagementWindow .llm-view {
+    display: none;
+    height: 100%;
+    width: 100%;
+}
 
-    LLMManagementWindow .llm-view.-active {
-        display: block;
-    }
+LLMManagementWindow .llm-view.-active {
+    display: block;
+}
 
-    LLMManagementWindow .section-title {
-        text-style: bold;
-        margin: 1 0;
-        color: $primary;
-    }
+LLMManagementWindow .section-title {
+    text-style: bold;
+    margin: 1 0;
+    color: $primary;
+}
 
-    LLMManagementWindow .section_label {
-        text-style: bold;
-        margin: 1 0;
-        color: $secondary;
-    }
+LLMManagementWindow .section_label {
+    text-style: bold;
+    margin: 1 0;
+    color: $secondary;
+}
 
-    LLMManagementWindow .description {
-        margin: 0 0 1 0;
-        color: $text-muted;
-    }
+LLMManagementWindow .description {
+    margin: 0 0 1 0;
+    color: $text-muted;
+}
 
-    LLMManagementWindow .label {
-        margin: 1 0 0 0;
-    }
+LLMManagementWindow .label {
+    margin: 1 0 0 0;
+}
 
-    LLMManagementWindow .input_container {
-        layout: horizontal;
-        height: 3;
-        margin: 0 0 1 0;
-    }
+LLMManagementWindow .input_container {
+    layout: horizontal;
+    height: 3;
+    margin: 0 0 1 0;
+}
 
 
-    LLMManagementWindow .inline-label {
-        width: 28;
-        height: 3;
-        content-align: right middle;
-        padding-right: 1;
-        color: $text;
-    }
+LLMManagementWindow .inline-label {
+    width: 28;
+    height: 3;
+    content-align: right middle;
+    padding-right: 1;
+    color: $text;
+}
 
-    LLMManagementWindow .input_container Input {
-        width: 1fr;
-        min-width: 16;
-    }
+LLMManagementWindow .input_container Input {
+    width: 1fr;
+    min-width: 16;
+}
 
-    LLMManagementWindow .input_container Button {
-        width: auto;
-        margin: 0 0 0 1;
-    }
+LLMManagementWindow .input_container Button {
+    width: auto;
+    margin: 0 0 0 1;
+}
 
-    LLMManagementWindow .button_container {
-        layout: horizontal;
-        margin: 1 0;
-        height: 3;
-    }
+LLMManagementWindow .button_container {
+    layout: horizontal;
+    margin: 1 0;
+    height: 3;
+}
 
-    LLMManagementWindow .button_container Button {
-        margin: 0 1 0 0;
-    }
+LLMManagementWindow .button_container Button {
+    margin: 0 1 0 0;
+}
 
-    LLMManagementWindow .log_output {
-        height: 15;
-        border: solid $primary;
-        margin: 1 0;
-    }
+LLMManagementWindow .log_output {
+    height: 15;
+    border: solid $primary;
+    margin: 1 0;
+}
 
-    LLMManagementWindow .help-text-display {
-        height: 10;
-        border: solid $secondary;
-        padding: 1;
-    }
+LLMManagementWindow .help-text-display {
+    height: 10;
+    border: solid $secondary;
+    padding: 1;
+}
 
-    LLMManagementWindow .additional_args_textarea {
-        height: 5;
-        margin: 0 0 1 0;
-    }
+LLMManagementWindow .additional_args_textarea {
+    height: 5;
+    margin: 0 0 1 0;
+}
 
-    LLMManagementWindow .separator {
-        height: 1;
-        margin: 1 0;
-        color: $primary;
-    }
+LLMManagementWindow .separator {
+    height: 1;
+    margin: 1 0;
+    color: $primary;
+}
 
-    LLMManagementWindow .ollama-button-bar {
-        layout: horizontal;
-        height: 3;
-        margin: 1 0;
-    }
+LLMManagementWindow .ollama-button-bar {
+    layout: horizontal;
+    height: 3;
+    margin: 1 0;
+}
 
-    LLMManagementWindow .ollama-button-bar Button {
-        margin: 0 1 0 0;
-    }
+LLMManagementWindow .ollama-button-bar Button {
+    margin: 0 1 0 0;
+}
 
-    LLMManagementWindow .ollama-actions-grid {
-        layout: horizontal;
-        margin: 1 0;
-    }
+LLMManagementWindow .ollama-actions-grid {
+    layout: horizontal;
+    margin: 1 0;
+}
 
-    LLMManagementWindow .ollama-actions-column {
-        width: 50%;
-        padding: 0 1;
-    }
+LLMManagementWindow .ollama-actions-column {
+    width: 50%;
+    padding: 0 1;
+}
 
-    LLMManagementWindow .column-title {
-        text-style: bold;
-        margin: 0 0 1 0;
-        color: $secondary;
-    }
+LLMManagementWindow .column-title {
+    text-style: bold;
+    margin: 0 0 1 0;
+    color: $secondary;
+}
 
-    LLMManagementWindow .input_field_short {
-        width: 40%;
-    }
+LLMManagementWindow .input_field_short {
+    width: 40%;
+}
 
-    LLMManagementWindow .input_field_long {
-        width: 100%;
-    }
+LLMManagementWindow .input_field_long {
+    width: 100%;
+}
 
-    LLMManagementWindow .action_button_short {
-        width: auto;
-    }
+LLMManagementWindow .action_button_short {
+    width: auto;
+}
 
-    LLMManagementWindow .full_width_button {
-        width: 100%;
-        margin: 1 0;
-    }
+LLMManagementWindow .full_width_button {
+    width: 100%;
+    margin: 1 0;
+}
 
-    LLMManagementWindow .delete_button {
-        background: $error;
-    }
+LLMManagementWindow .delete_button {
+    background: $error;
+}
 
-    LLMManagementWindow .embeddings_container {
-        layout: horizontal;
-        margin: 1 0;
-    }
+LLMManagementWindow .embeddings_container {
+    layout: horizontal;
+    margin: 1 0;
+}
 
-    LLMManagementWindow .embeddings_inputs {
-        width: 70%;
-    }
+LLMManagementWindow .embeddings_inputs {
+    width: 70%;
+}
 
-    LLMManagementWindow .action_button_tall {
-        width: 30%;
-        margin: 0 0 0 1;
-    }
+LLMManagementWindow .action_button_tall {
+    width: 30%;
+    margin: 0 0 0 1;
+}
 
-    LLMManagementWindow .output_textarea_medium {
-        height: 10;
-        margin: 1 0;
-    }
+LLMManagementWindow .output_textarea_medium {
+    height: 10;
+    margin: 1 0;
+}
 
-    LLMManagementWindow .log_output_large {
-        height: 20;
-        margin: 1 0;
-    }
+LLMManagementWindow .log_output_large {
+    height: 20;
+    margin: 1 0;
+}
 
 /* ===== WIDGET: SkillImportChoiceModal (UI/Library_Modules/skill_import_choice_modal.py) ===== */
 
 
-    SkillImportChoiceModal #skill-import-choice {
-        width: 88;
-        max-width: 100%;
-        height: 28;
-        max-height: 100%;
-        min-height: 14;
-        background: $panel;
-        border: round $accent;
-        padding: 1 2;
-    }
-    SkillImportChoiceModal #skill-import-choice-title,
-    SkillImportChoiceModal #skill-import-choice-help {
-        height: auto;
-    }
-    SkillImportChoiceModal #skill-import-choice-list {
-        height: 1fr;
-        min-height: 4;
-        background: $surface-darken-1;
-    }
-    SkillImportChoiceModal #skill-import-choice-actions {
-        height: 3;
-    }
-    SkillImportChoiceModal #skill-import-choice-actions Button.skill-import-choice-modal-button {
-        width: auto;
-        min-width: 10;
-        height: 3;
-        margin-right: 1;
-    }
+SkillImportChoiceModal #skill-import-choice {
+    width: 88;
+    max-width: 100%;
+    height: 28;
+    max-height: 100%;
+    min-height: 14;
+    background: $panel;
+    border: round $accent;
+    padding: 1 2;
+}
+SkillImportChoiceModal #skill-import-choice-title,
+SkillImportChoiceModal #skill-import-choice-help {
+    height: auto;
+}
+SkillImportChoiceModal #skill-import-choice-list {
+    height: 1fr;
+    min-height: 4;
+    background: $surface-darken-1;
+}
+SkillImportChoiceModal #skill-import-choice-actions {
+    height: 3;
+}
+SkillImportChoiceModal #skill-import-choice-actions Button.skill-import-choice-modal-button {
+    width: auto;
+    min-width: 10;
+    height: 3;
+    margin-right: 1;
+}
+
+/* ===== WIDGET: SkillRecoveryReviewModal (UI/Library_Modules/skills_trust_modals.py) ===== */
+
+
+SkillRecoveryReviewModal #skills-recovery-review { width: 90%; max-width: 110; height: 90%; border: tall $accent; padding: 1 2; background: $surface; }
+SkillRecoveryReviewModal #skills-recovery-scroll { height: 1fr; }
+SkillRecoveryReviewModal #skills-recovery-scroll Static.skill-recovery-review-modal-static { height: auto; margin-bottom: 1; }
+SkillRecoveryReviewModal #skills-recovery-actions { height: 3; align-horizontal: right; }
+SkillRecoveryReviewModal #skills-recovery-actions Button.skill-recovery-review-modal-button { width: auto; margin-left: 1; }
+SkillRecoveryReviewModal #skills-recovery-status { height: auto; color: $warning; }
 
 /* ===== WIDGET: LogsWindow (UI/Logs_Window.py) ===== */
 
 
-    LogsWindow #app-log-display {
-        height: 1fr;
-    }
-    LogsWindow #logs-empty-state {
-        display: none;
-    }
+LogsWindow #app-log-display {
+    height: 1fr;
+}
+LogsWindow #logs-empty-state {
+    display: none;
+}
 
 /* ===== WIDGET: MCPAuditMode (UI/MCP_Modules/mcp_audit_mode.py) ===== */
 
 
 
-    MCPAuditMode #mcp-audit-filter-bar {
-        layout: vertical;
-        height: auto;
-        min-height: 0;
-    }
-    MCPAuditMode #mcp-audit-filter-text,
-    MCPAuditMode #mcp-audit-filter-decision-slot,
-    MCPAuditMode #mcp-audit-filter-initiator-slot,
-    MCPAuditMode #mcp-audit-filter-decision,
-    MCPAuditMode #mcp-audit-filter-initiator {
-        width: 100%;
-    }
-    MCPAuditMode #mcp-audit-filter-decision-slot,
-    MCPAuditMode #mcp-audit-filter-initiator-slot {
-        height: auto;
-    }
-    MCPAuditMode #mcp-audit-executions-view {
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
-    MCPAuditMode #mcp-audit-table {
-        height: auto;
-        max-height: 70%;
-        min-height: 4;
-    }
-    MCPAuditMode #mcp-audit-empty {
-        height: auto;
-        min-height: 0;
-    }
+MCPAuditMode #mcp-audit-filter-bar {
+    layout: vertical;
+    height: auto;
+    min-height: 0;
+}
+MCPAuditMode #mcp-audit-filter-text,
+MCPAuditMode #mcp-audit-filter-decision-slot,
+MCPAuditMode #mcp-audit-filter-initiator-slot,
+MCPAuditMode #mcp-audit-filter-decision,
+MCPAuditMode #mcp-audit-filter-initiator {
+    width: 100%;
+}
+MCPAuditMode #mcp-audit-filter-decision-slot,
+MCPAuditMode #mcp-audit-filter-initiator-slot {
+    height: auto;
+}
+MCPAuditMode #mcp-audit-executions-view {
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+MCPAuditMode #mcp-audit-table {
+    height: auto;
+    max-height: 70%;
+    min-height: 4;
+}
+MCPAuditMode #mcp-audit-empty {
+    height: auto;
+    min-height: 0;
+}
 
-    MCPAuditMode #mcp-audit-subview-strip {
-        height: auto;
-        min-height: 0;
-    }
+MCPAuditMode #mcp-audit-subview-strip {
+    height: auto;
+    min-height: 0;
+}
 
-    MCPAuditMode #mcp-audit-executions-view,
-    MCPAuditMode #mcp-audit-findings-view {
-        width: 1fr;
-        height: 1fr;
-        min-height: 0;
-    }
-    MCPAuditMode #mcp-audit-findings-table {
-        height: auto;
-        max-height: 70%;
-        min-height: 4;
-    }
-    MCPAuditMode #mcp-audit-findings-empty {
-        height: auto;
-        min-height: 0;
-    }
+MCPAuditMode #mcp-audit-executions-view,
+MCPAuditMode #mcp-audit-findings-view {
+    width: 1fr;
+    height: 1fr;
+    min-height: 0;
+}
+MCPAuditMode #mcp-audit-findings-table {
+    height: auto;
+    max-height: 70%;
+    min-height: 4;
+}
+MCPAuditMode #mcp-audit-findings-empty {
+    height: auto;
+    min-height: 0;
+}
 
 /* ===== WIDGET: MCPInspector (UI/MCP_Modules/mcp_inspector.py) ===== */
 
 
 
-    MCPInspector #mcp-inspector-test-panel {
-        height: auto;
-    }
+MCPInspector #mcp-inspector-test-panel {
+    height: auto;
+}
 
-    MCPInspector #mcp-inspector-state {
-        width: 1fr;
-        height: auto;
-        min-height: 1;
-    }
-    MCPInspector #mcp-inspector-actions {
+MCPInspector #mcp-inspector-state {
+    width: 1fr;
+    height: auto;
+    min-height: 1;
+}
+MCPInspector #mcp-inspector-actions {
 
-        height: auto;
-        min-height: 0;
-    }
+    height: auto;
+    min-height: 0;
+}
 
-    MCPInspector #mcp-inspector-tool {
-        height: auto;
-        min-height: 0;
-        display: none;
-    }
+MCPInspector #mcp-inspector-tool {
+    height: auto;
+    min-height: 0;
+    display: none;
+}
 
-    MCPInspector #mcp-inspector-permission {
-        height: auto;
-        min-height: 0;
-        display: none;
-    }
+MCPInspector #mcp-inspector-permission {
+    height: auto;
+    min-height: 0;
+    display: none;
+}
 
-    MCPInspector #mcp-inspector-audit {
-        height: auto;
-        min-height: 0;
-        display: none;
-    }
+MCPInspector #mcp-inspector-audit {
+    height: auto;
+    min-height: 0;
+    display: none;
+}
 
-    MCPInspector #mcp-inspector-finding {
-        height: auto;
-        min-height: 0;
-        display: none;
-    }
+MCPInspector #mcp-inspector-finding {
+    height: auto;
+    min-height: 0;
+    display: none;
+}
 
-    MCPInspector #mcp-inspector-audit-scroll {
-        height: 12;
-        min-height: 6;
-    }
+MCPInspector #mcp-inspector-audit-scroll {
+    height: 12;
+    min-height: 6;
+}
 
-    MCPInspector #mcp-adv-collapsible {
-        height: auto;
-        min-height: 0;
-    }
-    MCPInspector #mcp-adv-collapsible.-collapsed {
-        height: auto;
-    }
-    MCPInspector #mcp-adv-scroll {
-        height: auto;
-        max-height: 24;
-        min-height: 0;
-    }
-    MCPInspector #mcp-adv-payload {
-        height: 6;
-        min-height: 3;
-    }
-    MCPInspector Button.mcp-inspector-action {
-        width: 100%;
-        height: 1;
-        min-height: 1;
-        border: none;
+MCPInspector #mcp-adv-collapsible {
+    height: auto;
+    min-height: 0;
+}
+MCPInspector #mcp-adv-collapsible.-collapsed {
+    height: auto;
+}
+MCPInspector #mcp-adv-scroll {
+    height: auto;
+    max-height: 24;
+    min-height: 0;
+}
+MCPInspector #mcp-adv-payload {
+    height: 6;
+    min-height: 3;
+}
+MCPInspector Button.mcp-inspector-action {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    border: none;
 
-        text-align: left;
-        content-align: left middle;
-    }
+    text-align: left;
+    content-align: left middle;
+}
 
-    MCPInspector Button.mcp-inspector-action:disabled {
-        opacity: 100%;
-        background: $surface;
-        color: $text-muted;
-        text-style: none;
-    }
-    MCPInspector Button.mcp-inspector-action:disabled:hover {
-        opacity: 100%;
-        background: $surface;
-        color: $text-muted;
-        text-style: none;
-    }
+MCPInspector Button.mcp-inspector-action:disabled {
+    opacity: 100%;
+    background: $surface;
+    color: $text-muted;
+    text-style: none;
+}
+MCPInspector Button.mcp-inspector-action:disabled:hover {
+    opacity: 100%;
+    background: $surface;
+    color: $text-muted;
+    text-style: none;
+}
 
-    MCPInspector .mcp-status-muted {
-        color: $text-muted;
-    }
+MCPInspector .mcp-status-muted {
+    color: $text-muted;
+}
 
-    MCPInspector .mcp-inspector-result-note {
-        color: $text-muted;
-        height: auto;
-        min-height: 0;
-    }
+MCPInspector .mcp-inspector-result-note {
+    color: $text-muted;
+    height: auto;
+    min-height: 0;
+}
 
-    MCPInspector #mcp-inspector-test-result-raw {
-        height: auto;
-        min-height: 0;
-    }
+MCPInspector #mcp-inspector-test-result-raw {
+    height: auto;
+    min-height: 0;
+}
 
-    MCPInspector #mcp-inspector-test-result-raw-scroll {
-        height: 12;
-        min-height: 6;
-    }
+MCPInspector #mcp-inspector-test-result-raw-scroll {
+    height: 12;
+    min-height: 6;
+}
 
 /* ===== WIDGET: MCPPermissionsMode (UI/MCP_Modules/mcp_permissions_mode.py) ===== */
 
 
 
-    MCPPermissionsMode #mcp-perm-filter-text {
-        height: auto;
-        min-height: 0;
-    }
+MCPPermissionsMode #mcp-perm-filter-text {
+    height: auto;
+    min-height: 0;
+}
 
-    MCPPermissionsMode #mcp-perm-table {
-        height: auto;
-        max-height: 70%;
-        min-height: 4;
-    }
-    MCPPermissionsMode #mcp-perm-preview {
-        height: auto;
-        min-height: 0;
-    }
+MCPPermissionsMode #mcp-perm-table {
+    height: auto;
+    max-height: 70%;
+    min-height: 4;
+}
+MCPPermissionsMode #mcp-perm-preview {
+    height: auto;
+    min-height: 0;
+}
 
-    MCPPermissionsMode #mcp-perm-legend {
-        height: auto;
-        min-height: 0;
-        color: $text-muted;
-    }
+MCPPermissionsMode #mcp-perm-legend {
+    height: auto;
+    min-height: 0;
+    color: $text-muted;
+}
 
-    MCPPermissionsMode #mcp-perm-profile-hint {
-        height: auto;
-        min-height: 0;
-        color: $text-muted;
-        padding: 0 1;
-    }
+MCPPermissionsMode #mcp-perm-profile-hint {
+    height: auto;
+    min-height: 0;
+    color: $text-muted;
+    padding: 0 1;
+}
 
-    MCPPermissionsMode #mcp-perm-kill-switch-hint {
-        height: auto;
-        min-height: 0;
-        color: $text-muted;
-        padding: 0 1;
-    }
+MCPPermissionsMode #mcp-perm-kill-switch-hint {
+    height: auto;
+    min-height: 0;
+    color: $text-muted;
+    padding: 0 1;
+}
 
-    MCPPermissionsMode #mcp-perm-server-profiles-slot {
-        height: auto;
-        min-height: 0;
-    }
+MCPPermissionsMode #mcp-perm-explainer {
+    height: auto;
+    min-height: 0;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+MCPPermissionsMode #mcp-perm-server-profiles-slot {
+    height: auto;
+    min-height: 0;
+}
 
 /* ===== WIDGET: MCPRail (UI/MCP_Modules/mcp_rail.py) ===== */
 
 
-    MCPRail Button.mcp-rail-row {
-        width: 100%;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
+MCPRail Button.mcp-rail-row {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
 
-        text-align: left;
-        content-align: left middle;
-    }
+    text-align: left;
+    content-align: left middle;
+}
 
-    MCPRail #mcp-rail-empty {
-        color: $text-muted;
-        padding: 0 1;
-    }
+MCPRail #mcp-rail-empty {
+    color: $text-muted;
+    padding: 0 1;
+}
 
-    MCPRail #mcp-rail-state-legend {
-        height: auto;
-        min-height: 0;
-        color: $text-muted;
-        padding: 0 1;
-    }
+MCPRail #mcp-rail-state-legend {
+    height: auto;
+    min-height: 0;
+    color: $text-muted;
+    padding: 0 1;
+}
 
 /* ===== WIDGET: MCPServersMode (UI/MCP_Modules/mcp_servers_mode.py) ===== */
 
 
 
-    MCPServersMode #mcp-servers-table {
-        height: auto;
-        max-height: 70%;
-        min-height: 4;
-    }
-    MCPServersMode #mcp-detail-scroll {
-        height: 1fr;
-        min-height: 0;
-    }
-    MCPServersMode #mcp-servers-form {
-        height: auto;
-        min-height: 0;
-    }
-    MCPServersMode #mcp-detail-header {
-        height: auto;
-        min-height: 1;
-    }
-    MCPServersMode #mcp-detail-header #mcp-detail-title {
-        width: 1fr;
-    }
-    MCPServersMode #mcp-detail-builtin-toggles {
-        height: auto;
-        min-height: 0;
-    }
-    MCPServersMode #mcp-detail-tool-gates {
-        height: auto;
-        min-height: 0;
-    }
-    MCPServersMode #mcp-overview-summary-glyph {
-        width: 2;
-    }
+MCPServersMode #mcp-servers-table {
+    height: auto;
+    max-height: 70%;
+    min-height: 4;
+}
+MCPServersMode #mcp-detail-scroll {
+    height: 1fr;
+    min-height: 0;
+}
+MCPServersMode #mcp-servers-form {
+    height: auto;
+    min-height: 0;
+}
+MCPServersMode #mcp-detail-header {
+    height: auto;
+    min-height: 1;
+}
+MCPServersMode #mcp-detail-header #mcp-detail-title {
+    width: 1fr;
+}
+MCPServersMode #mcp-detail-builtin-toggles {
+    height: auto;
+    min-height: 0;
+}
+MCPServersMode #mcp-detail-tool-gates {
+    height: auto;
+    min-height: 0;
+}
+MCPServersMode #mcp-overview-summary-glyph {
+    width: 2;
+}
 
-    MCPServersMode #mcp-overview-summary {
-        width: 1fr;
-        height: auto;
-        min-height: 1;
-    }
+MCPServersMode #mcp-overview-summary {
+    width: 1fr;
+    height: auto;
+    min-height: 1;
+}
 
-    MCPServersMode #mcp-servers-legend {
-        height: auto;
-        min-height: 0;
-        color: $text-muted;
-    }
+MCPServersMode #mcp-servers-legend {
+    height: auto;
+    min-height: 0;
+    color: $text-muted;
+}
 
 /* ===== WIDGET: MCPToolsMode (UI/MCP_Modules/mcp_tools_mode.py) ===== */
 
 
-    MCPToolsMode #mcp-tools-filter-bar {
-        height: auto;
-        min-height: 0;
-    }
-    MCPToolsMode #mcp-tools-local-config {
-        height: auto;
-        min-height: 0;
-        padding: 0 1 1 1;
-        background: $surface;
-    }
-    MCPToolsMode #mcp-tools-workspace-row {
-        height: auto;
-        min-height: 0;
-    }
-    MCPToolsMode #mcp-tools-local-config-help,
-    MCPToolsMode #mcp-tools-local-config-status {
-        height: auto;
-        color: $text-muted;
-    }
-    MCPToolsMode #mcp-tools-local-config-status.is-error {
-        color: $error;
-        text-style: bold;
-    }
-    MCPToolsMode #mcp-tools-workspace-root {
-        width: 1fr;
-    }
-    MCPToolsMode #mcp-tools-workspace-save {
-        width: 14;
-    }
-    MCPToolsMode #mcp-tools-filter-text {
-        width: 1fr;
-    }
-    MCPToolsMode #mcp-tools-filter-server-slot {
-        width: auto;
-        height: auto;
-    }
-    MCPToolsMode #mcp-tools-filter-server-slot Select {
-        width: 28;
-    }
+MCPToolsMode #mcp-tools-filter-bar {
+    height: auto;
+    min-height: 0;
+}
+MCPToolsMode #mcp-tools-local-config {
+    height: auto;
+    min-height: 0;
+    padding: 0 1 1 1;
+    background: $surface;
+}
+MCPToolsMode #mcp-tools-workspace-row {
+    height: auto;
+    min-height: 0;
+}
+MCPToolsMode #mcp-tools-local-config-help,
+MCPToolsMode #mcp-tools-local-config-status {
+    height: auto;
+    color: $text-muted;
+}
+MCPToolsMode #mcp-tools-local-config-status.is-error {
+    color: $error;
+    text-style: bold;
+}
 
-    MCPToolsMode #mcp-tools-table {
-        height: auto;
-        max-height: 70%;
-        min-height: 4;
-    }
-    MCPToolsMode #mcp-tools-empty {
-        height: auto;
-        min-height: 0;
-    }
+MCPToolsMode #mcp-tools-local-enabled {
+    min-width: 0;
+    max-width: 100%;
+    height: auto;
+    text-wrap: wrap;
+}
+MCPToolsMode #mcp-tools-workspace-root {
+    width: 1fr;
+}
+MCPToolsMode #mcp-tools-workspace-save {
+    width: 14;
+}
+MCPToolsMode #mcp-tools-filter-text {
+    width: 1fr;
+}
+MCPToolsMode #mcp-tools-filter-server-slot {
+    width: auto;
+    height: auto;
+}
+MCPToolsMode #mcp-tools-filter-server-slot Select {
+    width: 28;
+}
+
+MCPToolsMode #mcp-tools-table {
+    height: auto;
+    max-height: 70%;
+    min-height: 4;
+}
+MCPToolsMode #mcp-tools-empty {
+    height: auto;
+    min-height: 0;
+}
 
 /* ===== WIDGET: MCPWorkbench (UI/MCP_Modules/mcp_workbench.py) ===== */
 
 
-    MCPWorkbench #mcp-hub-grid {
-        width: 100%;
-        height: 100%;
-        min-height: 0;
-    }
-    MCPWorkbench #mcp-hub-canvas {
-        width: 5fr;
-        min-width: 38;
-        height: 100%;
-        min-height: 0;
-    }
+MCPWorkbench #mcp-hub-grid {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+}
+MCPWorkbench #mcp-hub-canvas {
+    width: 5fr;
+    min-width: 38;
+    height: 100%;
+    min-height: 0;
+}
 
-    MCPWorkbench #mcp-hub-grid.mcp-compact #mcp-hub-rail {
-        width: 2fr;
-        min-width: 16;
-    }
-    MCPWorkbench #mcp-hub-grid.mcp-compact #mcp-hub-canvas {
-        width: 7fr;
-        min-width: 30;
-    }
-    MCPWorkbench #mcp-hub-grid.mcp-compact #mcp-hub-inspector {
-        width: 2fr;
-        min-width: 20;
-    }
+MCPWorkbench #mcp-hub-grid.mcp-compact #mcp-hub-rail {
+    width: 2fr;
+    min-width: 16;
+}
+MCPWorkbench #mcp-hub-grid.mcp-compact #mcp-hub-canvas {
+    width: 7fr;
+    min-width: 30;
+}
+MCPWorkbench #mcp-hub-grid.mcp-compact #mcp-hub-inspector {
+    width: 2fr;
+    min-width: 20;
+}
+
+MCPWorkbench #mcp-hub-row {
+    width: 8fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+}
+MCPWorkbench #mcp-hub-grid.mcp-compact #mcp-hub-row {
+    width: 9fr;
+    min-width: 46;
+}
+
+MCPWorkbench #mcp-hub-grid.mcp-stacked {
+    layout: vertical;
+}
+MCPWorkbench #mcp-hub-grid.mcp-stacked #mcp-hub-row {
+    width: 100%;
+    min-width: 40;
+    height: 1fr;
+    min-height: 2;
+}
+MCPWorkbench #mcp-hub-grid.mcp-stacked #mcp-hub-canvas {
+    min-width: 24;
+}
+MCPWorkbench #mcp-hub-grid.mcp-stacked #mcp-hub-inspector {
+    width: 100%;
+    height: 40%;
+    min-height: 1;
+}
 
 /* ===== WIDGET: BaseAppScreen (UI/Navigation/base_app_screen.py) ===== */
 
 
 
-    BaseAppScreen #screen-content {
-        width: 100%;
-        height: 1fr;
-        min-height: 0;
-        padding-top: 0;
-    }
+BaseAppScreen #screen-content {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+    padding-top: 0;
+}
 
 /* ===== WIDGET: MainNavigationBar (UI/Navigation/main_navigation.py) ===== */
 
 
 
-    MainNavigationBar .main-nav {
-        height: 100%;
-        width: 1fr;
-        layout: horizontal;
-        align: left middle;
-        padding: 0;
-        margin: 0;
-        overflow-x: auto;
-        scrollbar-size-horizontal: 0;
-    }
+MainNavigationBar .main-nav {
+    height: 100%;
+    width: 1fr;
+    layout: horizontal;
+    align: left middle;
+    padding: 0;
+    margin: 0;
+    overflow-x: auto;
+    scrollbar-size-horizontal: 0;
+}
 
-    MainNavigationBar .nav-button {
-        margin: 0;
-        padding: 0;
-        min-width: 4;
-        background: $surface-darken-1;
-        border: solid $surface-lighten-2;
-        height: 3;
-        min-height: 3;
-        content-align: center middle;
-    }
+MainNavigationBar .nav-button {
+    margin: 0;
+    padding: 0;
+    min-width: 4;
+    background: $surface-darken-1;
+    border: solid $surface-lighten-2;
+    height: 3;
+    min-height: 3;
+    content-align: center middle;
+}
 
-    MainNavigationBar .nav-button:hover {
-        background: $surface;
-        border: solid $primary-lighten-1;
-        text-style: bold;
-    }
+MainNavigationBar .nav-button:hover {
+    background: $surface;
+    border: solid $primary-lighten-1;
+    text-style: bold;
+}
 
-    MainNavigationBar .nav-button:focus {
-        background: $surface;
-        border: solid $primary;
-        text-style: bold underline;
-        color: $text;
-        outline: none;
-    }
+MainNavigationBar .nav-button:focus {
+    background: $surface;
+    border: solid $primary;
+    text-style: bold underline;
+    color: $text;
+    outline: none;
+}
 
-    MainNavigationBar .nav-button.is-active {
-        background: $primary-darken-1;
-        border: solid $primary;
-        text-style: bold;
-        color: $text;
-    }
+MainNavigationBar .nav-button.is-active {
+    background: $primary-darken-1;
+    border: round $tldw-active-edge;
+    text-style: bold;
+    color: $text;
+}
 
-    MainNavigationBar .nav-button.is-active:focus {
-        background: $primary-darken-1;
-        border: solid $primary;
-        text-style: bold underline;
-        color: $text;
-        outline: none;
-    }
+MainNavigationBar .nav-button.is-active:focus {
+    background: $primary-darken-1;
+    border: round $tldw-active-edge;
+    text-style: bold underline;
+    color: $text;
+    outline: none;
+}
 
-    MainNavigationBar .nav-group-separator {
-        margin: 0;
-        padding: 0 1;
-        color: $accent;
-        width: auto;
-        text-style: bold;
-    }
+MainNavigationBar .nav-group-separator {
+    margin: 0;
+    padding: 0 1;
+    color: $accent;
+    width: auto;
+    text-style: bold;
+}
 
 
-    MainNavigationBar .nav-button.nav-button-clip-ghost,
-    MainNavigationBar .nav-button.nav-button-clip-ghost:hover,
-    MainNavigationBar .nav-button.nav-button-clip-ghost:focus,
-    MainNavigationBar .nav-button.nav-button-clip-ghost.is-active,
-    MainNavigationBar .nav-button.nav-button-clip-ghost.is-active:focus,
-    MainNavigationBar .nav-button.nav-button-clip-ghost:disabled {
-        background: $background !important;
-        color: $background !important;
-        text-style: none;
-        opacity: 100% !important;
-        text-opacity: 100% !important;
-    }
+MainNavigationBar .nav-button.nav-button-clip-ghost,
+MainNavigationBar .nav-button.nav-button-clip-ghost:hover,
+MainNavigationBar .nav-button.nav-button-clip-ghost:focus,
+MainNavigationBar .nav-button.nav-button-clip-ghost.is-active,
+MainNavigationBar .nav-button.nav-button-clip-ghost.is-active:focus,
+MainNavigationBar .nav-button.nav-button-clip-ghost:disabled {
+    background: $surface !important;
+    color: $surface !important;
+    text-style: none;
+    opacity: 100% !important;
+    text-opacity: 100% !important;
+}
 
-    MainNavigationBar .nav-overflow-hint {
-        width: auto;
-        min-width: 0;
-        padding: 0 1;
-        height: 3;
-        min-height: 3;
-        content-align: center middle;
-        color: $text-muted;
-        background: transparent;
-        border: none;
-    }
+MainNavigationBar .nav-overflow-hint {
+    width: auto;
+    min-width: 0;
+    padding: 0 1;
+    height: 3;
+    min-height: 3;
+    content-align: center middle;
+    color: $text-muted;
+    background: transparent;
+    border: none;
+}
 
-    MainNavigationBar .nav-overflow-hint:hover {
-        color: $text;
-        background: $surface;
-        text-style: bold;
-    }
+MainNavigationBar .nav-overflow-hint:hover {
+    color: $text;
+    background: $surface;
+    text-style: bold;
+}
 
-    MainNavigationBar .nav-overflow-hint:focus {
-        background: $surface;
-        color: $text;
-        text-style: bold underline;
-    }
+MainNavigationBar .nav-overflow-hint:focus {
+    background: $surface;
+    color: $text;
+    text-style: bold underline;
+}
 
 /* ===== WIDGET: LibraryScreen (UI/Screens/library_screen.py) ===== */
 
 
 
 
-    LibraryScreen #library-contract-grid {
-        height: 1fr;
-        min-height: 20;
-        padding: 1;
-        border: solid $surface-lighten-1;
-    }
-
-    LibraryScreen .library-region {
-        min-width: 0;
-        height: 100%;
-        min-height: 20;
-        padding: 1;
-        border: solid $surface-lighten-1;
-    }
-
-    LibraryScreen #library-source-browser {
-        width: 31;
-        min-width: 31;
-        max-width: 31;
-    }
-
-    LibraryScreen #library-source-detail {
-        width: 5fr;
-    }
-
-    LibraryScreen #library-source-inspector {
-        width: 2fr;
-    }
-
-    LibraryScreen #library-source-browser .library-source-action {
-        height: 1;
-        min-height: 1;
-        width: auto;
-        min-width: 0;
-        padding: 0 1;
-        border: none;
-        background: transparent;
-        content-align: left middle;
-        text-style: none;
-    }
-
-    LibraryScreen #library-source-browser .library-source-action-spacer {
-        height: 0;
-        min-height: 0;
-    }
-
-    LibraryScreen .library-source-active-marker {
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        background: $surface;
-        color: $text;
-        text-style: bold;
-    }
-
-    LibraryScreen .library-source-group-rule {
-        height: 1;
-        min-height: 1;
-        color: $text-muted;
-    }
-
-    LibraryScreen .library-source-action-meta {
-        color: $text-muted;
-        height: 1;
-        min-height: 1;
-        margin-bottom: 1;
-    }
-
-    LibraryScreen .library-hub-spacer {
-        height: 1;
-        min-height: 1;
-    }
-
-
-    LibraryScreen .library-hub-meta {
-        color: $text-muted;
-        height: auto;
-        min-height: 0;
-        margin-top: 1;
-    }
-
-    LibraryScreen #library-hub-actions {
-        height: auto;
-        min-height: 0;
-        margin-top: 1;
-    }
-    LibraryScreen Button.library-hub-action {
-        height: 1;
-        min-height: 1;
-    }
-
-    LibraryScreen Button.library-hub-recent {
-        height: 1;
-        min-height: 1;
-        width: 100%;
-        text-align: left;
-        content-align: left middle;
-    }
-
-    LibraryScreen #library-collection-form Input {
-        height: 3;
-        min-height: 3;
-        padding: 0 1;
-        border: tall $surface-lighten-1;
-        background: $surface;
-        color: $text;
-    }
-
-    LibraryScreen #library-collection-actions Button {
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-        background: transparent;
-        content-align: left middle;
-    }
-
-    LibraryScreen #library-notes-source-strip {
-        height: 1;
-        min-height: 1;
-    }
-
-    LibraryScreen #library-notes-source-strip Button {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-        background: transparent;
-    }
-
-    LibraryScreen #library-notes-source-strip Button.-selected {
-        text-style: bold;
-    }
-
-    LibraryScreen #library-notes-source-separator {
-        width: 1;
-        min-width: 1;
-        max-width: 1;
-        height: 1;
-        min-height: 1;
-        content-align: center middle;
-    }
-    LibraryScreen #library-notes-authority {
-        width: 100%;
-        height: auto;
-        min-height: 1;
-        color: $text-muted;
-    }
-
-    LibraryScreen #library-notes-filter-row,
-    LibraryScreen #library-notes-status-row,
-    LibraryScreen #library-note-heading,
-    LibraryScreen #library-note-title-row,
-    LibraryScreen #library-note-keywords-row,
-    LibraryScreen #library-note-context-keywords-row,
-    LibraryScreen #library-notes-create-heading {
-        layout: vertical;
-        height: auto;
-        min-height: 0;
-    }
-
-    LibraryScreen #library-notes-create-viewport {
-        height: 1fr;
-        min-height: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
-
-
-    LibraryScreen #library-note-preview-region {
-        margin: 0 0 1 0;
-        border: solid $surface-lighten-1;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-note-context-region {
-        border: solid $surface-lighten-1;
-    }
-
-
-    LibraryScreen #library-note-preview-region:focus,
-    LibraryScreen #library-note-context-region:focus {
-        border: heavy $accent;
-        outline: none;
-        background: $boost;
-    }
-
-    LibraryScreen #library-note-conflict-copy:focus {
-        background: $boost;
-        color: $text;
-        text-style: bold underline;
-    }
-
-    LibraryScreen #library-note-preview-body {
-        height: auto;
-        min-height: 0;
-        margin: 0;
-        padding: 0 1;
-        border: none;
-        overflow-y: hidden;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact {
-        padding: 0;
-        margin: 0;
-        border: none;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-canvas {
-        padding: 0;
-        margin: 0;
-        border: none;
-        overflow-x: hidden;
-        overflow-y: hidden;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-canvas,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-work-pane {
-        width: 1fr;
-        max-width: 100%;
-        height: 100%;
-        min-height: 0;
-        padding: 0;
-        margin: 0;
-        overflow-x: hidden;
-        overflow-y: hidden;
-    }
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-authority,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-work-authority {
-        height: 2;
-        min-height: 2;
-        max-height: 2;
-        margin: 0;
-        padding: 0 1;
-        text-wrap: wrap;
-        overflow: hidden hidden;
-    }
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-header {
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        padding: 0 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-filter-row {
-        layout: horizontal;
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-filter-label {
-        width: 8;
-        height: 1;
-        padding: 0 1;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-filter {
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        margin: 0;
-        padding: 0 1;
-        border: none;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-browse-actions,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-sort-choices,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-transfer-actions,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-selection-actions,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-primary-actions,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-conflict-actions,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-delete-actions {
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact .library-canvas-action {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0 1 0 0;
-        padding: 0 1;
-        border: none;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-status-row {
-        layout: horizontal;
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-status {
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        margin: 0;
-        padding: 0 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-filter-clear {
-        width: auto;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-selection-status {
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        padding: 0 1;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-list {
-        width: 1fr;
-        max-width: 100%;
-        height: 1fr;
-        min-height: 0;
-        margin: 0;
-        padding: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-empty {
-        height: 1fr;
-        min-height: 0;
-        margin: 0;
-        padding: 0 1;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-heading {
-        layout: horizontal;
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-editor-title,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-preview-title,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-title,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-loading-title,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-create-header {
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        padding: 0 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-editor-region {
-        height: 1fr;
-        min-height: 0;
-        margin: 0;
-        overflow-x: hidden;
-        overflow-y: hidden;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-title-row,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-keywords-row {
-        layout: horizontal;
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-title-label,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-keywords-label,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-keywords-label {
-        width: 10;
-        height: 1;
-        padding: 0 1;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-title,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-keywords,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-keywords {
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        margin: 0;
-        padding: 0 1;
-        border: none;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-body-label {
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        padding: 0 1;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-body {
-        height: 1fr;
-        min-height: 0;
-        max-height: 100%;
-        margin: 0;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-preview-region {
-        height: 1fr;
-        min-height: 0;
-        max-height: 100%;
-        margin: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-preview-body {
-        height: auto;
-        min-height: 0;
-        margin: 0;
-        padding: 0 1;
-        border: none;
-        overflow-y: hidden;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-region {
-        height: 1fr;
-        min-height: 0;
-        margin: 0;
-        padding: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-region .destination-section,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-region > .library-canvas-action {
-        height: 1;
-        min-height: 1;
-        margin: 0;
-    }
-
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-meta {
-        height: auto;
-        min-height: 1;
-        margin: 0;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-keywords-row {
-        layout: horizontal;
-        height: 1;
-        min-height: 1;
-        margin: 0;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-status {
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        padding: 0 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact .library-note-validation #library-note-status {
-        height: 2;
-        min-height: 2;
-        max-height: 2;
-        text-wrap: wrap;
-        text-overflow: clip;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-transfer-status,
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-transfer-status {
-        display: none;
-        height: 0;
-        min-height: 0;
-        margin: 0;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-conflict-region {
-        height: 3;
-        min-height: 3;
-        max-height: 3;
-        margin: 0;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-conflict-copy {
-        height: 2;
-        min-height: 2;
-        max-height: 2;
-        margin: 0;
-        padding: 0 1;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-delete-confirmation {
-        height: 2;
-        min-height: 2;
-        max-height: 2;
-        margin: 0;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-delete-confirm-copy {
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        padding: 0 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-create-heading {
-        layout: horizontal;
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-create-viewport {
-        height: 1fr;
-        min-height: 0;
-        margin: 0;
-        padding: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-load-state {
-        width: 100%;
-        height: 1fr;
-        min-height: 0;
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-load-heading {
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-loading {
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        padding: 0 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-note-loading-viewport {
-        height: 1fr;
-        min-height: 0;
-        margin: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
-
-
-    LibraryScreen #library-media-workbench {
-        width: 100%;
-        height: 1fr;
-        min-height: 0;
-    }
-
-    LibraryScreen #library-media-list,
-    LibraryScreen #library-media-preview,
-    LibraryScreen #library-media-detail-empty {
-        width: 1fr;
-        min-width: 0;
-        height: 100%;
-        min-height: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-media-preview,
-    LibraryScreen #library-media-detail-empty {
-        margin: 0 0 0 1;
-        padding: 0 1;
-    }
-
-    LibraryScreen #library-media-detail-empty {
-        color: $text-muted;
-    }
-
-    LibraryScreen #library-media-workbench.has-preview #library-media-detail-empty {
-        display: none;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-media-workbench {
-        layout: vertical;
-        height: 1fr;
-        min-height: 0;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-media-list {
-        width: 100%;
-        height: 100%;
-        min-height: 0;
-        margin: 0;
-        padding: 0;
-        overflow-y: hidden;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-media-row-scroll {
-        height: 1fr;
-        min-height: 0;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact .library-media-row {
-        height: 1;
-        min-height: 1;
-        margin: 0;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-media-preview {
-        display: none;
-    }
-
-    LibraryScreen #library-shell-grid.library-notes-compact #library-media-detail-empty {
-        display: none;
-    }
-
-/* ===== WIDGET: MCPScreen (UI/Screens/mcp_screen.py) ===== */
-
-    MCPScreen Button.mcp-mode-chip {
-        width: auto;
-
-        min-width: 10;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
-    MCPScreen .mcp-mode-chip.is-active {
-        border: none;
-        text-style: bold underline;
-    }
-
-    MCPScreen .mcp-mode-chip:focus,
-    MCPScreen .mcp-mode-chip:hover:focus {
-        background: $surface;
-        color: $text;
-        text-style: bold;
-        outline: none;
-    }
-
-    MCPScreen .mcp-mode-chip.is-active:focus,
-    MCPScreen .mcp-mode-chip.is-active:hover:focus {
-        background: $surface;
-        color: $text-muted;
-        text-style: bold underline;
-        outline: none;
-    }
+LibraryScreen #library-contract-grid {
+    height: 1fr;
+    min-height: 20;
+    padding: 1;
+    border: solid $surface-lighten-1;
+}
+
+LibraryScreen .library-region {
+    min-width: 0;
+    height: 100%;
+    min-height: 20;
+    padding: 1;
+    border: solid $surface-lighten-1;
+}
+
+LibraryScreen #library-source-browser {
+    width: 31;
+    min-width: 31;
+    max-width: 31;
+}
+
+LibraryScreen #library-source-detail {
+    width: 5fr;
+}
+
+LibraryScreen #library-source-inspector {
+    width: 2fr;
+}
+
+LibraryScreen #library-source-browser .library-source-action {
+    height: 1;
+    min-height: 1;
+    width: auto;
+    min-width: 0;
+    padding: 0 1;
+    border: none;
+    background: transparent;
+    content-align: left middle;
+    text-style: none;
+}
+
+LibraryScreen #library-source-browser .library-source-action-spacer {
+    height: 0;
+    min-height: 0;
+}
+
+LibraryScreen .library-source-active-marker {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    background: $surface;
+    color: $text;
+    text-style: bold;
+}
+
+LibraryScreen .library-source-group-rule {
+    height: 1;
+    min-height: 1;
+    color: $text-muted;
+}
+
+LibraryScreen .library-source-action-meta {
+    color: $text-muted;
+    height: 1;
+    min-height: 1;
+    margin-bottom: 1;
+}
+
+LibraryScreen .library-hub-spacer {
+    height: 1;
+    min-height: 1;
+}
+
+
+LibraryScreen .library-hub-meta {
+    color: $text-muted;
+    height: auto;
+    min-height: 0;
+    margin-top: 1;
+}
+
+LibraryScreen #library-hub-actions {
+    height: auto;
+    min-height: 0;
+    margin-top: 1;
+}
+LibraryScreen Button.library-hub-action {
+    height: 1;
+    min-height: 1;
+}
+
+LibraryScreen Button.library-hub-recent {
+    height: 1;
+    min-height: 1;
+    width: 100%;
+    text-align: left;
+    content-align: left middle;
+}
+
+LibraryScreen #library-collection-form Input {
+    height: 3;
+    min-height: 3;
+    padding: 0 1;
+    border: tall $surface-lighten-1;
+    background: $surface;
+    color: $text;
+}
+
+LibraryScreen #library-collection-actions Button {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    background: transparent;
+    content-align: left middle;
+}
+
+LibraryScreen #library-notes-source-strip {
+    height: 1;
+    min-height: 1;
+}
+
+LibraryScreen #library-notes-source-strip Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    background: transparent;
+}
+
+LibraryScreen #library-notes-source-strip Button.-selected {
+    text-style: bold;
+}
+
+LibraryScreen #library-notes-source-separator {
+    width: 1;
+    min-width: 1;
+    max-width: 1;
+    height: 1;
+    min-height: 1;
+    content-align: center middle;
+}
+LibraryScreen #library-notes-authority {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    color: $text-muted;
+}
+
+LibraryScreen #library-notes-filter-row,
+LibraryScreen #library-notes-status-row,
+LibraryScreen #library-note-heading,
+LibraryScreen #library-note-title-row,
+LibraryScreen #library-note-keywords-row,
+LibraryScreen #library-note-context-keywords-row,
+LibraryScreen #library-notes-create-heading {
+    layout: vertical;
+    height: auto;
+    min-height: 0;
+}
+
+LibraryScreen #library-notes-create-viewport {
+    height: 1fr;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+
+LibraryScreen #library-note-preview-region {
+    margin: 0 0 1 0;
+    border: solid $surface-lighten-1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+LibraryScreen #library-note-context-region {
+    border: solid $surface-lighten-1;
+}
+
+
+LibraryScreen #library-note-preview-region:focus,
+LibraryScreen #library-note-context-region:focus {
+    border: heavy $accent;
+    outline: none;
+    background: $boost;
+}
+
+LibraryScreen #library-note-conflict-copy:focus {
+    background: $boost;
+    color: $text;
+    text-style: bold underline;
+}
+
+LibraryScreen #library-note-preview-body {
+    height: auto;
+    min-height: 0;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    overflow-y: hidden;
+    overflow-x: hidden;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact {
+    padding: 0;
+    margin: 0;
+    border: none;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-canvas {
+    padding: 0;
+    margin: 0;
+    border: none;
+    overflow-x: hidden;
+    overflow-y: hidden;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-canvas,
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-work-pane {
+    width: 1fr;
+    max-width: 100%;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+    overflow-x: hidden;
+    overflow-y: hidden;
+}
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-authority,
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-work-authority {
+    height: 2;
+    min-height: 2;
+    max-height: 2;
+    margin: 0;
+    padding: 0 1;
+    text-wrap: wrap;
+    overflow: hidden hidden;
+}
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-header {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    padding: 0 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-filter-row {
+    layout: horizontal;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-filter-label {
+    width: 8;
+    height: 1;
+    padding: 0 1;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-filter {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-browse-actions,
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-sort-choices,
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-transfer-actions,
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-selection-actions,
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-primary-actions,
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-conflict-actions,
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-delete-actions {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    overflow-x: hidden;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact .library-canvas-action {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0 1 0 0;
+    padding: 0 1;
+    border: none;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-status-row {
+    layout: horizontal;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    overflow-x: hidden;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-status {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-filter-clear {
+    width: auto;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-selection-status {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    padding: 0 1;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-list {
+    width: 1fr;
+    max-width: 100%;
+    height: 1fr;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-empty {
+    height: 1fr;
+    min-height: 0;
+    margin: 0;
+    padding: 0 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-heading {
+    layout: horizontal;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    overflow-x: hidden;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-editor-title,
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-preview-title,
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-title,
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-loading-title,
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-create-header {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    padding: 0 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-editor-region {
+    height: 1fr;
+    min-height: 0;
+    margin: 0;
+    overflow-x: hidden;
+    overflow-y: hidden;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-title-row,
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-keywords-row {
+    layout: horizontal;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-title-label,
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-keywords-label,
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-keywords-label {
+    width: 10;
+    height: 1;
+    padding: 0 1;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-title,
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-keywords,
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-keywords {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-body-label {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    padding: 0 1;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-body {
+    height: 1fr;
+    min-height: 0;
+    max-height: 100%;
+    margin: 0;
+    overflow-x: hidden;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-preview-region {
+    height: 1fr;
+    min-height: 0;
+    max-height: 100%;
+    margin: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-preview-body {
+    height: auto;
+    min-height: 0;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    overflow-y: hidden;
+    overflow-x: hidden;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-region {
+    height: 1fr;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-region .destination-section,
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-region > .library-canvas-action {
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-meta {
+    height: auto;
+    min-height: 1;
+    margin: 0;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-keywords-row {
+    layout: horizontal;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-status {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    padding: 0 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact .library-note-validation #library-note-status {
+    height: 2;
+    min-height: 2;
+    max-height: 2;
+    text-wrap: wrap;
+    text-overflow: clip;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-transfer-status,
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-transfer-status {
+    display: none;
+    height: 0;
+    min-height: 0;
+    margin: 0;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-conflict-region {
+    height: 3;
+    min-height: 3;
+    max-height: 3;
+    margin: 0;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-conflict-copy {
+    height: 2;
+    min-height: 2;
+    max-height: 2;
+    margin: 0;
+    padding: 0 1;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-delete-confirmation {
+    height: 2;
+    min-height: 2;
+    max-height: 2;
+    margin: 0;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-delete-confirm-copy {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    padding: 0 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-create-heading {
+    layout: horizontal;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-notes-create-viewport {
+    height: 1fr;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-load-state {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-load-heading {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-loading {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    padding: 0 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-note-loading-viewport {
+    height: 1fr;
+    min-height: 0;
+    margin: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+
+LibraryScreen #library-media-workbench {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+}
+
+LibraryScreen #library-media-list,
+LibraryScreen #library-media-preview,
+LibraryScreen #library-media-detail-empty {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+LibraryScreen #library-media-preview,
+LibraryScreen #library-media-detail-empty {
+    margin: 0 0 0 1;
+    padding: 0 1;
+}
+
+LibraryScreen #library-media-detail-empty {
+    color: $text-muted;
+}
+
+LibraryScreen #library-media-workbench.has-preview #library-media-detail-empty {
+    display: none;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-media-workbench {
+    layout: vertical;
+    height: 1fr;
+    min-height: 0;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-media-list {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    overflow-y: hidden;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-media-row-scroll {
+    height: 1fr;
+    min-height: 0;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact .library-media-row {
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-media-preview {
+    display: none;
+}
+
+LibraryScreen #library-shell-grid.library-notes-compact #library-media-detail-empty {
+    display: none;
+}
 
 /* ===== WIDGET: ModelCatalogConsentModal (UI/Screens/model_catalog_consent.py) ===== */
 
 
 
-    ModelCatalogConsentModal #model-catalog-consent-dialog {
-        width: 72;
-        height: auto;
-        background: $panel;
-        border: round $accent;
-        padding: 1 2;
-    }
+ModelCatalogConsentModal #model-catalog-consent-dialog {
+    width: 72;
+    height: auto;
+    background: $panel;
+    border: round $accent;
+    padding: 1 2;
+}
 
-    ModelCatalogConsentModal #model-catalog-consent-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
+ModelCatalogConsentModal #model-catalog-consent-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
 
-    ModelCatalogConsentModal #model-catalog-consent-copy {
-        height: auto;
-        margin-bottom: 1;
-    }
+ModelCatalogConsentModal #model-catalog-consent-copy {
+    height: auto;
+    margin-bottom: 1;
+}
 
-    ModelCatalogConsentModal #model-catalog-consent-actions {
-        height: 3;
-        align-horizontal: right;
-    }
+ModelCatalogConsentModal #model-catalog-consent-actions {
+    height: 3;
+    align-horizontal: right;
+}
 
-    ModelCatalogConsentModal #model-catalog-consent-actions Button {
-        min-width: 16;
-        height: 3;
-        border: none;
-        margin-left: 1;
-    }
+ModelCatalogConsentModal #model-catalog-consent-actions Button {
+    min-width: 16;
+    height: 3;
+    border: none;
+    margin-left: 1;
+}
 
 /* ===== WIDGET: PersonasScreen (UI/Screens/personas_screen.py) ===== */
 
 
 
+PersonasScreen #personas-mode-strip {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    overflow: hidden;
+}
+
+PersonasScreen #personas-mode-label {
+    width: 8;
+    min-width: 8;
+    height: 1;
+    min-height: 1;
+}
+
+PersonasScreen Button.personas-mode-chip {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+}
+
+PersonasScreen .personas-mode-chip.is-active {
+    border: none;
+    text-style: bold underline;
+}
+
+PersonasScreen #personas-workbench {
+    height: 1fr;
+
+    min-height: 10;
+    padding: 1;
+}
+
+PersonasScreen #personas-workbench .destination-workbench-pane {
+    min-width: 0;
+    height: 100%;
+    min-height: 6;
+    padding: 0 1;
+}
+
+PersonasScreen #personas-library-pane {
+    width: 2fr;
+}
+
+PersonasScreen #personas-work-area {
+    width: 4fr;
+
+    min-width: 40;
+}
+
+PersonasScreen #personas-inspector-pane {
+    width: 2fr;
+}
+
+PersonasScreen #personas-workbench.personas-workbench-compact {
+    padding: 0;
+}
+
+PersonasScreen #personas-library-pane.personas-workbench-compact-pane {
+    width: 1fr;
+    min-width: 16;
+    padding: 0 1;
+}
+
+PersonasScreen #personas-work-area.personas-workbench-compact-pane {
+    width: 3fr;
+    min-width: 34;
+    padding: 0 1;
+}
+
+PersonasScreen #personas-inspector-pane.personas-workbench-compact-pane {
+    width: 1fr;
+    min-width: 22;
+    padding: 0 1;
+}
+
+PersonasScreen #personas-detail-stack {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+}
+
+PersonasScreen #personas-characters-empty {
+    width: 1fr;
+    height: 1fr;
+
+    content-align: left top;
+    text-align: left;
+    padding: 1 2;
+    color: $text-muted;
+}
+
+PersonasScreen #personas-library-rows {
+    height: 1fr;
+    min-height: 1;
+}
+
+PersonasScreen #personas-conversation-actions {
+    height: 9;
+    min-height: 9;
+    width: 100%;
+}
+
+PersonasScreen #personas-conversation-actions Button {
+    min-width: 0;
+    height: 3;
+    margin: 0;
+}
+
+PersonasScreen #personas-conversation-resume,
+PersonasScreen #personas-conversation-continue-console,
+PersonasScreen #personas-conversation-navigation-actions {
+    width: 100%;
+    height: 3;
+}
+
+PersonasScreen #personas-conversation-navigation-actions Button {
+    width: 1fr;
+}
 
 
-    PersonasScreen #personas-mode-strip {
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        overflow: hidden;
-    }
-
-    PersonasScreen #personas-mode-label {
-        width: 8;
-        min-width: 8;
-        height: 1;
-        min-height: 1;
-    }
-
-    PersonasScreen Button.personas-mode-chip {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
-
-    PersonasScreen .personas-mode-chip.is-active {
-        border: none;
-        text-style: bold underline;
-    }
-
-    PersonasScreen #personas-workbench {
-        height: 1fr;
-
-        min-height: 10;
-        padding: 1;
-    }
-
-    PersonasScreen #personas-workbench .destination-workbench-pane {
-        min-width: 0;
-        height: 100%;
-        min-height: 6;
-        padding: 0 1;
-    }
-
-    PersonasScreen #personas-library-pane {
-        width: 2fr;
-    }
-
-    PersonasScreen #personas-work-area {
-        width: 4fr;
-
-        min-width: 40;
-    }
-
-    PersonasScreen #personas-inspector-pane {
-        width: 2fr;
-    }
-
-    PersonasScreen #personas-workbench.personas-workbench-compact {
-        padding: 0;
-    }
-
-    PersonasScreen #personas-library-pane.personas-workbench-compact-pane {
-        width: 1fr;
-        min-width: 16;
-        padding: 0 1;
-    }
-
-    PersonasScreen #personas-work-area.personas-workbench-compact-pane {
-        width: 3fr;
-        min-width: 34;
-        padding: 0 1;
-    }
-
-    PersonasScreen #personas-inspector-pane.personas-workbench-compact-pane {
-        width: 1fr;
-        min-width: 22;
-        padding: 0 1;
-    }
-
-    PersonasScreen #personas-detail-stack {
-        width: 100%;
-        height: 1fr;
-        min-height: 0;
-    }
-
-    PersonasScreen #personas-characters-empty {
-        width: 1fr;
-        height: 1fr;
-
-        content-align: left top;
-        text-align: left;
-        padding: 1 2;
-        color: $text-muted;
-    }
-
-    PersonasScreen #personas-library-rows {
-        height: 1fr;
-        min-height: 3;
-    }
-
-    PersonasScreen #personas-library-pane ListItem.personas-library-row {
-        width: 100%;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
-
-    PersonasScreen #personas-conversation-actions {
-        height: 9;
-        min-height: 9;
-        width: 100%;
-    }
-
-    PersonasScreen #personas-conversation-actions Button {
-        min-width: 0;
-        height: 3;
-        margin: 0;
-    }
-
-    PersonasScreen #personas-conversation-resume,
-    PersonasScreen #personas-conversation-continue-console,
-    PersonasScreen #personas-conversation-navigation-actions {
-        width: 100%;
-        height: 3;
-    }
-
-    PersonasScreen #personas-conversation-navigation-actions Button {
-        width: 1fr;
-    }
-
-
-    PersonasScreen #personas-character-attachments {
-        height: auto;
-        width: 100%;
-    }
+PersonasScreen #personas-character-attachments {
+    height: auto;
+    width: 100%;
+}
 
 /* ===== WIDGET: ConflictsTab (UI/Screens/scheduling/conflicts_tab.py) ===== */
 
 
-    ConflictsTab #scheduling-conflicts-table {
+ConflictsTab #scheduling-conflicts-table {
 
-        height: auto;
-        max-height: 15;
-    }
-    ConflictsTab #scheduling-conflicts-empty {
-        color: $text-muted;
-        padding: 2 1;
-        display: none;
-    }
-    ConflictsTab #scheduling-conflict-actions {
-        height: auto;
-    }
-    ConflictsTab #scheduling-conflict-detail {
+    height: auto;
+    max-height: 15;
+}
+ConflictsTab #scheduling-conflicts-empty {
+    color: $text-muted;
+    padding: 2 1;
+    display: none;
+}
+ConflictsTab #scheduling-conflict-actions {
+    height: auto;
+}
+ConflictsTab #scheduling-conflict-detail {
 
-        height: 1fr;
-        padding: 0 1;
-        color: $text;
-        border-top: solid $surface-lighten-2;
-    }
-    ConflictsTab .conflict-detail-muted {
-        color: $text-muted;
-    }
+    height: 1fr;
+    padding: 0 1;
+    color: $text;
+    border-top: solid $surface-lighten-2;
+}
+ConflictsTab .conflict-detail-muted {
+    color: $text-muted;
+}
 
 /* ===== WIDGET: DefinitionAuditView (UI/Screens/scheduling/definition_audit_view.py) ===== */
 
 
-    DefinitionAuditView #scheduling-audit-view-table {
-        height: 1fr;
-    }
+DefinitionAuditView #scheduling-audit-view-table {
+    height: 1fr;
+}
 
 /* ===== WIDGET: AutomationDefinitionForm (UI/Screens/scheduling/forms/automation_definition_form.py) ===== */
 
@@ -1638,1335 +1646,1350 @@
 
 
 
-    AutomationDefinitionForm #automation-form-footer {
-        dock: bottom;
-        height: auto;
-        background: $surface;
-    }
+AutomationDefinitionForm #automation-form-footer {
+    dock: bottom;
+    height: auto;
+    background: $surface;
+}
 
-    AutomationDefinitionForm #automation-scope-sources-group,
-    AutomationDefinitionForm #automation-run-at-group,
-    AutomationDefinitionForm #automation-cron-group,
-    AutomationDefinitionForm #automation-timezone-group,
-    AutomationDefinitionForm #automation-preset-time-group,
-    AutomationDefinitionForm #automation-cron-custom-group,
-    AutomationDefinitionForm #automation-provider-group {
-        height: auto;
-    }
+AutomationDefinitionForm #automation-scope-sources-group,
+AutomationDefinitionForm #automation-run-at-group,
+AutomationDefinitionForm #automation-cron-group,
+AutomationDefinitionForm #automation-timezone-group,
+AutomationDefinitionForm #automation-preset-time-group,
+AutomationDefinitionForm #automation-cron-custom-group,
+AutomationDefinitionForm #automation-provider-group {
+    height: auto;
+}
 
-    AutomationDefinitionForm #automation-form-errors {
-        display: none;
-    }
+AutomationDefinitionForm #automation-form-errors {
+    display: none;
+}
 
-    AutomationDefinitionForm #automation-question {
-        height: 3;
-        max-height: 5;
-    }
+AutomationDefinitionForm #automation-question {
+    height: 3;
+    max-height: 5;
+}
 
-    AutomationDefinitionForm .form-title {
-        text-style: bold;
-        text-align: center;
-        padding: 0;
-    }
+AutomationDefinitionForm .form-title {
+    text-style: bold;
+    text-align: center;
+    padding: 0;
+}
 
-    AutomationDefinitionForm .form-label {
-        color: $text-muted;
-        padding: 1 0 0 0;
-    }
+AutomationDefinitionForm .form-label {
+    color: $text-muted;
+    padding: 1 0 0 0;
+}
 
-    AutomationDefinitionForm .form-helper {
-        color: $text-muted;
-        height: auto;
-        padding: 0;
-    }
+AutomationDefinitionForm .form-helper {
+    color: $text-muted;
+    height: auto;
+    padding: 0;
+}
 
-    AutomationDefinitionForm .form-preview {
-        color: $text-muted;
-        height: auto;
-        min-height: 1;
-        padding: 0;
-    }
+AutomationDefinitionForm .form-preview {
+    color: $text-muted;
+    height: auto;
+    min-height: 1;
+    padding: 0;
+}
 
-    AutomationDefinitionForm .error-text {
-        color: $error;
-        text-style: bold;
-        height: auto;
-        padding: 0;
-    }
+AutomationDefinitionForm .error-text {
+    color: $error;
+    text-style: bold;
+    height: auto;
+    padding: 0;
+}
 
-    AutomationDefinitionForm .button-container {
-        align: center middle;
-        height: auto;
-        padding: 0;
-        margin-top: 1;
-    }
+AutomationDefinitionForm .button-container {
+    align: center middle;
+    height: auto;
+    padding: 0;
+    margin-top: 1;
+}
 
-    AutomationDefinitionForm .button-container Button.automation-definition-form-button {
-        margin: 0 1;
-    }
+AutomationDefinitionForm .button-container Button.automation-definition-form-button {
+    margin: 0 1;
+}
 
 /* ===== WIDGET: ResultsTab (UI/Screens/scheduling/results_tab.py) ===== */
 
 
-    ResultsTab #scheduling-results-table {
+ResultsTab #scheduling-results-table {
 
-        height: auto;
-        max-height: 15;
-    }
-    ResultsTab #scheduling-results-empty {
-        color: $text-muted;
-        padding: 2 1;
-        display: none;
-    }
-    ResultsTab #scheduling-results-detail {
+    height: auto;
+    max-height: 15;
+}
+ResultsTab #scheduling-results-empty {
+    color: $text-muted;
+    padding: 2 1;
+    display: none;
+}
+ResultsTab #scheduling-results-detail {
 
-        height: 1fr;
-        padding: 0 1;
-        color: $text;
-        border-top: solid $surface-lighten-2;
-    }
-    ResultsTab .results-detail-muted {
-        color: $text-muted;
-    }
+    height: 1fr;
+    padding: 0 1;
+    color: $text;
+    border-top: solid $surface-lighten-2;
+}
+ResultsTab .results-detail-muted {
+    color: $text-muted;
+}
 
 /* ===== WIDGET: SyncStatusWidget (UI/Screens/scheduling/sync_status_widget.py) ===== */
 
 
-    SyncStatusWidget #scheduling-owner-local, SyncStatusWidget #scheduling-owner-server {
-        width: auto;
-    }
-    SyncStatusWidget #scheduling-sync-local-note {
-        width: auto;
-        color: $text-muted;
-    }
+SyncStatusWidget #scheduling-owner-local, SyncStatusWidget #scheduling-owner-server {
+    width: auto;
+}
+SyncStatusWidget #scheduling-sync-local-note {
+    width: auto;
+    color: $text-muted;
+}
 
-    SyncStatusWidget #scheduling-last-pull, SyncStatusWidget #scheduling-last-push {
-        width: auto;
-        margin-left: 2;
-    }
-    SyncStatusWidget #scheduling-sync-error {
-        width: 1fr;
-        color: $error;
-        margin-left: 2;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-    SyncStatusWidget #scheduling-clear-error {
-        width: auto;
-    }
+SyncStatusWidget #scheduling-last-pull, SyncStatusWidget #scheduling-last-push {
+    width: auto;
+    margin-left: 2;
+}
+SyncStatusWidget #scheduling-sync-error {
+    width: 1fr;
+    color: $error;
+    margin-left: 2;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+SyncStatusWidget #scheduling-clear-error {
+    width: auto;
+}
 
 /* ===== WIDGET: TaskDetail (UI/Screens/scheduling/task_detail.py) ===== */
 
-    TaskDetail #scheduling-task-detail-metadata {
-        height: auto;
-        padding: 0;
-    }
+TaskDetail #scheduling-task-detail-metadata {
+    height: auto;
+    padding: 0;
+}
 
-    TaskDetail #scheduling-task-detail-metadata Horizontal {
-        height: auto;
-        padding: 0;
-        margin: 0;
-    }
+TaskDetail #scheduling-task-detail-metadata Horizontal {
+    height: auto;
+    padding: 0;
+    margin: 0;
+}
 
-    TaskDetail .scheduling-detail-label {
-        color: $text-muted;
-        padding: 0 1 0 0;
-        width: 10;
-    }
-
-
-    TaskDetail .scheduling-detail-label-stacked {
-        width: auto;
-        min-width: 0;
-    }
-
-    TaskDetail .scheduling-detail-value {
-        color: $text;
-    }
-
-    TaskDetail .scheduling-detail-missed {
-        color: $warning;
-        margin: 0 0 0 11;
-        height: auto;
-    }
-
-/* ===== WIDGET: SkillRecoveryReviewModal (UI/Screens/skills_screen.py) ===== */
+TaskDetail .scheduling-detail-label {
+    color: $text-muted;
+    padding: 0 1 0 0;
+    width: 10;
+}
 
 
-    SkillRecoveryReviewModal #skills-recovery-review { width: 90%; max-width: 110; height: 90%; border: tall $accent; padding: 1 2; background: $surface; }
-    SkillRecoveryReviewModal #skills-recovery-scroll { height: 1fr; }
-    SkillRecoveryReviewModal #skills-recovery-scroll Static.skill-recovery-review-modal-static { height: auto; margin-bottom: 1; }
-    SkillRecoveryReviewModal #skills-recovery-actions { height: 3; align-horizontal: right; }
-    SkillRecoveryReviewModal #skills-recovery-actions Button.skill-recovery-review-modal-button { width: auto; margin-left: 1; }
-    SkillRecoveryReviewModal #skills-recovery-status { height: auto; color: $warning; }
+TaskDetail .scheduling-detail-label-stacked {
+    width: auto;
+    min-width: 0;
+}
+
+TaskDetail .scheduling-detail-value {
+    color: $text;
+}
+
+TaskDetail .scheduling-detail-missed {
+    color: $warning;
+    margin: 0 0 0 11;
+    height: auto;
+}
 
 /* ===== WIDGET: TrajectoryScreen (UI/Screens/trajectory_screen.py) ===== */
 
 
-    TrajectoryScreen #trajectory-screen {
-        width: 100%;
-        height: 100%;
-        layout: vertical;
-        padding: 0 1;
-    }
-    TrajectoryScreen #trajectory-title {
-        height: auto;
-        max-height: 3;
-        color: $text;
-        background: $panel;
-    }
-    TrajectoryScreen #trajectory-state {
-        height: auto;
-        min-height: 1;
-        max-height: 4;
-        color: $text-muted;
-    }
-    TrajectoryScreen #trajectory-search {
-        height: 3;
-    }
-    TrajectoryScreen #trajectory-table {
-        height: 1fr;
-        min-height: 3;
-    }
-    TrajectoryScreen #trajectory-inspector {
-        height: 40%;
-        max-height: 40%;
-        border-top: solid $primary;
-        padding: 0 1;
-        overflow-y: auto;
-        scrollbar-gutter: stable;
-    }
-    TrajectoryScreen #trajectory-inspector:focus {
-        border-top: heavy $accent;
-    }
-    TrajectoryScreen #trajectory-inspector-content {
-        width: 100%;
-        height: auto;
-    }
-    TrajectoryScreen #trajectory-inspector-overflow {
-        height: 1;
-        color: $text-muted;
-    }
+TrajectoryScreen #trajectory-screen {
+    width: 100%;
+    height: 100%;
+    layout: vertical;
+    padding: 0 1;
+}
+TrajectoryScreen #trajectory-title {
+    height: auto;
+    max-height: 3;
+    color: $text;
+    background: $panel;
+}
+TrajectoryScreen #trajectory-state {
+    height: auto;
+    min-height: 1;
+    max-height: 4;
+    color: $text-muted;
+}
+TrajectoryScreen #trajectory-search {
+    height: 3;
+}
+TrajectoryScreen #trajectory-table {
+    height: 1fr;
+    min-height: 3;
+}
+TrajectoryScreen #trajectory-inspector {
+    height: 40%;
+    max-height: 40%;
+    border-top: solid $primary;
+    padding: 0 1;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+TrajectoryScreen #trajectory-inspector:focus {
+    border-top: heavy $accent;
+}
+TrajectoryScreen #trajectory-inspector-content {
+    width: 100%;
+    height: auto;
+}
+TrajectoryScreen #trajectory-inspector-overflow {
+    height: 1;
+    color: $text-muted;
+}
 
 
 
-    TrajectoryScreen #trajectory-hints {
-        height: 1;
-        color: $text-disabled;
-    }
+TrajectoryScreen #trajectory-hints {
+    height: 1;
+    color: $text-disabled;
+}
 
 /* ===== WIDGET: TraceFilterBar (UI/Widgets/trace_filter_bar.py) ===== */
 
 
-    TraceFilterBar #trace-filter-wide { width: 1fr; height: 3; }
-    TraceFilterBar #trace-filter-counts { width: 20; height: 3; content-align: left middle; color: $text-muted; }
+TraceFilterBar #trace-filter-wide { width: 1fr; height: 3; }
+TraceFilterBar #trace-filter-counts { width: 20; height: 3; content-align: left middle; color: $text-muted; }
 
-    TraceFilterBar #trace-filter-compact { width: 1fr; height: 1; color: $text-muted; }
+TraceFilterBar #trace-filter-compact { width: 1fr; height: 1; color: $text-muted; }
 
 /* ===== WIDGET: ConsoleActivityOutcomeNotice (Widgets/Console/console_activity_outcome_notice.py) ===== */
 
 
-    ConsoleActivityOutcomeNotice #console-activity-outcome-copy {
-        width: 1fr;
-        height: 1;
-    }
-    ConsoleActivityOutcomeNotice #console-activity-outcome-mark-seen {
-        width: 11;
-        min-width: 11;
-        height: 1;
-        min-height: 1;
-        border: none;
-    }
-    ConsoleActivityOutcomeNotice #console-activity-outcome-dismiss {
-        width: 3;
-        min-width: 3;
-        height: 1;
-        min-height: 1;
-        border: none;
-    }
+ConsoleActivityOutcomeNotice #console-activity-outcome-copy {
+    width: 1fr;
+    height: 1;
+}
+ConsoleActivityOutcomeNotice #console-activity-outcome-mark-seen {
+    width: 11;
+    min-width: 11;
+    height: 1;
+    min-height: 1;
+    border: none;
+}
+ConsoleActivityOutcomeNotice #console-activity-outcome-dismiss {
+    width: 3;
+    min-width: 3;
+    height: 1;
+    min-height: 1;
+    border: none;
+}
 
 /* ===== WIDGET: ConsoleAppearancePickerModal (Widgets/Console/console_appearance_picker_modal.py) ===== */
 
 
 
-    ConsoleAppearancePickerModal #console-appearance-picker-modal {
-        width: 64;
-        max-width: 100%;
-        height: 29;
-        max-height: 100%;
-        border: tall $accent;
-        background: $panel;
-        padding: 1 2;
-    }
+ConsoleAppearancePickerModal #console-appearance-picker-modal {
+    width: 64;
+    max-width: 100%;
+    height: 29;
+    max-height: 100%;
+    border: tall $accent;
+    background: $panel;
+    padding: 1 2;
+}
 
-    ConsoleAppearancePickerModal #console-appearance-picker-filter {
-        width: 100%;
-        height: 3;
-    }
+ConsoleAppearancePickerModal #console-appearance-picker-filter {
+    width: 100%;
+    height: 3;
+}
 
-    ConsoleAppearancePickerModal #console-appearance-picker-preview {
-        width: 100%;
-        height: 1;
-        color: $text-muted;
-    }
+ConsoleAppearancePickerModal #console-appearance-picker-preview {
+    width: 100%;
+    height: 1;
+    color: $text-muted;
+}
 
-    ConsoleAppearancePickerModal #console-appearance-picker-emoji {
-        width: 100%;
-        height: 1fr;
-        min-height: 3;
-        background: $surface-darken-1;
-    }
+ConsoleAppearancePickerModal #console-appearance-picker-emoji {
+    width: 100%;
+    height: 1fr;
+    min-height: 3;
+    background: $surface-darken-1;
+}
 
 
-    ConsoleAppearancePickerModal #console-appearance-picker-emoji .emoji_row {
-        height: 3;
-        width: 100%;
-    }
+ConsoleAppearancePickerModal #console-appearance-picker-emoji .emoji_row {
+    height: 3;
+    width: 100%;
+}
 
-    ConsoleAppearancePickerModal #console-appearance-picker-emoji .emoji_button {
-        width: 4;
-        min-width: 4;
-        max-width: 4;
-        height: 3;
-        padding: 0;
-        margin: 0;
-    }
+ConsoleAppearancePickerModal #console-appearance-picker-emoji .emoji_button {
+    width: 4;
+    min-width: 4;
+    max-width: 4;
+    height: 3;
+    padding: 0;
+    margin: 0;
+}
 
-    ConsoleAppearancePickerModal #console-appearance-picker-colors {
+ConsoleAppearancePickerModal #console-appearance-picker-colors {
 
-        width: 100%;
-        height: 4;
-        margin-top: 0;
-    }
+    width: 100%;
+    height: 4;
+    margin-top: 0;
+}
 
-    ConsoleAppearancePickerModal #console-appearance-picker-hex {
-        width: 1fr;
-        height: 3;
-        margin-top: 0;
-    }
+ConsoleAppearancePickerModal #console-appearance-picker-hex {
+    width: 1fr;
+    height: 3;
+    margin-top: 0;
+}
 
-    ConsoleAppearancePickerModal .console-appearance-swatch {
-        width: 3;
-        min-width: 3;
-        max-width: 3;
-        height: 3;
-        min-height: 3;
-        margin: 0;
-        padding: 0;
-        border: none;
-        text-align: center;
-        content-align: center middle;
-    }
+ConsoleAppearancePickerModal .console-appearance-swatch {
+    width: 3;
+    min-width: 3;
+    max-width: 3;
+    height: 3;
+    min-height: 3;
+    margin: 0;
+    padding: 0;
+    border: none;
+    text-align: center;
+    content-align: center middle;
+}
 
-    ConsoleAppearancePickerModal .console-appearance-swatch-selected {
+ConsoleAppearancePickerModal .console-appearance-swatch-selected {
 
-        background: $accent 25%;
-        text-style: bold;
-    }
+    background: $accent 25%;
+    text-style: bold;
+}
 
-    ConsoleAppearancePickerModal #console-appearance-swatch-none {
-        width: 6;
-        min-width: 6;
-        max-width: 6;
-    }
+ConsoleAppearancePickerModal #console-appearance-swatch-none {
+    width: 6;
+    min-width: 6;
+    max-width: 6;
+}
 
-    ConsoleAppearancePickerModal .console-appearance-emoji-selected {
-        background: $accent 25%;
-        text-style: bold;
-    }
+ConsoleAppearancePickerModal .console-appearance-emoji-selected {
+    background: $accent 25%;
+    text-style: bold;
+}
 
-    ConsoleAppearancePickerModal #console-appearance-picker-actions {
-        width: 100%;
-        height: 3;
-        margin-top: 1;
-    }
+ConsoleAppearancePickerModal #console-appearance-picker-actions {
+    width: 100%;
+    height: 3;
+    margin-top: 1;
+}
 
-    ConsoleAppearancePickerModal #console-appearance-picker-actions Button.console-appearance-picker-modal-button {
-        width: 1fr;
-        height: 3;
-        border: none;
-        margin: 0 1 0 0;
-    }
+ConsoleAppearancePickerModal #console-appearance-picker-actions Button.console-appearance-picker-modal-button {
+    width: 1fr;
+    height: 3;
+    border: none;
+    margin: 0 1 0 0;
+}
 
-    ConsoleAppearancePickerModal #console-appearance-picker-apply {
-        background: $primary;
-        color: $text;
-    }
+ConsoleAppearancePickerModal #console-appearance-picker-apply {
+    background: $primary;
+    color: $text;
+}
 
-    ConsoleAppearancePickerModal #console-appearance-picker-clear,
-    ConsoleAppearancePickerModal #console-appearance-picker-cancel {
-        background: $surface;
-        color: $text;
-    }
+ConsoleAppearancePickerModal #console-appearance-picker-clear,
+ConsoleAppearancePickerModal #console-appearance-picker-cancel {
+    background: $surface;
+    color: $text;
+}
 
 /* ===== WIDGET: AutoSpeakConsentModal (Widgets/Console/console_auto_speak_consent.py) ===== */
 
 
 
-    AutoSpeakConsentModal #console-auto-speak-consent-modal {
-        width: 68;
-        max-width: 95%;
-        height: auto;
-        border: tall gray;
-        background: black;
-        padding: 1 2;
-    }
+AutoSpeakConsentModal #console-auto-speak-consent-modal {
+    width: 68;
+    max-width: 95%;
+    height: auto;
+    border: tall $tldw-boundary;
+    background: $panel;
+    color: $text;
+    padding: 1 2;
+}
 
-    AutoSpeakConsentModal #console-auto-speak-consent-actions {
-        height: auto;
-        margin-top: 1;
-        align-horizontal: right;
-    }
+AutoSpeakConsentModal #console-auto-speak-consent-modal Static {
+    color: $text;
+}
+
+AutoSpeakConsentModal #console-auto-speak-consent-actions {
+    height: auto;
+    margin-top: 1;
+    align-horizontal: right;
+}
 
 /* ===== WIDGET: GlobalFullCaptureConfirmation (Widgets/Console/console_capture_policy_dialog.py) ===== */
 
 
-    GlobalFullCaptureConfirmation #global-full-confirmation {
-        width: 72; max-width: 96%; height: 18; max-height: 96%;
-        border: thick $error; background: $surface; padding: 1 2;
-    }
-    GlobalFullCaptureConfirmation #global-full-title { text-style: bold; text-align: center; }
-    GlobalFullCaptureConfirmation #global-full-body { height: 1fr; scrollbar-gutter: stable; }
-    GlobalFullCaptureConfirmation #global-full-message, GlobalFullCaptureConfirmation #global-full-ack { height: auto; margin-top: 1; }
-    GlobalFullCaptureConfirmation #global-full-actions { height: 3; min-height: 3; align-horizontal: right; }
-    GlobalFullCaptureConfirmation #global-full-actions Button { min-width: 14; margin-left: 1; }
+GlobalFullCaptureConfirmation #global-full-confirmation {
+    width: 72; max-width: 96%; height: 18; max-height: 96%;
+    border: thick $error; background: $surface; padding: 1 2;
+}
+GlobalFullCaptureConfirmation #global-full-title { text-style: bold; text-align: center; }
+GlobalFullCaptureConfirmation #global-full-body { height: 1fr; scrollbar-gutter: stable; }
+GlobalFullCaptureConfirmation #global-full-message, GlobalFullCaptureConfirmation #global-full-ack { height: auto; margin-top: 1; }
+GlobalFullCaptureConfirmation #global-full-actions { height: 3; min-height: 3; align-horizontal: right; }
+GlobalFullCaptureConfirmation #global-full-actions Button { min-width: 14; margin-left: 1; }
 
 /* ===== WIDGET: ConsoleTracePrivacyDialog (Widgets/Console/console_capture_policy_dialog.py) ===== */
 
 
-    ConsoleTracePrivacyDialog #trace-privacy-dialog {
-        width: 76; max-width: 96%; height: 24; max-height: 96%;
-        border: tall $primary; background: $surface; padding: 1 2;
-    }
-    ConsoleTracePrivacyDialog #trace-privacy-title { height: 1; text-style: bold; }
-    ConsoleTracePrivacyDialog #trace-privacy-help, ConsoleTracePrivacyDialog #trace-privacy-effective, ConsoleTracePrivacyDialog #trace-privacy-status {
-        height: auto;
-    }
-    ConsoleTracePrivacyDialog #trace-privacy-body { height: 1fr; scrollbar-gutter: stable; }
-    ConsoleTracePrivacyDialog #trace-privacy-actions { height: 3; min-height: 3; align-horizontal: right; }
-    ConsoleTracePrivacyDialog #trace-privacy-actions Button { min-width: 10; margin-left: 1; }
-    ConsoleTracePrivacyDialog #trace-privacy-status.-error { color: $error; }
+ConsoleTracePrivacyDialog #trace-privacy-dialog {
+    width: 76; max-width: 96%; height: 24; max-height: 96%;
+    border: tall $primary; background: $surface; padding: 1 2;
+}
+ConsoleTracePrivacyDialog #trace-privacy-title { height: 1; text-style: bold; }
+ConsoleTracePrivacyDialog #trace-privacy-help, ConsoleTracePrivacyDialog #trace-privacy-effective, ConsoleTracePrivacyDialog #trace-privacy-status {
+    height: auto;
+}
+ConsoleTracePrivacyDialog #trace-privacy-body { height: 1fr; scrollbar-gutter: stable; }
+ConsoleTracePrivacyDialog #trace-privacy-actions { height: 3; min-height: 3; align-horizontal: right; }
+ConsoleTracePrivacyDialog #trace-privacy-actions Button { min-width: 10; margin-left: 1; }
+ConsoleTracePrivacyDialog #trace-privacy-status.-error { color: $error; }
 
 /* ===== WIDGET: ConsoleConversationInspector (Widgets/Console/console_conversation_inspector.py) ===== */
 
 
-    ConsoleConversationInspector #console-inspector-modal {
-        width: 110; max-width: 95%; height: 42; max-height: 90%;
-        border: tall gray; padding: 1 2;
-    }
-    ConsoleConversationInspector #console-inspector-header { height: auto; }
-    ConsoleConversationInspector #console-inspector-policy-status { height: auto; color: $text-muted; }
-    ConsoleConversationInspector #console-inspector-tabs { height: 1fr; margin-top: 1; }
-    ConsoleConversationInspector #console-inspector-costs-rows { height: 1fr; }
-    ConsoleConversationInspector .console-inspector-cost-row { height: auto; }
-    ConsoleConversationInspector #console-inspector-costs-totals { height: auto; margin-top: 1; text-style: bold; }
-    ConsoleConversationInspector #console-inspector-exchange-caveat { height: auto; color: gray; margin-bottom: 1; }
-    ConsoleConversationInspector #console-inspector-capture-status { height: auto; color: yellow; }
-    ConsoleConversationInspector #console-inspector-exchange-turns { height: 1fr; }
-    ConsoleConversationInspector .console-inspector-exchange-turn { height: auto; }
-    ConsoleConversationInspector .console-inspector-exchange-call { height: auto; }
-    ConsoleConversationInspector .console-inspector-exchange-section { height: auto; }
-    ConsoleConversationInspector .console-inspector-exchange-message { height: auto; }
-    ConsoleConversationInspector .console-inspector-exchange-call-actions { height: auto; margin-bottom: 1; }
-    ConsoleConversationInspector #console-inspector-actions { height: auto; margin-top: 1; }
+ConsoleConversationInspector #console-inspector-modal {
+    width: 110; max-width: 95%; height: 42; max-height: 90%;
+    border: tall $tldw-boundary; padding: 1 2;
+}
+ConsoleConversationInspector #console-inspector-header { height: auto; }
+ConsoleConversationInspector #console-inspector-policy-status { height: auto; color: $text-muted; }
+ConsoleConversationInspector #console-inspector-tabs { height: 1fr; margin-top: 1; }
+ConsoleConversationInspector #console-inspector-costs-rows { height: 1fr; }
+ConsoleConversationInspector .console-inspector-cost-row { height: auto; }
+ConsoleConversationInspector #console-inspector-costs-totals { height: auto; margin-top: 1; text-style: bold; }
+ConsoleConversationInspector #console-inspector-exchange-caveat { height: auto; color: $text-muted; margin-bottom: 1; }
+ConsoleConversationInspector #console-inspector-capture-status { height: auto; color: $text-warning; }
+ConsoleConversationInspector #console-inspector-exchange-turns { height: 1fr; }
+ConsoleConversationInspector .console-inspector-exchange-turn { height: auto; }
+ConsoleConversationInspector .console-inspector-exchange-call { height: auto; }
+ConsoleConversationInspector .console-inspector-exchange-section { height: auto; }
+ConsoleConversationInspector .console-inspector-exchange-message { height: auto; }
+ConsoleConversationInspector .console-inspector-exchange-call-actions { height: auto; margin-bottom: 1; }
+ConsoleConversationInspector #console-inspector-actions { height: auto; margin-top: 1; }
 
-    ConsoleConversationInspector #console-inspector-next-send-pane { height: 1fr; }
-    ConsoleConversationInspector #console-inspector-next-send-header { height: auto; }
-    ConsoleConversationInspector #console-inspector-next-send-warning { height: auto; color: yellow; }
-    ConsoleConversationInspector #console-inspector-next-send-loading { display: none; }
-    ConsoleConversationInspector #console-inspector-next-send-loading.loading { display: block; }
-    ConsoleConversationInspector #console-inspector-next-send-tabs { height: 1fr; }
-    ConsoleConversationInspector #console-inspector-next-send-actions { height: auto; }
+ConsoleConversationInspector #console-inspector-next-send-pane { height: 1fr; }
+ConsoleConversationInspector #console-inspector-next-send-header { height: auto; }
+ConsoleConversationInspector #console-inspector-next-send-warning { height: auto; color: $text-warning; }
+ConsoleConversationInspector #console-inspector-next-send-loading { display: none; }
+ConsoleConversationInspector #console-inspector-next-send-loading.loading { display: block; }
+ConsoleConversationInspector #console-inspector-next-send-tabs { height: 1fr; }
+ConsoleConversationInspector #console-inspector-next-send-actions { height: auto; }
+ConsoleConversationInspector .inspector-selection-body { max-height: 8; }
+ConsoleConversationInspector .console-inspector-selection-row {
+    width: 100%; height: auto; text-wrap: wrap;
+}
 
 /* ===== WIDGET: ConsoleEditThinkingModal (Widgets/Console/console_edit_message_modal.py) ===== */
 
 
 
-    ConsoleEditThinkingModal #console-edit-thinking-modal {
-        width: 92;
-        height: 28;
-        border: tall gray;
-        background: black;
-        padding: 1 2;
-    }
+ConsoleEditThinkingModal #console-edit-thinking-modal {
+    width: 92;
+    height: 28;
+    border: tall $tldw-boundary;
+    background: $panel;
+    color: $text;
+    padding: 1 2;
+}
 
-    ConsoleEditThinkingModal #console-edit-thinking-context {
-        height: auto;
-        margin: 1 0 1 0;
-    }
+ConsoleEditThinkingModal #console-edit-thinking-context {
+    height: auto;
+    margin: 1 0 1 0;
+    color: $text;
+}
 
-    ConsoleEditThinkingModal #console-edit-thinking-body {
-        width: 100%;
-        height: 1fr;
-        min-height: 8;
-    }
+ConsoleEditThinkingModal #console-edit-thinking-body {
+    width: 100%;
+    height: 1fr;
+    min-height: 8;
+}
 
-    ConsoleEditThinkingModal #console-edit-thinking-error {
-        height: auto;
-        min-height: 1;
-        color: red;
-    }
+ConsoleEditThinkingModal #console-edit-thinking-error {
+    height: auto;
+    min-height: 1;
+    color: $text-error;
+}
 
-    ConsoleEditThinkingModal #console-edit-thinking-actions {
-        height: 3;
-        min-height: 3;
-        margin: 1 0 0 0;
-        align-horizontal: right;
-    }
+ConsoleEditThinkingModal #console-edit-thinking-actions {
+    height: 3;
+    min-height: 3;
+    margin: 1 0 0 0;
+    align-horizontal: right;
+}
 
-    ConsoleEditThinkingModal #console-edit-thinking-cancel,
-    ConsoleEditThinkingModal #console-edit-thinking-save {
-        width: 10;
-        min-width: 10;
-        height: 3;
-        min-height: 3;
-    }
+ConsoleEditThinkingModal #console-edit-thinking-cancel,
+ConsoleEditThinkingModal #console-edit-thinking-save {
+    width: 10;
+    min-width: 10;
+    height: 3;
+    min-height: 3;
+}
 
 /* ===== WIDGET: ConsoleFeedbackCommentModal (Widgets/Console/console_feedback_comment_modal.py) ===== */
 
 
 
-    ConsoleFeedbackCommentModal #console-feedback-comment-modal {
-        width: 56;
-        height: auto;
-        border: tall gray;
-        background: black;
-        padding: 1 2;
-    }
+ConsoleFeedbackCommentModal #console-feedback-comment-modal {
+    width: 56;
+    height: auto;
+    border: tall $tldw-boundary;
+    background: $panel;
+    color: $text;
+    padding: 1 2;
+}
 
-    ConsoleFeedbackCommentModal #console-feedback-comment-quote {
-        height: 5;
-        border: round gray;
-        padding: 0 1;
-        margin: 1 0;
-        color: $text-muted;
-    }
+ConsoleFeedbackCommentModal #console-feedback-comment-quote {
+    height: 5;
+    border: round $tldw-boundary;
+    padding: 0 1;
+    margin: 1 0;
+    color: $text-muted;
+}
 
-    ConsoleFeedbackCommentModal #console-feedback-comment-input {
-        width: 100%;
-        margin: 0 0 1 0;
-    }
+ConsoleFeedbackCommentModal #console-feedback-comment-input {
+    width: 100%;
+    margin: 0 0 1 0;
+}
 
-    ConsoleFeedbackCommentModal #console-feedback-comment-actions {
-        height: 3;
-        min-height: 3;
-        margin: 1 0 0 0;
-        align-horizontal: right;
-    }
+ConsoleFeedbackCommentModal #console-feedback-comment-actions {
+    height: 3;
+    min-height: 3;
+    margin: 1 0 0 0;
+    align-horizontal: right;
+}
 
-    ConsoleFeedbackCommentModal #console-feedback-comment-cancel,
-    ConsoleFeedbackCommentModal #console-feedback-comment-submit {
-        width: 10;
-        min-width: 10;
-        height: 3;
-        min-height: 3;
-    }
+ConsoleFeedbackCommentModal #console-feedback-comment-cancel,
+ConsoleFeedbackCommentModal #console-feedback-comment-submit {
+    width: 10;
+    min-width: 10;
+    height: 3;
+    min-height: 3;
+}
 
 /* ===== WIDGET: ConsoleForkChatModal (Widgets/Console/console_fork_chat_modal.py) ===== */
 
 
 
-    ConsoleForkChatModal #console-fork-chat-modal {
-        width: 74;
-        max-width: 96%;
-        height: 28;
-        max-height: 96%;
-        border: round $primary;
-        background: $panel;
-        padding: 1 2;
-        overflow-y: hidden;
-    }
+ConsoleForkChatModal #console-fork-chat-modal {
+    width: 74;
+    max-width: 96%;
+    height: 28;
+    max-height: 96%;
+    border: round $primary;
+    background: $panel;
+    padding: 1 2;
+    overflow-y: hidden;
+}
 
-    ConsoleForkChatModal #console-fork-chat-content {
-        height: 1fr;
-        min-height: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-        scrollbar-gutter: stable;
-    }
+ConsoleForkChatModal #console-fork-chat-content {
+    height: 1fr;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+}
 
-    ConsoleForkChatModal #console-fork-chat-heading {
-        text-style: bold;
-        color: $text;
-        height: 1;
-    }
+ConsoleForkChatModal #console-fork-chat-heading {
+    text-style: bold;
+    color: $text;
+    height: 1;
+}
 
-    ConsoleForkChatModal .console-fork-chat-summary {
-        height: auto;
-        color: $text-muted;
-    }
+ConsoleForkChatModal .console-fork-chat-summary {
+    height: auto;
+    color: $text-muted;
+}
 
-    ConsoleForkChatModal #console-fork-chat-boundary {
-        color: $text;
-        margin-top: 1;
-        max-height: 2;
-        text-overflow: ellipsis;
-    }
+ConsoleForkChatModal #console-fork-chat-boundary {
+    color: $text;
+    margin-top: 1;
+    max-height: 2;
+    text-overflow: ellipsis;
+}
 
-    ConsoleForkChatModal #console-fork-chat-destination {
-        color: $accent;
-        margin-top: 1;
-    }
+ConsoleForkChatModal #console-fork-chat-destination {
+    color: $accent;
+    margin-top: 1;
+}
 
-    ConsoleForkChatModal #console-fork-chat-warning {
-        color: $warning;
-    }
+ConsoleForkChatModal #console-fork-chat-warning {
+    color: $warning;
+}
 
-    ConsoleForkChatModal #console-fork-chat-disclosure {
-        width: auto;
-        min-width: 20;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        margin-top: 1;
-        border: none;
-    }
+ConsoleForkChatModal #console-fork-chat-disclosure {
+    width: auto;
+    min-width: 20;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    margin-top: 1;
+    border: none;
+}
 
-    ConsoleForkChatModal #console-fork-chat-exclusions {
-        display: none;
-        height: auto;
-        color: $text-muted;
-    }
+ConsoleForkChatModal #console-fork-chat-exclusions {
+    display: none;
+    height: auto;
+    color: $text-muted;
+}
 
-    ConsoleForkChatModal #console-fork-chat-name-label {
-        margin-top: 1;
-        height: 1;
-        text-style: bold;
-    }
+ConsoleForkChatModal #console-fork-chat-name-label {
+    margin-top: 1;
+    height: 1;
+    text-style: bold;
+}
 
-    ConsoleForkChatModal #console-fork-chat-title {
-        width: 100%;
-        height: 3;
-        border: round $surface-lighten-1;
-    }
+ConsoleForkChatModal #console-fork-chat-title {
+    width: 100%;
+    height: 3;
+    border: round $surface-lighten-1;
+}
 
-    ConsoleForkChatModal #console-fork-chat-title:focus {
-        border: round $accent;
-    }
+ConsoleForkChatModal #console-fork-chat-title:focus {
+    border: round $accent;
+}
 
-    ConsoleForkChatModal #console-fork-chat-status {
-        width: 100%;
-        height: auto;
-        min-height: 1;
-        color: $text-muted;
-    }
+ConsoleForkChatModal #console-fork-chat-status {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    color: $text-muted;
+}
 
-    ConsoleForkChatModal #console-fork-chat-status:focus {
-        background: $accent 10%;
-        color: $text;
-        text-style: bold;
-    }
+ConsoleForkChatModal #console-fork-chat-status:focus {
+    background: $accent 10%;
+    color: $text;
+    text-style: bold;
+}
 
-    ConsoleForkChatModal #console-fork-chat-actions {
-        width: 100%;
-        height: 3;
-        align-horizontal: right;
-    }
+ConsoleForkChatModal #console-fork-chat-actions {
+    width: 100%;
+    height: 3;
+    align-horizontal: right;
+}
 
-    ConsoleForkChatModal #console-fork-chat-actions Button {
-        width: auto;
-        min-width: 10;
-        height: 3;
-        min-height: 3;
-    }
+ConsoleForkChatModal #console-fork-chat-actions Button {
+    width: auto;
+    min-width: 10;
+    height: 3;
+    min-height: 3;
+}
 
-    ConsoleForkChatModal #console-fork-chat-open {
-        display: none;
-    }
+ConsoleForkChatModal #console-fork-chat-open {
+    display: none;
+}
 
 /* ===== WIDGET: ConsoleLibraryAccessModal (Widgets/Console/console_library_access_modal.py) ===== */
 
 
 
-    ConsoleLibraryAccessModal #console-library-access {
-        width: 76;
-        max-width: 96%;
-        height: 34;
-        max-height: 96%;
-        border: tall $border;
-        background: $surface;
-        padding: 1 2;
-    }
+ConsoleLibraryAccessModal #console-library-access {
+    width: 76;
+    max-width: 96%;
+    height: 34;
+    max-height: 96%;
+    border: tall $border;
+    background: $surface;
+    padding: 1 2;
+}
 
-    ConsoleLibraryAccessModal #console-library-access-body {
-        height: 1fr;
-        min-height: 0;
-        max-height: 24;
-        scrollbar-gutter: stable;
-    }
+ConsoleLibraryAccessModal #console-library-access-body {
+    height: 1fr;
+    min-height: 0;
+    max-height: 24;
+    scrollbar-gutter: stable;
+}
 
-    ConsoleLibraryAccessModal .console-library-access-axis {
-        height: auto;
-        margin: 1 0;
-    }
+ConsoleLibraryAccessModal .console-library-access-axis {
+    height: auto;
+    margin: 1 0;
+}
 
-    ConsoleLibraryAccessModal .console-library-access-local,
-    ConsoleLibraryAccessModal .console-library-access-axis-copy {
-        height: auto;
-        color: $text-muted;
-    }
+ConsoleLibraryAccessModal .console-library-access-local,
+ConsoleLibraryAccessModal .console-library-access-axis-copy {
+    height: auto;
+    color: $text-muted;
+}
 
-    ConsoleLibraryAccessModal .console-library-access-local {
-        margin-bottom: 1;
-    }
+ConsoleLibraryAccessModal .console-library-access-local {
+    margin-bottom: 1;
+}
 
-    ConsoleLibraryAccessModal .console-library-access-axis-title {
-        height: auto;
-        text-style: bold;
-    }
+ConsoleLibraryAccessModal .console-library-access-axis-title {
+    height: auto;
+    text-style: bold;
+}
 
-    ConsoleLibraryAccessModal .console-library-access-actions {
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin-top: 1;
-    }
+ConsoleLibraryAccessModal .console-library-access-actions {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin-top: 1;
+}
 
-    ConsoleLibraryAccessModal #console-library-access .console-library-access-actions Button {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        border: none;
-        padding: 0;
-        margin-right: 1;
-    }
+ConsoleLibraryAccessModal #console-library-access .console-library-access-actions Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    border: none;
+    padding: 0;
+    margin-right: 1;
+}
 
-    ConsoleLibraryAccessModal #library-access-feedback {
-        color: $text-muted;
-        margin-top: 1;
-    }
+ConsoleLibraryAccessModal #library-access-feedback {
+    color: $text-muted;
+    margin-top: 1;
+}
 
 /* ===== WIDGET: ConsoleProjectInstructionStatusRow (Widgets/Console/console_project_instructions.py) ===== */
 
 
-    ConsoleProjectInstructionStatusRow #console-project-instruction-status-button {
-        width: 100%;
-        height: 1;
-        min-height: 1;
-        border: none;
-        padding: 0 1;
-        background: $surface;
-        color: $text;
-    }
-    ConsoleProjectInstructionStatusRow #console-project-instruction-status-button:focus {
-        outline: heavy $accent;
-    }
+ConsoleProjectInstructionStatusRow #console-project-instruction-status-button {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    border: none;
+    padding: 0 1;
+    background: $surface;
+    color: $text;
+}
+ConsoleProjectInstructionStatusRow #console-project-instruction-status-button:focus {
+    outline: heavy $accent;
+}
 
 /* ===== WIDGET: ConsoleProjectInstructionContextPanel (Widgets/Console/console_project_instructions.py) ===== */
 
 
-    ConsoleProjectInstructionContextPanel .console-project-instruction-meta { height: auto; color: $text-muted; }
-    ConsoleProjectInstructionContextPanel #console-project-instruction-recovery-actions { height: 1; margin-top: 1; }
-    ConsoleProjectInstructionContextPanel .console-project-instruction-recovery-action {
-        width: auto;
-        min-width: 10;
-        height: 1;
-        min-height: 1;
-        border: none;
-        padding: 0 1;
-    }
+ConsoleProjectInstructionContextPanel .console-project-instruction-meta { height: auto; color: $text-muted; }
+ConsoleProjectInstructionContextPanel #console-project-instruction-recovery-actions { height: 1; margin-top: 1; }
+ConsoleProjectInstructionContextPanel .console-project-instruction-recovery-action {
+    width: auto;
+    min-width: 10;
+    height: 1;
+    min-height: 1;
+    border: none;
+    padding: 0 1;
+}
 
 /* ===== WIDGET: ProjectInstructionSetupModal (Widgets/Console/console_project_instructions.py) ===== */
 
 
-    ProjectInstructionSetupModal #console-project-setup-modal {
-        width: 90%;
-        max-width: 76;
-        height: auto;
-        max-height: 80%;
-        border: tall $accent;
-        background: $panel;
-        padding: 1 2;
-    }
-    ProjectInstructionSetupModal #console-project-binding-list { height: auto; max-height: 14; }
-    ProjectInstructionSetupModal .console-project-binding-option { width: 100%; height: 1; min-height: 1; }
-    ProjectInstructionSetupModal .console-project-binding-recovery { height: auto; color: $text-muted; }
-    ProjectInstructionSetupModal #console-project-setup-actions { height: 1; margin-top: 1; }
+ProjectInstructionSetupModal #console-project-setup-modal {
+    width: 90%;
+    max-width: 76;
+    height: auto;
+    max-height: 80%;
+    border: tall $accent;
+    background: $panel;
+    padding: 1 2;
+}
+ProjectInstructionSetupModal #console-project-binding-list { height: auto; max-height: 14; }
+ProjectInstructionSetupModal .console-project-binding-option { width: 100%; height: 1; min-height: 1; }
+ProjectInstructionSetupModal .console-project-binding-recovery { height: auto; color: $text-muted; }
+ProjectInstructionSetupModal #console-project-setup-actions { height: 1; margin-top: 1; }
 
 /* ===== WIDGET: ProjectInstructionNoticeModal (Widgets/Console/console_project_instructions.py) ===== */
 
 
-    ProjectInstructionNoticeModal #console-project-notice-modal {
-        width: 90%;
-        max-width: 76;
-        height: auto;
-        max-height: 80%;
-        border: tall $warning;
-        background: $panel;
-        padding: 1 2;
-    }
-    ProjectInstructionNoticeModal .console-project-notice-copy { height: auto; }
-    ProjectInstructionNoticeModal #console-project-notice-actions { height: 1; margin-top: 1; }
+ProjectInstructionNoticeModal #console-project-notice-modal {
+    width: 90%;
+    max-width: 76;
+    height: auto;
+    max-height: 80%;
+    border: tall $warning;
+    background: $panel;
+    padding: 1 2;
+}
+ProjectInstructionNoticeModal .console-project-notice-copy { height: auto; }
+ProjectInstructionNoticeModal #console-project-notice-actions { height: 1; margin-top: 1; }
 
 /* ===== WIDGET: ConsoleReactionPickerModal (Widgets/Console/console_reaction_picker_modal.py) ===== */
 
 
 
-    ConsoleReactionPickerModal #console-reaction-picker-modal {
-        width: 76;
-        max-width: 100%;
-        height: 30;
-        max-height: 100%;
-        border: tall $accent;
-        background: $panel;
-        padding: 1 2;
-    }
+ConsoleReactionPickerModal #console-reaction-picker-modal {
+    width: 76;
+    max-width: 100%;
+    height: 30;
+    max-height: 100%;
+    border: tall $accent;
+    background: $panel;
+    padding: 1 2;
+}
 
-    ConsoleReactionPickerModal #console-reaction-picker-filter {
-        width: 100%;
-        height: 3;
-    }
+ConsoleReactionPickerModal #console-reaction-picker-filter {
+    width: 100%;
+    height: 3;
+}
 
-    ConsoleReactionPickerModal #console-reaction-picker-count {
-        width: 100%;
-        height: 1;
-        color: $text-muted;
-    }
+ConsoleReactionPickerModal #console-reaction-picker-count {
+    width: 100%;
+    height: 1;
+    color: $text-muted;
+}
 
-    ConsoleReactionPickerModal #console-reaction-picker-body {
-        width: 100%;
-        height: 1fr;
-        min-height: 4;
-    }
+ConsoleReactionPickerModal #console-reaction-picker-body {
+    width: 100%;
+    height: 1fr;
+    min-height: 4;
+}
 
-    ConsoleReactionPickerModal #console-reaction-picker-results {
-        width: 2fr;
-        height: 100%;
-        min-width: 0;
-        background: $surface-darken-1;
-    }
+ConsoleReactionPickerModal #console-reaction-picker-results {
+    width: 2fr;
+    height: 100%;
+    min-width: 0;
+    background: $surface-darken-1;
+}
 
-    ConsoleReactionPickerModal .console-reaction-picker-row {
-        width: 100%;
-        height: 1;
-        min-height: 1;
-        border: none;
-        padding: 0 1;
-        margin: 0;
-        background: $surface;
-        color: $text;
-        content-align: left middle;
-        text-align: left;
-    }
+ConsoleReactionPickerModal .console-reaction-picker-row {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    border: none;
+    padding: 0 1;
+    margin: 0;
+    background: $surface;
+    color: $text;
+    content-align: left middle;
+    text-align: left;
+}
 
-    ConsoleReactionPickerModal .console-reaction-picker-row-highlighted {
-        background: $accent 25%;
-        color: $text;
-        text-style: bold;
-    }
+ConsoleReactionPickerModal .console-reaction-picker-row-highlighted {
+    background: $accent 25%;
+    color: $text;
+    text-style: bold;
+}
 
-    ConsoleReactionPickerModal #console-reaction-picker-preview {
-        width: 1fr;
-        height: 100%;
-        min-width: 0;
-        margin-left: 1;
-        padding: 1;
-        background: $surface;
-    }
+ConsoleReactionPickerModal #console-reaction-picker-preview {
+    width: 1fr;
+    height: 100%;
+    min-width: 0;
+    margin-left: 1;
+    padding: 1;
+    background: $surface;
+}
 
-    ConsoleReactionPickerModal #console-reaction-picker-preview-label {
-        width: 100%;
-        height: auto;
-        text-style: bold;
-    }
+ConsoleReactionPickerModal #console-reaction-picker-preview-label {
+    width: 100%;
+    height: auto;
+    text-style: bold;
+}
 
-    ConsoleReactionPickerModal #console-reaction-picker-preview-meta {
-        width: 100%;
-        height: auto;
-        color: $text-muted;
-    }
+ConsoleReactionPickerModal #console-reaction-picker-preview-meta {
+    width: 100%;
+    height: auto;
+    color: $text-muted;
+}
 
-    ConsoleReactionPickerModal #console-reaction-picker-preview-image {
-        width: 100%;
-        height: 1fr;
-        content-align: center middle;
-    }
+ConsoleReactionPickerModal #console-reaction-picker-preview-image {
+    width: 100%;
+    height: 1fr;
+    content-align: center middle;
+}
 
-    ConsoleReactionPickerModal #console-reaction-picker-actions {
-        width: 100%;
-        height: 3;
-        margin-top: 1;
-    }
+ConsoleReactionPickerModal #console-reaction-picker-actions {
+    width: 100%;
+    height: 3;
+    margin-top: 1;
+}
 
-    ConsoleReactionPickerModal #console-reaction-picker-actions Button {
-        width: 1fr;
-        height: 3;
-        border: none;
-        margin: 0 1 0 0;
-    }
+ConsoleReactionPickerModal #console-reaction-picker-actions Button {
+    width: 1fr;
+    height: 3;
+    border: none;
+    margin: 0 1 0 0;
+}
 
-    ConsoleReactionPickerModal #console-reaction-picker-select {
-        background: $primary;
-        color: $text;
-    }
+ConsoleReactionPickerModal #console-reaction-picker-select {
+    background: $primary;
+    color: $text;
+}
 
-    ConsoleReactionPickerModal #console-reaction-picker-clear,
-    ConsoleReactionPickerModal #console-reaction-picker-cancel {
-        background: $surface;
-        color: $text;
-    }
+ConsoleReactionPickerModal #console-reaction-picker-clear,
+ConsoleReactionPickerModal #console-reaction-picker-cancel {
+    background: $surface;
+    color: $text;
+}
 
-    ConsoleReactionPickerModal #console-reaction-picker-actions Button:focus {
-        outline: heavy $accent;
-    }
+ConsoleReactionPickerModal #console-reaction-picker-actions Button:focus {
+    outline: heavy $accent;
+}
 
 /* ===== WIDGET: ConsoleReviewNotesModal (Widgets/Console/console_review_notes_modal.py) ===== */
 
 
 
-    ConsoleReviewNotesModal #console-review-notes-modal {
-        width: 76;
-        max-height: 90%;
-        height: auto;
-        border: tall gray;
-        background: black;
-        padding: 1 2;
-    }
+ConsoleReviewNotesModal #console-review-notes-modal {
+    width: 76;
+    max-height: 90%;
+    height: auto;
+    border: tall $tldw-boundary;
+    background: $panel;
+    color: $text;
+    padding: 1 2;
+}
 
-    ConsoleReviewNotesModal #console-review-notes-header {
-        text-style: bold;
-        margin-bottom: 1;
-    }
+ConsoleReviewNotesModal #console-review-notes-header {
+    text-style: bold;
+    margin-bottom: 1;
+}
 
-    ConsoleReviewNotesModal #console-review-notes-list {
-        height: auto;
-        max-height: 26;
-    }
+ConsoleReviewNotesModal #console-review-notes-list {
+    height: auto;
+    max-height: 26;
+}
 
-    ConsoleReviewNotesModal .console-review-notes-row {
-        height: auto;
-        border: round gray;
-        padding: 0 1;
-        margin: 0 0 1 0;
-    }
+ConsoleReviewNotesModal .console-review-notes-row {
+    height: auto;
+    border: round $tldw-boundary;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
 
-    ConsoleReviewNotesModal .console-review-notes-comment {
-        height: auto;
-        margin-bottom: 1;
-    }
+ConsoleReviewNotesModal .console-review-notes-comment {
+    height: auto;
+    margin-bottom: 1;
+}
 
-    ConsoleReviewNotesModal .console-review-notes-edit {
-        height: 5;
-        margin-bottom: 1;
-    }
+ConsoleReviewNotesModal .console-review-notes-edit {
+    height: 5;
+    margin-bottom: 1;
+}
 
-    ConsoleReviewNotesModal .console-review-notes-meta {
-        color: $text-muted;
-        height: auto;
-        margin-bottom: 1;
-    }
+ConsoleReviewNotesModal .console-review-notes-meta {
+    color: $text-muted;
+    height: auto;
+    margin-bottom: 1;
+}
 
-    ConsoleReviewNotesModal .console-review-notes-actions {
-        height: 3;
-        min-height: 3;
-        align-horizontal: right;
-    }
+ConsoleReviewNotesModal .console-review-notes-actions {
+    height: 3;
+    min-height: 3;
+    align-horizontal: right;
+}
 
-    ConsoleReviewNotesModal .console-review-notes-actions Button {
-        width: 10;
-        min-width: 10;
-        height: 3;
-        min-height: 3;
-        margin-left: 1;
-    }
+ConsoleReviewNotesModal .console-review-notes-actions Button {
+    width: 10;
+    min-width: 10;
+    height: 3;
+    min-height: 3;
+    margin-left: 1;
+}
 
-    ConsoleReviewNotesModal #console-review-notes-close-bar {
-        height: 3;
-        min-height: 3;
-        margin-top: 1;
-        align-horizontal: right;
-    }
+ConsoleReviewNotesModal #console-review-notes-close-bar {
+    height: 3;
+    min-height: 3;
+    margin-top: 1;
+    align-horizontal: right;
+}
 
-    ConsoleReviewNotesModal #console-review-notes-close {
-        width: 10;
-        min-width: 10;
-        height: 3;
-        min-height: 3;
-    }
+ConsoleReviewNotesModal #console-review-notes-close {
+    width: 10;
+    min-width: 10;
+    height: 3;
+    min-height: 3;
+}
 
 /* ===== WIDGET: ConsoleSaveMarkdownModal (Widgets/Console/console_save_markdown_modal.py) ===== */
 
 
-    ConsoleSaveMarkdownModal #console-save-markdown-box {
-        width: 64;
-        height: auto;
-        border: round $primary;
-        background: $surface;
-        padding: 1 2;
-    }
-    ConsoleSaveMarkdownModal #console-save-markdown-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-    ConsoleSaveMarkdownModal #console-save-markdown-input {
-        width: 1fr;
-    }
-    ConsoleSaveMarkdownModal #console-save-markdown-actions {
-        height: auto;
-        align-horizontal: right;
-        margin-top: 1;
-    }
+ConsoleSaveMarkdownModal #console-save-markdown-box {
+    width: 64;
+    height: auto;
+    border: round $primary;
+    background: $surface;
+    padding: 1 2;
+}
+ConsoleSaveMarkdownModal #console-save-markdown-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+ConsoleSaveMarkdownModal #console-save-markdown-input {
+    width: 1fr;
+}
+ConsoleSaveMarkdownModal #console-save-markdown-actions {
+    height: auto;
+    align-horizontal: right;
+    margin-top: 1;
+}
 
 /* ===== WIDGET: ConsoleSideChatModal (Widgets/Console/console_side_chat_modal.py) ===== */
 
 
 
-    ConsoleSideChatModal #console-side-chat-modal {
-        width: 92;
-        height: 30;
-        border: tall gray;
-        background: black;
-        padding: 1 2;
-    }
+ConsoleSideChatModal #console-side-chat-modal {
+    width: 92;
+    height: 30;
+    border: tall $tldw-boundary;
+    background: $panel;
+    color: $text;
+    padding: 1 2;
+}
 
-    ConsoleSideChatModal #console-side-chat-identity {
-        height: auto;
-        color: gray;
-    }
+ConsoleSideChatModal #console-side-chat-identity {
+    height: auto;
+    color: $text-muted;
+}
 
-    ConsoleSideChatModal #console-side-chat-quote {
-        height: 5;
-        border: round gray;
-        padding: 0 1;
-        margin: 1 0;
-        color: $text-muted;
-    }
+ConsoleSideChatModal #console-side-chat-quote {
+    height: 5;
+    border: round $tldw-boundary;
+    padding: 0 1;
+    margin: 1 0;
+    color: $text-muted;
+}
 
-    ConsoleSideChatModal #console-side-chat-prompt {
-        height: 3;
-        margin: 0 0 1 0;
-    }
+ConsoleSideChatModal #console-side-chat-prompt {
+    height: 3;
+    margin: 0 0 1 0;
+}
 
-    ConsoleSideChatModal #console-side-chat-reply-scroll {
-        height: 1fr;
-        min-height: 3;
-        margin: 0 0 1 0;
-    }
+ConsoleSideChatModal #console-side-chat-reply-scroll {
+    height: 1fr;
+    min-height: 3;
+    margin: 0 0 1 0;
+}
 
-    ConsoleSideChatModal #console-side-chat-status {
-        height: auto;
-        min-height: 1;
-        color: $text-muted;
-    }
+ConsoleSideChatModal #console-side-chat-status {
+    height: auto;
+    min-height: 1;
+    color: $text-muted;
+}
 
-    ConsoleSideChatModal #console-side-chat-actions {
-        height: 3;
-        min-height: 3;
-        margin: 1 0 0 0;
-        align-horizontal: right;
-    }
+ConsoleSideChatModal #console-side-chat-actions {
+    height: 3;
+    min-height: 3;
+    margin: 1 0 0 0;
+    align-horizontal: right;
+}
 
-    ConsoleSideChatModal #console-side-chat-close,
-    ConsoleSideChatModal #console-side-chat-retry,
-    ConsoleSideChatModal #console-side-chat-send,
-    ConsoleSideChatModal #console-side-chat-stop {
-        width: 10;
-        min-width: 10;
-        height: 3;
-        min-height: 3;
-    }
+ConsoleSideChatModal #console-side-chat-close,
+ConsoleSideChatModal #console-side-chat-retry,
+ConsoleSideChatModal #console-side-chat-send,
+ConsoleSideChatModal #console-side-chat-stop {
+    width: 10;
+    min-width: 10;
+    height: 3;
+    min-height: 3;
+}
 
 /* ===== WIDGET: ConsoleSummarizePreviewModal (Widgets/Console/console_summarize_preview_modal.py) ===== */
 
 
 
-    ConsoleSummarizePreviewModal #console-summarize-preview-modal {
-        width: 64;
-        max-width: 95%;
-        height: auto;
-        border: tall gray;
-        background: black;
-        padding: 1 2;
-    }
+ConsoleSummarizePreviewModal #console-summarize-preview-modal {
+    width: 64;
+    max-width: 95%;
+    height: auto;
+    border: tall $tldw-boundary;
+    background: $panel;
+    color: $text;
+    padding: 1 2;
+}
 
-    ConsoleSummarizePreviewModal #console-summarize-preview-actions {
-        height: auto;
-        margin-top: 1;
-        align-horizontal: right;
-    }
+ConsoleSummarizePreviewModal #console-summarize-preview-actions {
+    height: auto;
+    margin-top: 1;
+    align-horizontal: right;
+}
 
 /* ===== WIDGET: ConsoleTerminalSessionModal (Widgets/Console/console_terminal_session_modal.py) ===== */
 
 
 
-    ConsoleTerminalSessionModal #console-terminal-session-modal {
-        width: 72;
-        max-width: 94%;
-        height: auto;
-        border: round $primary;
-        background: $surface;
-        padding: 1 2;
-    }
+ConsoleTerminalSessionModal #console-terminal-session-modal {
+    width: 72;
+    max-width: 94%;
+    height: auto;
+    border: round $primary;
+    background: $surface;
+    padding: 1 2;
+}
 
-    ConsoleTerminalSessionModal #console-terminal-session-error {
-        min-height: 1;
-        color: $error;
-    }
+ConsoleTerminalSessionModal #console-terminal-session-error {
+    min-height: 1;
+    color: $error;
+}
 
-    ConsoleTerminalSessionModal #console-terminal-session-actions {
-        height: auto;
-        margin-top: 1;
-        align-horizontal: right;
-    }
+ConsoleTerminalSessionModal #console-terminal-session-actions {
+    height: auto;
+    margin-top: 1;
+    align-horizontal: right;
+}
 
 /* ===== WIDGET: WorkspaceArchiveReceiptModal (Widgets/Console/console_workspace_switcher_modal.py) ===== */
 
 
-    WorkspaceArchiveReceiptModal #workspace-archive-receipt { width: 60; height: auto; border: tall $primary;
-        background: $surface; padding: 1 2; }
-    WorkspaceArchiveReceiptModal #workspace-archive-receipt-actions { height: 3; }
-    WorkspaceArchiveReceiptModal #workspace-archive-receipt-actions Button.workspace-archive-receipt-modal-button { width: auto; min-width: 8; margin-right: 1; }
+WorkspaceArchiveReceiptModal #workspace-archive-receipt { width: 60; height: auto; border: tall $primary;
+    background: $surface; padding: 1 2; }
+WorkspaceArchiveReceiptModal #workspace-archive-receipt-actions { height: 3; }
+WorkspaceArchiveReceiptModal #workspace-archive-receipt-actions Button.workspace-archive-receipt-modal-button { width: auto; min-width: 8; margin-right: 1; }
+
+/* ===== WIDGET: PortraitRadio (Widgets/Console/portrait_radio.py) ===== */
+
+
+
+PortraitRadio #console-character-voice-status { color: $text-muted; }
+PortraitRadio #console-character-voice-status.voice-failed { color: $text-error; }
+PortraitRadio #console-character-voice-meter { color: $primary; }
+PortraitRadio #console-character-voice-meter.voice-suppressed { visibility: hidden; }
 
 /* ===== WIDGET: LibraryMediaCanvas (Widgets/Library/library_media_canvas.py) ===== */
 
 
-    LibraryMediaCanvas .ds-toolbar > .library-canvas-action,
-    LibraryMediaCanvas .ds-toolbar > .library-toolbar-count {
-        width: auto;
-        min-width: 0;
-    }
+LibraryMediaCanvas .ds-toolbar > .library-canvas-action,
+LibraryMediaCanvas .ds-toolbar > .library-toolbar-count {
+    width: auto;
+    min-width: 0;
+}
 
-    LibraryMediaCanvas #library-media-filter {
-        width: 1fr;
-    }
-    LibraryMediaCanvas #library-media-filter-clear {
-        width: auto;
-        min-width: 0;
-    }
+LibraryMediaCanvas #library-media-filter {
+    width: 1fr;
+}
+LibraryMediaCanvas #library-media-filter-clear {
+    width: auto;
+    min-width: 0;
+}
 
-    LibraryMediaCanvas .library-media-receipt {
-        width: 100%;
-        height: auto;
-    }
-    LibraryMediaCanvas .library-media-receipt > .library-media-receipt-copy {
-        width: 100%;
-        height: auto;
-    }
-    LibraryMediaCanvas .library-media-receipt > .library-media-receipt-actions {
-        width: 100%;
-        height: auto;
-    }
+LibraryMediaCanvas .library-media-receipt {
+    width: 100%;
+    height: auto;
+}
+LibraryMediaCanvas .library-media-receipt > .library-media-receipt-copy {
+    width: 100%;
+    height: auto;
+}
+LibraryMediaCanvas .library-media-receipt > .library-media-receipt-actions {
+    width: 100%;
+    height: auto;
+}
 
-    LibraryMediaCanvas .library-media-speaker-row {
-        width: 100%;
-        height: auto;
-    }
+LibraryMediaCanvas .library-media-speaker-row {
+    width: 100%;
+    height: auto;
+}
 
-    LibraryMediaCanvas Static.library-media-speaker-label {
-        width: auto;
-        min-width: 0;
-    }
-    LibraryMediaCanvas Input.library-media-speaker-input {
-        width: 1fr;
-    }
+LibraryMediaCanvas Static.library-media-speaker-label {
+    width: auto;
+    min-width: 0;
+}
+LibraryMediaCanvas Input.library-media-speaker-input {
+    width: 1fr;
+}
 
 /* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
 
 
 
-    LibraryNoteFolderNameDialog #library-note-folder-dialog-actions { height: auto; align-horizontal: right; }
+LibraryNoteFolderNameDialog #library-note-folder-dialog-actions { height: auto; align-horizontal: right; }
 
 /* ===== WIDGET: LibraryNoteFolderTargetDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
 
 
 
-    LibraryNoteFolderTargetDialog #library-note-folder-target-actions { height: auto; align-horizontal: right; }
+LibraryNoteFolderTargetDialog #library-note-folder-target-actions { height: auto; align-horizontal: right; }
 
 /* ===== WIDGET: LibraryReviewSetPickerDialog (Widgets/Library/library_review_set_picker.py) ===== */
 
 
 
-    LibraryReviewSetPickerDialog #library-review-set-picker-dialog {
-        width: 72; max-height: 80%; height: auto; padding: 1 2;
-        border: tall $accent; background: $surface;
-    }
-    LibraryReviewSetPickerDialog #library-review-set-picker-rows { height: auto; max-height: 20; }
-    LibraryReviewSetPickerDialog .library-review-set-row { height: auto; }
-    LibraryReviewSetPickerDialog .library-review-set-open { width: 1fr; }
-    LibraryReviewSetPickerDialog #library-review-set-picker-actions { height: auto; align-horizontal: right; }
+LibraryReviewSetPickerDialog #library-review-set-picker-dialog {
+    width: 72; max-height: 80%; height: auto; padding: 1 2;
+    border: tall $accent; background: $surface;
+}
+LibraryReviewSetPickerDialog #library-review-set-picker-rows { height: auto; max-height: 20; }
+LibraryReviewSetPickerDialog .library-review-set-row { height: auto; }
+LibraryReviewSetPickerDialog .library-review-set-open { width: 1fr; }
+LibraryReviewSetPickerDialog #library-review-set-picker-actions { height: auto; align-horizontal: right; }
 
 /* ===== WIDGET: NotesRecoveryDialog (Widgets/Library/notes_recovery_dialog.py) ===== */
 
 
-    NotesRecoveryDialog #notes-recovery-dialog { width: 85%; max-width: 100; height: 85%;
-        border: round $accent; background: $surface; padding: 1 2; }
-    NotesRecoveryDialog #notes-recovery-rows { height: 1fr; }
-    NotesRecoveryDialog #notes-recovery-actions { height: auto; }
-    NotesRecoveryDialog #notes-recovery-dialog Static.notes-recovery-dialog-static { height: auto; margin-bottom: 1; }
+NotesRecoveryDialog #notes-recovery-dialog { width: 85%; max-width: 100; height: 85%;
+    border: round $accent; background: $surface; padding: 1 2; }
+NotesRecoveryDialog #notes-recovery-rows { height: 1fr; }
+NotesRecoveryDialog #notes-recovery-actions { height: auto; }
+NotesRecoveryDialog #notes-recovery-dialog Static.notes-recovery-dialog-static { height: auto; margin-bottom: 1; }
 
 /* ===== WIDGET: BuddyConversationModal (Widgets/Persona_Widgets/buddy_conversation_modal.py) ===== */
 
 
-    BuddyConversationModal #buddy-conversation { width: 90; max-width: 96%; height: 90%; max-height: 52;
-        border: round $accent; background: $panel; padding: 0 1; }
-    BuddyConversationModal #buddy-conversation-title { height: 2; text-style: bold; }
-    BuddyConversationModal #buddy-activity, BuddyConversationModal #buddy-reply-notice { height: auto; }
-    BuddyConversationModal #buddy-conversation-body { height: 1fr; min-height: 2; }
-    BuddyConversationModal #buddy-transcript-navigation { height: 1; }
-    BuddyConversationModal #buddy-transcript-navigation Button.buddy-conversation-modal-button { height: 1; min-width: 8; width: auto; }
-    BuddyConversationModal #buddy-transcript { height: auto; padding: 1 0; }
-    BuddyConversationModal #buddy-reply { height: 5; min-height: 3; }
+BuddyConversationModal #buddy-conversation { width: 90; max-width: 96%; height: 90%; max-height: 52;
+    border: round $accent; background: $panel; padding: 0 1; }
+BuddyConversationModal #buddy-conversation-title { height: 2; text-style: bold; }
+BuddyConversationModal #buddy-activity, BuddyConversationModal #buddy-reply-notice { height: auto; }
+BuddyConversationModal #buddy-conversation-body { height: 1fr; min-height: 2; }
+BuddyConversationModal #buddy-transcript-navigation { height: 1; }
+BuddyConversationModal #buddy-transcript-navigation Button.buddy-conversation-modal-button { height: 1; min-width: 8; width: auto; }
+BuddyConversationModal #buddy-transcript { height: auto; padding: 1 0; }
+BuddyConversationModal #buddy-reply { height: 5; min-height: 3; }
 
 
-    BuddyConversationModal #buddy-actions { height: 3; align-horizontal: right; }
-    BuddyConversationModal #buddy-actions Button.buddy-conversation-modal-button { min-width: 8; width: auto; margin-left: 1; }
-    BuddyConversationModal #buddy-reply-notice { color: $text-muted; }
+BuddyConversationModal #buddy-actions { height: 3; align-horizontal: right; }
+BuddyConversationModal #buddy-actions Button.buddy-conversation-modal-button { min-width: 8; width: auto; margin-left: 1; }
+BuddyConversationModal #buddy-reply-notice { color: $text-muted; }
 
 /* ===== WIDGET: BuddyManagementModal (Widgets/Persona_Widgets/buddy_management_modal.py) ===== */
 
 
-    BuddyManagementModal #buddy-management {
-        width: 78; max-width: 96%; height: 90%; max-height: 48;
-        border: round $accent; background: $panel; padding: 0 1;
-    }
-    BuddyManagementModal #buddy-management-title { height: 2; text-style: bold; padding-top: 1; }
-    BuddyManagementModal #buddy-management-body { height: 1fr; padding-right: 1; }
-    BuddyManagementModal .buddy-section { height: auto; margin-top: 1; text-style: bold; }
-    BuddyManagementModal .buddy-help { height: auto; color: $text-muted; }
-    BuddyManagementModal #buddy-management-body Select.buddy-management-modal-select, BuddyManagementModal #buddy-management-body Input.buddy-management-modal-input { width: 100%; }
-    BuddyManagementModal .buddy-toggle-row { height: 3; align-vertical: middle; }
-    BuddyManagementModal .buddy-toggle-row Static.buddy-management-modal-static { width: 1fr; height: auto; }
-    BuddyManagementModal .buddy-toggle-row Switch { width: auto; }
-    BuddyManagementModal #buddy-size { height: 3; }
-    BuddyManagementModal #buddy-management-body #buddy-size Input.buddy-management-modal-input { width: 1fr; min-width: 4; }
-    BuddyManagementModal #buddy-size Static.buddy-management-modal-static { width: 9; height: 3; content-align: left middle; }
-    BuddyManagementModal #buddy-size #buddy-height-label { width: 10; padding-left: 1; }
-    BuddyManagementModal #buddy-preview { height: auto; max-height: 12; content-align: center middle; }
-    BuddyManagementModal #buddy-artwork-pages { height: 3; }
-    BuddyManagementModal #buddy-artwork-pages Button.buddy-management-modal-button { width: auto; min-width: 10; }
-    BuddyManagementModal #buddy-artwork-page { width: 1fr; content-align: center middle; }
-    BuddyManagementModal #buddy-preview-actions { height: 3; }
-    BuddyManagementModal #buddy-management-body #buddy-preview-state { width: 1fr; min-width: 10; }
-    BuddyManagementModal #buddy-preview-button { width: auto; min-width: 11; }
-    BuddyManagementModal #buddy-form-error, BuddyManagementModal #buddy-import-error { height: auto; color: $error; }
-    BuddyManagementModal #buddy-advanced { height: auto; padding: 0; }
-    BuddyManagementModal #buddy-preview-button:focus { text-style: bold reverse; }
-    BuddyManagementModal #buddy-management-actions { height: 3; min-height: 3; align-horizontal: right; }
-    BuddyManagementModal #buddy-management-actions Button.buddy-management-modal-button { width: auto; min-width: 10; margin-left: 1; }
+BuddyManagementModal #buddy-management {
+    width: 78; max-width: 96%; height: 90%; max-height: 48;
+    border: round $accent; background: $panel; padding: 0 1;
+}
+BuddyManagementModal #buddy-management-title { height: 2; text-style: bold; padding-top: 1; }
+BuddyManagementModal #buddy-management-body { height: 1fr; padding-right: 1; }
+BuddyManagementModal .buddy-section { height: auto; margin-top: 1; text-style: bold; }
+BuddyManagementModal .buddy-help { height: auto; color: $text-muted; }
+BuddyManagementModal #buddy-management-body Select.buddy-management-modal-select, BuddyManagementModal #buddy-management-body Input.buddy-management-modal-input { width: 100%; }
+BuddyManagementModal .buddy-toggle-row { height: 3; align-vertical: middle; }
+BuddyManagementModal .buddy-toggle-row Static.buddy-management-modal-static { width: 1fr; height: auto; }
+BuddyManagementModal .buddy-toggle-row Switch { width: auto; }
+BuddyManagementModal #buddy-size { height: 3; }
+BuddyManagementModal #buddy-management-body #buddy-size Input.buddy-management-modal-input { width: 1fr; min-width: 4; }
+BuddyManagementModal #buddy-size Static.buddy-management-modal-static { width: 9; height: 3; content-align: left middle; }
+BuddyManagementModal #buddy-size #buddy-height-label { width: 10; padding-left: 1; }
+BuddyManagementModal #buddy-preview { height: auto; max-height: 12; content-align: center middle; }
+BuddyManagementModal #buddy-artwork-pages { height: 3; }
+BuddyManagementModal #buddy-artwork-pages Button.buddy-management-modal-button { width: auto; min-width: 10; }
+BuddyManagementModal #buddy-artwork-page { width: 1fr; content-align: center middle; }
+BuddyManagementModal #buddy-preview-actions { height: 3; }
+BuddyManagementModal #buddy-management-body #buddy-preview-state { width: 1fr; min-width: 10; }
+BuddyManagementModal #buddy-preview-button { width: auto; min-width: 11; }
+BuddyManagementModal #buddy-form-error, BuddyManagementModal #buddy-import-error { height: auto; color: $error; }
+BuddyManagementModal #buddy-advanced { height: auto; padding: 0; }
+BuddyManagementModal #buddy-preview-button:focus { text-style: bold reverse; }
+BuddyManagementModal #buddy-management-actions { height: 3; min-height: 3; align-horizontal: right; }
+BuddyManagementModal #buddy-management-actions Button.buddy-management-modal-button { width: auto; min-width: 10; margin-left: 1; }
 
 /* ===== WIDGET: BuddyWorkspaceModal (Widgets/Persona_Widgets/buddy_workspace_modal.py) ===== */
 
 
-    BuddyWorkspaceModal #buddy-inbox {
-        width: 82; max-width: 96%; height: 85%; max-height: 42;
-        border: round $accent; background: $panel; padding: 0 1;
-    }
-    BuddyWorkspaceModal #buddy-inbox-title { height: 2; text-style: bold; padding-top: 1; }
-    BuddyWorkspaceModal #buddy-inbox-help { height: auto; color: $text-muted; }
-    BuddyWorkspaceModal #buddy-inbox-list { height: 1fr; margin-top: 1; }
-    BuddyWorkspaceModal #buddy-inbox-error { height: auto; color: $error; }
-    BuddyWorkspaceModal #buddy-inbox-actions { height: 3; min-height: 3; align-horizontal: right; }
-    BuddyWorkspaceModal #buddy-inbox-actions Button.buddy-workspace-modal-button { width: auto; min-width: 8; margin-left: 1; }
+BuddyWorkspaceModal #buddy-inbox {
+    width: 82; max-width: 96%; height: 85%; max-height: 42;
+    border: round $accent; background: $panel; padding: 0 1;
+}
+BuddyWorkspaceModal #buddy-inbox-title { height: 2; text-style: bold; padding-top: 1; }
+BuddyWorkspaceModal #buddy-inbox-help { height: auto; color: $text-muted; }
+BuddyWorkspaceModal #buddy-inbox-list { height: 1fr; margin-top: 1; }
+BuddyWorkspaceModal #buddy-inbox-error { height: auto; color: $error; }
+BuddyWorkspaceModal #buddy-inbox-actions { height: 3; min-height: 3; align-horizontal: right; }
+BuddyWorkspaceModal #buddy-inbox-actions Button.buddy-workspace-modal-button { width: auto; min-width: 8; margin-left: 1; }
 
 /* ===== WIDGET: ProjectSkillsImportModal (Widgets/project_skills_import_modal.py) ===== */
 
 
 
-    ProjectSkillsImportModal #project-skills-modal {
-        width: 76;
-        height: auto;
-        max-height: 34;
-        border: tall gray;
-        background: black;
-        padding: 1 2;
-    }
+ProjectSkillsImportModal #project-skills-modal {
+    width: 76;
+    height: auto;
+    max-height: 34;
+    border: tall $tldw-boundary;
+    background: $panel;
+    color: $text;
+    padding: 1 2;
+}
 
-    ProjectSkillsImportModal #project-skills-provenance {
-        color: $text-muted;
-        margin: 0 0 1 0;
-    }
+ProjectSkillsImportModal #project-skills-provenance {
+    color: $text-muted;
+    margin: 0 0 1 0;
+}
 
-    ProjectSkillsImportModal #project-skills-trust-line {
-        color: $text-muted;
-        margin: 0 0 1 0;
-    }
+ProjectSkillsImportModal #project-skills-trust-line {
+    color: $text-muted;
+    margin: 0 0 1 0;
+}
 
-    ProjectSkillsImportModal #project-skills-post-trust-line {
-        color: $text-muted;
-        margin: 0 0 1 0;
-    }
+ProjectSkillsImportModal #project-skills-post-trust-line {
+    color: $text-muted;
+    margin: 0 0 1 0;
+}
 
-    ProjectSkillsImportModal #project-skills-rows {
-        height: auto;
-        max-height: 18;
-        margin: 0 0 1 0;
-    }
+ProjectSkillsImportModal #project-skills-rows {
+    height: auto;
+    max-height: 18;
+    margin: 0 0 1 0;
+}
 
-    ProjectSkillsImportModal #project-skills-results {
-        height: auto;
-        max-height: 18;
-        margin: 0 0 1 0;
-    }
+ProjectSkillsImportModal #project-skills-results {
+    height: auto;
+    max-height: 18;
+    margin: 0 0 1 0;
+}
 
-    ProjectSkillsImportModal #project-skills-footer {
-        color: $text-muted;
-        height: auto;
-    }
+ProjectSkillsImportModal #project-skills-footer {
+    color: $text-muted;
+    height: auto;
+}
 
-    ProjectSkillsImportModal #project-skills-actions {
-        height: auto;
-        margin: 1 0 0 0;
-        align-horizontal: right;
-    }
+ProjectSkillsImportModal #project-skills-actions {
+    height: auto;
+    margin: 1 0 0 0;
+    align-horizontal: right;
+}
 
 /* ===== WIDGET: WorkspaceCreateModal (Widgets/workspace_create_modal.py) ===== */
 
 
 
-    WorkspaceCreateModal #workspace-create-modal {
-        width: 72;
-        height: auto;
-        max-height: 32;
-        border: tall $surface-lighten-2;
-        background: $surface;
-        color: $text;
-        padding: 1 2;
-    }
+WorkspaceCreateModal #workspace-create-modal {
+    width: 72;
+    height: auto;
+    max-height: 32;
+    border: tall $surface-lighten-2;
+    background: $surface;
+    color: $text;
+    padding: 1 2;
+}
 
-    WorkspaceCreateModal #workspace-create-explainer {
-        color: $text-muted;
-        margin: 0 0 1 0;
-    }
+WorkspaceCreateModal #workspace-create-explainer {
+    color: $text-muted;
+    margin: 0 0 1 0;
+}
 
-    WorkspaceCreateModal #workspace-create-error {
-        color: $error;
-        height: auto;
-    }
+WorkspaceCreateModal #workspace-create-error {
+    color: $error;
+    height: auto;
+}
 
-    WorkspaceCreateModal #workspace-create-folder-row {
-        height: auto;
-    }
+WorkspaceCreateModal #workspace-create-folder-row {
+    height: auto;
+}
 
-    WorkspaceCreateModal #workspace-create-folder-path {
-        width: 1fr;
-    }
+WorkspaceCreateModal #workspace-create-folder-path {
+    width: 1fr;
+}
 
-    WorkspaceCreateModal #workspace-create-actions {
-        height: auto;
-        margin: 1 0 0 0;
-        align-horizontal: right;
-    }
+WorkspaceCreateModal #workspace-create-actions {
+    height: auto;
+    margin: 1 0 0 0;
+    align-horizontal: right;
+}
 
-    WorkspaceCreateModal #workspace-create-folder-list {
-        height: auto;
-    }
+WorkspaceCreateModal #workspace-create-folder-list {
+    height: auto;
+}
 
-    WorkspaceCreateModal .workspace-create-folder-item {
-        height: auto;
-    }
+WorkspaceCreateModal .workspace-create-folder-item {
+    height: auto;
+}
 
-    WorkspaceCreateModal .workspace-create-folder-locator {
-        width: 1fr;
-        content-align: left middle;
-    }
+WorkspaceCreateModal .workspace-create-folder-locator {
+    width: 1fr;
+    content-align: left middle;
+}
 
 /* ===== WIDGET: WorkspacePersonaDefaultModal (Widgets/workspace_persona_default.py) ===== */
 
 
-    WorkspacePersonaDefaultModal #workspace-default-dialog { width: 68; max-width: 95%; height: auto; max-height: 95%;
-        background: $surface; border: tall $primary; padding: 1 2; }
-    WorkspacePersonaDefaultModal #workspace-default-form { height: 1fr; max-height: 17; }
-    WorkspacePersonaDefaultModal #workspace-default-actions { height: 3; align-horizontal: right; }
-    WorkspacePersonaDefaultModal #workspace-default-error { height: auto; color: $error; }
+WorkspacePersonaDefaultModal #workspace-default-dialog { width: 68; max-width: 95%; height: auto; max-height: 95%;
+    background: $surface; border: tall $primary; padding: 1 2; }
+WorkspacePersonaDefaultModal #workspace-default-form { height: 1fr; max-height: 17; }
+WorkspacePersonaDefaultModal #workspace-default-actions { height: 3; align-horizontal: right; }
+WorkspacePersonaDefaultModal #workspace-default-error { height: auto; color: $error; }

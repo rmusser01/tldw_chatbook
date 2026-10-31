@@ -3391,3 +3391,69 @@ async def test_first_run_voice_save_reports_to_the_wizard_without_a_toast(
 
     assert app.notifications == []
     assert [result.persisted for result in recorder.results] == [True]
+
+
+@pytest.mark.asyncio
+async def test_first_run_voice_save_without_default_writes_no_default_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-34100.8 (voice-speech-01): "Use as default" unticked.
+
+    The handler used to snapshot the current effective settings and write them
+    back as the saved defaults, so an unticked Voice save wrote
+    ``default_provider = "openai"`` with tts-1-hd / shimmer / mp3 next to a
+    PocketTTS URL, and the Summary then claimed "(default voice)". The step
+    offers an unticked save only while another provider reads replies (review
+    round 1, F1), so the shared default axes stay that provider's.
+    """
+
+    from tldw_chatbook.UI.Wizards.first_run_voice_step_state import (
+        DEFAULT_SAMPLE_TEXT,
+        POCKET_TTS_ENDPOINT,
+        POCKET_TTS_MODEL,
+        POCKET_TTS_VOICE,
+        VoiceSetupDraft,
+        build_voice_setup_save_event,
+    )
+
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    handler._stts_service = ImmediatePublicationService()
+    written: list[tuple[dict, dict]] = []
+
+    def capture(section_values, *, delete_keys):
+        written.append((deepcopy(dict(section_values)), dict(delete_keys)))
+        return _mutation_outcome()
+
+    monkeypatch.setattr(
+        "tldw_chatbook.config.apply_settings_mutation_to_cli_config", capture
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.settings",
+        {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {}}},
+    )
+
+    await handler.handle_settings_save(
+        build_voice_setup_save_event(
+            VoiceSetupDraft(
+                endpoint=POCKET_TTS_ENDPOINT,
+                authentication_mode="none",
+                model_id=POCKET_TTS_MODEL,
+                voice_id=POCKET_TTS_VOICE,
+                response_format="wav",
+                speed=1.0,
+                sample_text=DEFAULT_SAMPLE_TEXT,
+            ),
+        )
+    )
+
+    [(sections, deletes)] = written
+    app_tts = sections["app_tts"]
+    assert app_tts["OPENAI_BASE_URL"] == POCKET_TTS_ENDPOINT
+    assert "default_provider" not in app_tts
+    assert "default_model_mode" not in app_tts
+    assert "tts_settings" not in sections or "default_tts_provider" not in sections[
+        "tts_settings"
+    ]
+    assert deletes == {}
+    assert not {"default_model", "default_voice", "default_format"} & set(app_tts)

@@ -64,9 +64,7 @@ def migrate(db: _MigrationCapableDB) -> None:
         # common case still lands on exactly 2; only a database ALREADY
         # above 2 keeps its higher version. A missing schema_version table
         # (fresh :memory: connection) is treated as version 0.
-        row = conn.execute(
-            "SELECT MAX(version) FROM schema_version"
-        ).fetchone()
+        row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
         current_version = int(row[0]) if row and row[0] is not None else 0
         if current_version < 2:
             conn.execute("DELETE FROM schema_version")
@@ -147,12 +145,8 @@ def rollback(db: _MigrationCapableDB) -> None:
             CREATE INDEX IF NOT EXISTS idx_reminder_tasks_server_id
                 ON reminder_tasks (server_id);
             COMMIT;
-            """.format(
-                columns=column_list
-            )
+            """.format(columns=column_list)
         )
         conn.execute("DELETE FROM schema_version WHERE version = ?", (2,))
-        conn.execute(
-            "INSERT OR REPLACE INTO schema_version (version) VALUES (?)", (1,)
-        )
+        conn.execute("INSERT OR REPLACE INTO schema_version (version) VALUES (?)", (1,))
         conn.commit()

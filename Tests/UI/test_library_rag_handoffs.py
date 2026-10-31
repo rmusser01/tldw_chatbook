@@ -242,7 +242,9 @@ def test_library_rag_console_payload_helper_documents_contract():
     assert "Returns:" in docstring
 
 
-def _library_use_in_console_launch(result: dict, *, query: str) -> ConsoleLiveWorkLaunch:
+def _library_use_in_console_launch(
+    result: dict, *, query: str
+) -> ConsoleLiveWorkLaunch:
     """Build the launch exactly as `library_screen.py::_stage_library_rag_result_in_console`
     does for one selected Library Search/RAG result: `opener(...,
     payload=build_library_rag_console_live_work_payload(selected_result,

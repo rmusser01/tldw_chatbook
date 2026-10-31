@@ -16,15 +16,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from tldw_chatbook.Character_Chat.artwork_attribution import (
-    ARTWORK_FEATURE,
-    ARTWORK_MEMBER,
-    CONVERSION_FEATURE,
-    MAX_ARTWORK_BYTES,
-    decode_artwork_attribution,
-)
-
-
 ACTOR_PACK_SCHEMA = "tldw.actor-pack/v1"
 ACTOR_PAYLOAD_SCHEMA = "tldw.actor/v1"
 MAX_MANIFEST_BYTES = 1 * 1024 * 1024
@@ -68,14 +59,6 @@ _MANIFEST_KEYS = frozenset(
 _ACTOR_KEYS = frozenset({"kind", "portable_uuid", "payload", "portrait"})
 _SECTION_KEYS = frozenset({"kind", "manifest"})
 _FILE_KEYS = frozenset({"path", "bytes", "sha256"})
-_KNOWN_REQUIRED_FEATURES = frozenset(
-    {
-        "shared-visual-identity/v1",
-        "persona-runtime/sprite-frames-v1",
-        ARTWORK_FEATURE,
-        CONVERSION_FEATURE,
-    }
-)
 _CHARACTER_FIELDS = frozenset(
     {
         "name",
@@ -106,6 +89,7 @@ _PERSONA_FIELDS = frozenset(
         "use_persona_state_context_default",
         "voice_defaults",
         "setup",
+        "policy_rules",
     }
 )
 _PERSONA_VOICE_FIELDS = frozenset(
@@ -325,6 +309,11 @@ def validate_actor_pack_manifest(manifest: Mapping[str, Any]) -> ActorPackDocume
 def _validate_actor_pack_document(
     manifest: Mapping[str, Any], files: Mapping[str, bytes]
 ) -> ActorPackDocument:
+    from tldw_chatbook.Character_Chat.artwork_attribution import (
+        ARTWORK_MEMBER,
+        decode_artwork_attribution,
+    )
+
     document = _validate_actor_pack_manifest(manifest)
     supplied = _supplied_files(files)
     if {item.path for item in document.files} != set(supplied):
@@ -366,6 +355,21 @@ def _validate_actor_pack_document(
 
 
 def _validate_actor_pack_manifest(manifest: Mapping[str, Any]) -> ActorPackDocument:
+    from tldw_chatbook.Character_Chat.artwork_attribution import (
+        ARTWORK_FEATURE,
+        ARTWORK_MEMBER,
+        CONVERSION_FEATURE,
+        MAX_ARTWORK_BYTES,
+    )
+
+    known_required_features = frozenset(
+        {
+            "shared-visual-identity/v1",
+            "persona-runtime/sprite-frames-v1",
+            ARTWORK_FEATURE,
+            CONVERSION_FEATURE,
+        }
+    )
     if not isinstance(manifest, Mapping) or set(manifest) != _MANIFEST_KEYS:
         raise ActorPackValidationError("actor_pack_manifest_invalid")
     if manifest.get("schema") != ACTOR_PACK_SCHEMA:
@@ -378,7 +382,7 @@ def _validate_actor_pack_manifest(manifest: Mapping[str, Any]) -> ActorPackDocum
         type(required_features) is not list
         or any(type(item) is not str or not item for item in required_features)
         or len(required_features) != len(set(required_features))
-        or not set(required_features) <= _KNOWN_REQUIRED_FEATURES
+        or not set(required_features) <= known_required_features
     ):
         raise ActorPackValidationError("actor_pack_feature_unsupported")
 
@@ -587,6 +591,16 @@ def _validate_actor_fields(actor_kind: str, actor_data: Mapping[str, Any]) -> No
                 _validate_persona_voice_defaults(actor_data["voice_defaults"])
             if "setup" in actor_data:
                 _validate_persona_setup(actor_data["setup"])
+            if "policy_rules" in actor_data:
+                from tldw_chatbook.tldw_api.character_persona_schemas import (
+                    PersonaPolicyRule,
+                )
+
+                rules = actor_data["policy_rules"]
+                if type(rules) is not list:
+                    raise ValueError
+                for rule in rules:
+                    PersonaPolicyRule.model_validate(rule, strict=True)
             return
         text_fields = _CHARACTER_FIELDS - {
             "alternate_greetings",

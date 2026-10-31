@@ -138,6 +138,57 @@ def test_local_research_service_dispatches_terminal_run_notifications(tmp_path):
     ]
 
 
+class ExplodingDispatcher:
+    """Stands in for a dispatch service backed by a corrupt store (TASK-21238)."""
+
+    def dispatch(self, **kwargs):
+        raise sqlite3.DatabaseError("file is not a database")
+
+
+def test_local_research_service_corrupt_notification_store_does_not_fail_runs(tmp_path):
+    """TASK-21238: a failing notifications store skips the notification.
+
+    The store went lazy in TASK-21105, so store failures surface at dispatch
+    time -- after the run's own DB write already succeeded. A dispatch
+    failure must not fail the launch/cancel/complete flows.
+    """
+    service = LocalResearchService(
+        tmp_path / "research.db",
+        notification_dispatcher=ExplodingDispatcher(),
+        notification_app=object(),
+    )
+    session = service.create_session(
+        title="MCP governance", query="How should MCP approvals work?"
+    )
+
+    launched = service.launch_run(session_id=session["id"])
+    assert launched["status"] == "running"
+
+    cancelled = service.cancel_run(launched["id"])
+    assert cancelled["status"] == "cancelled"
+
+    resumed = service.resume_run(launched["id"])
+    completed = service.complete_run(resumed["id"], progress_message="done")
+    assert completed["status"] == "completed"
+
+
+def test_local_research_service_corrupt_notification_store_does_not_fail_external_events(
+    tmp_path,
+):
+    """TASK-21238: the external-run event arm skips its notification too."""
+    service = LocalResearchService(
+        tmp_path / "research.db",
+        notification_dispatcher=ExplodingDispatcher(),
+        notification_app=object(),
+    )
+    run = service.create_run(query="Draft question")
+
+    started = service.update_run_progress(
+        run["id"], status="running", control_state="running"
+    )
+    assert started["status"] == "running"
+
+
 # --- update_run_progress (task-16322 engine seam) ------------------------------
 
 

@@ -25,9 +25,11 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionResult,
     ConsoleProviderResolution,
 )
+from tldw_chatbook.Chat.message_metadata import AgentChatStartMetadata, MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.console_provider_doubles import provider_resolution
+from Tests.private_profile import private_profile_test
 
 
 class NoteSummaryGateway:
@@ -105,8 +107,9 @@ def _seed_rows(store, session_id):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_build_transcript_note_is_inclusive_and_user_assistant_only(
-    tmp_path,
+    tmp_path, request
 ):
     controller, store, session, _gateway, _db = _note_controller(tmp_path)
     rows = _seed_rows(store, session.id)
@@ -126,7 +129,8 @@ async def test_build_transcript_note_is_inclusive_and_user_assistant_only(
 
 
 @pytest.mark.asyncio
-async def test_build_transcript_note_accepts_assistant_target(tmp_path):
+@private_profile_test
+async def test_build_transcript_note_accepts_assistant_target(tmp_path, request):
     controller, store, session, _gateway, _db = _note_controller(tmp_path)
     rows = _seed_rows(store, session.id)
 
@@ -137,7 +141,8 @@ async def test_build_transcript_note_accepts_assistant_target(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_note_actions_block_off_path_and_unknown_targets(tmp_path):
+@private_profile_test
+async def test_note_actions_block_off_path_and_unknown_targets(tmp_path, request):
     controller, store, session, _gateway, _db = _note_controller(tmp_path)
     _rows = _seed_rows(store, session.id)
 
@@ -153,8 +158,9 @@ async def test_note_actions_block_off_path_and_unknown_targets(tmp_path):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_summarize_span_as_note_returns_draft_without_compaction_writes(
-    tmp_path,
+    tmp_path, request
 ):
     controller, store, session, gateway, db = _note_controller(tmp_path)
     rows = _seed_rows(store, session.id)
@@ -187,7 +193,8 @@ async def test_summarize_span_as_note_returns_draft_without_compaction_writes(
 
 
 @pytest.mark.asyncio
-async def test_summarize_span_as_note_blocks_when_provider_not_ready(tmp_path):
+@private_profile_test
+async def test_summarize_span_as_note_blocks_when_provider_not_ready(tmp_path, request):
     controller, store, session, _gateway, _db = _note_controller(
         tmp_path, gateway=NoteSummaryGateway(ready=False)
     )
@@ -201,7 +208,10 @@ async def test_summarize_span_as_note_blocks_when_provider_not_ready(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_summarize_span_as_note_blocks_oversized_span(tmp_path, monkeypatch):
+@private_profile_test
+async def test_summarize_span_as_note_blocks_oversized_span(
+    tmp_path, monkeypatch, request
+):
     controller, store, session, gateway, _db = _note_controller(tmp_path)
     rows = _seed_rows(store, session.id)
     # Shrink the span budget so the seeded span blows past it; the action
@@ -254,7 +264,8 @@ def _dispatch_event(action_id: str, message_id: str):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action_id", ["summarize-note", "save-transcript-note"])
-async def test_note_actions_dispatch_one_exclusive_note_worker(action_id):
+@private_profile_test
+async def test_note_actions_dispatch_one_exclusive_note_worker(action_id, request):
     """Each More-menu note action routes to the shared console-note-actions
     worker group (never console-run, so it can never cancel a live stream)."""
     import asyncio
@@ -290,7 +301,8 @@ async def test_note_actions_dispatch_one_exclusive_note_worker(action_id):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action_id", ["summarize-note", "save-transcript-note"])
-async def test_note_actions_mid_run_notify_instead_of_summarizing(action_id):
+@private_profile_test
+async def test_note_actions_mid_run_notify_instead_of_summarizing(action_id, request):
     """With a run streaming, the note actions must not reach a provider
     call: the worker resolves to the controller's active-run rejection and
     surfaces it as a notice."""
@@ -341,7 +353,18 @@ async def test_note_actions_mid_run_notify_instead_of_summarizing(action_id):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action_id", ["summarize-note", "save-transcript-note"])
-async def test_note_actions_persist_through_notes_service(action_id):
+@pytest.mark.parametrize(
+    ("origin", "speaker"),
+    [
+        ("", "User"),
+        ("agent_chat_start", "Agent handoff"),
+        ("untrusted", "Unverified handoff"),
+    ],
+)
+@private_profile_test
+async def test_note_actions_persist_through_notes_service(
+    action_id, origin, speaker, request
+):
     """End-to-end (review follow-up): driving each action's worker against
     a stubbed notes service persists the draft with the expected title,
     content, scope, keywords, and the app's configured notes identity."""
@@ -358,7 +381,19 @@ async def test_note_actions_persist_through_notes_service(action_id):
     screen._ensure_console_chat_controller()
     store = screen._ensure_console_chat_store()
     session = store.ensure_session()
-    store.append_message(session.id, role=ConsoleMessageRole.USER, content="the question")
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="the question",
+        metadata=MessageMetadata(
+            origin=origin,
+            agent_chat_start=(
+                AgentChatStartMetadata("attempt-1", "run-1", "source-1")
+                if origin == "agent_chat_start"
+                else None
+            ),
+        ),
+    )
     completed = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content="the answer"
     )
@@ -412,12 +447,15 @@ async def test_note_actions_persist_through_notes_service(action_id):
         assert call["content"].startswith("> Generated: ")
         assert "STUB SUMMARY" in call["content"]
     else:
-        assert "**User:** the question" in call["content"]
+        assert f"**{speaker}:** the question" in call["content"]
+        assert call["content"].startswith("> Generated: ")
+        assert f"> Up to message: {completed.id}" in call["content"]
         assert "**Assistant:** the answer" in call["content"]
 
 
 @pytest.mark.asyncio
-async def test_oversized_span_blocks_at_the_real_budget(tmp_path):
+@private_profile_test
+async def test_oversized_span_blocks_at_the_real_budget(tmp_path, request):
     """Review follow-up (bug fix): the budget check must see the UNTRIMMED
     span. _build_summary_span_text silently drops oldest turns, so checking
     after it could never fire; a >12k-token span must now block outright."""
@@ -442,7 +480,8 @@ async def test_oversized_span_blocks_at_the_real_budget(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_capture_note_dispatches_one_exclusive_note_worker():
+@private_profile_test
+async def test_capture_note_dispatches_one_exclusive_note_worker(request):
     """The new per-message capture rides the same note worker group as the
     TASK-31759 span actions (never console-run, so it cannot cancel a
     live stream)."""
@@ -475,7 +514,8 @@ async def test_capture_note_dispatches_one_exclusive_note_worker():
 
 
 @pytest.mark.asyncio
-async def test_capture_note_records_the_conversation_and_message_it_came_from():
+@private_profile_test
+async def test_capture_note_records_the_conversation_and_message_it_came_from(request):
     """task-32146 AC#2: the captured note is titled by the answer's own
     first line, carries the answer verbatim, and records its provenance as
     keywords; the created note id is handed to the receipt."""
@@ -525,7 +565,8 @@ async def test_capture_note_records_the_conversation_and_message_it_came_from():
 
 
 @pytest.mark.asyncio
-async def test_console_note_writes_use_the_configured_notes_identity():
+@private_profile_test
+async def test_console_note_writes_use_the_configured_notes_identity(request):
     """Regression (task-32146): Save as... > Note wrote under a `current_user`
     attribute that nothing in the tree ever sets, so every note it saved
     carried the literal "default_user" as its author id (the client_id sync
@@ -555,7 +596,10 @@ async def test_console_note_writes_use_the_configured_notes_identity():
 
 
 @pytest.mark.asyncio
-async def test_capture_note_dispatch_refuses_a_temporary_chat_before_any_worker():
+@private_profile_test
+async def test_capture_note_dispatch_refuses_a_temporary_chat_before_any_worker(
+    request,
+):
     """task-32146 fix round 1 (review finding 3): the ephemeral registry is
     consulted again at dispatch -- the same defence the regenerate
     image/video branches carry -- so a temporary chat gets the registry's

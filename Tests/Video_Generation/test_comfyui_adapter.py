@@ -43,20 +43,40 @@ def adapter(monkeypatch):
 def json_recorder(monkeypatch):
     """Record fetch_json calls, with fake signature matching the real helper."""
     assert set(inspect.signature(fetch_json).parameters) >= {
-        "method", "url", "headers", "json", "params", "timeout", "trusted_origins",
+        "method",
+        "url",
+        "headers",
+        "json",
+        "params",
+        "timeout",
+        "trusted_origins",
     }
     calls: list[dict] = []
     routes: dict[tuple[str, str], object] = {}
 
     def fake_fetch_json(
-        method, url, *, headers=None, json=None, params=None, cookies=None,
-        timeout=None, trusted_origins=frozenset(),
+        method,
+        url,
+        *,
+        headers=None,
+        json=None,
+        params=None,
+        cookies=None,
+        timeout=None,
+        trusted_origins=frozenset(),
     ):
-        calls.append({
-            "method": method, "url": url, "headers": headers, "json": json,
-            "params": params, "cookies": cookies, "timeout": timeout,
-            "trusted_origins": trusted_origins,
-        })
+        calls.append(
+            {
+                "method": method,
+                "url": url,
+                "headers": headers,
+                "json": json,
+                "params": params,
+                "cookies": cookies,
+                "timeout": timeout,
+                "trusted_origins": trusted_origins,
+            }
+        )
         for (route_method, fragment), response in routes.items():
             if method == route_method and fragment in url:
                 if isinstance(response, list):
@@ -76,16 +96,56 @@ def _request(**overrides):
 
 def _custom_workflow():
     return {
-        "1": {"class_type": "CLIPTextEncode", "inputs": {"text": "old"}, "_meta": {"title": "Prompt"}},
-        "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "keep"}, "_meta": {"title": "Negative Prompt"}},
-        "3": {"class_type": "KSampler", "inputs": {"seed": 0, "latent_image": ["9", 0]}, "_meta": {"title": "Seed"}},
-        "4": {"class_type": "EmptyLatentImage", "inputs": {"width": 320, "height": 240, "batch_size": 1}, "_meta": {"title": "Width"}},
-        "5": {"class_type": "EmptyLatentImage", "inputs": {"width": 320, "height": 240}, "_meta": {"title": "Height"}},
-        "6": {"class_type": "VideoFrames", "inputs": {"num_frames": 1, "fps": 8}, "_meta": {"title": "Frames"}},
-        "7": {"class_type": "VHS_VideoCombine", "inputs": {"images": ["6", 0]}, "_meta": {"title": "Output"}},
-        "8": {"class_type": "LoadImage", "inputs": {"image": "old.png"}, "_meta": {"title": "Input Image"}},
-        "9": {"class_type": "OtherNode", "inputs": {"text": "unrelated", "seed": 77}, "_meta": {"title": "Ignore me"}},
-        "10": {"class_type": "OtherNode", "inputs": {"fps": 8}, "_meta": {"title": "FPS"}},
+        "1": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"text": "old"},
+            "_meta": {"title": "Prompt"},
+        },
+        "2": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"text": "keep"},
+            "_meta": {"title": "Negative Prompt"},
+        },
+        "3": {
+            "class_type": "KSampler",
+            "inputs": {"seed": 0, "latent_image": ["9", 0]},
+            "_meta": {"title": "Seed"},
+        },
+        "4": {
+            "class_type": "EmptyLatentImage",
+            "inputs": {"width": 320, "height": 240, "batch_size": 1},
+            "_meta": {"title": "Width"},
+        },
+        "5": {
+            "class_type": "EmptyLatentImage",
+            "inputs": {"width": 320, "height": 240},
+            "_meta": {"title": "Height"},
+        },
+        "6": {
+            "class_type": "VideoFrames",
+            "inputs": {"num_frames": 1, "fps": 8},
+            "_meta": {"title": "Frames"},
+        },
+        "7": {
+            "class_type": "VHS_VideoCombine",
+            "inputs": {"images": ["6", 0]},
+            "_meta": {"title": "Output"},
+        },
+        "8": {
+            "class_type": "LoadImage",
+            "inputs": {"image": "old.png"},
+            "_meta": {"title": "Input Image"},
+        },
+        "9": {
+            "class_type": "OtherNode",
+            "inputs": {"text": "unrelated", "seed": 77},
+            "_meta": {"title": "Ignore me"},
+        },
+        "10": {
+            "class_type": "OtherNode",
+            "inputs": {"fps": 8},
+            "_meta": {"title": "FPS"},
+        },
     }
 
 
@@ -93,7 +153,12 @@ def _h3_workflow():
     return {
         "gen": {
             "class_type": "MiniMaxH3ImageToVideo",
-            "inputs": {"prompt": "safe placeholder", "width": 864, "height": 480, "length": ["expr", 1]},
+            "inputs": {
+                "prompt": "safe placeholder",
+                "width": 864,
+                "height": 480,
+                "length": ["expr", 1],
+            },
             "_meta": {"title": "Prompt Width Height"},
         },
         "seed": {
@@ -120,7 +185,11 @@ def _h3_workflow():
 
 
 def _install_workflow(adapter, monkeypatch, workflow=None):
-    monkeypatch.setattr(adapter, "_load_workflow", lambda _name: _h3_workflow() if workflow is None else workflow)
+    monkeypatch.setattr(
+        adapter,
+        "_load_workflow",
+        lambda _name: _h3_workflow() if workflow is None else workflow,
+    )
 
 
 def _object_info_for(workflow):
@@ -192,13 +261,19 @@ def test_submits_packaged_workflow_through_observed_history_shape(
     ]
     monkeypatch.setattr("time.sleep", lambda _seconds: None)
 
-    result = adapter.generate(_request(seed=41, width=640, height=352, fps=24, duration_seconds=2))
+    result = adapter.generate(
+        _request(seed=41, width=640, height=352, fps=24, duration_seconds=2)
+    )
 
     assert result.content == b"video"
     assert result.content_type == "video/mp4"
     assert result.container == "mp4"
     assert result.bytes_len == 5
-    submit = next(call for call in calls if call["method"] == "POST" and call["url"].endswith("/prompt"))
+    submit = next(
+        call
+        for call in calls
+        if call["method"] == "POST" and call["url"].endswith("/prompt")
+    )
     assert submit["url"] == "http://127.0.0.1:8188/prompt"
     assert submit["json"]["client_id"]
     sent = submit["json"]["prompt"]
@@ -232,13 +307,18 @@ def test_generic_webm_output_returns_observed_container(
         max_bytes=None,
         trusted_origins=frozenset(),
     ):
-        download_calls.append((url, {
-            "timeout": timeout,
-            "headers": headers,
-            "cookies": cookies,
-            "max_bytes": max_bytes,
-            "trusted_origins": trusted_origins,
-        }))
+        download_calls.append(
+            (
+                url,
+                {
+                    "timeout": timeout,
+                    "headers": headers,
+                    "cookies": cookies,
+                    "max_bytes": max_bytes,
+                    "trusted_origins": trusted_origins,
+                },
+            )
+        )
         return b"video", " Video/WebM ; codecs=vp9 "
 
     # Match the shared helper's transport contract, not the call under test.
@@ -250,7 +330,13 @@ def test_generic_webm_output_returns_observed_container(
     routes[("POST", "/prompt")] = {"prompt_id": "job-2"}
     routes[("GET", "/history/job-2")] = {
         "job-2": {
-            "outputs": {"7": {"videos": [{"filename": "clip.webm", "subfolder": "", "type": "output"}]}},
+            "outputs": {
+                "7": {
+                    "videos": [
+                        {"filename": "clip.webm", "subfolder": "", "type": "output"}
+                    ]
+                }
+            },
             "status": {"completed": True, "status_str": "success", "messages": []},
         }
     }
@@ -265,10 +351,18 @@ def test_generic_webm_output_returns_observed_container(
         )
     )
 
-    assert download_calls == [(
-        "http://127.0.0.1:8188/view?filename=clip.webm&subfolder=&type=output",
-        {"timeout": 30, "headers": None, "cookies": None, "max_bytes": 500 * 1024 * 1024, "trusted_origins": frozenset({"127.0.0.1"})},
-    )]
+    assert download_calls == [
+        (
+            "http://127.0.0.1:8188/view?filename=clip.webm&subfolder=&type=output",
+            {
+                "timeout": 30,
+                "headers": None,
+                "cookies": None,
+                "max_bytes": 500 * 1024 * 1024,
+                "trusted_origins": frozenset({"127.0.0.1"}),
+            },
+        )
+    ]
     assert result.content_type == "video/webm"
     assert result.container == "webm"
 
@@ -307,7 +401,9 @@ def test_h3_webm_request_rejects_after_local_graph_load_before_remote_preflight(
     assert effects == ["load"]
 
 
-@pytest.mark.parametrize("observed_type", ["application/octet-stream", None, "video/webm"])
+@pytest.mark.parametrize(
+    "observed_type", ["application/octet-stream", None, "video/webm"]
+)
 def test_h3_download_requires_observed_mp4_mime(
     adapter, json_recorder, monkeypatch, observed_type
 ):
@@ -346,12 +442,17 @@ def test_h3_download_requires_observed_mp4_mime(
         adapter.generate(_request())
 
 
-def test_uploads_image_asset_and_injects_uploaded_filename(adapter, json_recorder, monkeypatch):
+def test_uploads_image_asset_and_injects_uploaded_filename(
+    adapter, json_recorder, monkeypatch
+):
     calls, routes = json_recorder
     graph = _custom_workflow()
     _install_workflow(adapter, monkeypatch, graph)
     uploads = []
-    monkeypatch.setattr(adapter, "_upload_image", lambda asset: uploads.append(asset) or "upload.png")
+    monkeypatch.setattr(
+        adapter, "_upload_image", lambda asset: uploads.append(asset) or "upload.png"
+    )
+
     def fetch_bytes(
         url: str,
         *,
@@ -368,20 +469,34 @@ def test_uploads_image_asset_and_injects_uploaded_filename(adapter, json_recorde
     routes[("POST", "/prompt")] = {"prompt_id": "job-3"}
     routes[("GET", "/history/job-3")] = {
         "job-3": {
-            "outputs": {"7": {"videos": [{"filename": "clip.mp4", "subfolder": "", "type": "output"}]}},
+            "outputs": {
+                "7": {
+                    "videos": [
+                        {"filename": "clip.mp4", "subfolder": "", "type": "output"}
+                    ]
+                }
+            },
             "status": {"completed": True, "status_str": "success", "messages": []},
         }
     }
-    image = ResolvedReferenceAsset("first_frame", b"png-bytes", "image/png", "source.png")
+    image = ResolvedReferenceAsset(
+        "first_frame", b"png-bytes", "image/png", "source.png"
+    )
 
     adapter.generate(_request(reference_assets=(image,)))
 
     assert uploads == [image]
-    submit = next(call for call in calls if call["method"] == "POST" and call["url"].endswith("/prompt"))
+    submit = next(
+        call
+        for call in calls
+        if call["method"] == "POST" and call["url"].endswith("/prompt")
+    )
     assert submit["json"]["prompt"]["8"]["inputs"]["image"] == "upload.png"
 
 
-def test_h3_reference_image_is_rejected_before_remote_side_effects(adapter, monkeypatch):
+def test_h3_reference_image_is_rejected_before_remote_side_effects(
+    adapter, monkeypatch
+):
     effects: list[str] = []
     resolve_uploaded_image = adapter._resolve_uploaded_image
     monkeypatch.setattr(
@@ -430,7 +545,9 @@ def test_upload_uses_multipart_endpoint_and_trusted_origin(adapter, monkeypatch)
         "_validate_egress_or_raise",
         lambda url, *, trusted_origins: egress_checks.append((url, trusted_origins)),
     )
-    asset = ResolvedReferenceAsset("first_frame", b"png-bytes", "image/png", "source.png")
+    asset = ResolvedReferenceAsset(
+        "first_frame", b"png-bytes", "image/png", "source.png"
+    )
 
     uploaded = adapter._upload_image(asset)
 
@@ -471,7 +588,9 @@ def test_upload_rejects_unsafe_server_returned_paths(
     client.__enter__.return_value = client
     client.post.return_value = response
     monkeypatch.setattr(cva, "create_client", lambda **_kwargs: client)
-    monkeypatch.setattr(cva, "_validate_egress_or_raise", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        cva, "_validate_egress_or_raise", lambda *_args, **_kwargs: None
+    )
     asset = ResolvedReferenceAsset(
         "first_frame", b"png-bytes", "image/png", "source.png"
     )
@@ -491,7 +610,9 @@ def test_upload_accepts_safe_nested_server_subfolder(adapter, monkeypatch):
     client.__enter__.return_value = client
     client.post.return_value = response
     monkeypatch.setattr(cva, "create_client", lambda **_kwargs: client)
-    monkeypatch.setattr(cva, "_validate_egress_or_raise", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        cva, "_validate_egress_or_raise", lambda *_args, **_kwargs: None
+    )
     asset = ResolvedReferenceAsset(
         "first_frame", b"png-bytes", "image/png", "source.png"
     )
@@ -499,13 +620,18 @@ def test_upload_accepts_safe_nested_server_subfolder(adapter, monkeypatch):
     assert adapter._upload_image(asset) == "nested/upload/input.png"
 
 
-def test_missing_required_classes_fail_before_prompt(adapter, json_recorder, monkeypatch):
+def test_missing_required_classes_fail_before_prompt(
+    adapter, json_recorder, monkeypatch
+):
     calls, routes = json_recorder
     graph = _custom_workflow()
     _install_workflow(adapter, monkeypatch, graph)
     routes[("GET", "/object_info")] = {"CLIPTextEncode": {}, "KSampler": {}}
 
-    with pytest.raises(VideoBackendUnavailableError, match="EmptyLatentImage.*LoadImage.*OtherNode.*VHS_VideoCombine.*VideoFrames"):
+    with pytest.raises(
+        VideoBackendUnavailableError,
+        match="EmptyLatentImage.*LoadImage.*OtherNode.*VHS_VideoCombine.*VideoFrames",
+    ):
         adapter.generate(_request())
     assert not any(call["url"].endswith("/prompt") for call in calls)
 
@@ -527,7 +653,9 @@ def test_cancellation_interrupts_and_stops(adapter, json_recorder, monkeypatch):
     assert interrupt["trusted_origins"] == frozenset({"127.0.0.1"})
 
 
-def test_workflow_resolution_prefers_user_dir_and_rejects_unsafe_names(adapter, monkeypatch, tmp_path):
+def test_workflow_resolution_prefers_user_dir_and_rejects_unsafe_names(
+    adapter, monkeypatch, tmp_path
+):
     user_dir = tmp_path / "data"
     workflows = user_dir / "video_workflows"
     workflows.mkdir(parents=True)
@@ -535,7 +663,10 @@ def test_workflow_resolution_prefers_user_dir_and_rejects_unsafe_names(adapter, 
     monkeypatch.setattr(cva, "get_user_data_dir", lambda: user_dir)
 
     assert adapter._load_workflow("chosen.json") == {"user": {"class_type": "User"}}
-    assert adapter._load_workflow("minimax_h3_t2v.json")["105:104"]["class_type"] == "MiniMaxH3ImageToVideo"
+    assert (
+        adapter._load_workflow("minimax_h3_t2v.json")["105:104"]["class_type"]
+        == "MiniMaxH3ImageToVideo"
+    )
     with pytest.raises(VideoGenerationError, match="workflow.*JSON"):
         adapter._load_workflow("chosen.txt")
     with pytest.raises(VideoGenerationError, match="workflow.*path"):
@@ -571,7 +702,9 @@ def test_workflow_read_uses_central_path_validation_result(
     ]
 
 
-def test_workflow_resolution_rejects_user_workflow_symlink_escape(adapter, monkeypatch, tmp_path):
+def test_workflow_resolution_rejects_user_workflow_symlink_escape(
+    adapter, monkeypatch, tmp_path
+):
     user_dir = tmp_path / "data"
     workflows = user_dir / "video_workflows"
     workflows.mkdir(parents=True)
@@ -584,7 +717,9 @@ def test_workflow_resolution_rejects_user_workflow_symlink_escape(adapter, monke
         adapter._load_workflow("escape.json")
 
 
-def test_workflow_resolution_rejects_symlinked_workflow_parent(adapter, monkeypatch, tmp_path):
+def test_workflow_resolution_rejects_symlinked_workflow_parent(
+    adapter, monkeypatch, tmp_path
+):
     user_dir = tmp_path / "data"
     user_dir.mkdir()
     outside = tmp_path / "outside-workflows"
@@ -597,14 +732,19 @@ def test_workflow_resolution_rejects_symlinked_workflow_parent(adapter, monkeypa
         adapter._load_workflow("escape.json")
 
 
-def test_unsupported_reference_and_bad_output_are_clear(adapter, json_recorder, monkeypatch):
+def test_unsupported_reference_and_bad_output_are_clear(
+    adapter, json_recorder, monkeypatch
+):
     graph = _h3_workflow()
     _install_workflow(adapter, monkeypatch, graph)
-    unsupported = ResolvedReferenceAsset("reference_video", b"video", "video/mp4", "source.mp4")
+    unsupported = ResolvedReferenceAsset(
+        "reference_video", b"video", "video/mp4", "source.mp4"
+    )
     with pytest.raises(VideoGenerationError, match="image.*first_frame"):
         adapter.generate(_request(reference_assets=(unsupported,)))
 
     calls, routes = json_recorder
+
     def fetch_bytes(
         url: str,
         *,
@@ -619,13 +759,25 @@ def test_unsupported_reference_and_bad_output_are_clear(adapter, json_recorder, 
     monkeypatch.setattr(cva, "fetch_image_bytes", fetch_bytes)
     routes[("GET", "/object_info")] = _object_info_for(graph)
     routes[("POST", "/prompt")] = {"prompt_id": "job-5"}
-    routes[("GET", "/history/job-5")] = {"job-5": {"outputs": {"save": {"images": [{"filename": "plain.png", "subfolder": "", "type": "output"}]}}}}
+    routes[("GET", "/history/job-5")] = {
+        "job-5": {
+            "outputs": {
+                "save": {
+                    "images": [
+                        {"filename": "plain.png", "subfolder": "", "type": "output"}
+                    ]
+                }
+            }
+        }
+    }
     routes[("GET", "/history/job-5")]["job-5"]["status"] = {
         "completed": True,
         "status_str": "success",
         "messages": [],
     }
-    with pytest.raises(VideoGenerationError, match="no matching canonical video output"):
+    with pytest.raises(
+        VideoGenerationError, match="no matching canonical video output"
+    ):
         adapter.generate(_request())
 
 
@@ -633,10 +785,18 @@ def test_unsupported_reference_and_bad_output_are_clear(adapter, json_recorder, 
     "outputs",
     [
         {},
-        {"preview": {"images": [{"filename": "partial.png", "subfolder": "", "type": "output"}]}},
+        {
+            "preview": {
+                "images": [
+                    {"filename": "partial.png", "subfolder": "", "type": "output"}
+                ]
+            }
+        },
     ],
 )
-def test_terminal_history_failure_is_not_masked_by_empty_or_partial_output(adapter, outputs):
+def test_terminal_history_failure_is_not_masked_by_empty_or_partial_output(
+    adapter, outputs
+):
     graph = _h3_workflow()
     history = {
         "job-6": {
@@ -644,12 +804,16 @@ def test_terminal_history_failure_is_not_masked_by_empty_or_partial_output(adapt
             "status": {
                 "completed": True,
                 "status_str": "error",
-                "messages": [["execution_error", {"exception_message": "model unavailable"}]],
+                "messages": [
+                    ["execution_error", {"exception_message": "model unavailable"}]
+                ],
             },
         }
     }
 
-    with pytest.raises(VideoGenerationError, match="execution failed: model unavailable"):
+    with pytest.raises(
+        VideoGenerationError, match="execution failed: model unavailable"
+    ):
         adapter._find_output_descriptor(history, "job-6", graph, "mp4")
 
 
@@ -673,7 +837,10 @@ def test_output_selection_uses_save_video_node_not_preview(adapter):
         }
     }
 
-    assert adapter._find_output_descriptor(history, "job", graph, "mp4")["filename"] == "clip.mp4"
+    assert (
+        adapter._find_output_descriptor(history, "job", graph, "mp4")["filename"]
+        == "clip.mp4"
+    )
 
 
 def test_save_video_output_accepts_arbitrary_list_collection(adapter):
@@ -738,24 +905,35 @@ def test_output_selection_uses_only_request_matching_canonical_descriptor(
             "outputs": {
                 "unrelated": {
                     "files": [
-                        {"filename": f"wrong-node.{requested}", "subfolder": "", "type": "output"}
+                        {
+                            "filename": f"wrong-node.{requested}",
+                            "subfolder": "",
+                            "type": "output",
+                        }
                     ]
                 },
                 "output": {
                     "arbitrary_collection": [
-                        {"filename": "animated.webp", "subfolder": "", "type": "output"},
+                        {
+                            "filename": "animated.webp",
+                            "subfolder": "",
+                            "type": "output",
+                        },
                         {"filename": "first.mp4", "subfolder": "", "type": "output"},
                         {"filename": "second.webm", "subfolder": "", "type": "output"},
                         {"filename": "movie.mov", "subfolder": "", "type": "output"},
                     ]
-                }
+                },
             },
             "status": {"completed": True, "status_str": "success", "messages": []},
         }
     }
 
     expected = "first.mp4" if requested == "mp4" else "second.webm"
-    assert adapter._find_output_descriptor(history, "job", graph, requested)["filename"] == expected
+    assert (
+        adapter._find_output_descriptor(history, "job", graph, requested)["filename"]
+        == expected
+    )
 
 
 def test_output_selection_waits_for_explicit_terminal_success(adapter):
@@ -783,9 +961,7 @@ def test_output_selection_rejects_multiple_matching_final_outputs_boundedly(
     node_ids = ["save-a", "save-b"]
     if reverse_order:
         node_ids.reverse()
-    graph = {
-        node_id: {"class_type": "SaveVideo", "inputs": {}} for node_id in node_ids
-    }
+    graph = {node_id: {"class_type": "SaveVideo", "inputs": {}} for node_id in node_ids}
     output_items = [
         (
             "save-a",
@@ -816,7 +992,9 @@ def test_output_selection_rejects_multiple_matching_final_outputs_boundedly(
         }
     }
 
-    with pytest.raises(VideoGenerationError, match="multiple matching canonical") as exc_info:
+    with pytest.raises(
+        VideoGenerationError, match="multiple matching canonical"
+    ) as exc_info:
         adapter._find_output_descriptor(history, "job", graph, "mp4")
 
     assert "PRIVATE-A" not in str(exc_info.value)
@@ -863,7 +1041,9 @@ def test_terminal_success_without_media_fails_without_waiting(adapter):
         }
     }
 
-    with pytest.raises(VideoGenerationError, match="no matching canonical video output"):
+    with pytest.raises(
+        VideoGenerationError, match="no matching canonical video output"
+    ):
         adapter._find_output_descriptor(history, "job-7", graph, "mp4")
 
 
@@ -922,7 +1102,9 @@ def test_poll_timeout_is_bounded_by_remaining_deadline(adapter, monkeypatch):
 def test_h3_preparation_applies_request_and_reports_effective_values(adapter):
     prepared = adapter._parameterize_workflow(
         _h3_workflow(),
-        _request(seed=41, width=1280, height=704, duration_seconds=6, fps=24, ratio="16:9"),
+        _request(
+            seed=41, width=1280, height=704, duration_seconds=6, fps=24, ratio="16:9"
+        ),
         None,
     )
 
@@ -932,7 +1114,12 @@ def test_h3_preparation_applies_request_and_reports_effective_values(adapter):
     assert prepared.graph["seed"]["inputs"]["noise_seed"] == 41
     assert prepared.graph["duration"]["inputs"]["value"] == 6
     assert prepared.graph["gen"]["inputs"]["length"] == ["expr", 1]
-    assert (prepared.width, prepared.height, prepared.duration_seconds, prepared.fps) == (1280, 704, 6.0, 24.0)
+    assert (
+        prepared.width,
+        prepared.height,
+        prepared.duration_seconds,
+        prepared.fps,
+    ) == (1280, 704, 6.0, 24.0)
     assert prepared.resolved_seed == 41
 
 
@@ -954,7 +1141,9 @@ def test_h3_rejects_incompatible_ratio_and_format(adapter):
     with pytest.raises(VideoGenerationError, match="ratio"):
         adapter._parameterize_workflow(_h3_workflow(), _request(ratio="1:1"), None)
     with pytest.raises(VideoGenerationError, match="MP4"):
-        adapter._parameterize_workflow(_h3_workflow(), _request(video_format="webm"), None)
+        adapter._parameterize_workflow(
+            _h3_workflow(), _request(video_format="webm"), None
+        )
 
 
 def test_h3_defaults_are_reported_without_modifying_graph(adapter):
@@ -963,7 +1152,13 @@ def test_h3_defaults_are_reported_without_modifying_graph(adapter):
 
     prepared = adapter._parameterize_workflow(workflow, _request(), None)
 
-    assert (prepared.width, prepared.height, prepared.duration_seconds, prepared.fps, prepared.resolved_seed) == (864, 480, 5.0, 24.0, 0)
+    assert (
+        prepared.width,
+        prepared.height,
+        prepared.duration_seconds,
+        prepared.fps,
+        prepared.resolved_seed,
+    ) == (864, 480, 5.0, 24.0, 0)
     assert workflow == original
     assert prepared.graph is not workflow
 
@@ -1042,7 +1237,12 @@ def test_generic_custom_workflow_keeps_documented_title_controls(adapter):
     assert prepared.graph["6"]["inputs"]["num_frames"] == 144
     assert prepared.graph["10"]["inputs"]["fps"] == 24
     assert prepared.graph["8"]["inputs"]["image"] == "safe-input.png"
-    assert (prepared.width, prepared.height, prepared.duration_seconds, prepared.fps) == (1280, 704, 6.0, 24.0)
+    assert (
+        prepared.width,
+        prepared.height,
+        prepared.duration_seconds,
+        prepared.fps,
+    ) == (1280, 704, 6.0, 24.0)
 
 
 def test_h3_seed_minus_one_resolves_once_and_rejects_lower_values(adapter, monkeypatch):
@@ -1064,7 +1264,9 @@ def test_h3_rejects_unsupported_ratios(adapter, ratio):
 def test_h3_allows_the_exact_three_percent_ratio_boundary(adapter):
     ratio = f"{864 / 1.03}:480"
 
-    prepared = adapter._parameterize_workflow(_h3_workflow(), _request(ratio=ratio), None)
+    prepared = adapter._parameterize_workflow(
+        _h3_workflow(), _request(ratio=ratio), None
+    )
 
     assert (prepared.width, prepared.height) == (864, 480)
 

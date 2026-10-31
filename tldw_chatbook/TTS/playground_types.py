@@ -237,7 +237,9 @@ class STTSPlaygroundRequest:
                     "Profile preview requires a complete matching audio.cpp Studio request"
                 )
         if self.clone_audition is not None and self.profile_preview is not None:
-            raise ValueError("Clone audition and profile preview are mutually exclusive")
+            raise ValueError(
+                "Clone audition and profile preview are mutually exclusive"
+            )
 
 
 @dataclass(frozen=True, slots=True)

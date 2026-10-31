@@ -111,12 +111,20 @@ class FakeTagLister:
         return tuple(tc for tc in self.counts if q in tc.tag.lower())
 
 
-def _media(source_id: str, title: str, updated_at: str = "2026-01-01", tags=()) -> ScopeListItem:
-    return ScopeListItem(source_id=source_id, title=title, updated_at=updated_at, tags=tuple(tags))
+def _media(
+    source_id: str, title: str, updated_at: str = "2026-01-01", tags=()
+) -> ScopeListItem:
+    return ScopeListItem(
+        source_id=source_id, title=title, updated_at=updated_at, tags=tuple(tags)
+    )
 
 
-def _note(source_id: str, title: str, updated_at: str = "2026-01-01", tags=()) -> ScopeListItem:
-    return ScopeListItem(source_id=source_id, title=title, updated_at=updated_at, tags=tuple(tags))
+def _note(
+    source_id: str, title: str, updated_at: str = "2026-01-01", tags=()
+) -> ScopeListItem:
+    return ScopeListItem(
+        source_id=source_id, title=title, updated_at=updated_at, tags=tuple(tags)
+    )
 
 
 # -- harness --------------------------------------------------------------------
@@ -517,7 +525,11 @@ async def test_tag_multi_select_is_or_and_ands_with_text_filter() -> None:
                 _media("m2", "Marketing plan", tags=["marketing"]),
                 _media("m3", "Sales Q2", tags=["sales", "finance"]),
             ],
-            tags=[TagCount("sales", 2), TagCount("marketing", 1), TagCount("finance", 1)],
+            tags=[
+                TagCount("sales", 2),
+                TagCount("marketing", 1),
+                TagCount("finance", 1),
+            ],
         )
         # Top tag chips loaded.
         chips = app.screen.query(".console-scope-picker-tag-chip")
@@ -607,7 +619,11 @@ async def test_sort_recent_orders_by_updated_at_descending() -> None:
             ],
         )
         labels = _row_labels(app)  # default sort is "recent"
-        assert [label.split(" ", 1)[1] for label in labels] == ["Newest", "Middle", "Oldest"]
+        assert [label.split(" ", 1)[1] for label in labels] == [
+            "Newest",
+            "Middle",
+            "Oldest",
+        ]
 
 
 @pytest.mark.asyncio
@@ -659,7 +675,11 @@ async def test_pagination_respects_universe_size_not_raw_total() -> None:
         # Create 50-item media store, but universe restricts to just 3 items.
         media_items = [_media(f"m{i:02d}", f"Item {i}") for i in range(50)]
         universe = frozenset(
-            {(SOURCE_TYPE_MEDIA, "m00"), (SOURCE_TYPE_MEDIA, "m01"), (SOURCE_TYPE_MEDIA, "m02")}
+            {
+                (SOURCE_TYPE_MEDIA, "m00"),
+                (SOURCE_TYPE_MEDIA, "m01"),
+                (SOURCE_TYPE_MEDIA, "m02"),
+            }
         )
         await _open(app, pilot, media=media_items, universe=universe, page_size=10)
         # With universe-aware pagination, "1 of 1" page (3 items < 10 page_size).

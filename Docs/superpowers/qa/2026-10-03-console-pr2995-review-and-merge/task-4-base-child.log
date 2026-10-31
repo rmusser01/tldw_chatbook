@@ -1,0 +1,946 @@
+F.FFFFFFFFFF....FE.FFF                                                   [100%]
+==================================== ERRORS ====================================
+_ ERROR at teardown of test_captured_automatic_authority_keeps_automatic_capacity_origin _
+
+    @pytest.fixture(autouse=True)
+    def _fleet_chat_scripts_fully_consumed():
+        """Fail any test that mis-scripted a `FleetChat` (PR2a Task 6.5 review).
+    
+        `Tests/Agents/test_agent_service.FleetChat` addresses provider replies
+        per agent, and is the load-bearing harness for every suite that spawns
+        a sub-agent. Two of its failure modes are otherwise SILENT:
+    
+        * a fault raised on a CHILD's thread is swallowed by `AgentService`'s
+          `run_child` (BaseException by design) into `status=error`, so a test
+          that does not assert the child's own result still passes;
+        * a scripted turn nobody ever asks for -- e.g. after a task-text
+          rename leaves the key stale -- simply goes unused, and the test
+          passes while exercising nothing it claims to.
+    
+        Autouse and repo-wide on purpose: this must not be something a future
+        test can forget to opt into. It is a no-op (one empty list check) for
+        the thousands of tests that never touch `FleetChat`, and it never
+        imports it -- the class registers its own instances.
+        """
+        # Looked up through sys.modules rather than imported: a test that
+        # never pulled the harness in must not pay to import the whole agent
+        # stack, nor gain its import side effects. No module -> nothing to check.
+        module = sys.modules.get("Tests.Agents.test_agent_service")
+        fleet_chat = getattr(module, "FleetChat", None) if module else None
+        if fleet_chat is None:
+            yield
+            return
+    
+        fleet_chat._live_instances.clear()
+        yield
+        instances = list(fleet_chat._live_instances)
+        fleet_chat._live_instances.clear()
+        # PR3a-1 Task 2: a sub-agent now outlives the turn that spawned it by
+        # default, so a child can still be on its way to its FIRST scripted
+        # reply when the test body ends -- "unused turn" and "not used YET"
+        # look identical at this instant. Wait for the difference rather than
+        # guessing at it: a script that is merely late is consumed within
+        # milliseconds, while a genuinely mis-keyed one costs this bounded
+        # wait once, on a test that is failing anyway.
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and any(
+            chat.unconsumed() for chat in instances
+        ):
+            time.sleep(0.02)
+        problems = []
+        for chat in instances:
+            problems.extend(chat.harness_errors)
+            problems.extend(chat.unconsumed())
+>       assert not problems, "FleetChat scripting fault(s): " + "; ".join(problems)
+E       AssertionError: FleetChat scripting fault(s): parent has 1 unused turn(s)
+E       assert not ['parent has 1 unused turn(s)']
+
+Tests/conftest.py:1635: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 21:34:13.329 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest/test_captured_automatic_author0/runs.sqlite [Client: automatic-child]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 21:34:13.423 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:34:13.471 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:34:13.533 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+=================================== FAILURES ===================================
+___________ test_captured_context_reaches_raw_child_and_tool_threads ___________
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10c9ff260>
+
+    def test_captured_context_reaches_raw_child_and_tool_threads(db):
+        context = accepted_context(db)
+        seen = []
+        tool = ContextProbe()
+    
+        def child():
+            seen.append(current_automatic_work())
+            return fence("whoami", {})
+    
+        service, _ = make_service(
+            db,
+            context,
+            [fence("spawn_subagent", {"task": "child"}), fence("wait_agents", {}), "done"],
+            {"child": [child, "child done"]},
+            provider=tool,
+        )
+        assert current_automatic_work() is None
+        try:
+>           assert run(service)[1].status == "done"
+E           AssertionError: assert 'error' == 'done'
+E             
+E             - done
+E             + error
+
+Tests/Agents/test_automatic_child_scope.py:181: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 21:33:52.009 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-03 21:33:52.062 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-03 21:33:52.113 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-03 21:33:52.115 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+2026-10-03 21:33:52.309 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest/test_captured_context_reaches_0/runs.sqlite [Client: automatic-child]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 21:33:52.400 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:52.450 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:52.559 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+___ test_three_generations_share_six_actual_launches_and_manual_is_uncharged ___
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10cd24aa0>
+
+    def test_three_generations_share_six_actual_launches_and_manual_is_uncharged(db):
+        context = accepted_context(db)
+        chain_id = context.chain_id
+        for generation in range(3):
+            if generation:
+                context = accepted_context(
+                    db, chain_id=chain_id, attempt=f"attempt-{generation}"
+                )
+            names = [f"child-{generation}-{i}" for i in range(2)]
+            replies = []
+            for name in names:
+                replies += [
+                    fence("spawn_subagent", {"task": name}),
+                    fence("wait_agents", {}),
+                ]
+            if generation == 2:
+                replies += [fence("spawn_subagent", {"task": "seventh"})]
+            replies += ["done"]
+            scripts = {name: ["child done"] for name in names}
+            if generation == 2:
+                scripts["seventh"] = ["must be refused"]
+            service, _ = make_service(db, context, replies, scripts)
+            try:
+                run(service)
+                join_fleet_children(service)
+            finally:
+                join_fleet_children(service)
+            assert db.automatic_work.complete_wake(context.attempt_id, owner_id="owner")
+        snapshot = db.automatic_work.snapshot(chain_id)
+>       assert snapshot.used["child_launch"] == 6
+E       assert 0 == 6
+
+Tests/Agents/test_automatic_child_scope.py:237: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 21:33:53.056 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest/test_three_generations_share_s0/runs.sqlite [Client: automatic-child]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 21:33:53.149 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:53.262 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:53.347 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+2026-10-03 21:33:53.452 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:53.511 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:53.594 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+2026-10-03 21:33:53.687 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:53.743 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:53.818 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+_____ test_proven_prelaunch_failure_refunds_shared_reservation[construct] ______
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10ccc3ef0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cd74d10>
+failure_site = 'construct'
+
+    @pytest.mark.parametrize("failure_site", ["construct", "start", "review"])
+    def test_proven_prelaunch_failure_refunds_shared_reservation(
+        db, monkeypatch, failure_site
+    ):
+        context = accepted_context(db, child_launches=1)
+        failed = []
+        extra = {}
+        if failure_site == "review":
+            pin_agent_settings(monkeypatch, max_live_subagents=1)
+    
+            @contextmanager
+            def review_scope(run_id):
+                if not failed:
+                    failed.append(True)
+                    raise RuntimeError("review scope unavailable")
+                yield
+    
+            extra["review_state_scope"] = review_scope
+        else:
+            original_thread, original_start = threading.Thread, threading.Thread.start
+    
+            def construct(*args, **kwargs):
+                if kwargs.get("name", "").startswith("fleet-") and not failed:
+                    failed.append(True)
+                    raise RuntimeError("thread unavailable")
+                return original_thread(*args, **kwargs)
+    
+            def start(thread):
+                if thread.name.startswith("fleet-") and not failed:
+                    failed.append(True)
+                    raise RuntimeError("thread unavailable")
+                return original_start(thread)
+    
+            if failure_site == "construct":
+                monkeypatch.setattr(threading, "Thread", construct)
+            else:
+                monkeypatch.setattr(threading.Thread, "start", start)
+        service, _ = make_service(
+            db,
+            context,
+            [
+                fence("spawn_subagent", {"task": "failed"}),
+                fence("spawn_subagent", {"task": "retry"}),
+                fence("wait_agents", {}),
+                "done",
+            ],
+            {"retry": ["child done"]},
+            **extra,
+        )
+        try:
+            run(service, max_subagents=1)
+            join_fleet_children(service)
+>           assert failed == [True]
+E           assert [] == [True]
+E             
+E             Right contains one more item: True
+E             Use -v to get more diff
+
+Tests/Agents/test_automatic_child_scope.py:309: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 21:33:53.993 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest/test_proven_prelaunch_failure_0/runs.sqlite [Client: automatic-child]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 21:33:54.091 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:54.146 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:54.217 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+_______ test_proven_prelaunch_failure_refunds_shared_reservation[start] ________
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10ccc34a0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cd74ef0>
+failure_site = 'start'
+
+    @pytest.mark.parametrize("failure_site", ["construct", "start", "review"])
+    def test_proven_prelaunch_failure_refunds_shared_reservation(
+        db, monkeypatch, failure_site
+    ):
+        context = accepted_context(db, child_launches=1)
+        failed = []
+        extra = {}
+        if failure_site == "review":
+            pin_agent_settings(monkeypatch, max_live_subagents=1)
+    
+            @contextmanager
+            def review_scope(run_id):
+                if not failed:
+                    failed.append(True)
+                    raise RuntimeError("review scope unavailable")
+                yield
+    
+            extra["review_state_scope"] = review_scope
+        else:
+            original_thread, original_start = threading.Thread, threading.Thread.start
+    
+            def construct(*args, **kwargs):
+                if kwargs.get("name", "").startswith("fleet-") and not failed:
+                    failed.append(True)
+                    raise RuntimeError("thread unavailable")
+                return original_thread(*args, **kwargs)
+    
+            def start(thread):
+                if thread.name.startswith("fleet-") and not failed:
+                    failed.append(True)
+                    raise RuntimeError("thread unavailable")
+                return original_start(thread)
+    
+            if failure_site == "construct":
+                monkeypatch.setattr(threading, "Thread", construct)
+            else:
+                monkeypatch.setattr(threading.Thread, "start", start)
+        service, _ = make_service(
+            db,
+            context,
+            [
+                fence("spawn_subagent", {"task": "failed"}),
+                fence("spawn_subagent", {"task": "retry"}),
+                fence("wait_agents", {}),
+                "done",
+            ],
+            {"retry": ["child done"]},
+            **extra,
+        )
+        try:
+            run(service, max_subagents=1)
+            join_fleet_children(service)
+>           assert failed == [True]
+E           assert [] == [True]
+E             
+E             Right contains one more item: True
+E             Use -v to get more diff
+
+Tests/Agents/test_automatic_child_scope.py:309: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 21:33:54.381 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest/test_proven_prelaunch_failure_1/runs.sqlite [Client: automatic-child]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 21:33:54.463 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:54.511 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:54.573 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+_______ test_proven_prelaunch_failure_refunds_shared_reservation[review] _______
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10cb7d460>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b295280>
+failure_site = 'review'
+
+    @pytest.mark.parametrize("failure_site", ["construct", "start", "review"])
+    def test_proven_prelaunch_failure_refunds_shared_reservation(
+        db, monkeypatch, failure_site
+    ):
+        context = accepted_context(db, child_launches=1)
+        failed = []
+        extra = {}
+        if failure_site == "review":
+            pin_agent_settings(monkeypatch, max_live_subagents=1)
+    
+            @contextmanager
+            def review_scope(run_id):
+                if not failed:
+                    failed.append(True)
+                    raise RuntimeError("review scope unavailable")
+                yield
+    
+            extra["review_state_scope"] = review_scope
+        else:
+            original_thread, original_start = threading.Thread, threading.Thread.start
+    
+            def construct(*args, **kwargs):
+                if kwargs.get("name", "").startswith("fleet-") and not failed:
+                    failed.append(True)
+                    raise RuntimeError("thread unavailable")
+                return original_thread(*args, **kwargs)
+    
+            def start(thread):
+                if thread.name.startswith("fleet-") and not failed:
+                    failed.append(True)
+                    raise RuntimeError("thread unavailable")
+                return original_start(thread)
+    
+            if failure_site == "construct":
+                monkeypatch.setattr(threading, "Thread", construct)
+            else:
+                monkeypatch.setattr(threading.Thread, "start", start)
+        service, _ = make_service(
+            db,
+            context,
+            [
+                fence("spawn_subagent", {"task": "failed"}),
+                fence("spawn_subagent", {"task": "retry"}),
+                fence("wait_agents", {}),
+                "done",
+            ],
+            {"retry": ["child done"]},
+            **extra,
+        )
+        try:
+            run(service, max_subagents=1)
+            join_fleet_children(service)
+>           assert failed == [True]
+E           assert [] == [True]
+E             
+E             Right contains one more item: True
+E             Use -v to get more diff
+
+Tests/Agents/test_automatic_child_scope.py:309: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 21:33:54.746 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest/test_proven_prelaunch_failure_2/runs.sqlite [Client: automatic-child]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 21:33:54.844 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:54.912 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:54.983 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+_________ test_inline_model_setup_failure_keeps_accepted_launch_charge _________
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10be33e00>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10be31ca0>
+
+    def test_inline_model_setup_failure_keeps_accepted_launch_charge(db, monkeypatch):
+        pin_agent_settings(monkeypatch, max_live_subagents=1)
+        context = accepted_context(db, child_launches=1)
+    
+        @contextmanager
+        def model_scope():
+            raise RuntimeError("driver partially started")
+            yield  # pragma: no cover
+    
+        service, _ = make_service(
+            db,
+            context,
+            [
+                fence("spawn_subagent", {"task": "failed"}),
+                fence("spawn_subagent", {"task": "retry"}),
+                "done",
+            ],
+            inline_child_model_scope=model_scope,
+        )
+        run(service, max_subagents=1)
+        assert child_rows(db) == []
+        snapshot = db.automatic_work.snapshot(context.chain_id)
+>       assert snapshot.used["child_launch"] == 1
+E       assert 0 == 1
+
+Tests/Agents/test_automatic_child_scope.py:345: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 21:33:55.127 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest/test_inline_model_setup_failur0/runs.sqlite [Client: automatic-child]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 21:33:55.220 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:55.272 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:55.338 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+______ test_finished_child_continuation_cannot_bypass_shared_launch_limit ______
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10bd88410>
+
+    def test_finished_child_continuation_cannot_bypass_shared_launch_limit(db):
+        context = accepted_context(db, child_launches=1)
+        fleet = FleetCoordinator(max_live=3, clock=time.monotonic)
+    
+        def resume():
+            handle = fleet.snapshot()[0]
+            return fence("send_to_agent", {"id": handle.handle_id, "message": "continue"})
+    
+        service, _ = make_service(
+            db,
+            context,
+            [
+                fence("spawn_subagent", {"task": "child"}),
+                fence("wait_agents", {}),
+                resume,
+                "done",
+            ],
+            {"child": ["child done", "should not resume"]},
+            fleet_coordinator=fleet,
+        )
+        try:
+            run(service)
+            join_fleet_children(service)
+>           assert len(child_rows(db)) == 1
+E           assert 0 == 1
+E            +  where 0 = len([])
+E            +    where [] = child_rows(<tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10bd88410>)
+
+Tests/Agents/test_automatic_child_scope.py:373: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 21:33:55.523 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest/test_finished_child_continuati0/runs.sqlite [Client: automatic-child]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 21:33:55.620 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:55.679 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:55.752 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+______ test_survivor_still_honors_its_chain_deadline_after_parent_returns ______
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10caab3b0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10bcf4cb0>
+
+    def test_survivor_still_honors_its_chain_deadline_after_parent_returns(db, monkeypatch):
+        wall, monotonic = [1000.0], [10.0]
+        monkeypatch.setattr(db.automatic_work, "_wall_clock", lambda: wall[0])
+        monkeypatch.setattr(db.automatic_work, "_monotonic_clock", lambda: monotonic[0])
+        context = accepted_context(db, wall_seconds=2)
+        entered, release = threading.Event(), threading.Event()
+        tool = ContextProbe()
+    
+        def child():
+            entered.set()
+            assert release.wait(5)
+            return fence("whoami", {})
+    
+        def parent_done():
+            assert entered.wait(5)
+            return "done"
+    
+        service, _ = make_service(
+            db,
+            context,
+            [fence("spawn_subagent", {"task": "survivor"}), parent_done],
+            {"survivor": [child, "should not continue"]},
+            provider=tool,
+        )
+        try:
+>           assert run(service)[1].status == "done"
+E           AssertionError: assert 'error' == 'done'
+E             
+E             - done
+E             + error
+
+Tests/Agents/test_automatic_child_scope.py:409: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 21:33:55.932 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest/test_survivor_still_honors_its0/runs.sqlite [Client: automatic-child]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 21:33:56.037 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:56.094 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:56.185 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+_ test_real_paused_capped_child_releases_logically_before_physical_worker[elapsed_deadline] _
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10cb7f830>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10bcf46e0>
+stop_mode = 'elapsed_deadline'
+
+    @pytest.mark.parametrize("stop_mode", ["elapsed_deadline", "explicit_cancel"])
+    def test_real_paused_capped_child_releases_logically_before_physical_worker(
+        db, monkeypatch, stop_mode
+    ):
+        import tldw_chatbook.Agents.agent_service as service_module
+    
+        monkeypatch.setattr(service_module, "_CANCEL_POLL_SECONDS", 0.01)
+        wall, monotonic = [1000.0], [10.0]
+        monkeypatch.setattr(db.automatic_work, "_wall_clock", lambda: wall[0])
+        monkeypatch.setattr(db.automatic_work, "_monotonic_clock", lambda: monotonic[0])
+        context = accepted_context(db, wall_seconds=2)
+        provider = PausedChildToolProvider()
+        capacity = RuntimeCapacity()
+        fleet = FleetCoordinator(max_live=1, clock=time.monotonic)
+        db.create_agent_definition(
+            AgentDefinition(
+                name="bounded",
+                description="Bounded child.",
+                instructions="Call the paused tool.",
+                tool_allowlist=("paused_tool",),
+                max_wall_seconds=0.2,
+            )
+        )
+        service, _chat = make_service(
+            db,
+            context,
+            [fence("spawn_subagent", {"task": "paused", "agent": "bounded"}), "done"],
+            {"paused": [fence("paused_tool", {}), "must not continue"]},
+            provider=provider,
+            runtime_capacity=capacity,
+            fleet_coordinator=fleet,
+        )
+        result = []
+    
+        def run_parent():
+            result.append(
+                service.run_turn(
+                    conversation_id="conversation",
+                    messages=[{"role": "user", "content": "go"}],
+                    config=AgentConfig(
+                        model="test",
+                        system_prompt="Test",
+                        allowed_tools=("spawn_subagent", "paused_tool"),
+                        budget=RunBudget(
+                            max_subagents=1,
+                            max_steps=60,
+                            max_model_turns=30,
+                            max_tool_call_seconds=5,
+                        ),
+                    ),
+                    api_endpoint="llama_cpp",
+                )
+            )
+    
+        parent = threading.Thread(target=run_parent)
+        parent.start()
+        try:
+>           assert provider.entered.wait(5)
+E           assert False
+E            +  where False = wait(5)
+E            +    where wait = <threading.Event at 0x10caab6b0: unset>.wait
+E            +      where <threading.Event at 0x10caab6b0: unset> = <Tests.Agents.test_automatic_child_scope.PausedChildToolProvider object at 0x10bcf5fa0>.entered
+
+Tests/Agents/test_automatic_child_scope.py:481: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 21:33:56.382 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest/test_real_paused_capped_child_0/runs.sqlite [Client: automatic-child]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 21:33:56.494 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:56.610 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:33:56.692 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+_ test_real_paused_capped_child_releases_logically_before_physical_worker[explicit_cancel] _
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10cb40950>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cb422d0>
+stop_mode = 'explicit_cancel'
+
+    @pytest.mark.parametrize("stop_mode", ["elapsed_deadline", "explicit_cancel"])
+    def test_real_paused_capped_child_releases_logically_before_physical_worker(
+        db, monkeypatch, stop_mode
+    ):
+        import tldw_chatbook.Agents.agent_service as service_module
+    
+        monkeypatch.setattr(service_module, "_CANCEL_POLL_SECONDS", 0.01)
+        wall, monotonic = [1000.0], [10.0]
+        monkeypatch.setattr(db.automatic_work, "_wall_clock", lambda: wall[0])
+        monkeypatch.setattr(db.automatic_work, "_monotonic_clock", lambda: monotonic[0])
+        context = accepted_context(db, wall_seconds=2)
+        provider = PausedChildToolProvider()
+        capacity = RuntimeCapacity()
+        fleet = FleetCoordinator(max_live=1, clock=time.monotonic)
+        db.create_agent_definition(
+            AgentDefinition(
+                name="bounded",
+                description="Bounded child.",
+                instructions="Call the paused tool.",
+                tool_allowlist=("paused_tool",),
+                max_wall_seconds=0.2,
+            )
+        )
+        service, _chat = make_service(
+            db,
+            context,
+            [fence("spawn_subagent", {"task": "paused", "agent": "bounded"}), "done"],
+            {"paused": [fence("paused_tool", {}), "must not continue"]},
+            provider=provider,
+            runtime_capacity=capacity,
+            fleet_coordinator=fleet,
+        )
+        result = []
+    
+        def run_parent():
+            result.append(
+                service.run_turn(
+                    conversation_id="conversation",
+                    messages=[{"role": "user", "content": "go"}],
+                    config=AgentConfig(
+                        model="test",
+                        system_prompt="Test",
+                        allowed_tools=("spawn_subagent", "paused_tool"),
+                        budget=RunBudget(
+                            max_subagents=1,
+                            max_steps=60,
+                            max_model_turns=30,
+                            max_tool_call_seconds=5,
+                        ),
+                    ),
+                    api_endpoint="llama_cpp",
+                )
+            )
+    
+        parent = threading.Thread(target=run_parent)
+        parent.start()
+        try:
+>           assert provider.entered.wait(5)
+E           assert False
+E            +  where False = wait(5)
+E            +    where wait = <threading.Event at 0x10be309b0: unset>.wait
+E            +      where <threading.Event at 0x10be309b0: unset> = <Tests.Agents.test_automatic_child_scope.PausedChildToolProvider object at 0x10cb7dd30>.entered
+
+Tests/Agents/test_automatic_child_scope.py:481: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 21:34:01.657 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest/test_real_paused_capped_child_1/runs.sqlite [Client: automatic-child]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 21:34:01.761 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:34:01.891 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:34:01.981 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+__ test_real_human_wait_pauses_only_capped_child_then_wall_boundary_stops_it ___
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10cb40ad0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cb43c80>
+
+    def test_real_human_wait_pauses_only_capped_child_then_wall_boundary_stops_it(
+        db, monkeypatch
+    ):
+        import tldw_chatbook.Agents.agent_service as service_module
+    
+        monkeypatch.setattr(service_module, "_CANCEL_POLL_SECONDS", 0.01)
+        provider = PausedChildToolProvider()
+        capacity = RuntimeCapacity(max_tool_workers=2, reserved_manual_tool_workers=0)
+        fleet = FleetCoordinator(max_live=2, clock=time.monotonic)
+        db.create_agent_definition(
+            AgentDefinition(
+                name="bounded",
+                description="Bounded child.",
+                instructions="Call the paused tool.",
+                tool_allowlist=("paused_tool",),
+                max_wall_seconds=0.15,
+            )
+        )
+        service, _chat = make_service(
+            db,
+            None,
+            [
+                fence("spawn_subagent", {"task": "paused", "agent": "bounded"}),
+                fence("spawn_subagent", {"task": "sibling"}),
+                "done",
+            ],
+            {
+                "paused": [fence("paused_tool", {}), "must not continue"],
+                "sibling": [fence("sibling_tool", {}), "sibling done"],
+            },
+            provider=provider,
+            runtime_capacity=capacity,
+            fleet_coordinator=fleet,
+        )
+        result = []
+    
+        def run_parent():
+            result.append(
+                service.run_turn(
+                    conversation_id="conversation",
+                    messages=[{"role": "user", "content": "go"}],
+                    config=AgentConfig(
+                        model="test",
+                        system_prompt="Test",
+                        allowed_tools=(
+                            "spawn_subagent",
+                            "paused_tool",
+                            "sibling_tool",
+                        ),
+                        budget=RunBudget(
+                            max_subagents=2,
+                            max_steps=60,
+                            max_model_turns=30,
+                            max_tool_call_seconds=0.08,
+                        ),
+                    ),
+                    api_endpoint="llama_cpp",
+                )
+            )
+    
+        parent = threading.Thread(target=run_parent)
+        parent.start()
+        try:
+>           assert provider.entered.wait(5)
+E           assert False
+E            +  where False = wait(5)
+E            +    where wait = <threading.Event at 0x10ccc2f30: unset>.wait
+E            +      where <threading.Event at 0x10ccc2f30: unset> = <Tests.Agents.test_automatic_child_scope.PausedChildToolProvider object at 0x10ccc23c0>.entered
+
+Tests/Agents/test_automatic_child_scope.py:578: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 21:34:06.884 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest/test_real_human_wait_pauses_on0/runs.sqlite [Client: automatic-child]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 21:34:06.932 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:34:07.018 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:34:07.071 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+______ test_captured_automatic_authority_keeps_automatic_capacity_origin _______
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10ccf0ad0>
+
+    def test_captured_automatic_authority_keeps_automatic_capacity_origin(db):
+        context = accepted_context(db)
+        capacity = RuntimeCapacity()
+        seen = []
+        chat = FleetChat([lambda: (seen.extend(capacity.snapshot().executions), "done")[1]])
+        with context.scope():
+            service = AgentService(
+                db, ToolCatalogRegistry(), chat_call=chat, runtime_capacity=capacity
+            )
+>       assert run(service)[1].status == "done"
+E       AssertionError: assert 'error' == 'done'
+E         
+E         - done
+E         + error
+
+Tests/Agents/test_automatic_child_scope.py:742: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 21:34:13.329 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest/test_captured_automatic_author0/runs.sqlite [Client: automatic-child]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 21:34:13.423 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:34:13.471 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:34:13.533 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+_______ test_occupied_child_capacity_refunds_chain_before_retry[runtime] _______
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10bd8b440>
+capacity_kind = 'runtime'
+
+    @pytest.mark.parametrize("capacity_kind", ["runtime", "fleet"])
+    def test_occupied_child_capacity_refunds_chain_before_retry(db, capacity_kind):
+        context = accepted_context(db, child_launches=1)
+        capacity = RuntimeCapacity(max_child_executions=1, reserved_manual_children=0)
+        fleet = FleetCoordinator(max_live=1, clock=time.monotonic)
+        blocker = (
+            capacity.begin_execution(
+                origin=WorkOrigin.MANUAL, conversation_id="other", child=True
+            )
+            if capacity_kind == "runtime"
+            else fleet.reserve(task="other", agent=None)
+        )
+    
+        def release():
+            if capacity_kind == "runtime":
+                blocker.finish_root()
+            else:
+                fleet.finish(blocker.handle_id, "done", result="done")
+    
+        def retry():
+            assert child_rows(db) == []
+            assert (
+                db.automatic_work.snapshot(context.chain_id).available["child_launch"] == 1
+            )
+            release()
+            return fence("spawn_subagent", {"task": "retry"})
+    
+        service, _ = make_service(
+            db,
+            context,
+            [
+                fence("spawn_subagent", {"task": "refused"}),
+                retry,
+                fence("wait_agents", {}),
+                "done",
+            ],
+            {"retry": ["child done"]},
+            runtime_capacity=capacity,
+            fleet_coordinator=fleet,
+        )
+        try:
+>           assert run(service, max_subagents=1)[1].status == "done"
+E           AssertionError: assert 'error' == 'done'
+E             
+E             - done
+E             + error
+
+Tests/Agents/test_automatic_child_scope.py:814: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 21:34:16.919 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest/test_occupied_child_capacity_r0/runs.sqlite [Client: automatic-child]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 21:34:17.010 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:34:17.062 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:34:17.124 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+________ test_occupied_child_capacity_refunds_chain_before_retry[fleet] ________
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10cb7e1b0>
+capacity_kind = 'fleet'
+
+    @pytest.mark.parametrize("capacity_kind", ["runtime", "fleet"])
+    def test_occupied_child_capacity_refunds_chain_before_retry(db, capacity_kind):
+        context = accepted_context(db, child_launches=1)
+        capacity = RuntimeCapacity(max_child_executions=1, reserved_manual_children=0)
+        fleet = FleetCoordinator(max_live=1, clock=time.monotonic)
+        blocker = (
+            capacity.begin_execution(
+                origin=WorkOrigin.MANUAL, conversation_id="other", child=True
+            )
+            if capacity_kind == "runtime"
+            else fleet.reserve(task="other", agent=None)
+        )
+    
+        def release():
+            if capacity_kind == "runtime":
+                blocker.finish_root()
+            else:
+                fleet.finish(blocker.handle_id, "done", result="done")
+    
+        def retry():
+            assert child_rows(db) == []
+            assert (
+                db.automatic_work.snapshot(context.chain_id).available["child_launch"] == 1
+            )
+            release()
+            return fence("spawn_subagent", {"task": "retry"})
+    
+        service, _ = make_service(
+            db,
+            context,
+            [
+                fence("spawn_subagent", {"task": "refused"}),
+                retry,
+                fence("wait_agents", {}),
+                "done",
+            ],
+            {"retry": ["child done"]},
+            runtime_capacity=capacity,
+            fleet_coordinator=fleet,
+        )
+        try:
+>           assert run(service, max_subagents=1)[1].status == "done"
+E           AssertionError: assert 'error' == 'done'
+E             
+E             - done
+E             + error
+
+Tests/Agents/test_automatic_child_scope.py:814: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 21:34:17.313 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest/test_occupied_child_capacity_r1/runs.sqlite [Client: automatic-child]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 21:34:17.407 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:34:17.460 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:34:17.525 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+_____ test_concurrent_service_launches_cannot_double_spend_chain_remainder _____
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10cb7ed20>
+
+    def test_concurrent_service_launches_cannot_double_spend_chain_remainder(db):
+        context = accepted_context(db, child_launches=1)
+        ready = threading.Barrier(2)
+        errors = []
+        children = []
+    
+        def spawn():
+            ready.wait(5)
+            return fence("spawn_subagent", {"task": "child"})
+    
+        def child():
+            children.append(threading.current_thread())
+            return "child done"
+    
+        services = [
+            make_service(db, context, [spawn, "done"], {"child": [child]})[0]
+            for _ in range(2)
+        ]
+    
+        def parent(service):
+            try:
+                run(service)
+            except BaseException as exc:  # noqa: BLE001 -- propagate worker failures to the test
+                errors.append(exc)
+    
+        parents = [threading.Thread(target=parent, args=(service,)) for service in services]
+        try:
+            for parent_thread in parents:
+                parent_thread.start()
+            for parent_thread in parents:
+                parent_thread.join(5)
+                assert not parent_thread.is_alive()
+            for service in services:
+                join_fleet_children(service)
+            assert errors == []
+            assert len(children) <= 1
+            assert len(child_rows(db)) <= 1
+            snapshot = db.automatic_work.snapshot(context.chain_id)
+            assert snapshot.used["child_launch"] <= 1
+            assert snapshot.reserved["child_launch"] == 0
+>           assert snapshot.pause_reason == "child_launch_budget"
+E           AssertionError: assert None == 'child_launch_budget'
+E            +  where None = AutomaticWorkSnapshot(chain_id='0e2dfcd0ea4e44aba7d70687f71c0cda', conversation_id='conversation', limits=AutomaticWor...0}), available=mappingproxy({'generation': 2, 'child_launch': 1, 'model_call': 32, 'tokens': 500000}), uncertain=False).pause_reason
+
+Tests/Agents/test_automatic_child_scope.py:866: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 21:34:17.676 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest/test_concurrent_service_launch0/runs.sqlite [Client: automatic-child]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 21:34:17.818 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:34:17.828 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:34:17.989 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:34:18.009 | WARNING  | tldw_chatbook.Agents.run_log:resolve_log_root:353 - run log: cannot resolve any root category=RecoveryRequired
+2026-10-03 21:34:18.144 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+2026-10-03 21:34:18.153 | WARNING  | tldw_chatbook.Agents.agent_service:_maybe_emit_run_webhook:3888 - could not emit run lifecycle webhook: RecoveryRequired('raw_source_selection_changed')
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child.xml -
+============================= slowest 25 durations =============================
+5.07s call     Tests/Agents/test_automatic_child_scope.py::test_real_paused_capped_child_releases_logically_before_physical_worker[elapsed_deadline]
+5.07s call     Tests/Agents/test_automatic_child_scope.py::test_real_paused_capped_child_releases_logically_before_physical_worker[explicit_cancel]
+5.01s call     Tests/Agents/test_automatic_child_scope.py::test_real_human_wait_pauses_only_capped_child_then_wall_boundary_stops_it
+3.01s teardown Tests/Agents/test_automatic_child_scope.py::test_captured_automatic_authority_keeps_automatic_capacity_origin
+
+(21 durations < 1s hidden.)
+=========================== short test summary info ============================
+ERROR Tests/Agents/test_automatic_child_scope.py::test_captured_automatic_authority_keeps_automatic_capacity_origin
+FAILED Tests/Agents/test_automatic_child_scope.py::test_captured_context_reaches_raw_child_and_tool_threads
+FAILED Tests/Agents/test_automatic_child_scope.py::test_three_generations_share_six_actual_launches_and_manual_is_uncharged
+FAILED Tests/Agents/test_automatic_child_scope.py::test_proven_prelaunch_failure_refunds_shared_reservation[construct]
+FAILED Tests/Agents/test_automatic_child_scope.py::test_proven_prelaunch_failure_refunds_shared_reservation[start]
+FAILED Tests/Agents/test_automatic_child_scope.py::test_proven_prelaunch_failure_refunds_shared_reservation[review]
+FAILED Tests/Agents/test_automatic_child_scope.py::test_inline_model_setup_failure_keeps_accepted_launch_charge
+FAILED Tests/Agents/test_automatic_child_scope.py::test_finished_child_continuation_cannot_bypass_shared_launch_limit
+FAILED Tests/Agents/test_automatic_child_scope.py::test_survivor_still_honors_its_chain_deadline_after_parent_returns
+FAILED Tests/Agents/test_automatic_child_scope.py::test_real_paused_capped_child_releases_logically_before_physical_worker[elapsed_deadline]
+FAILED Tests/Agents/test_automatic_child_scope.py::test_real_paused_capped_child_releases_logically_before_physical_worker[explicit_cancel]
+FAILED Tests/Agents/test_automatic_child_scope.py::test_real_human_wait_pauses_only_capped_child_then_wall_boundary_stops_it
+FAILED Tests/Agents/test_automatic_child_scope.py::test_captured_automatic_authority_keeps_automatic_capacity_origin
+FAILED Tests/Agents/test_automatic_child_scope.py::test_occupied_child_capacity_refunds_chain_before_retry[runtime]
+FAILED Tests/Agents/test_automatic_child_scope.py::test_occupied_child_capacity_refunds_chain_before_retry[fleet]
+FAILED Tests/Agents/test_automatic_child_scope.py::test_concurrent_service_launches_cannot_double_spend_chain_remainder
+15 failed, 6 passed, 1 error in 26.88s

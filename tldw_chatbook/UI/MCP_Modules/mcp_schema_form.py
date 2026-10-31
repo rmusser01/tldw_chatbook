@@ -68,7 +68,9 @@ def _resolve_array_item_kind(items_spec: object) -> str | None:
     return item_kind
 
 
-def _resolve_property(spec: dict) -> tuple[str, tuple[str, ...], bool, str | None] | None:
+def _resolve_property(
+    spec: dict,
+) -> tuple[str, tuple[str, ...], bool, str | None] | None:
     """Resolve a JSON-Schema property to `(kind, enum_choices, nullable, item_kind)`.
 
     Renders the simple/enum/array-of-simple types and unwraps the
@@ -92,9 +94,7 @@ def _resolve_property(spec: dict) -> tuple[str, tuple[str, ...], bool, str | Non
         # so they don't render as literal "null"/"None" choices.
         nullable = None in enum_values or "null" in enum_values
         choices = tuple(
-            str(value)
-            for value in enum_values
-            if value is not None and value != "null"
+            str(value) for value in enum_values if value is not None and value != "null"
         )
         return ("enum", choices, nullable, None)
 
@@ -359,7 +359,9 @@ class MCPSchemaForm(Vertical):
                         result[schema_field.name] = []
                     continue
                 result[schema_field.name] = [
-                    self._cast_array_item(schema_field.name, part, schema_field.item_kind)
+                    self._cast_array_item(
+                        schema_field.name, part, schema_field.item_kind
+                    )
                     for part in items
                 ]
                 continue

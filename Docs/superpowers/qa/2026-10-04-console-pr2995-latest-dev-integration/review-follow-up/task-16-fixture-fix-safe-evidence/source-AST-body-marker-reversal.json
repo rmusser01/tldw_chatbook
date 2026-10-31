@@ -1,0 +1,25 @@
+{
+  "no_production_or_shared_fixture_changes": true,
+  "rows": [
+    {
+      "after_sha256": "5a03c3b5a041c5d0aa5a0e355060448860b468249c31a831765d21239175230e",
+      "all_original_signatures_decorators_bodies_assertions_waits_imports_unrelated_definitions_preserved": true,
+      "before_sha256": "55f07bda160164bd8bebe25c8378b49bdae3b787ef7305768a1e4c9a746cd999",
+      "body_AST_sha256": "9a24592a6cbd4268ed70f74b3f56e6bf03a0b9723533eabbe1624daa108fa266",
+      "function": "test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer",
+      "path": "Tests/UI/test_console_ask_user_typed_answers.py",
+      "reverse_exact_entire_owner": true,
+      "whole_owner_AST_reverse_exact": true
+    },
+    {
+      "after_sha256": "a8378c3d429769052198a44c6f9615ac2aeeb9a414deea7ce1013402334975ce",
+      "all_original_signatures_decorators_bodies_assertions_waits_imports_unrelated_definitions_preserved": true,
+      "before_sha256": "97f66aae0e241f26eaeea5debd5ae007f85f7362c1a04de7e6c28fab5ab7c9c3",
+      "body_AST_sha256": "e9dfc807aafdea2a24fa85e5b21eee4922decf7d5405b2510bf78217eb5de0d7",
+      "function": "test_open_in_console_stages_preview_transcript",
+      "path": "Tests/UI/test_personas_workbench.py",
+      "reverse_exact_entire_owner": true,
+      "whole_owner_AST_reverse_exact": true
+    }
+  ]
+}

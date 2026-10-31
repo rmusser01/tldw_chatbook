@@ -1,0 +1,29 @@
+tldw_chatbook/Chat/console_chat_start.py: 6 -> 11 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 5
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + warning c8a2be10e3c147cb (now line 374)
+      | logger.warning(
+      |     "Chat start failed (phase=restriction, exception_type={})",
+      |     type(exc).__name__,
+      | )
+  + warning babeceb3ed2499a1 (now line 389)
+      | logger.warning(
+      |     "Chat start failed (phase=restriction_fallback, exception_type={})",
+      |     type(retain_error).__name__,
+      | )
+  + warning 288d67e4256dda6b (now line 584)
+      | logger.warning(
+      |     "Chat start failed (phase=absence, exception_type={})",
+      |     type(absence_error).__name__,
+      | )
+  + warning 9953e2d8cf3cee47 (now line 630)
+      | logger.warning(
+      |     "Chat start failed (phase=abandonment, exception_type={})",
+      |     type(exc).__name__,
+      | )
+  + warning e592b22a58b9b8da (now line 648)
+      | logger.warning(
+      |     "Chat start failed (phase=run_state, exception_type={})",
+      |     type(exc).__name__,
+      | )

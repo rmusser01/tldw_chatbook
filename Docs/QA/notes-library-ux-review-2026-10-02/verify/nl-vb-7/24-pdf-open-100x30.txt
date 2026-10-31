@@ -1,0 +1,30 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflo  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  N  Media (25)      Sets                          I       ‹ Back
+  a  Media · 25 of 25 · all types · sort: Newest   t  paper-retrieval-practice
+  v   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter    e  file://$TMPROOT/…
+      ▊  Title/keyword…          ▎                 m  dev-Documents-GitHub-tldw-chatbook/9a6612d8-88
+      ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                 s  a3-469a-a5da-1307bdff44b8/scratchpad/nlrev/run
+      ┃ type: All types ┃  sort: Newest               s/nl-vb-7-1/home/fixtures/import-docs/paper-re
+                                                      trieval-practice.pdf
+        Export…     Trash     Select                    Find  Read later  Use in Console  More
+--->    Review these                                    Read (selected)  Analysis  Highlights  Info
+      ▸ paper-retrieval-practice                       Rendered (selected) |      Raw
+          pdf · updated just now · loaded             ┌────────────────────────────────────────────┐
+        Old draft — delete candidate                  │                                            │
+          document · updated 2m                  <--- │                                            │
+        A field guide to Markdown tables        ▆     │   Retrieval practice improves              │
+          article · updated 2d                        │   long-term retention                      │
+        Voice memo 2026-09-29                         │                                            │
+--->      audio · updated 3d                          │   Abstract. We compare rereading with   ▁▁ │
+        学習メモ — 日本語の文法                       │   retrieval practice in 120                │
+          document · updated 4d                       │   undergraduates. Results. Retrieval       │
+        Server logs excerpt 2026-09-27                │   practice improved 7-day retention by     │
+          plaintext · updated 5d                      │   21 percentage points. Discussion.        │
+        Spaced repetition, explained                  │   Effects held across subject areas.       │
+               1-20 of 25 · Page 1 of 2               │   Abstract. We compare rereading with      │
+              Already on the first page.              └────────────────────────────────────────────┘
+                 ○ Previous     Next
+  / focus search | F6 next pane | ] next item | ctrl+f find | F1 · Ctrl+P · Ctrl+Q

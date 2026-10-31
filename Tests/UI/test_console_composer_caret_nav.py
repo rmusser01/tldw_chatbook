@@ -212,9 +212,7 @@ async def test_up_across_a_soft_wrapped_line_lands_on_the_same_column():
 async def test_pilot_press_up_and_down_move_the_real_caret():
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
-        composer = await _focused_composer(
-            host, pilot, "line0\nline1\nline2"
-        )
+        composer = await _focused_composer(host, pilot, "line0\nline1\nline2")
         # row0 "line0" -> [0, 5); row1 "line1" -> [6, 11); row2 "line2" -> [12, 17)
         composer.position_cursor_from_display_index(12 + 2)
         assert composer.cursor_index == 14
@@ -399,9 +397,7 @@ async def test_down_across_soft_wrapped_rows_matches_painted_caret_including_col
             expected_index = row1.start + expected_column
             assert moved is True, column
             assert composer.cursor_index == expected_index, column
-            assert (
-                _painted_caret_rowcol(visible_draft) == (1, expected_column)
-            ), column
+            assert _painted_caret_rowcol(visible_draft) == (1, expected_column), column
 
         # penultimate -> last: the last row is the SHORT remainder row, so a
         # late column in the penultimate row exercises the clamp on a

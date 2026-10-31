@@ -6,6 +6,7 @@ from pathlib import Path
 
 from tldw_chatbook.Utils.platform_files import os
 
+from . import bootstrap
 from .native_files import pinned_directory
 
 
@@ -42,10 +43,11 @@ def effective_roots(roots, entries):
                     info = os.fstat(descriptor)
                     expected = {
                         "path:" + str(parent),
-                        f"inode:{info.st_dev}:{info.st_ino}",
+                        bootstrap.inode_token(info),
                     }
                     if not any(
-                        set(entry["historical"]) == expected for entry in parents
+                        bootstrap.identity_view(entry["historical"]) == expected
+                        for entry in parents
                     ):
                         continue
                     cursor, chain = descriptor, []

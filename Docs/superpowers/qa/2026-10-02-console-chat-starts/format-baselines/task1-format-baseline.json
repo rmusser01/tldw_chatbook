@@ -1,0 +1,101 @@
+{
+  "base_ref": "9ba96ebb626dd010f14d093b0e8d40f37c715d32",
+  "base_sha": "9ba96ebb626dd010f14d093b0e8d40f37c715d32",
+  "baseline_red_paths": [
+    "tldw_chatbook/DB/AgentRuns_DB.py",
+    "Tests/Chat/test_automatic_work_lineage.py"
+  ],
+  "files": {
+    "Tests/Chat/test_automatic_work_lineage.py": {
+      "debt_units": 6,
+      "formatter_required": true,
+      "normalized_diff_sha256": "71a1c831d63ebf3632bf47833dfe83d620ac8044a443fdf03cf5e64306ef3195",
+      "source_hunks": [
+        [
+          42,
+          48
+        ]
+      ],
+      "source_sha256": "2e56d6c690bc55e3a8c0110b4a9d94a257ac935d10d6358258b3b2e55894f6a9"
+    },
+    "Tests/DB/test_automatic_wake_attempts.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "79a7770d6502660f4f085a335df91d93a998769eb9adf5a9ed3a96942a07c072"
+    },
+    "Tests/DB/test_automatic_work_budget.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "ff192cf65cc436c6152448da89744542096da488f2090c2feb438b0152f6d417"
+    },
+    "Tests/DB/test_automatic_work_deadlines.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "77302331243ee26c2c4291ed652226023d85180083ed412c485e07212eb87d5f"
+    },
+    "Tests/DB/test_automatic_work_migration.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "83789fb1a9258030f0ac3fdd5d254a95965b0e22d548e818eb038e3653626101"
+    },
+    "tldw_chatbook/Agents/automatic_work_budget.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "af6b9e0c8e2ecb9843049a7c49359de92167252ab4d38753921c8fd2b49f2da0"
+    },
+    "tldw_chatbook/Agents/automatic_work_runtime.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "a7b82c44dfa54cd1f6b6fc603071992dc2deb178e77abfd812490762f098f823"
+    },
+    "tldw_chatbook/DB/AgentRuns_DB.py": {
+      "debt_units": 2,
+      "formatter_required": true,
+      "normalized_diff_sha256": "f00e7cc84e035d2be27b6297fd88f388c82bc8ee7a9b4eda917dcd3e74345685",
+      "source_hunks": [
+        [
+          30,
+          35
+        ],
+        [
+          2115,
+          2120
+        ]
+      ],
+      "source_sha256": "7543f2e1865ad8aaada96121754b5fa04e586f2382aca3d075f4f95fe7d284ee"
+    },
+    "tldw_chatbook/DB/automatic_work.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "37b503f77ba3c0190b87f4afbbcce87cc63fc385d7ae9adf02d9c771c781fe64"
+    }
+  },
+  "generated_at_utc": "2026-10-03T00:53:49.068921+00:00",
+  "paths": [
+    "tldw_chatbook/DB/AgentRuns_DB.py",
+    "tldw_chatbook/DB/automatic_work.py",
+    "tldw_chatbook/Agents/automatic_work_budget.py",
+    "tldw_chatbook/Agents/automatic_work_runtime.py",
+    "Tests/DB/test_automatic_work_budget.py",
+    "Tests/DB/test_automatic_work_deadlines.py",
+    "Tests/DB/test_automatic_work_migration.py",
+    "Tests/DB/test_automatic_wake_attempts.py",
+    "Tests/Chat/test_automatic_work_lineage.py"
+  ],
+  "ruff_version": "ruff 0.16.6",
+  "schema_version": 1
+}

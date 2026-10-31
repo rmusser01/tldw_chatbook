@@ -424,15 +424,16 @@ def test_swarmui_client_importable_without_aiohttp(tmp_path: Path) -> None:
     Args:
         tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.
     """
-    snippet = _AIOHTTP_ABSENT_SNIPPET.split(
-        "from tldw_chatbook.UI.Navigation"
-    )[0] + """
+    snippet = (
+        _AIOHTTP_ABSENT_SNIPPET.split("from tldw_chatbook.UI.Navigation")[0]
+        + """
 import json
 
 from tldw_chatbook.Media_Creation.swarmui_client import SwarmUIClient
 
 print(json.dumps({"imported": SwarmUIClient is not None}))
 """
+    )
     result = _run_isolated_python(tmp_path, snippet)
     assert result.returncode == 0, (
         f"importing swarmui_client without aiohttp failed:\n"

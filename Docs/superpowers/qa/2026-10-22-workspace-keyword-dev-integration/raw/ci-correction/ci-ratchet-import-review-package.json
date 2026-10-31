@@ -1,0 +1,10 @@
+{
+  "base": "00a1e1495236203517570ac8cae2ee39b84da110",
+  "head": "e8c841d48ba35f99433842e5e7552f989867c01f",
+  "package": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\ci-ratchet-import-review-package.txt",
+  "sha256": "00f3a0c5cc2ab45a08232bdd47840a4e4a65f9f33a97886e51138976fa55a087",
+  "bytes": 970,
+  "paths": [
+    "tldw_chatbook/Chat/answer_citations.py"
+  ]
+}

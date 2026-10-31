@@ -42,14 +42,19 @@ def _briefing(db, watchlist_id: int, *, status: str = "complete") -> int:
 
 def _complete_script_with_audio(db, briefing_id: int, file_path: str) -> None:
     script_id = db.insert_briefing_script(
-        briefing_id, preset_id=None, preset_name="Daily Brief",
+        briefing_id,
+        preset_id=None,
+        preset_name="Daily Brief",
         roster_snapshot_json="[]",
     )
     db.update_briefing_script(script_id, status="complete", turns_json="[]")
     audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
     db.update_briefing_audio(
-        audio_id, status="complete", file_path=file_path,
-        duration_seconds=1.0, turn_count=1,
+        audio_id,
+        status="complete",
+        file_path=file_path,
+        duration_seconds=1.0,
+        turn_count=1,
     )
 
 
@@ -62,7 +67,11 @@ def test_list_recent_briefings_orders_newest_first_across_watchlists(tmp_path):
 
     rows = db.list_recent_briefings(limit=10)
 
-    assert [r["briefing_id"] for r in rows] == [b3, b2, b1]  # same-second ties break on id DESC
+    assert [r["briefing_id"] for r in rows] == [
+        b3,
+        b2,
+        b1,
+    ]  # same-second ties break on id DESC
     by_id = {r["briefing_id"]: r for r in rows}
     assert by_id[b2]["watchlist_name"] == "World"
     assert by_id[b2]["status"] == "empty"
@@ -96,7 +105,9 @@ def test_report_rows_surface_audio_only_through_the_safety_guard(tmp_path, monke
     rows = list_recent_reports(db, limit=10)
     by_id = {r["id"]: r for r in rows}
     assert by_id[b1]["has_audio"] is True
-    assert by_id[b1]["audio_file_path"] == "/armored/briefing_audio/script-1-audio-1.wav"
+    assert (
+        by_id[b1]["audio_file_path"] == "/armored/briefing_audio/script-1-audio-1.wav"
+    )
     assert by_id[b2]["has_audio"] is False
     assert by_id[b2]["audio_file_path"] is None
 

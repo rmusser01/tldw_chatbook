@@ -13,6 +13,8 @@ approval-gated through the shared review hook.
 
 import dataclasses
 import json
+
+import pytest
 from contextlib import contextmanager
 
 from tldw_chatbook.Agents.agent_models import (
@@ -41,12 +43,16 @@ from tldw_chatbook.Chat.console_agent_bridge import (
 )
 from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.Chat.test_console_agent_bridge import (
+    _retire_original_run_databases,  # noqa: F401 - exact constructor-owner fixture
+)
 
 from Tests.Agents.test_agent_service import FleetChat
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutor
 
 
+@pytest.mark.bootstrap_profile
 def test_run_registry_includes_local_tools(tmp_path):
     local = LocalToolProvider(workspace_root=tmp_path)
     registry, allowed, builtin_names, local_names = _compose_run_registry_and_allowed(
@@ -60,6 +66,7 @@ def test_run_registry_includes_local_tools(tmp_path):
     # _BridgeSkillRunner narrows against builtin_names + local_names combined
 
 
+@pytest.mark.bootstrap_profile
 def test_skill_named_like_local_tool_is_filtered(tmp_path):
     """A skill literally named ``fs_list`` must never shadow the local tool.
 
@@ -95,6 +102,7 @@ def test_skill_named_like_local_tool_is_filtered(tmp_path):
     assert "code-review" in allowed  # non-colliding skills unaffected
 
 
+@pytest.mark.bootstrap_profile
 def test_non_colliding_skill_entries_excludes_local_names(tmp_path):
     local = LocalToolProvider(workspace_root=tmp_path)
     local_names = tuple(e.name for e in local.list_catalog())
@@ -279,6 +287,7 @@ class _ScriptedChat:
         return {"choices": [{"message": message}]}
 
 
+@pytest.mark.bootstrap_profile
 def test_skill_run_child_still_approval_gated(tmp_path):
     """Wire-level: a skill child narrowed onto a local tool still resolves
     that call through the parent's shared review hook -- the wider narrowing

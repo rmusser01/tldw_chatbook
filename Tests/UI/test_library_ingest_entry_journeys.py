@@ -20,6 +20,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry
 from tldw_chatbook.Library.library_ingest_state import (
+    PATH_PROBLEM_LINE,
     LibraryIngestFormState,
     build_library_ingest_state,
 )
@@ -40,13 +41,26 @@ def _painted(host, widget):
     )
 
 
+def _painted_screen(host):
+    """The whole paint, rows joined by one space, whitespace collapsed.
+
+    A sentence that wraps at a word boundary re-joins, so counting it here
+    counts the SENTENCES on screen, not the rows they take.
+    """
+    strips = list(host.screen._compositor.render_strips())
+    return " ".join(" ".join(strip.text for strip in strips).split())
+
+
 def _gate_state(case):
     form = LibraryIngestFormState(path="/inbox/source.txt")
     preflight = PreflightResult({}, [], [], 0, False, 0)
     kwargs = {}
     if case == "missing":
+        # The sentence ``analyze_path`` produces for a missing local path
+        # (TASK-34000.20 fix round 1, I2: only this generic "Path not found:"
+        # / "Invalid path:" shape collapses to ``PATH_PROBLEM_LINE``).
         preflight = PreflightResult(
-            {}, [], ["Path not found"], 0, False, 0, path_invalid=True
+            {}, [], [f"Path not found: {form.path}"], 0, False, 0, path_invalid=True
         )
     elif case == "unsupported":
         preflight = PreflightResult(
@@ -84,10 +98,25 @@ async def test_import_gate_paints_complete_recovery_above_start(
         await pilot.pause()
         gate = host.query_one("#library-ingest-start-quiet-line", Static)
         start = host.query_one("#library-ingest-start", Button)
-        # Compare the UI's full input message to actual compositor paint:
-        # a height clamp loses the recovery suffix even when the widget exists.
-        assert state.start_quiet_line
-        assert state.start_quiet_line in _painted(host, gate)
+        if case == "missing":
+            # TASK-34000.20 (owner ruling 2026-10-23, Q2): a path the check
+            # could not find is explained ONCE, under the field, as
+            # ``PATH_PROBLEM_LINE``; the gate line beside Start stays empty
+            # instead of repeating the sentence two rows down. Start is still
+            # disabled (asserted below). Flipped by name in the P1-C final
+            # fix round (I-A): this pin used to require the gate line.
+            assert state.start_quiet_line == ""
+            assert _painted(host, gate) == ""
+            error = host.query_one("#ingest-preflight-error-0", Static)
+            assert PATH_PROBLEM_LINE in _painted(host, error)
+            assert _painted_screen(host).count(PATH_PROBLEM_LINE) == 1
+            assert error.region.bottom <= start.region.y
+        else:
+            # Compare the UI's full input message to actual compositor paint:
+            # a height clamp loses the recovery suffix even when the widget
+            # exists.
+            assert state.start_quiet_line
+            assert state.start_quiet_line in _painted(host, gate)
         assert gate.region.bottom <= start.region.y
         assert start in host.screen._compositor.visible_widgets
         assert start.disabled is (case != "consent")
@@ -129,8 +158,20 @@ async def test_keyboard_clear_recovers_missing_source_and_keeps_metadata(
             message="Missing-source preflight did not settle",
         )
         await pilot.pause()
+        # TASK-34000.20 (owner ruling 2026-10-23, Q2): the one explanation is
+        # the sentence under the field; the gate line beside Start is empty.
+        # Flipped by name in the P1-C final fix round (I-A): this pin used to
+        # read "file or folder." off the gate line. The error ``Static`` is
+        # mounted in place after the result lands, so its paint can lag the
+        # state by a frame -- wait on the painted claim.
+        await _wait_for_condition(
+            pilot,
+            lambda: "file or folder."
+            in _painted(host, screen.query_one("#ingest-preflight-error-0", Static)),
+            message="PATH_PROBLEM_LINE was not painted under the field",
+        )
         gate = screen.query_one("#library-ingest-start-quiet-line", Static)
-        assert "file or folder." in _painted(host, gate)
+        assert _painted(host, gate) == ""
         assert screen.query_one("#library-ingest-start", Button).disabled
         await pilot.press("tab")
         await _focus(screen, host, pilot, "#library-ingest-browse", "Browse")

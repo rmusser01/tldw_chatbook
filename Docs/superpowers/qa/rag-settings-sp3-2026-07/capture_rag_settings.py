@@ -175,6 +175,7 @@ async def main() -> None:
     # demonstrates the display-only advisory Static under the Reranking group.
     _mgr2, _profile2, _state2 = _wire_profiles(tmp_dir / "session2", active_id=None)
     from tldw_chatbook.RAG_Search.reranker import RerankingConfig as _RerankingConfig
+
     _profile2.reranking_config = _RerankingConfig(top_k_to_rerank=25)
     _profile2.rag_config.search.enable_reranking = True
     _profile2.rag_config.search.default_top_k = 15
@@ -220,9 +221,7 @@ async def main() -> None:
         select = screen.query_one("#settings-library-rag-profile-select", Select)
         select.value = other_profile.id
         await pilot.pause()
-        screen.query_one(
-            "#settings-library-rag-profile-set-active", Button
-        ).focus()
+        screen.query_one("#settings-library-rag-profile-set-active", Button).focus()
         # Note: the Button's focus style (bold + text-decoration:underline,
         # confirmed present in the exported SVG's <style> block) doesn't
         # render through cairosvg -- a converter limitation (cairosvg has no

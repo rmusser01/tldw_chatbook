@@ -18,12 +18,14 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
+from weakref import WeakKeyDictionary, proxy
 
 import pytest
 from aiohttp import ClientSession, WSMsgType, web
 
 from tldw_chatbook import config as config_module
+from tldw_chatbook.Terminal.screen_model import TerminalScreenModel
 from tldw_chatbook.Web_Server import serve
 
 FIXTURES = Path(__file__).with_name("fixtures")
@@ -52,6 +54,189 @@ _PROVIDER_SECRET_ENV_NAMES = (
     "VLLM_API_KEY",
     "ZAI_API_KEY",
 )
+
+
+_TERMINAL_GLYPH_OBSERVER = """(() => {
+    if (window.__chatbookTerminalGlyphObserver) return;
+    window.__chatbookTerminalGlyphObserver = true;
+    for (const name of ['drawImage', 'fillText']) {
+        const original = CanvasRenderingContext2D.prototype[name];
+        CanvasRenderingContext2D.prototype[name] = function(...args) {
+            const result = Reflect.apply(original, this, args);
+            if (this.canvas.matches('canvas.xterm-text-layer')) {
+                this.canvas.__chatbookGlyphDraws = (this.canvas.__chatbookGlyphDraws || 0) + 1;
+            }
+            return result;
+        };
+    }
+})()"""
+
+
+class TerminalPaintObserver:
+    """Observe fresh terminal screen content and independent visible Canvas paint."""
+
+    def __init__(self, page) -> None:
+        self.page = proxy(page)
+        self.columns, self.rows = 80, 24
+        self.screen = self._new_screen()
+        self.fresh = self.screen
+        self.before = None
+        self.connection = 0
+        page.on("websocket", self._websocket)
+
+    def _new_screen(self) -> TerminalScreenModel:
+        return TerminalScreenModel(
+            columns=self.columns, rows=self.rows, scrollback_line_limit=0
+        )
+
+    def connect(self, url: str) -> None:
+        """Retire a prior child's screen when the terminal transport changes."""
+        query = parse_qs(urlsplit(url).query)
+        self.columns = int(query.get("width", [80])[0])
+        self.rows = int(query.get("height", [24])[0])
+        self.screen = self._new_screen()
+        self.fresh = self.screen
+        self.before = None
+        self.connection += 1
+
+    def _websocket(self, websocket) -> None:
+        if urlsplit(websocket.url).path != "/ws":
+            return
+        self.connect(websocket.url)
+        connection = self.connection
+        websocket.on(
+            "framereceived",
+            lambda frame: (
+                self.receive(frame) if self.connection == connection else None
+            ),
+        )
+        websocket.on(
+            "framesent",
+            lambda frame: self._sent(frame) if self.connection == connection else None,
+        )
+
+    def _sent(self, frame: str | bytes) -> None:
+        if not isinstance(frame, str):
+            return
+        envelope = json.loads(frame)
+        if envelope[0] == "resize":
+            self.columns = envelope[1]["width"]
+            self.rows = envelope[1]["height"]
+            self.screen.resize(columns=self.columns, rows=self.rows)
+            self.fresh.resize(columns=self.columns, rows=self.rows)
+
+    def receive(self, frame: str | bytes) -> None:
+        """Decode binary terminal output; JSON control frames cannot supply text."""
+        if isinstance(frame, bytes):
+            self.screen.feed(frame)
+            self.screen.take_pending_replies()
+            if self.fresh is not self.screen:
+                self.fresh.feed(frame)
+                self.fresh.take_pending_replies()
+
+    @property
+    def text(self) -> str:
+        return self.screen.visible_text()
+
+    async def install(self) -> None:
+        """Observe real glyph draws before navigation starts the terminal renderer."""
+        await self.page.add_init_script(_TERMINAL_GLYPH_OBSERVER)
+        await self.page.evaluate(_TERMINAL_GLYPH_OBSERVER)
+
+    async def _paint(self):
+        return await self.page.evaluate("""() => {
+            const terminal = document.getElementById('terminal');
+            const canvas = terminal?.querySelector('canvas.xterm-text-layer');
+            if (!canvas || !canvas.width || !canvas.height) return null;
+            let visible = !!canvas.getClientRects().length;
+            for (let node = canvas; node; node = node.parentElement) {
+                const style = getComputedStyle(node);
+                visible &&= style.visibility !== 'hidden' && style.display !== 'none'
+                    && Number(style.opacity) > 0;
+            }
+            const pixels = canvas.getContext('2d').getImageData(
+                0, 0, canvas.width, canvas.height).data;
+            let hash = 2166136261, ink = false;
+            for (let i = 0; i < pixels.length; i++) {
+                hash = Math.imul(hash ^ pixels[i], 16777619);
+                if (pixels[i] !== pixels[i % 4]) ink = true;
+            }
+            return {hash: hash >>> 0, ink, visible, glyphs: canvas.__chatbookGlyphDraws || 0};
+        }""")
+
+    async def mark(self) -> None:
+        """Start a fresh command window, excluding earlier text and paint."""
+        await self.page.evaluate(_TERMINAL_GLYPH_OBSERVER)
+        self.before = await self._paint()
+        self.fresh = self._new_screen()
+
+    @staticmethod
+    def _contains(value: str, text: str | re.Pattern[str]) -> bool:
+        if isinstance(text, re.Pattern):
+            return bool(text.search(value))
+        if text in value:
+            return True
+        lines = value.splitlines()
+        for index, line in enumerate(lines):
+            for start in re.finditer(re.escape(text.split(" ", 1)[0]), line):
+                remaining = text
+                for continuation in lines[index:]:
+                    segment = continuation[start.start() :]
+                    count = 0
+                    for actual, expected in zip(segment, remaining):
+                        if actual != expected:
+                            break
+                        count += 1
+                    if count == len(remaining):
+                        return True
+                    if not count or not (
+                        remaining[count].isspace() or remaining[count - 1].isspace()
+                    ):
+                        break
+                    boundary = count
+                    while boundary and segment[boundary - 1].isspace():
+                        boundary -= 1
+                    padding = segment[boundary:]
+                    # Adjacent controls may follow the input's blank padding.
+                    if padding and not (padding.isspace() or padding.startswith("  ")):
+                        break
+                    remaining = remaining[count:].lstrip()
+        return False
+
+    async def wait_for_text(
+        self, text: str | re.Pattern[str], *, timeout_ms: float = 5_000
+    ) -> None:
+        """Require current and fresh decoded text plus visible, nonblank repaint."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_ms / 1_000
+
+        while loop.time() < deadline:
+            if self._contains(self.text, text) and self._contains(
+                self.fresh.visible_text(), text
+            ):
+                paint = await self._paint()
+                if (
+                    paint
+                    and paint["visible"]
+                    and paint["ink"]
+                    and paint["glyphs"] > (self.before["glyphs"] if self.before else 0)
+                    and (self.before is None or paint["hash"] != self.before["hash"])
+                ):
+                    return
+            await asyncio.sleep(min(0.05, max(0, deadline - loop.time())))
+        raise AssertionError(
+            f"terminal evidence missing fresh text or visible text-layer repaint: {text!r}"
+        )
+
+
+_TERMINAL_OBSERVERS = WeakKeyDictionary()
+
+
+def terminal_observer(page) -> TerminalPaintObserver:
+    """Return the connection-aware observer installed before this page logs in."""
+    if page not in _TERMINAL_OBSERVERS:
+        _TERMINAL_OBSERVERS[page] = TerminalPaintObserver(page)
+    return _TERMINAL_OBSERVERS[page]
 
 
 def chromium_executable(browser_type: object) -> str:
@@ -781,8 +966,15 @@ async def _construct_live_served_stack(
     services: list[object] = []
     service_class = server._chatbook_app_service_class
 
+    class OwnedChildService(service_class):
+        def _build_environment(self, width=80, height=24):
+            environment = super()._build_environment(width, height)
+            # Bootstrap admission preserves the parent's config, not child receipts.
+            environment["XDG_DATA_HOME"] = str(tmp_path / "test_data")
+            return environment
+
     def record_service(*args, **kwargs):
-        service = service_class(*args, **kwargs)
+        service = OwnedChildService(*args, **kwargs)
         services.append(service)
         return service
 

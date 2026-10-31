@@ -146,6 +146,35 @@ async def test_import_keeps_textual_alpha_suffixed_variables(request, tmp_path, 
         assert "alpha" in app.available_themes
 
 
+@pytest.mark.asyncio
+@private_profile_test
+async def test_import_drops_auto_on_a_background_variable(request, tmp_path, src):
+    """TASK-33003.16: 'auto NN%' on a name a stylesheet paints as a background
+    is a stylesheet error, so Import does not write it; on a text colour
+    (text-muted, which Textual itself sets to auto) it is kept. The imported
+    theme then applies."""
+    source = src / "auto.toml"
+    source.write_text(
+        '[theme]\nname = "auto"\n[colors]\nprimary = "#112233"\n'
+        '[variables]\nsurface-lighten-2 = "auto 50%"\n'
+        'block-cursor-blurred-background = "auto 30%"\n'
+        'text-muted = "auto 70%"\n',
+        encoding="utf-8",
+    )
+    editor = SettingsThemeEditor()
+    app = _app(editor)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _mounted(pilot, app, editor, tmp_path)
+        assert await editor.import_theme(str(source)) == "auto"
+        written = toml.loads((tmp_path / "auto.toml").read_text(encoding="utf-8"))
+        assert written["variables"] == {"text-muted": "auto 70%"}
+        app.theme = "auto"
+        await pilot.pause()
+        app.refresh_css()
+        await pilot.pause()
+        assert app.theme == "auto"
+
+
 HOSTILE = [
     ("notes.txt", GOOD, "Import needs a .toml file"),
     ("big.toml", GOOD + "# " + "x" * (64 * 1024) + "\n", "Theme file is larger than 64 KB"),

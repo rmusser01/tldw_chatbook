@@ -14,10 +14,11 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import Request, build_opener
 
-from vendor_canvas_mermaid import SOURCE, STATIC, build
+from vendor_canvas_mermaid import ROOT, SOURCE, STATIC, build
 from vendor_canvas_runtime import VendorError, _RejectRedirects
 
 INPUT_MANIFEST = SOURCE / "inputs.json"
+PINNED_INPUT_DIR = ROOT / "vendor" / "canvas-mermaid-inputs"
 EXPECTED_OUTPUTS = frozenset(
     {
         "canvas_runtime_worker_v2.js",
@@ -48,6 +49,7 @@ EXPECTED_OUTPUTS = frozenset(
 #: not in anything ``vendor_canvas_mermaid.py`` writes -- that placement is the
 #: whole point. Changing either file is a deliberate act: update the digest
 #: below in the same commit.
+#: TASK-32897.1 includes the trusted browser shell in the same independent pin.
 VENDORED_OUTPUTS: dict[str, dict[str, object]] = {
     "canvas_runtime_worker_v2.js": {
         "bytes": 85299,
@@ -56,6 +58,18 @@ VENDORED_OUTPUTS: dict[str, dict[str, object]] = {
     "canvas_renderer_v2.js": {
         "bytes": 59472,
         "sha256": "f31b287fc68e810893755b140b292b150f38299ed938950972f17ffb02282c98",
+    },
+    "canvas_shell.js": {
+        "bytes": 51455,
+        "sha256": "8c9e0e1eac13b8a61dc8a9e04e4c6cc4cf2ae8fcfa232878c0750485bf5760d7",
+    },
+    "canvas_shell.css": {
+        "bytes": 10408,
+        "sha256": "2d08f7736f72850bb2d3a6afd63338e589278aaddc82e303df559270532d5b33",
+    },
+    "canvas_shell.html": {
+        "bytes": 7720,
+        "sha256": "a7ce3323eb1eff21cad3f02166bc281b23e8682ea1e671e6bc6990bd9c1c41a7",
     },
 }
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -138,7 +152,12 @@ def acquire_declared_inputs(
     """
 
     records = _validated_downloads(downloads)
-    destination.mkdir(parents=True, exist_ok=False)
+    try:
+        destination.mkdir(parents=True, exist_ok=False)
+    except OSError as exc:
+        raise MermaidAssetCheckError(
+            "input destination must be a new writable directory"
+        ) from exc
     opener = None if input_dir is not None else build_opener(_RejectRedirects())
     for name, record in records.items():
         size = record["bytes"]
@@ -173,7 +192,7 @@ def verify_vendored_pins(
     committed_dir: Path,
     pins: Mapping[str, Mapping[str, object]] = VENDORED_OUTPUTS,
 ) -> None:
-    """Authenticate the hand-maintained outputs the builder merely copies.
+    """Authenticate the hand-maintained runtime and trusted shell assets.
 
     Args:
         committed_dir: Packaged Canvas static directory holding the assets.
@@ -261,6 +280,15 @@ def compare_generated_outputs(
             raise MermaidAssetCheckError(f"committed generated output drift: {name}")
 
 
+def _declared_downloads(manifest_path: Path) -> object:
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8"))["downloads"]
+    except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise MermaidAssetCheckError(
+            "input manifest is unavailable or invalid"
+        ) from exc
+
+
 def check_assets(
     *,
     input_dir: Path | None = None,
@@ -271,9 +299,8 @@ def check_assets(
     """Authenticate inputs, rebuild offline, and compare packaged outputs.
 
     Args:
-        input_dir: Optional local cache containing only source input candidates.
-            If omitted, exact manifest URLs are downloaded before the offline
-            build begins.
+        input_dir: Optional local input directory. If omitted, use the
+            repository's pinned source inputs without network access.
         manifest_path: Pinned Mermaid input manifest.
         committed_dir: Packaged generated-output directory.
         vendored: Copied-not-derived outputs to authenticate against recorded
@@ -289,18 +316,16 @@ def check_assets(
     """
 
     verify_vendored_pins(committed_dir, vendored)
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        downloads = manifest["downloads"]
-    except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise MermaidAssetCheckError(
-            "input manifest is unavailable or invalid"
-        ) from exc
+    downloads = _declared_downloads(manifest_path)
     with tempfile.TemporaryDirectory(prefix="canvas-mermaid-check-") as temporary:
         root = Path(temporary)
         isolated_inputs = root / "inputs"
         rebuilt = root / "rebuilt"
-        acquire_declared_inputs(downloads, isolated_inputs, input_dir=input_dir)
+        acquire_declared_inputs(
+            downloads,
+            isolated_inputs,
+            input_dir=PINNED_INPUT_DIR if input_dir is None else input_dir,
+        )
         generated = build(isolated_inputs, rebuilt)
         compare_generated_outputs(rebuilt, committed_dir, generated)
         return generated
@@ -310,18 +335,26 @@ def main(argv: list[str] | None = None) -> int:
     """Rebuild the Canvas Mermaid closure and compare it to the packaged bytes.
 
     Args:
-        argv: Command-line arguments, defaulting to ``sys.argv[1:]``. Only
-            ``--input-dir`` is recognised; it overrides the pinned-input
-            source that ``TLDW_CANVAS_MERMAID_INPUT_DIR`` otherwise supplies.
+        argv: Command-line arguments, defaulting to ``sys.argv[1:]``.
+            ``--input-dir`` overrides the environment or repository inputs;
+            ``--fetch-inputs`` explicitly downloads to a new directory only.
 
     Returns:
         0 when every output reproduces exactly, 1 when an input fails its
         pinned digest or a regenerated output differs from the committed one.
     """
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input-dir", type=Path)
+    inputs = parser.add_mutually_exclusive_group()
+    inputs.add_argument("--input-dir", type=Path)
+    inputs.add_argument("--fetch-inputs", type=Path, metavar="NEW_DIRECTORY")
     args = parser.parse_args(argv)
     try:
+        if args.fetch_inputs is not None:
+            acquire_declared_inputs(
+                _declared_downloads(INPUT_MANIFEST), args.fetch_inputs
+            )
+            print(f"Canvas Mermaid pinned inputs fetched: {args.fetch_inputs}")
+            return 0
         input_dir = args.input_dir
         configured = os.environ.get("TLDW_CANVAS_MERMAID_INPUT_DIR")
         if input_dir is None and configured is not None:
@@ -334,11 +367,11 @@ def main(argv: list[str] | None = None) -> int:
     except (MermaidAssetCheckError, VendorError) as exc:
         print(f"Canvas Mermaid assets do not reproduce: {exc}", file=sys.stderr)
         return 1
-    derived = len(generated) - len(VENDORED_OUTPUTS)
+    derived = len(set(generated) - VENDORED_OUTPUTS.keys())
     print(
         f"Canvas Mermaid assets reproduce: {len(generated)} outputs "
-        f"({derived} derived from pinned inputs, "
-        f"{len(VENDORED_OUTPUTS)} vendored digests verified)"
+        f"({derived} derived from pinned inputs); "
+        f"{len(VENDORED_OUTPUTS)} vendored asset digests verified"
     )
     return 0
 

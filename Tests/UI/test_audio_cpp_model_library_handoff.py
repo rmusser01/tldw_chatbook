@@ -1371,7 +1371,7 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from textual.widgets import Button
+    from textual.widgets import Button, Static
 
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_model_curated_view import _descriptor, _registry_with
@@ -1461,11 +1461,15 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
     )
     from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
 
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
 
     app = _build_test_app()
     request = AudioCppModelLibraryRequest("mounted-request", 9)
@@ -1511,12 +1515,19 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
             if not button.disabled and button in app.screen._compositor.visible_widgets
         )
         install.press()
+        # TASK-34100.14: the details text mounts inside the plan's collapsed
+        # "Details" section, a compose cycle after the confirm button.
         assert await _wait_for(
-            lambda: bool(app.screen.query("#model-install-confirm")), pilot
+            lambda: bool(app.screen.query("#model-install-confirm"))
+            and bool(app.screen.query(".model-plan-details-text")),
+            pilot,
         )
         modal = app.screen
         modal_text = "\n".join(
-            str(item.renderable) for item in modal.query(".model-plan-panel")
+            # TASK-34100.14: hashes and pinned URLs sit under the plan's
+            # collapsed "Details" section.
+            str(item.renderable)
+            for item in modal.query(".model-plan-details-text").results(Static)
         )
         for artifact_file in descriptor.files:
             assert f"Path: {artifact_file.path}" in modal_text
@@ -1593,11 +1604,15 @@ async def test_real_worker_cancel_on_screen_unmount_drains_before_request_releas
     )
     from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
 
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
     app = _build_test_app()
     request = AudioCppModelLibraryRequest("cancel-request", 3)
     app.pending_handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
@@ -1686,11 +1701,15 @@ async def test_mounted_already_installed_audio_cpp_returns_exact_leased_root(
         "_ollama_api_available",
         lambda _self: asyncio.sleep(0, result=False),
     )
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
     app = _build_test_app()
     request = AudioCppModelLibraryRequest("installed-request", 11)
     app.pending_handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
@@ -1734,11 +1753,15 @@ async def test_real_app_shutdown_drains_audio_cpp_owner_executor(
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
 
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
     app = _build_test_app()
     started = threading.Event()
     finished = threading.Event()
@@ -1779,11 +1802,15 @@ async def test_mounted_unmount_during_blocked_audio_preflight_drains_once(
         "_ollama_api_available",
         lambda _self: asyncio.sleep(0, result=False),
     )
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
     app = _build_test_app()
     request = AudioCppModelLibraryRequest("preflight-cancel", 12)
     app.pending_handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
@@ -1879,11 +1906,15 @@ async def test_mounted_unmount_with_audio_consent_pending_invalidates_generation
         "_ollama_api_available",
         lambda _self: asyncio.sleep(0, result=False),
     )
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
     app = _build_test_app()
     request = AudioCppModelLibraryRequest("consent-cancel", 13)
     app.pending_handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
@@ -2058,11 +2089,13 @@ async def test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_ret
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
     from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
 
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
-            False
-            if section == "splash_screen" and key == "enabled"
-            else default
-        ))
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            False if section == "splash_screen" and key == "enabled" else default
+        ),
+    )
 
     monkeypatch.setattr(
         LLMManagementWindow,
@@ -2116,11 +2149,17 @@ async def test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_ret
         assert screen._audio_cpp_model_request_claim.value == request
 
 
+# Laned (scripts/ui_pr_gate_census.txt): mounts the real Settings screen,
+# whose config readers are bound to the collection-time profile.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Real Settings save/restore retains global, provider, and Realtime drafts."""
+    """Real Settings save/restore retains global, provider, Realtime and
+    pipeline voice drafts. save_state and restore_state copied six fields by
+    hand and dropped the pipeline voice pair, so its edit came back as the
+    default with nothing unsaved (TASK-33007)."""
 
     from textual.widgets import Input, Select, Switch
 
@@ -2167,11 +2206,18 @@ async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
             "#settings-speech-realtime-model", Input
         ).value = "gpt-realtime-draft"
         screen.query_one("#settings-speech-realtime-voice", Input).value = "cedar"
+        eagerness = "#settings-speech-pipeline-response-eagerness-ms"
+        pipeline_edit = "2000"  # the saved default is 700
+        screen.query_one(eagerness, Input).value = pipeline_edit
         await pilot.pause()
 
         before = panel.draft_snapshot()
         saved = screen.save_state()
 
+    assert before.pipeline_voice_draft != before.pipeline_voice_original
+    assert saved["speech_tts_panel_draft"].pipeline_voice_draft == (
+        before.pipeline_voice_draft
+    ), "save_state dropped the pipeline voice edit"
     assert saved["speech_tts_panel_draft"] == before
     assert "18081" not in repr(saved["speech_tts_panel_draft"])
 
@@ -2204,6 +2250,11 @@ async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
         assert (
             restored_screen.query_one("#settings-speech-realtime-voice", Input).value
             == "cedar"
+        )
+        assert restored_screen.query_one(eagerness, Input).value == pipeline_edit
+        assert restored_panel.has_unsaved_changes()
+        assert restored_screen._category_has_unsaved_changes(
+            SettingsCategoryId.SPEECH_TTS
         )
 
 
@@ -3983,6 +4034,153 @@ async def test_transaction_failure_rolls_back_and_requeues_exact_result(
         assert settled is False
         assert panel.draft_snapshot() == before
         assert replay is not None and replay.value == result
+
+
+# Laned (scripts/ui_pr_gate_census.txt): mounts the real Settings screen,
+# whose config readers are bound to the collection-time profile.
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("forced", (False, True), ids=("undo", "forced_teardown"))
+async def test_review_merge_undo_keeps_a_pipeline_voice_edit(
+    tmp_path: Path,
+    forced: bool,
+) -> None:
+    """Undoing an audio.cpp review merge keeps a later pipeline voice edit.
+
+    Both undo paths rebuilt the draft from six named fields and dropped the
+    pipeline voice pair, and the forced one (screen teardown, after a newer
+    package edit overlaps the merge) called the draft unchanged when only the
+    pipeline voice differed and handed back the pre-merge draft (TASK-33007).
+    """
+
+    import struct
+
+    from textual.widgets import Input, Select
+
+    from Tests.UI.test_destination_shells import (
+        DestinationHarness,
+        _active_destination_screen,
+        _build_test_app,
+        _wait_for_selector,
+    )
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        AUDIO_CPP_ARTIFACT_COMMIT,
+    )
+    from tldw_chatbook.TTS.audio_cpp_guided_config import (
+        AudioCppManagedArtifactIdentity,
+    )
+    from tldw_chatbook.TTS.audio_cpp_package_scanner import (
+        scan_audio_cpp_package_root,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSPanelDraftSnapshot,
+        SpeechTTSSettingsPanel,
+    )
+
+    root = (tmp_path / "pipeline-voice-package").resolve()
+    root.mkdir()
+    (root / "supertonic-3-orig.gguf").write_bytes(b"GGUF" + struct.pack("<I", 3))
+    identity = AudioCppManagedArtifactIdentity(
+        artifact_id="audio-cpp-supertonic-3-orig",
+        revision=AUDIO_CPP_ARTIFACT_COMMIT,
+        variant="orig",
+    )
+    scan = scan_audio_cpp_package_root(
+        root,
+        expected_managed_artifact=identity,
+        expected_canonical_root=str(root),
+    )
+    package = scan.discoveries[0].match.candidates[0].accept(managed_artifact=identity)
+
+    app_instance = _build_test_app()
+    host = DestinationHarness(app_instance, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        await _open_speech_tts_category(screen, pilot)
+        await _wait_for_selector(
+            screen, pilot, "#settings-speech-tts-panel", timeout=8.0
+        )
+        screen.query_one(
+            "#settings-speech-configure-provider", Select
+        ).value = "audio_cpp"
+        await pilot.pause()
+        screen.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        screen.query_one(
+            "#settings-speech-audio_cpp-managed-setup-source", Select
+        ).value = "guided"
+        await pilot.pause()
+        panel = screen.query_one(SpeechTTSSettingsPanel)
+        before = panel.draft_snapshot()
+        request = AudioCppModelLibraryRequest(
+            "pipeline-voice-request", before.draft_revision
+        )
+        result = AudioCppModelLibraryResult(
+            token=request.token,
+            draft_revision=request.draft_revision,
+            artifact_id=identity.artifact_id,
+            revision=identity.revision,
+            variant=identity.variant,
+            canonical_root=str(root),
+        )
+        app_instance._audio_cpp_settings_model_library_request = request
+        app_instance.pending_handoffs.stage(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT, result
+        )
+        claim = app_instance.pending_handoffs.claim(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT
+        )
+        assert claim is not None
+        screen._begin_audio_cpp_result_cleanup(
+            claim,
+            request,
+            panel=panel,
+            before=before,
+            before_result_text=panel.result_text,
+            release_only=False,
+        )
+        merged = screen._merge_and_ack_audio_cpp_model_library_result(
+            claim, result, package, False
+        )
+        assert type(merged) is SpeechTTSPanelDraftSnapshot
+        await pilot.pause()
+
+        eagerness = "#settings-speech-pipeline-response-eagerness-ms"
+        pipeline_edit = "2000"  # the saved default is 700
+        screen.query_one(eagerness, Input).value = pipeline_edit
+        await pilot.pause()
+        if forced:
+            # A newer package edit overlaps the merge, so only teardown's
+            # forced undo may still remove the review's delta.
+            panel.state.providers["audio_cpp"]["guided_packages"] = []
+            panel._synchronize_draft_revision()
+            screen._retry_audio_cpp_result_cleanup(force_overlap=True)
+        else:
+            settled = screen._ack_merged_audio_cpp_model_library_result(
+                claim,
+                panel,
+                before,
+                panel.result_text,
+                request,
+                result,
+                merged,
+            )
+            assert settled is False
+        await pilot.pause()
+
+        kept = screen._speech_tts_draft_snapshot
+        assert screen._audio_cpp_result_cleanup is None
+        assert kept.pipeline_voice_draft.response_eagerness_ms == pipeline_edit, (
+            "undoing the review merge dropped the pipeline voice edit"
+        )
+        assert kept.pipeline_voice_original == before.pipeline_voice_original
+        assert screen.query_one(eagerness, Input).value == pipeline_edit
+        assert kept.state.providers["audio_cpp"].get("guided_packages") == (
+            before.state.providers["audio_cpp"].get("guided_packages")
+        )
+        assert panel.has_unsaved_changes()
 
 
 @pytest.mark.asyncio

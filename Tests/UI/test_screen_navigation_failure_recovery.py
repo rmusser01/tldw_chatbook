@@ -101,9 +101,7 @@ def _wire_failing_navigation(
 
     # `_current_runtime_identity` is one of the genuinely unguarded steps the
     # incident's exception class could have escaped from.
-    monkeypatch.setattr(
-        type(app), "_current_runtime_identity", maybe_failing_identity
-    )
+    monkeypatch.setattr(type(app), "_current_runtime_identity", maybe_failing_identity)
     monkeypatch.setattr(
         type(app), "screen", property(lambda self: outgoing_screen_cls(bar))
     )
@@ -181,7 +179,9 @@ async def test_dispatched_navigation_failure_still_records_worker_failed(
     from Tests.UI.app_factory import _build_test_app
 
     recorded: list[dict] = []
-    set_app_global(monkeypatch, "persist_event",
+    set_app_global(
+        monkeypatch,
+        "persist_event",
         lambda component, event, **fields: recorded.append(
             {"component": component, "event": event, **fields}
         ),

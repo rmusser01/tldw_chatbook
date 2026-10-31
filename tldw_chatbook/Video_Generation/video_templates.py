@@ -85,8 +85,7 @@ BUILTIN_VIDEO_TEMPLATES: dict[str, VideoStyleTemplate] = {
         name="Anime",
         description="Cel-shaded animation look",
         prompt_suffix=(
-            "anime style, cel shading, clean line work, smooth animation, "
-            "vivid color"
+            "anime style, cel shading, clean line work, smooth animation, vivid color"
         ),
         negative_prompt_suffix="photorealistic, flicker, low quality",
         default_params={"duration_seconds": 5, "fps": 24, "ratio": "16:9"},
@@ -150,6 +149,14 @@ def apply_video_template(
     The user's prompt text always leads; the style language follows (models
     weight earlier tokens more, so the subject stays the user's).
     """
-    composed = f"{prompt.rstrip()}, {template.prompt_suffix}" if prompt.strip() else template.prompt_suffix
-    negative_parts = [part for part in (negative_prompt or "", template.negative_prompt_suffix) if part]
+    composed = (
+        f"{prompt.rstrip()}, {template.prompt_suffix}"
+        if prompt.strip()
+        else template.prompt_suffix
+    )
+    negative_parts = [
+        part
+        for part in (negative_prompt or "", template.negative_prompt_suffix)
+        if part
+    ]
     return composed, ", ".join(negative_parts)

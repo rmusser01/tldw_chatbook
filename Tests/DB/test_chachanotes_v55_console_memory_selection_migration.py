@@ -27,9 +27,7 @@ def _version(db: CharactersRAGDB) -> int:
     )
 
 
-def _v54_database(
-    path: Path, monkeypatch: pytest.MonkeyPatch
-) -> CharactersRAGDB:
+def _v54_database(path: Path, monkeypatch: pytest.MonkeyPatch) -> CharactersRAGDB:
     """Create a real v54 database without running the v55 migration."""
     monkeypatch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 54)
     db = CharactersRAGDB(path, client_id="v54-seed")
@@ -109,7 +107,9 @@ def test_fresh_database_creates_local_scope_and_selection_schema(
         conn = db.get_connection()
         tables = {
             row[0]
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
         }
         assert _version(db) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert {SCOPE_TABLE, SELECTION_TABLE} <= tables
@@ -167,7 +167,14 @@ def test_fresh_database_creates_local_scope_and_selection_schema(
         assert _foreign_key_constraints(conn, SCOPE_TABLE) == {
             ((0, "conversations", "conversation_id", "id", "CASCADE", "CASCADE"),),
             (
-                (0, "console_conversation_memories", "memory_id", "id", "CASCADE", "CASCADE"),
+                (
+                    0,
+                    "console_conversation_memories",
+                    "memory_id",
+                    "id",
+                    "CASCADE",
+                    "CASCADE",
+                ),
                 (
                     1,
                     "console_conversation_memories",
@@ -178,14 +185,26 @@ def test_fresh_database_creates_local_scope_and_selection_schema(
                 ),
             ),
             (
-                (0, "messages", "conversation_id", "conversation_id", "CASCADE", "RESTRICT"),
-                (1, "messages", "selection_anchor_message_id", "id", "CASCADE", "RESTRICT"),
+                (
+                    0,
+                    "messages",
+                    "conversation_id",
+                    "conversation_id",
+                    "CASCADE",
+                    "RESTRICT",
+                ),
+                (
+                    1,
+                    "messages",
+                    "selection_anchor_message_id",
+                    "id",
+                    "CASCADE",
+                    "RESTRICT",
+                ),
             ),
         }
         assert _foreign_key_constraints(conn, SELECTION_TABLE) == {
-            (
-                (0, "conversations", "conversation_id", "id", "CASCADE", "CASCADE"),
-            ),
+            ((0, "conversations", "conversation_id", "id", "CASCADE", "CASCADE"),),
             (
                 (
                     0,
@@ -205,7 +224,14 @@ def test_fresh_database_creates_local_scope_and_selection_schema(
                 ),
             ),
             (
-                (0, "messages", "conversation_id", "conversation_id", "CASCADE", "RESTRICT"),
+                (
+                    0,
+                    "messages",
+                    "conversation_id",
+                    "conversation_id",
+                    "CASCADE",
+                    "RESTRICT",
+                ),
                 (1, "messages", "activation_message_id", "id", "CASCADE", "RESTRICT"),
             ),
         }
@@ -339,9 +365,7 @@ def test_v54_backfill_is_idempotent_and_uses_memory_insertion_order(
             first_leaf,
         )
         assert _version(upgraded) == 55
-        conn.execute(
-            f"DELETE FROM {SCOPE_TABLE} WHERE memory_id = 'second-memory'"
-        )
+        conn.execute(f"DELETE FROM {SCOPE_TABLE} WHERE memory_id = 'second-memory'")
         conn.execute(
             "UPDATE db_schema_version SET version = 54 WHERE schema_name = ?",
             (SCHEMA_NAME,),
@@ -356,7 +380,9 @@ def test_v54_backfill_is_idempotent_and_uses_memory_insertion_order(
     try:
         conn = reopened.get_connection()
         assert conn.execute(f"SELECT COUNT(*) FROM {SCOPE_TABLE}").fetchone()[0] == 4
-        assert conn.execute(f"SELECT COUNT(*) FROM {SELECTION_TABLE}").fetchone()[0] == 2
+        assert (
+            conn.execute(f"SELECT COUNT(*) FROM {SELECTION_TABLE}").fetchone()[0] == 2
+        )
     finally:
         reopened.close_connection()
 
@@ -481,9 +507,12 @@ def test_scope_and_selection_checks_cross_conversation_guards_and_deletion(
         conn.execute(
             "DELETE FROM console_conversation_memories WHERE id = 'scope-only-memory'"
         )
-        assert conn.execute(
-            f"SELECT COUNT(*) FROM {SCOPE_TABLE} WHERE memory_id = 'scope-only-memory'"
-        ).fetchone()[0] == 0
+        assert (
+            conn.execute(
+                f"SELECT COUNT(*) FROM {SCOPE_TABLE} WHERE memory_id = 'scope-only-memory'"
+            ).fetchone()[0]
+            == 0
+        )
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 f"INSERT INTO {SELECTION_TABLE}(selection_id, conversation_id, activation_message_id, selected_memory_id, event_kind, suppresses_legacy, created_at, revision, active) "
@@ -518,7 +547,12 @@ def test_scope_and_selection_checks_cross_conversation_guards_and_deletion(
             "VALUES ('reset', ?, ?, NULL, 'reset', 1, CURRENT_TIMESTAMP, 1, 1)",
             (first, first_message),
         )
-        assert [row[0] for row in conn.execute(f"SELECT sequence FROM {SELECTION_TABLE} ORDER BY sequence")] == [1, 2]
+        assert [
+            row[0]
+            for row in conn.execute(
+                f"SELECT sequence FROM {SELECTION_TABLE} ORDER BY sequence"
+            )
+        ] == [1, 2]
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute("DELETE FROM messages WHERE id = ?", (first_message,))
         with pytest.raises(sqlite3.IntegrityError):
@@ -531,12 +565,20 @@ def test_scope_and_selection_checks_cross_conversation_guards_and_deletion(
             (first_message,),
         )
         conn.execute("DELETE FROM conversations WHERE id = ?", (first,))
-        assert conn.execute(
-            f"SELECT COUNT(*) FROM {SCOPE_TABLE} WHERE conversation_id = ?", (first,)
-        ).fetchone()[0] == 0
-        assert conn.execute(
-            f"SELECT COUNT(*) FROM {SELECTION_TABLE} WHERE conversation_id = ?", (first,)
-        ).fetchone()[0] == 0
+        assert (
+            conn.execute(
+                f"SELECT COUNT(*) FROM {SCOPE_TABLE} WHERE conversation_id = ?",
+                (first,),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                f"SELECT COUNT(*) FROM {SELECTION_TABLE} WHERE conversation_id = ?",
+                (first,),
+            ).fetchone()[0]
+            == 0
+        )
     finally:
         db.close_connection()
 
@@ -560,7 +602,11 @@ def test_v55_foreign_key_audit_rolls_back_before_version_stamp(
     with pytest.raises(SchemaError, match="(?i)foreign key audit failed"):
         db._migrate_from_v54_to_v55(conn)
     assert _version(db) == 54
-    assert conn.execute(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", (SCOPE_TABLE,)
-    ).fetchone()[0] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (SCOPE_TABLE,),
+        ).fetchone()[0]
+        == 0
+    )
     db.close_connection()

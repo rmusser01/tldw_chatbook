@@ -34,9 +34,7 @@ REVIEWED_ARTIFACT_NAMES = {
     "real-provider-three-turn.summary.json",
     "real-provider-three-turn-summary.md",
 }
-TASK5_PUBLISHED_NAMES = REVIEWED_ARTIFACT_NAMES | {
-    "confirmatory-review-receipt.json"
-}
+TASK5_PUBLISHED_NAMES = REVIEWED_ARTIFACT_NAMES | {"confirmatory-review-receipt.json"}
 
 
 def _write_immutable_foreign_publication(
@@ -286,9 +284,15 @@ def test_validate_sample_accepts_complete_arm_contracts(arm: str) -> None:
     ("mutation", "expected_code"),
     [
         (("terminal_third_assistant_ns", None), "terminal_third_assistant_missing"),
-        (("terminal_third_provider_completed_ns", None), "terminal_third_provider_missing"),
+        (
+            ("terminal_third_provider_completed_ns", None),
+            "terminal_third_provider_missing",
+        ),
         (("third_provider_started_ns", None), "third_provider_missing"),
-        (("provider_round_counts", {"1": 1, "2": 2, "3": 1}), "provider_round_contract"),
+        (
+            ("provider_round_counts", {"1": 1, "2": 2, "3": 1}),
+            "provider_round_contract",
+        ),
         (("provider_usage", []), "provider_usage_contract"),
         (("third_send_requested_ns", 120), "third_send_not_queued"),
         (("heartbeat_lateness_ns", []), "heartbeat_missing"),
@@ -315,7 +319,9 @@ def test_validate_sample_rejects_common_contract_mutants(
     [
         (lambda row: row["tool_calls"].pop(), "tool_call_contract"),
         (
-            lambda row: row["tool_calls"][0].update({"requested_tool_id": "local:fs_read"}),
+            lambda row: row["tool_calls"][0].update(
+                {"requested_tool_id": "local:fs_read"}
+            ),
             "load_tools_contract",
         ),
         (
@@ -340,7 +346,9 @@ def test_validate_sample_rejects_common_contract_mutants(
         ),
     ],
 )
-def test_validate_sample_rejects_tool_contract_mutants(mutate, expected_code: str) -> None:
+def test_validate_sample_rejects_tool_contract_mutants(
+    mutate, expected_code: str
+) -> None:
     validate_sample = getattr(profile, "validate_sample", None)
     row = _valid_sample("enabled")
     mutate(row)
@@ -437,7 +445,14 @@ def test_validate_confirmation_rows_accepts_exact_sequence_before_filtering() ->
 
 @pytest.mark.parametrize(
     "mutation",
-    ("reordered", "missing", "extra", "missing_position", "wrong_position", "unknown_phase"),
+    (
+        "reordered",
+        "missing",
+        "extra",
+        "missing_position",
+        "wrong_position",
+        "unknown_phase",
+    ),
 )
 def test_validate_confirmation_rows_rejects_sequence_mutants(mutation: str) -> None:
     schedule, rows = _valid_confirmation_rows()
@@ -573,14 +588,10 @@ def test_campaign_attempt_ids_are_sequential_and_staging_roots_are_fresh(
     with pytest.raises(RuntimeError, match="campaign_attempt_root_exists"):
         profile.create_attempt_root(tmp_path, "attempt-0001")
 
-    profile.append_attempt_state(
-        ledger, _attempt_event("attempt-0001", "running")
-    )
+    profile.append_attempt_state(ledger, _attempt_event("attempt-0001", "running"))
     profile.append_attempt_state(
         ledger,
-        _attempt_event(
-            "attempt-0001", "failed", reason_category="acquisition"
-        ),
+        _attempt_event("attempt-0001", "failed", reason_category="acquisition"),
     )
     assert profile.next_attempt_id(profile.attempt_lineage(ledger)) == "attempt-0002"
     second_root = profile.create_attempt_root(tmp_path, "attempt-0002")
@@ -609,9 +620,9 @@ def test_campaign_ledger_appends_sorted_newline_json_and_syncs(
 
     assert modes == ["a"]
     assert synced
-    assert ledger.read_text(encoding="utf-8") == json.dumps(
-        event, sort_keys=True
-    ) + "\n"
+    assert (
+        ledger.read_text(encoding="utf-8") == json.dumps(event, sort_keys=True) + "\n"
+    )
 
 
 def test_campaign_directory_fsync_helper_uses_directory_descriptor(
@@ -642,7 +653,10 @@ def test_campaign_state_bearing_namespace_mutations_fsync_parents_in_order(
 ) -> None:
     synced: list[Path] = []
     monkeypatch.setattr(
-        profile, "_fsync_directory", lambda path: synced.append(Path(path)), raising=False
+        profile,
+        "_fsync_directory",
+        lambda path: synced.append(Path(path)),
+        raising=False,
     )
     campaign = tmp_path / "campaign"
 
@@ -676,9 +690,7 @@ def test_campaign_state_bearing_namespace_mutations_fsync_parents_in_order(
 def test_campaign_ledger_never_overwrites_or_truncates(tmp_path: Path) -> None:
     ledger = tmp_path / "attempts.jsonl"
     running = _attempt_event("attempt-0001", "running")
-    failed = _attempt_event(
-        "attempt-0001", "failed", reason_category="provider"
-    )
+    failed = _attempt_event("attempt-0001", "failed", reason_category="provider")
     profile.append_attempt_state(ledger, running)
     original = ledger.read_bytes()
 
@@ -714,9 +726,7 @@ def test_campaign_acquisition_is_blocked_by_current_attempt_state(
     tmp_path: Path, state: str
 ) -> None:
     ledger = tmp_path / "attempts.jsonl"
-    profile.append_attempt_state(
-        ledger, _attempt_event("attempt-0001", "running")
-    )
+    profile.append_attempt_state(ledger, _attempt_event("attempt-0001", "running"))
     if state == "complete_pending_review":
         profile.complete_attempt_measurement(
             ledger,
@@ -764,14 +774,10 @@ def test_campaign_retry_is_allowed_only_after_uncorrectable_terminal_state(
     tmp_path: Path, terminal_state: str, reason_category: str
 ) -> None:
     ledger = tmp_path / "attempts.jsonl"
-    profile.append_attempt_state(
-        ledger, _attempt_event("attempt-0001", "running")
-    )
+    profile.append_attempt_state(ledger, _attempt_event("attempt-0001", "running"))
     profile.append_attempt_state(
         ledger,
-        _attempt_event(
-            "attempt-0001", terminal_state, reason_category=reason_category
-        ),
+        _attempt_event("attempt-0001", terminal_state, reason_category=reason_category),
     )
 
     assert profile.require_campaign_acquisition(ledger) == "attempt-0002"
@@ -782,9 +788,7 @@ def test_campaign_measured_verdict_always_enters_pending_review(
     tmp_path: Path, verdict: str
 ) -> None:
     ledger = tmp_path / "attempts.jsonl"
-    profile.append_attempt_state(
-        ledger, _attempt_event("attempt-0001", "running")
-    )
+    profile.append_attempt_state(ledger, _attempt_event("attempt-0001", "running"))
 
     event = profile.complete_attempt_measurement(
         ledger,
@@ -805,9 +809,7 @@ def test_campaign_measured_verdict_always_enters_pending_review(
 
 def test_disposable_smoke_uses_explicit_nonstatistical_verdict(tmp_path: Path) -> None:
     ledger = tmp_path / "attempts.jsonl"
-    profile.append_attempt_state(
-        ledger, _attempt_event("attempt-0001", "running")
-    )
+    profile.append_attempt_state(ledger, _attempt_event("attempt-0001", "running"))
 
     event = profile.complete_attempt_measurement(
         ledger,
@@ -876,9 +878,7 @@ def test_campaign_correctable_derived_changes_preserve_raw_hash_and_lineage(
 ) -> None:
     ledger = tmp_path / "attempts.jsonl"
     raw_sha256 = "b" * 64
-    profile.append_attempt_state(
-        ledger, _attempt_event("attempt-0001", "running")
-    )
+    profile.append_attempt_state(ledger, _attempt_event("attempt-0001", "running"))
     profile.complete_attempt_measurement(
         ledger,
         "attempt-0001",
@@ -928,9 +928,7 @@ def test_campaign_changes_required_preserves_first_measured_verdict(
     tmp_path: Path,
 ) -> None:
     ledger = tmp_path / "attempts.jsonl"
-    profile.append_attempt_state(
-        ledger, _attempt_event("attempt-0001", "running")
-    )
+    profile.append_attempt_state(ledger, _attempt_event("attempt-0001", "running"))
     profile.complete_attempt_measurement(
         ledger, "attempt-0001", verdict="pass", raw_sha256="a" * 64
     )
@@ -952,9 +950,7 @@ def test_campaign_renewed_pending_review_preserves_first_measured_verdict(
     tmp_path: Path,
 ) -> None:
     ledger = tmp_path / "attempts.jsonl"
-    profile.append_attempt_state(
-        ledger, _attempt_event("attempt-0001", "running")
-    )
+    profile.append_attempt_state(ledger, _attempt_event("attempt-0001", "running"))
     profile.complete_attempt_measurement(
         ledger, "attempt-0001", verdict="pass", raw_sha256="a" * 64
     )
@@ -990,9 +986,7 @@ def test_campaign_renewed_pending_review_preserves_first_measured_verdict(
             "campaign_attempt_state_invalid",
         ),
         (
-            _attempt_event(
-                "attempt-0001", "failed", reason_category="network_flake"
-            ),
+            _attempt_event("attempt-0001", "failed", reason_category="network_flake"),
             "campaign_reason_category_invalid",
         ),
         (
@@ -1092,8 +1086,7 @@ def test_campaign_attempt_lineage_rejects_malformed_and_out_of_order_records(
         profile.attempt_lineage(ledger)
 
     ledger.write_text(
-        json.dumps(_attempt_event("attempt-0002", "running"), sort_keys=True)
-        + "\n",
+        json.dumps(_attempt_event("attempt-0002", "running"), sort_keys=True) + "\n",
         encoding="utf-8",
     )
     with pytest.raises(RuntimeError, match="campaign_attempt_sequence_invalid"):
@@ -1321,8 +1314,7 @@ def test_campaign_owner_publication_has_no_fixed_marker_aba(
     def coordinated_rename(source: Path, target: Path) -> None:
         thread_name = threading.current_thread().name
         is_owner_publication = target.name == ".campaign-lock" or (
-            target.name == "owner.json"
-            and target.parent.name == ".campaign-lock"
+            target.name == "owner.json" and target.parent.name == ".campaign-lock"
         )
         if thread_name in publish_ready and is_owner_publication:
             publish_ready[thread_name].set()
@@ -1515,7 +1507,10 @@ def test_campaign_wrong_release_cannot_resurrect_after_exact_owner_finishes(
     def finish_exact_release_after_claim(lock_root: Path):
         nonlocal interleaved
         observed = real_read_owner(lock_root)
-        if lock_root.name in {".campaign-lock", ".campaign-release"} and not interleaved:
+        if (
+            lock_root.name in {".campaign-lock", ".campaign-release"}
+            and not interleaved
+        ):
             interleaved = True
             profile.release_campaign_lock(tmp_path, owner)
         return observed
@@ -1779,9 +1774,12 @@ def test_campaign_recovery_releases_dead_owner_after_durable_terminal(
     profile.append_attempt_state(ledger, terminal)
     before = ledger.read_bytes()
 
-    assert profile.recover_interrupted_attempt(
-        tmp_path, process_start_probe=lambda _pid: None
-    ) == terminal
+    assert (
+        profile.recover_interrupted_attempt(
+            tmp_path, process_start_probe=lambda _pid: None
+        )
+        == terminal
+    )
 
     assert ledger.read_bytes() == before
     assert not (tmp_path / ".campaign-lock").exists()
@@ -1793,9 +1791,7 @@ def test_campaign_recovery_refuses_live_owner_after_durable_terminal(
 ) -> None:
     attempt = _acquire_attempt(tmp_path)
     ledger = tmp_path / "attempts.jsonl"
-    terminal = _attempt_event(
-        attempt.attempt_id, "failed", reason_category="provider"
-    )
+    terminal = _attempt_event(attempt.attempt_id, "failed", reason_category="provider")
     profile.append_attempt_state(ledger, terminal)
     before = ledger.read_bytes()
 
@@ -1981,10 +1977,13 @@ def test_campaign_recover_is_idempotent_after_pending_attempt_release(
     profile.release_campaign_attempt(tmp_path, attempt)
     before = ledger.read_bytes()
 
-    assert profile.recover_interrupted_attempt(
-        tmp_path,
-        process_start_probe=lambda _pid: pytest.fail("released owner was probed"),
-    ) == pending
+    assert (
+        profile.recover_interrupted_attempt(
+            tmp_path,
+            process_start_probe=lambda _pid: pytest.fail("released owner was probed"),
+        )
+        == pending
+    )
 
     assert ledger.read_bytes() == before
     assert not (tmp_path / ".campaign-lock").exists()
@@ -2017,10 +2016,13 @@ def test_campaign_recover_finishes_pending_release_marker_without_probe(
         (release / "owner.json").unlink()
     before = ledger.read_bytes()
 
-    assert profile.recover_interrupted_attempt(
-        tmp_path,
-        process_start_probe=lambda _pid: pytest.fail("terminal owner was probed"),
-    ) == pending
+    assert (
+        profile.recover_interrupted_attempt(
+            tmp_path,
+            process_start_probe=lambda _pid: pytest.fail("terminal owner was probed"),
+        )
+        == pending
+    )
 
     assert ledger.read_bytes() == before
     assert not release.exists()
@@ -2070,18 +2072,19 @@ def test_campaign_recovery_finishes_terminal_lock_marker_without_appending(
 ) -> None:
     attempt = _acquire_attempt(tmp_path)
     ledger = tmp_path / "attempts.jsonl"
-    terminal = _attempt_event(
-        attempt.attempt_id, "invalid", reason_category="raw"
-    )
+    terminal = _attempt_event(attempt.attempt_id, "invalid", reason_category="raw")
     profile.append_attempt_state(ledger, terminal)
     before = ledger.read_bytes()
     (tmp_path / ".campaign-lock").rename(tmp_path / marker)
     if empty_marker:
         (tmp_path / marker / "owner.json").unlink()
 
-    assert profile.recover_interrupted_attempt(
-        tmp_path, process_start_probe=lambda _pid: None
-    ) == terminal
+    assert (
+        profile.recover_interrupted_attempt(
+            tmp_path, process_start_probe=lambda _pid: None
+        )
+        == terminal
+    )
 
     assert ledger.read_bytes() == before
     assert not (tmp_path / marker).exists()
@@ -2093,15 +2096,18 @@ def test_campaign_recovery_finishes_owned_marker_after_interrupted_append(
     _acquire_attempt(tmp_path)
     ledger = tmp_path / "attempts.jsonl"
     (tmp_path / ".campaign-lock").rename(tmp_path / ".campaign-recovery")
-    failed = _attempt_event(
-        "attempt-0001", "failed", reason_category="interrupted"
-    )
+    failed = _attempt_event("attempt-0001", "failed", reason_category="interrupted")
     profile.append_attempt_state(ledger, failed)
 
-    assert profile.recover_interrupted_attempt(
-        tmp_path,
-        process_start_probe=lambda _pid: pytest.fail("must not probe completed recovery"),
-    ) == failed
+    assert (
+        profile.recover_interrupted_attempt(
+            tmp_path,
+            process_start_probe=lambda _pid: pytest.fail(
+                "must not probe completed recovery"
+            ),
+        )
+        == failed
+    )
     assert not (tmp_path / ".campaign-recovery").exists()
     assert profile.attempt_lineage(ledger) == (
         {"attempt_id": "attempt-0001", "state": "running"},
@@ -2132,9 +2138,7 @@ def test_campaign_recovery_append_exception_preserves_resumable_marker(
     monkeypatch.setattr(profile, "append_attempt_state", real_append)
     assert profile.recover_interrupted_attempt(
         tmp_path, process_start_probe=lambda _pid: pytest.fail("must not reprobe")
-    ) == _attempt_event(
-        "attempt-0001", "failed", reason_category="interrupted"
-    )
+    ) == _attempt_event("attempt-0001", "failed", reason_category="interrupted")
     assert not (tmp_path / ".campaign-recovery").exists()
 
 
@@ -2163,9 +2167,7 @@ def test_campaign_recovery_resumes_owned_marker_before_interrupted_append(
 def test_campaign_release_and_recovery_resume_empty_markers(tmp_path: Path) -> None:
     release_campaign = tmp_path / "release"
     release_owner = _acquire_lock(release_campaign)
-    (release_campaign / ".campaign-lock").rename(
-        release_campaign / ".campaign-release"
-    )
+    (release_campaign / ".campaign-lock").rename(release_campaign / ".campaign-release")
     (release_campaign / ".campaign-release" / "owner.json").unlink()
 
     profile.release_campaign_lock(release_campaign, release_owner)
@@ -2179,9 +2181,7 @@ def test_campaign_release_and_recovery_resume_empty_markers(tmp_path: Path) -> N
     (recovery_campaign / ".campaign-lock").rename(
         recovery_campaign / ".campaign-recovery"
     )
-    failed = _attempt_event(
-        "attempt-0001", "failed", reason_category="interrupted"
-    )
+    failed = _attempt_event("attempt-0001", "failed", reason_category="interrupted")
     profile.append_attempt_state(recovery_ledger, failed)
     (recovery_campaign / ".campaign-recovery" / "owner.json").unlink()
 
@@ -2196,9 +2196,7 @@ def test_campaign_acquisition_finishes_empty_release_marker_without_owner_token(
     attempt = _acquire_attempt(tmp_path)
     profile.append_attempt_state(
         tmp_path / "attempts.jsonl",
-        _attempt_event(
-            "attempt-0001", "failed", reason_category="acquisition"
-        ),
+        _attempt_event("attempt-0001", "failed", reason_category="acquisition"),
     )
     (tmp_path / ".campaign-lock").rename(tmp_path / ".campaign-release")
     (tmp_path / ".campaign-release" / "owner.json").unlink()
@@ -2296,12 +2294,15 @@ def test_process_start_identity_returns_none_only_for_exact_missing_pid() -> Non
 def test_process_start_identity_hashes_valid_ps_start_time() -> None:
     started = "Fri Aug 22 13:00:00 2026"
 
-    assert profile.process_start_identity(
-        123,
-        run_command=lambda _command, **_kwargs: SimpleNamespace(
-            returncode=0, stdout=started + "\n", stderr=""
-        ),
-    ) == hashlib.sha256(started.encode("utf-8")).hexdigest()
+    assert (
+        profile.process_start_identity(
+            123,
+            run_command=lambda _command, **_kwargs: SimpleNamespace(
+                returncode=0, stdout=started + "\n", stderr=""
+            ),
+        )
+        == hashlib.sha256(started.encode("utf-8")).hexdigest()
+    )
 
 
 @pytest.mark.parametrize(
@@ -2534,9 +2535,7 @@ def test_campaign_recovery_refuses_different_canonical_and_recovery_owners(
     canonical_before = (tmp_path / ".campaign-lock" / "owner.json").read_bytes()
     recovery_before = (recovery / "owner.json").read_bytes()
 
-    with pytest.raises(
-        RuntimeError, match="^campaign_recovery_owner_conflict$"
-    ):
+    with pytest.raises(RuntimeError, match="^campaign_recovery_owner_conflict$"):
         profile.recover_interrupted_attempt(
             tmp_path, process_start_probe=lambda _pid: None
         )
@@ -2569,9 +2568,7 @@ def test_campaign_recovery_preserves_malformed_dual_marker_owners(
         return None
 
     with pytest.raises(RuntimeError, match="^campaign_lock_owner_invalid$"):
-        profile.recover_interrupted_attempt(
-            tmp_path, process_start_probe=probe
-        )
+        profile.recover_interrupted_attempt(tmp_path, process_start_probe=probe)
 
     assert probes == 0
     assert ledger.read_bytes() == ledger_before
@@ -2685,7 +2682,9 @@ def test_campaign_dead_owner_recovery_appends_interrupted_and_preserves_raw(
     assert attempt.root.is_dir()
     assert not (tmp_path / ".campaign-lock").exists()
     assert not (tmp_path / ".campaign-recovery").exists()
-    assert [row["state"] for row in profile.attempt_lineage(tmp_path / "attempts.jsonl")] == [
+    assert [
+        row["state"] for row in profile.attempt_lineage(tmp_path / "attempts.jsonl")
+    ] == [
         "running",
         "failed",
     ]
@@ -2941,14 +2940,14 @@ def _copy_original_evidence(destination_root: Path) -> Path:
     destination = destination_root / relative
     destination.mkdir(parents=True)
     for name in profile.ORIGINAL_EVIDENCE_SHA256:
-        (destination / name).write_bytes((repository_root / relative / name).read_bytes())
+        (destination / name).write_bytes(
+            (repository_root / relative / name).read_bytes()
+        )
     return destination
 
 
 def test_original_runner_and_evidence_pins_are_exact() -> None:
-    assert profile.ORIGINAL_HARNESS_SHA == (
-        "eb8225a32f88ea43c337aff99804d360384e7668"
-    )
+    assert profile.ORIGINAL_HARNESS_SHA == ("eb8225a32f88ea43c337aff99804d360384e7668")
     assert profile.ORIGINAL_RUNNER_SHA256 == (
         "fbca69703b771f7b7b27fa78ef9bf095fb30712435743877e20fcb01bb6d06ae"
     )
@@ -2984,7 +2983,11 @@ def test_original_evidence_guard_rejects_altered_missing_and_extra_files(
     with pytest.raises(RuntimeError, match="original_evidence_hash_mismatch:README.md"):
         verify_original_evidence(tmp_path)
     altered.write_bytes(
-        (Path(__file__).resolve().parents[2] / evidence.relative_to(tmp_path) / "README.md").read_bytes()
+        (
+            Path(__file__).resolve().parents[2]
+            / evidence.relative_to(tmp_path)
+            / "README.md"
+        ).read_bytes()
     )
 
     missing = evidence / "real-provider-three-turn.summary.json"
@@ -3036,11 +3039,15 @@ def test_original_runner_contract_failure_removes_isolated_module(
 ) -> None:
     _materialize_original_runner(tmp_path)
     invalid = SimpleNamespace()
-    monkeypatch.setattr(profile.importlib.util, "module_from_spec", lambda _spec: invalid)
+    monkeypatch.setattr(
+        profile.importlib.util, "module_from_spec", lambda _spec: invalid
+    )
     monkeypatch.setattr(
         profile.importlib.util,
         "spec_from_file_location",
-        lambda *_args: SimpleNamespace(loader=SimpleNamespace(exec_module=lambda _module: None)),
+        lambda *_args: SimpleNamespace(
+            loader=SimpleNamespace(exec_module=lambda _module: None)
+        ),
     )
 
     with pytest.raises(RuntimeError, match="original_runner_contract_mismatch"):
@@ -3092,8 +3099,7 @@ def _original_protocol() -> dict[str, object]:
     repository_root = Path(__file__).resolve().parents[2]
     manifest = json.loads(
         (
-            repository_root
-            / "Docs/superpowers/qa/console-three-turn-real-provider/"
+            repository_root / "Docs/superpowers/qa/console-three-turn-real-provider/"
             "real-provider-three-turn.manifest.json"
         ).read_bytes()
     )
@@ -3335,9 +3341,7 @@ def test_current_enabled_summary_routing_mismatches_pinned_original(
         summary["arms"]["enabled"]["gates"] = copy.deepcopy(
             summary["arms"]["disabled"]["gates"]
         )
-        summary["arms"]["enabled"]["verdict"] = summary["arms"]["disabled"][
-            "verdict"
-        ]
+        summary["arms"]["enabled"]["verdict"] = summary["arms"]["disabled"]["verdict"]
         return summary
 
     monkeypatch.setattr(profile, "build_summary", disabled_only_summary)
@@ -3353,64 +3357,79 @@ def test_current_enabled_summary_routing_mismatches_pinned_original(
     [
         (("revisions", "candidate"), "0" * 40, "protocol_revisions_mismatch"),
         (("provider_kind",), "other", "protocol_provider_kind_mismatch"),
-        *((
-            ("provider_server", *path),
-            replacement,
-            "protocol_provider_server_mismatch",
-        ) for path, replacement in [
-            (("build_info",), "other"),
-            (("model_alias",), "other.gguf"),
-            (("total_slots",), 2),
-            (("context_tokens",), 32_000),
-            (("endpoints", "metrics"), True),
-            (("endpoints", "slots"), False),
-            (("endpoints", "props"), True),
-            (("is_sleeping",), True),
-            (("modalities", "vision"), True),
-            (("modalities", "audio"), True),
-        ]),
-        *((
-            ("runtime", *path),
-            "changed",
-            "protocol_runtime_mismatch",
-        ) for path in [
-            ("python", "implementation"),
-            ("python", "version"),
-            ("sqlite",),
-            ("dependencies", "httpx"),
-            ("dependencies", "pydantic"),
-            ("dependencies", "rich"),
-            ("dependencies", "textual"),
-        ]),
+        *(
+            (
+                ("provider_server", *path),
+                replacement,
+                "protocol_provider_server_mismatch",
+            )
+            for path, replacement in [
+                (("build_info",), "other"),
+                (("model_alias",), "other.gguf"),
+                (("total_slots",), 2),
+                (("context_tokens",), 32_000),
+                (("endpoints", "metrics"), True),
+                (("endpoints", "slots"), False),
+                (("endpoints", "props"), True),
+                (("is_sleeping",), True),
+                (("modalities", "vision"), True),
+                (("modalities", "audio"), True),
+            ]
+        ),
+        *(
+            (
+                ("runtime", *path),
+                "changed",
+                "protocol_runtime_mismatch",
+            )
+            for path in [
+                ("python", "implementation"),
+                ("python", "version"),
+                ("sqlite",),
+                ("dependencies", "httpx"),
+                ("dependencies", "pydantic"),
+                ("dependencies", "rich"),
+                ("dependencies", "textual"),
+            ]
+        ),
         (("model_alias",), "other.gguf", "protocol_model_alias_mismatch"),
-        *((
-            ("request_settings", key),
-            replacement,
-            "protocol_request_settings_mismatch",
-        ) for key, replacement in [
-            ("temperature", 0.1),
-            ("max_tokens", 511),
-            ("reasoning_effort", "low"),
-            ("streaming", False),
-            ("include_usage", False),
-        ]),
-        *((
-            ("fixture_ids", key),
-            "changed",
-            "protocol_fixture_ids_mismatch",
-        ) for key in ("turn_prompts", "tool_schema", "mutation", "workspace_corpus")),
-        *((
-            ("fixture_hashes", *path),
-            "0" * 64,
-            "protocol_fixture_hashes_mismatch",
-        ) for path in [
-            ("turn_prompts_sha256",),
-            ("mutation_sha256",),
-            ("workspace_content_tree_digest",),
-            ("tool_definition_sha256_by_arm", "control"),
-            ("tool_definition_sha256_by_arm", "disabled"),
-            ("tool_definition_sha256_by_arm", "enabled"),
-        ]),
+        *(
+            (
+                ("request_settings", key),
+                replacement,
+                "protocol_request_settings_mismatch",
+            )
+            for key, replacement in [
+                ("temperature", 0.1),
+                ("max_tokens", 511),
+                ("reasoning_effort", "low"),
+                ("streaming", False),
+                ("include_usage", False),
+            ]
+        ),
+        *(
+            (
+                ("fixture_ids", key),
+                "changed",
+                "protocol_fixture_ids_mismatch",
+            )
+            for key in ("turn_prompts", "tool_schema", "mutation", "workspace_corpus")
+        ),
+        *(
+            (
+                ("fixture_hashes", *path),
+                "0" * 64,
+                "protocol_fixture_hashes_mismatch",
+            )
+            for path in [
+                ("turn_prompts_sha256",),
+                ("mutation_sha256",),
+                ("workspace_content_tree_digest",),
+                ("tool_definition_sha256_by_arm", "control"),
+                ("tool_definition_sha256_by_arm", "disabled"),
+                ("tool_definition_sha256_by_arm", "enabled"),
+            ]
+        ),
         (("metric_names",), [], "protocol_metric_names_mismatch"),
         (("primary_gate_names",), [], "protocol_primary_gate_names_mismatch"),
         (("p95", "method"), "linear", "protocol_p95_mismatch"),
@@ -3480,17 +3499,17 @@ def test_original_protocol_uses_real_detached_runner_and_retained_evidence(
     )
     try:
         assert not (
-            candidate
-            / "Docs/superpowers/qa/console-three-turn-real-provider/"
+            candidate / "Docs/superpowers/qa/console-three-turn-real-provider/"
             "real-provider-three-turn.manifest.json"
         ).exists()
-        assert profile.load_original_protocol(candidate, repository_root) == _original_protocol()
+        assert (
+            profile.load_original_protocol(candidate, repository_root)
+            == _original_protocol()
+        )
         with pytest.raises(RuntimeError, match="original_evidence_missing"):
             profile.load_original_protocol(candidate, candidate)
     finally:
-        profile._remove_target_worktree(
-            git_repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(git_repository, run_root, name="candidate")
 
 
 def test_original_protocol_is_independent_from_current_harness_drift(
@@ -3512,9 +3531,7 @@ def test_original_protocol_is_independent_from_current_harness_drift(
     monkeypatch.setattr(profile, "IMPROVEMENT_CEILING", 0.9)
     current_build_summary = profile.build_summary
 
-    def drifted_current_summary(
-        rows, *, bootstrap_resamples=9_999, bootstrap_seed=7
-    ):
+    def drifted_current_summary(rows, *, bootstrap_resamples=9_999, bootstrap_seed=7):
         return current_build_summary(
             rows,
             bootstrap_resamples=bootstrap_resamples,
@@ -3540,14 +3557,16 @@ def test_original_protocol_is_independent_from_current_harness_drift(
     assert expected["fixture_hashes"]["turn_prompts_sha256"] == (
         "3f6b88ffa37b4f6b9673878288b93d81e965c50cba1fb2ce7bbb4dfadb5245ac"
     )
-    assert expected["metric_names"] == sorted([
-        "assistant_durable_to_release_ns",
-        "conversation_wall_ns",
-        "event_loop_lag_p95_ns",
-        "provider_total_ns",
-        "terminal_to_third_provider_ns",
-        "third_send_to_worker_ns",
-    ])
+    assert expected["metric_names"] == sorted(
+        [
+            "assistant_durable_to_release_ns",
+            "conversation_wall_ns",
+            "event_loop_lag_p95_ns",
+            "provider_total_ns",
+            "terminal_to_third_provider_ns",
+            "third_send_to_worker_ns",
+        ]
+    )
     assert profile.protocol_mismatches(expected, observed) == (
         "protocol_request_settings_mismatch",
         "protocol_fixture_hashes_mismatch",
@@ -3710,7 +3729,9 @@ def test_confirmation_protocol_rejects_malformed_json_shapes_stably(
         profile.confirmation_protocol(**arguments)
 
 
-@pytest.mark.parametrize("expected,observed", [(None, {}), ({}, []), ([], []), (1, "x")])
+@pytest.mark.parametrize(
+    "expected,observed", [(None, {}), ({}, []), ([], []), (1, "x")]
+)
 def test_protocol_mismatches_rejects_malformed_json_shapes_stably(
     expected: object, observed: object
 ) -> None:
@@ -3898,7 +3919,9 @@ def test_confirmatory_schedule_continues_rotation_after_five_burn_in_blocks() ->
     burn_in = [row for row in schedule if row.phase == "burn_in"]
     assert len(burn_in) == 15
     for block in range(5):
-        block_rows = burn_in[block * len(profile.ARMS) : (block + 1) * len(profile.ARMS)]
+        block_rows = burn_in[
+            block * len(profile.ARMS) : (block + 1) * len(profile.ARMS)
+        ]
         assert [(row.arm, row.iteration) for row in block_rows] == [
             (arm, block) for arm in profile.balanced_arm_order(block)
         ]
@@ -4099,7 +4122,9 @@ def test_resolve_revision_rejects_a_different_control_hash(tmp_path: Path) -> No
     resolve_benchmark_revisions = getattr(profile, "resolve_benchmark_revisions", None)
 
     def fake_run(command, **kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout="d" * 40 + "\n", stderr="")
+        return subprocess.CompletedProcess(
+            command, 0, stdout="d" * 40 + "\n", stderr=""
+        )
 
     assert callable(resolve_benchmark_revisions)
     with pytest.raises(RuntimeError, match="control_revision_mismatch"):
@@ -4257,9 +4282,7 @@ def test_legacy_output_root_rejects_campaign_burn_in(tmp_path: Path) -> None:
         )
 
 
-@pytest.mark.parametrize(
-    ("iterations", "burn_in_blocks"), ((30, 5), (1, 1))
-)
+@pytest.mark.parametrize(("iterations", "burn_in_blocks"), ((30, 5), (1, 1)))
 def test_confirmatory_child_cli_accepts_parent_burn_in(
     tmp_path: Path, iterations: int, burn_in_blocks: int
 ) -> None:
@@ -4286,9 +4309,7 @@ def test_confirmatory_child_cli_accepts_parent_burn_in(
     assert arguments.burn_in_blocks == burn_in_blocks
 
 
-@pytest.mark.parametrize(
-    ("iterations", "burn_in_blocks"), ((30, 5), (1, 1))
-)
+@pytest.mark.parametrize(("iterations", "burn_in_blocks"), ((30, 5), (1, 1)))
 def test_real_confirmatory_child_command_reaches_child_mode_after_parse(
     tmp_path: Path, iterations: int, burn_in_blocks: int
 ) -> None:
@@ -4412,10 +4433,10 @@ def test_reopen_review_cli_dispatches_without_provider_contact(
     monkeypatch.setattr(
         profile,
         "reopen_review_receipt",
-        lambda campaign, attempt, review, *, correction_id: observed.append(
-            (campaign, attempt, review, correction_id)
-        )
-        or {"artifact_set_sha256": "a" * 64, "decision": "changes_required"},
+        lambda campaign, attempt, review, *, correction_id: (
+            observed.append((campaign, attempt, review, correction_id))
+            or {"artifact_set_sha256": "a" * 64, "decision": "changes_required"}
+        ),
     )
     monkeypatch.setattr(
         profile,
@@ -4423,20 +4444,23 @@ def test_reopen_review_cli_dispatches_without_provider_contact(
         lambda *_args: pytest.fail("maintenance action contacted provider"),
     )
 
-    assert profile.main(
-        [
-            "--campaign-action",
-            "reopen-review",
-            "--campaign-root",
-            str(tmp_path / "campaign"),
-            "--attempt-id",
-            "attempt-0001",
-            "--review-receipt",
-            str(receipt),
-            "--correction-id",
-            "correction-001",
-        ]
-    ) == 0
+    assert (
+        profile.main(
+            [
+                "--campaign-action",
+                "reopen-review",
+                "--campaign-root",
+                str(tmp_path / "campaign"),
+                "--attempt-id",
+                "attempt-0001",
+                "--review-receipt",
+                str(receipt),
+                "--correction-id",
+                "correction-001",
+            ]
+        )
+        == 0
+    )
     assert observed == [
         (tmp_path / "campaign", "attempt-0001", receipt, "correction-001")
     ]
@@ -4458,10 +4482,9 @@ def test_prepare_correction_cli_dispatches_without_provider_contact(
     monkeypatch.setattr(
         profile,
         "prepare_manifest_correction",
-        lambda root, attempt, *, correction_id: observed.append(
-            (root, attempt, correction_id)
-        )
-        or correction,
+        lambda root, attempt, *, correction_id: (
+            observed.append((root, attempt, correction_id)) or correction
+        ),
     )
     monkeypatch.setattr(
         profile,
@@ -4474,18 +4497,21 @@ def test_prepare_correction_cli_dispatches_without_provider_contact(
         lambda *_args: pytest.fail("maintenance action contacted provider"),
     )
 
-    assert profile.main(
-        [
-            "--campaign-action",
-            "prepare-correction",
-            "--campaign-root",
-            str(campaign),
-            "--attempt-id",
-            "attempt-0001",
-            "--correction-id",
-            "correction-001",
-        ]
-    ) == 0
+    assert (
+        profile.main(
+            [
+                "--campaign-action",
+                "prepare-correction",
+                "--campaign-root",
+                str(campaign),
+                "--attempt-id",
+                "attempt-0001",
+                "--correction-id",
+                "correction-001",
+            ]
+        )
+        == 0
+    )
     assert observed == [(campaign, "attempt-0001", "correction-001")]
     assert json.loads(capsys.readouterr().out) == {
         "artifact_set_sha256": "a" * 64,
@@ -4767,9 +4793,10 @@ def test_implementation_base_revision_resolves_only_the_fixed_ref(
             stderr="",
         )
 
-    assert profile.resolve_implementation_base_revision(
-        tmp_path, run_command=run
-    ) == "77c5e9f487af79391a479deb85e712163bfed909"
+    assert (
+        profile.resolve_implementation_base_revision(tmp_path, run_command=run)
+        == "77c5e9f487af79391a479deb85e712163bfed909"
+    )
     assert calls == [
         [
             "git",
@@ -4915,7 +4942,9 @@ def test_reopen_review_registers_later_rejection_and_correction_identity(
         / "reviews"
         / f"review-002.json--{hashlib.sha256(rejected.read_bytes()).hexdigest()}"
     ).is_file()
-    assert approved.read_bytes() == (attempt / "reviews" / "review-001.json").read_bytes()
+    assert (
+        approved.read_bytes() == (attempt / "reviews" / "review-001.json").read_bytes()
+    )
 
 
 @pytest.mark.parametrize("append_committed", (False, True))
@@ -4977,12 +5006,15 @@ def test_reopen_review_reconciles_marker_to_lineage_crash_window(
     monkeypatch.setattr(profile, "_fsync_regular_file", record_file)
     monkeypatch.setattr(profile, "_fsync_directory", record_directory)
     monkeypatch.setattr(profile, "append_attempt_state", real_append)
-    assert profile.reopen_review_receipt(
-        campaign,
-        "attempt-0001",
-        rejected,
-        correction_id="correction-001",
-    )["decision"] == "changes_required"
+    assert (
+        profile.reopen_review_receipt(
+            campaign,
+            "attempt-0001",
+            rejected,
+            correction_id="correction-001",
+        )["decision"]
+        == "changes_required"
+    )
     states = profile.attempt_lineage(campaign / "attempts.jsonl")
     assert [event["state"] for event in states] == [
         "running",
@@ -4998,9 +5030,7 @@ def test_reopen_review_refsyncs_incomplete_marker_before_lineage_retry(
     monkeypatch: pytest.MonkeyPatch,
     failure: str,
 ) -> None:
-    campaign, attempt, approved, digest, _raw_sha256 = _approve_review_attempt(
-        tmp_path
-    )
+    campaign, attempt, approved, digest, _raw_sha256 = _approve_review_attempt(tmp_path)
     rejected = _write_review_receipt(
         attempt,
         digest,
@@ -5066,12 +5096,15 @@ def test_reopen_review_refsyncs_incomplete_marker_before_lineage_retry(
     monkeypatch.setattr(profile, "_fsync_regular_file", record_file)
     monkeypatch.setattr(profile, "_fsync_directory", record_directory)
     monkeypatch.setattr(profile, "append_attempt_state", record_append)
-    assert profile.reopen_review_receipt(
-        campaign,
-        "attempt-0001",
-        rejected,
-        correction_id="correction-001",
-    )["decision"] == "changes_required"
+    assert (
+        profile.reopen_review_receipt(
+            campaign,
+            "attempt-0001",
+            rejected,
+            correction_id="correction-001",
+        )["decision"]
+        == "changes_required"
+    )
 
     assert events == ["marker", "directory", "lineage"]
 
@@ -5239,9 +5272,7 @@ def test_manifest_correction_rename_failure_leaves_no_partial_root(
     campaign, attempt, _approved, _digest, _raw_sha256 = _reopen_approved_attempt(
         tmp_path
     )
-    original = {
-        name: (attempt / name).read_bytes() for name in REVIEWED_ARTIFACT_NAMES
-    }
+    original = {name: (attempt / name).read_bytes() for name in REVIEWED_ARTIFACT_NAMES}
     monkeypatch.setattr(
         profile,
         "_atomic_rename_directory_noreplace",
@@ -5419,9 +5450,10 @@ def test_post_rename_correction_republishes_parent_before_approval_marker(
     monkeypatch.setattr(profile, "_fsync_regular_file", record_file)
     monkeypatch.setattr(profile, "_fsync_directory", record_directory)
     monkeypatch.setattr(profile, "complete_attempt_measurement", record_complete)
-    assert profile.register_review_receipt(
-        campaign, "attempt-0001", receipt
-    )["decision"] == "approved"
+    assert (
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)["decision"]
+        == "approved"
+    )
 
     assert retry_events == [
         "correction",
@@ -5437,9 +5469,7 @@ def test_versioned_manifest_correction_preserves_original_and_promotes_by_path(
     synthetic_correction_authority: None,
 ) -> None:
     campaign, attempt, approved, digest, raw_sha256 = _approve_review_attempt(tmp_path)
-    original = {
-        name: (attempt / name).read_bytes() for name in REVIEWED_ARTIFACT_NAMES
-    }
+    original = {name: (attempt / name).read_bytes() for name in REVIEWED_ARTIFACT_NAMES}
     approved_bytes = approved.read_bytes()
     rejected = _write_review_receipt(
         attempt,
@@ -5480,9 +5510,7 @@ def test_versioned_manifest_correction_preserves_original_and_promotes_by_path(
         filename="review-003.json",
     )
 
-    profile.register_review_receipt(
-        campaign, "attempt-0001", approved_correction
-    )
+    profile.register_review_receipt(campaign, "attempt-0001", approved_correction)
 
     assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1] == {
         "attempt_id": "attempt-0001",
@@ -5563,9 +5591,10 @@ def test_correction_approval_reconciles_marker_to_lineage_crash_window(
     monkeypatch.setattr(profile, "_fsync_regular_file", record_file)
     monkeypatch.setattr(profile, "_fsync_directory", record_directory)
     monkeypatch.setattr(profile, "complete_attempt_measurement", real_complete)
-    assert profile.register_review_receipt(
-        campaign, "attempt-0001", receipt
-    )["decision"] == "approved"
+    assert (
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)["decision"]
+        == "approved"
+    )
     states = profile.attempt_lineage(campaign / "attempts.jsonl")
     assert [event["state"] for event in states] == [
         "running",
@@ -5646,9 +5675,10 @@ def test_correction_approval_refsyncs_incomplete_marker_before_lineage_retry(
     monkeypatch.setattr(profile, "_fsync_regular_file", record_file)
     monkeypatch.setattr(profile, "_fsync_directory", record_directory)
     monkeypatch.setattr(profile, "complete_attempt_measurement", record_complete)
-    assert profile.register_review_receipt(
-        campaign, "attempt-0001", receipt
-    )["decision"] == "approved"
+    assert (
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)["decision"]
+        == "approved"
+    )
 
     assert events == ["marker", "directory", "lineage"]
 
@@ -5746,9 +5776,10 @@ def test_correction_namespace_fsync_failure_is_stable_and_retryable(
     assert approved.is_file()
     assert correction.is_dir()
     monkeypatch.setattr(profile, "_fsync_directory", real_fsync)
-    assert profile.register_review_receipt(
-        campaign, "attempt-0001", receipt
-    )["decision"] == "approved"
+    assert (
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)["decision"]
+        == "approved"
+    )
 
 
 def test_correction_approval_rejects_wrong_root_or_unchanged_digest(
@@ -5771,7 +5802,9 @@ def test_correction_approval_rejects_wrong_root_or_unchanged_digest(
     )
     wrong = attempt / "corrections" / "correction-002"
     _write_reviewed_artifacts(wrong)
-    receipt = _write_review_receipt(wrong, profile.canonical_artifact_digest(wrong), filename="review-003.json")
+    receipt = _write_review_receipt(
+        wrong, profile.canonical_artifact_digest(wrong), filename="review-003.json"
+    )
 
     with pytest.raises(RuntimeError, match="^review_correction_identity_mismatch$"):
         profile.register_review_receipt(campaign, "attempt-0001", receipt)
@@ -5887,9 +5920,10 @@ def test_registered_changes_receipt_reconciles_append_failure_without_duplicate(
 
     assert (attempt / "reviews" / ".registered").is_dir()
     monkeypatch.setattr(profile, "append_attempt_state", real_append)
-    assert profile.register_review_receipt(
-        campaign, "attempt-0001", receipt
-    )["decision"] == "changes_required"
+    assert (
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)["decision"]
+        == "changes_required"
+    )
     assert [
         event["state"] for event in profile.attempt_lineage(campaign / "attempts.jsonl")
     ] == ["running", "complete_pending_review", "changes_required"]
@@ -6281,9 +6315,10 @@ def test_receipt_marker_fsync_failure_is_stable_and_preserves_marker(
     monkeypatch.setattr(profile, "_fsync_regular_file", record_file)
     monkeypatch.setattr(profile, "_fsync_directory", record_directory)
 
-    assert profile.register_review_receipt(
-        campaign, "attempt-0001", receipt
-    )["decision"] == decision
+    assert (
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)["decision"]
+        == decision
+    )
     assert events[-2:] == ["marker", "registry"]
 
 
@@ -6315,9 +6350,10 @@ def test_concurrent_changes_required_registration_has_one_stable_loser(
         finish.set()
         assert winner.result(timeout=5)["decision"] == "changes_required"
 
-    assert profile.register_review_receipt(
-        campaign, "attempt-0001", receipt
-    )["decision"] == "changes_required"
+    assert (
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)["decision"]
+        == "changes_required"
+    )
     assert [
         event["state"] for event in profile.attempt_lineage(campaign / "attempts.jsonl")
     ] == ["running", "complete_pending_review", "changes_required"]
@@ -6522,11 +6558,7 @@ def test_native_setup_and_mode_restore_double_failure_is_stable(
         real_close(descriptor)
 
     def fail_restore(descriptor: int, mode: int) -> None:
-        if (
-            descriptor == stage_fd
-            and native_symbol_requested
-            and mode == 0o555
-        ):
+        if descriptor == stage_fd and native_symbol_requested and mode == 0o555:
             raise OSError("injected source mode restore failure")
         real_fchmod(descriptor, mode)
 
@@ -6730,9 +6762,7 @@ def test_failed_native_rename_never_clears_foreign_destination_flags(
     stage = destination.parent / f".{destination.name}.task-20010-stage"
     native_library = profile.ctypes.CDLL(None, use_errno=True)
     real_native = native_library.renamex_np
-    foreign_names = REVIEWED_ARTIFACT_NAMES | {
-        "confirmatory-review-receipt.json"
-    }
+    foreign_names = REVIEWED_ARTIFACT_NAMES | {"confirmatory-review-receipt.json"}
     foreign_state: dict[str, tuple[bytes, int]] = {}
 
     class RacingRename:
@@ -7019,10 +7049,10 @@ def test_post_rename_restore_failure_is_stable_and_closes_owned_descriptors(
     def track_open(path, flags, *args, **kwargs):
         descriptor = real_open(path, flags, *args, **kwargs)
         candidate = Path(path)
-        if (
-            candidate in {stage, destination}
-            or candidate.parent in {stage, destination}
-        ):
+        if candidate in {stage, destination} or candidate.parent in {
+            stage,
+            destination,
+        }:
             owned_descriptors.add(descriptor)
         return descriptor
 
@@ -7364,7 +7394,9 @@ def test_prepare_output_root_allows_only_retained_readme(tmp_path: Path) -> None
         prepare_output_root(output)
 
 
-def test_remove_successful_sample_root_is_confined_to_run_samples(tmp_path: Path) -> None:
+def test_remove_successful_sample_root_is_confined_to_run_samples(
+    tmp_path: Path,
+) -> None:
     remove_successful_sample_root = getattr(
         profile, "remove_successful_sample_root", None
     )
@@ -7417,9 +7449,7 @@ def test_remove_successful_sample_root_parent_swap_preserves_foreign(
         swap_parent()
         original_clear(descriptor, **kwargs)
 
-    monkeypatch.setattr(
-        profile, "_remove_directory_contents_fd", clear_then_swap
-    )
+    monkeypatch.setattr(profile, "_remove_directory_contents_fd", clear_then_swap)
 
     with pytest.raises(RuntimeError, match="^sample_cleanup_refused$"):
         profile.remove_successful_sample_root(run_root, sample_root)
@@ -7454,9 +7484,7 @@ def test_preflight_provider_verifies_exact_model_without_credentials() -> None:
         assert timeout > 0
         if request.full_url.endswith("/v1/models"):
             return Response({"data": [{"id": "fixture.gguf"}]})
-        return Response(
-            {"choices": [{"message": {"content": "synthetic-ok"}}]}
-        )
+        return Response({"choices": [{"message": {"content": "synthetic-ok"}}]})
 
     assert callable(preflight_provider)
     result = preflight_provider(
@@ -7497,10 +7525,13 @@ def test_extract_sse_usage_retains_only_exact_token_counts() -> None:
         "total_tokens": 21,
     }
     assert extract_sse_usage("data: [DONE]") is None
-    assert extract_sse_usage(
-        'data: {"usage":{"prompt_tokens":17,"completion_tokens":4,'
-        '"total_tokens":20}}'
-    ) is None
+    assert (
+        extract_sse_usage(
+            'data: {"usage":{"prompt_tokens":17,"completion_tokens":4,'
+            '"total_tokens":20}}'
+        )
+        is None
+    )
 
 
 def test_runtime_and_host_metadata_are_content_free(
@@ -7518,8 +7549,7 @@ def test_runtime_and_host_metadata_are_content_free(
     host = host_load_snapshot()
 
     assert runtime["dependencies"] == {
-        name: f"fixture-{name}"
-        for name in ("httpx", "pydantic", "rich", "textual")
+        name: f"fixture-{name}" for name in ("httpx", "pydantic", "rich", "textual")
     }
     assert isinstance(runtime["sqlite"], str)
     assert host == {"logical_cpu_count": 8, "load_average": [1.25, 2.5, 3.75]}
@@ -7593,9 +7623,7 @@ def test_listener_resource_snapshot_retains_counts_not_process_identity() -> Non
         return SimpleNamespace(returncode=0, stdout=values[command[-1]], stderr="")
 
     assert callable(listener_resource_snapshot)
-    result = listener_resource_snapshot(
-        "http://127.0.0.1:9099", run_command=fake_run
-    )
+    result = listener_resource_snapshot("http://127.0.0.1:9099", run_command=fake_run)
 
     assert result == {
         "listener_count": 2,
@@ -7632,9 +7660,7 @@ def test_current_harness_identity_refuses_any_dirty_file(
             runner_path=runner,
             run_command=fake_run,
         )
-    assert commands == [
-        ["git", "status", "--porcelain", "--untracked-files=all"]
-    ]
+    assert commands == [["git", "status", "--porcelain", "--untracked-files=all"]]
 
 
 def test_current_harness_identity_retains_full_revision_and_runner_digest(
@@ -7696,9 +7722,7 @@ def test_parent_retains_harness_identity_and_splits_original_roots(
     repository_root = Path(profile.__file__).resolve().parents[2]
     output = tmp_path / "run"
     harness = {"revision": "1" * 40, "runner_sha256": "2" * 64}
-    plans = tuple(
-        profile.SamplePlan("measured", arm, 0) for arm in profile.ARMS
-    )
+    plans = tuple(profile.SamplePlan("measured", arm, 0) for arm in profile.ARMS)
     monkeypatch.setattr(profile, "current_harness_identity", lambda _root: harness)
     monkeypatch.setattr(
         profile,
@@ -7725,7 +7749,9 @@ def test_parent_retains_harness_identity_and_splits_original_roots(
     monkeypatch.setattr(profile, "sample_schedule", lambda _iterations: plans)
     monkeypatch.setattr(profile, "validate_sample", lambda _row: ())
     monkeypatch.setattr(profile, "validate_run", lambda *_args, **_kwargs: ())
-    monkeypatch.setattr(profile, "_remove_target_worktrees", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        profile, "_remove_target_worktrees", lambda *_args, **_kwargs: None
+    )
 
     def prepare(_repository, run_root, *, name, revision):
         target = run_root / name
@@ -7951,7 +7977,9 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
         "resolve_implementation_base_revision",
         lambda _root: profile.IMPLEMENTATION_BASE_SHA,
     )
-    monkeypatch.setattr(profile, "preflight_provider", lambda *_args: {"status": "ready"})
+    monkeypatch.setattr(
+        profile, "preflight_provider", lambda *_args: {"status": "ready"}
+    )
     monkeypatch.setattr(
         profile,
         "provider_server_metadata",
@@ -7990,8 +8018,10 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
     statistics = SimpleNamespace(
         validate_sample=lambda _row: (),
         validate_run=lambda _rows, **_kwargs: (),
-        build_summary=lambda rows: summary_inputs.append(list(rows))
-        or {"overall_verdict": "pass", "sample_count": len(rows)},
+        build_summary=lambda rows: (
+            summary_inputs.append(list(rows))
+            or {"overall_verdict": "pass", "sample_count": len(rows)}
+        ),
     )
     monkeypatch.setattr(profile, "load_original_runner", lambda _root: statistics)
     monkeypatch.setattr(
@@ -8017,7 +8047,8 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
                     "legacy" if spec["arm"] == "control" else "candidate"
                 ),
                 "workspace_content_tree_digest": "4" * 64,
-                "tool_definition_sha256": ("5" if spec["arm"] == "control" else "6") * 64,
+                "tool_definition_sha256": ("5" if spec["arm"] == "control" else "6")
+                * 64,
                 "behavior_sha256": expected_behaviors[str(spec["arm"])],
                 "final_ownership": {"live_threads": 0},
             }
@@ -8100,14 +8131,19 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
     )
 
     if finalization_failure is not None:
-        with pytest.raises(RuntimeError, match=f"{finalization_failure}_finalization_failed"):
+        with pytest.raises(
+            RuntimeError, match=f"{finalization_failure}_finalization_failed"
+        ):
             profile.run_parent_mode(args)
         pinned = profile.read_acquisition_pin(campaign, attempt.attempt_id)
         assert pinned is not None
         assert finalization[0] == "pin"
-        assert profile.recover_interrupted_attempt(
-            campaign, process_start_probe=lambda _pid: None
-        ) == pinned
+        assert (
+            profile.recover_interrupted_attempt(
+                campaign, process_start_probe=lambda _pid: None
+            )
+            == pinned
+        )
         with pytest.raises(
             RuntimeError, match="campaign_acquisition_blocked:complete_pending_review"
         ):
@@ -8118,9 +8154,7 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
     assert finalization == ["pin", "manifest", "summary", "run_complete"]
     preflights = [spec for spec, _cwd in child_specs[:3]]
     samples = child_specs[3:]
-    schedule = profile.sample_schedule(
-        iterations, burn_in_blocks=burn_in_blocks
-    )
+    schedule = profile.sample_schedule(iterations, burn_in_blocks=burn_in_blocks)
     raw_rows = [
         json.loads(line)
         for line in (output / "real-provider-three-turn.raw.jsonl")
@@ -8142,14 +8176,10 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
         roots["control"]
     ] * sum(item.arm == "control" for item in schedule)
     assert all(
-        cwd == roots["candidate"]
-        for spec, cwd in samples
-        if spec["arm"] != "control"
+        cwd == roots["candidate"] for spec, cwd in samples if spec["arm"] != "control"
     )
     assert len(listener_checks) == len(schedule) * 2
-    summary = json.loads(
-        (output / "real-provider-three-turn.summary.json").read_text()
-    )
+    summary = json.loads((output / "real-provider-three-turn.summary.json").read_text())
     statistics_row_count = len(schedule) - burn_in_blocks * len(profile.ARMS)
     assert summary["sample_count"] == statistics_row_count
     assert summary["excluded_burn_in_sample_count"] == (
@@ -8201,9 +8231,7 @@ def test_listener_identity_hashes_pid_and_start_without_retaining_them() -> None
 
     assert result == {
         "listener_count": 1,
-        "fingerprint_sha256": hashlib.sha256(
-            f"42\0{started}".encode()
-        ).hexdigest(),
+        "fingerprint_sha256": hashlib.sha256(f"42\0{started}".encode()).hexdigest(),
     }
     retained = json.dumps(result, sort_keys=True)
     assert "pid" not in result
@@ -8222,11 +8250,14 @@ def test_listener_identity_is_verified_at_repeated_boundaries() -> None:
     )
 
     for _boundary in range(6):
-        assert profile.verify_listener_identity(
-            "http://127.0.0.1:9099",
-            first["fingerprint_sha256"],
-            run_command=_listener_run(started),
-        ) == first
+        assert (
+            profile.verify_listener_identity(
+                "http://127.0.0.1:9099",
+                first["fingerprint_sha256"],
+                run_command=_listener_run(started),
+            )
+            == first
+        )
 
 
 def test_changed_listener_identity_invalidates_the_attempt() -> None:
@@ -8427,9 +8458,7 @@ def _exact_protocol_preflight_rows() -> list[dict[str, object]]:
     return [
         {
             "arm": arm,
-            "target_revision_kind": (
-                "legacy" if arm == "control" else "candidate"
-            ),
+            "target_revision_kind": ("legacy" if arm == "control" else "candidate"),
             "behavior_sha256": expected[arm],
             "workspace_content_tree_digest": "c" * 64,
             "tool_definition_sha256": f"{index + 1}" * 64,
@@ -8463,10 +8492,13 @@ def test_protocol_preflight_rejects_each_arm_behavior_mismatch(arm: str) -> None
         profile.validate_protocol_preflight_rows(rows)
 
 
-@pytest.mark.parametrize(("mutation", "code"), [
-    ("missing", "protocol_preflight_behavior_missing:disabled"),
-    ("duplicate", "protocol_preflight_behavior_duplicate:disabled"),
-])
+@pytest.mark.parametrize(
+    ("mutation", "code"),
+    [
+        ("missing", "protocol_preflight_behavior_missing:disabled"),
+        ("duplicate", "protocol_preflight_behavior_duplicate:disabled"),
+    ],
+)
 def test_protocol_preflight_rejects_missing_or_duplicate_arm(
     mutation: str, code: str
 ) -> None:
@@ -8481,7 +8513,9 @@ def test_protocol_preflight_rejects_missing_or_duplicate_arm(
         profile.validate_protocol_preflight_rows(rows)
 
 
-def test_protocol_preflight_measures_ownership_only_after_cleanup(tmp_path: Path) -> None:
+def test_protocol_preflight_measures_ownership_only_after_cleanup(
+    tmp_path: Path,
+) -> None:
     closed: list[str] = []
     runtime = SimpleNamespace(
         workspace_root=tmp_path / "workspace",
@@ -8510,11 +8544,14 @@ def test_protocol_preflight_measures_ownership_only_after_cleanup(tmp_path: Path
     )
 
     assert result["final_ownership"] == ownership_probe(set())
-    assert not {
-        "provider_closed",
-        "sqlite_closed",
-        "shadow_operations_pending",
-    } & result["final_ownership"].keys()
+    assert (
+        not {
+            "provider_closed",
+            "sqlite_closed",
+            "shadow_operations_pending",
+        }
+        & result["final_ownership"].keys()
+    )
 
 
 def test_protocol_preflight_restores_adapter_when_runtime_close_fails(
@@ -8702,7 +8739,9 @@ def test_child_mode_preserves_async_cancellation_as_terminal_failure(
     monkeypatch.setattr(
         profile,
         "assert_target_modules",
-        lambda *_args: {name: str(target_root / "fixture.py") for name in profile.TARGET_MODULES},
+        lambda *_args: {
+            name: str(target_root / "fixture.py") for name in profile.TARGET_MODULES
+        },
     )
     monkeypatch.setattr(
         profile.TargetAdapter,
@@ -8731,7 +8770,9 @@ def test_child_mode_preserves_async_cancellation_as_terminal_failure(
     assert rows[-1]["error_origin"] == "cancelled"
 
 
-def test_owned_cleanup_suppresses_child_cancellation_but_not_task_cancellation() -> None:
+def test_owned_cleanup_suppresses_child_cancellation_but_not_task_cancellation() -> (
+    None
+):
     await_owned_cleanup = getattr(profile, "await_owned_cleanup", None)
 
     assert callable(await_owned_cleanup)
@@ -8753,9 +8794,7 @@ def test_owned_cleanup_suppresses_child_cancellation_but_not_task_cancellation()
 
 
 def test_owned_teardown_cancel_requires_completed_contract_and_live_caller() -> None:
-    should_suppress = getattr(
-        profile, "should_suppress_owned_teardown_cancel", None
-    )
+    should_suppress = getattr(profile, "should_suppress_owned_teardown_cancel", None)
 
     assert callable(should_suppress)
     assert should_suppress(contract_complete=True, cancellation_count=0) is True
@@ -8833,22 +8872,25 @@ def test_main_acquisition_owns_attempt_through_pending_review(
         lambda root, owned: calls.append(("release", root, owned)),
     )
 
-    assert profile.main(
-        [
-            "--endpoint",
-            "http://127.0.0.1:9099",
-            "--model",
-            "fixture.gguf",
+    assert (
+        profile.main(
+            [
+                "--endpoint",
+                "http://127.0.0.1:9099",
+                "--model",
+                "fixture.gguf",
                 "--campaign-root",
                 str(campaign),
                 "--iterations",
                 "1",
                 "--burn-in-blocks",
                 "1",
-            "--candidate-sha",
-            profile.CANDIDATE_SHA,
-        ]
-    ) == 0
+                "--candidate-sha",
+                profile.CANDIDATE_SHA,
+            ]
+        )
+        == 0
+    )
     assert [call[0] for call in calls] == ["acquire", "parent", "complete", "release"]
     assert calls[2][3] == {
         "verdict": "smoke",
@@ -8913,9 +8955,7 @@ def test_pre_acquisition_failure_preserves_terminal_append_failure_and_lock(
 def test_predefinitive_failure_classification_is_explicit(
     code: str, state: str, reason_category: str
 ) -> None:
-    assert profile.acquisition_failure_event(
-        "attempt-0001", RuntimeError(code)
-    ) == {
+    assert profile.acquisition_failure_event("attempt-0001", RuntimeError(code)) == {
         "attempt_id": "attempt-0001",
         "state": state,
         "reason_category": reason_category,
@@ -9109,9 +9149,7 @@ def test_acquisition_pin_is_atomic_empty_campaign_marker_not_attempt_artifact(
         raw_sha256="a" * 64,
     )
 
-    marker = campaign / (
-        "acquisition-pins/attempt-0001--pass--" + "a" * 64
-    )
+    marker = campaign / ("acquisition-pins/attempt-0001--pass--" + "a" * 64)
     assert marker.is_dir()
     assert list(marker.iterdir()) == []
     assert list(marker.parent.iterdir()) == [marker]
@@ -9143,9 +9181,7 @@ def test_pin_marker_survives_parent_fsync_failure_without_retryable_terminal(
         real_fsync(path)
 
     monkeypatch.setattr(profile, "_fsync_directory", fail_after_marker_mkdir)
-    args = SimpleNamespace(
-        campaign_root=campaign, iterations=30, burn_in_blocks=5
-    )
+    args = SimpleNamespace(campaign_root=campaign, iterations=30, burn_in_blocks=5)
 
     assert profile.run_acquisition_action(args) == 0
 
@@ -9154,10 +9190,13 @@ def test_pin_marker_survives_parent_fsync_failure_without_retryable_terminal(
     assert pending is not None
     assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1] == pending
     assert not (campaign / ".campaign-lock").exists()
-    assert profile.recover_interrupted_attempt(
-        campaign,
-        process_start_probe=lambda _pid: pytest.fail("released owner was probed"),
-    ) == pending
+    assert (
+        profile.recover_interrupted_attempt(
+            campaign,
+            process_start_probe=lambda _pid: pytest.fail("released owner was probed"),
+        )
+        == pending
+    )
     with pytest.raises(
         RuntimeError, match="campaign_acquisition_blocked:complete_pending_review"
     ):
@@ -9185,9 +9224,7 @@ def test_persistent_pin_parent_fsync_failure_stays_running_until_recovery(
         real_fsync(path)
 
     monkeypatch.setattr(profile, "_fsync_directory", fail_pin_parent_fsync)
-    args = SimpleNamespace(
-        campaign_root=campaign, iterations=30, burn_in_blocks=5
-    )
+    args = SimpleNamespace(campaign_root=campaign, iterations=30, burn_in_blocks=5)
 
     with pytest.raises(
         RuntimeError, match="^campaign_acquisition_pin_durability_failed$"
@@ -9202,9 +9239,12 @@ def test_persistent_pin_parent_fsync_failure_stays_running_until_recovery(
     assert (campaign / ".campaign-lock").is_dir()
     persistent_failure = False
 
-    assert profile.recover_interrupted_attempt(
-        campaign, process_start_probe=lambda _pid: None
-    ) == pin
+    assert (
+        profile.recover_interrupted_attempt(
+            campaign, process_start_probe=lambda _pid: None
+        )
+        == pin
+    )
     assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1] == pin
     assert not (campaign / ".campaign-lock").exists()
     with pytest.raises(
@@ -9237,9 +9277,7 @@ def test_pin_callback_failure_never_appends_retryable_terminal(
         raise OSError("injected pin callback failure")
 
     monkeypatch.setattr(profile, "write_acquisition_pin", fail_pin)
-    args = SimpleNamespace(
-        campaign_root=campaign, iterations=30, burn_in_blocks=5
-    )
+    args = SimpleNamespace(campaign_root=campaign, iterations=30, burn_in_blocks=5)
 
     if pin_outcome == "exact":
         assert profile.run_acquisition_action(args) == 0
@@ -9348,9 +9386,7 @@ def test_pending_ledger_failure_keeps_raw_verdict_pin_blocking_and_resumable(
             RuntimeError("pending_ledger_write_failed")
         ),
     )
-    args = SimpleNamespace(
-        campaign_root=campaign, iterations=30, burn_in_blocks=5
-    )
+    args = SimpleNamespace(campaign_root=campaign, iterations=30, burn_in_blocks=5)
 
     with pytest.raises(RuntimeError, match="pending_ledger_write_failed"):
         profile.run_acquisition_action(args)
@@ -9367,7 +9403,9 @@ def test_pending_ledger_failure_keeps_raw_verdict_pin_blocking_and_resumable(
         "real-provider-three-turn.summary.json",
         "real-provider-three-turn.manifest.json",
     }
-    assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1]["state"] == "running"
+    assert (
+        profile.attempt_lineage(campaign / "attempts.jsonl")[-1]["state"] == "running"
+    )
     assert (campaign / ".campaign-lock").is_dir()
     with pytest.raises(RuntimeError, match="campaign_acquisition_blocked:running"):
         profile.require_campaign_acquisition(campaign / "attempts.jsonl")
@@ -9412,9 +9450,7 @@ def test_post_acquisition_manifest_failure_stays_pending_and_releases_lock(
 
     with pytest.raises(RuntimeError, match="manifest_finalization_failed"):
         profile.run_acquisition_action(
-            SimpleNamespace(
-                campaign_root=campaign, iterations=30, burn_in_blocks=5
-            )
+            SimpleNamespace(campaign_root=campaign, iterations=30, burn_in_blocks=5)
         )
 
     lineage = profile.attempt_lineage(campaign / "attempts.jsonl")
@@ -9454,18 +9490,19 @@ def test_recovery_finishes_lock_release_when_pending_append_raised_after_commit(
 
     with pytest.raises(RuntimeError, match="pending_ledger_post_commit_failed"):
         profile.run_acquisition_action(
-            SimpleNamespace(
-                campaign_root=campaign, iterations=30, burn_in_blocks=5
-            )
+            SimpleNamespace(campaign_root=campaign, iterations=30, burn_in_blocks=5)
         )
 
     pin = profile.read_acquisition_pin(campaign, attempt.attempt_id)
     assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1] == pin
     assert (campaign / ".campaign-lock").is_dir()
     monkeypatch.undo()
-    assert profile.recover_interrupted_attempt(
-        campaign, process_start_probe=lambda _pid: None
-    ) == pin
+    assert (
+        profile.recover_interrupted_attempt(
+            campaign, process_start_probe=lambda _pid: None
+        )
+        == pin
+    )
     assert not (campaign / ".campaign-lock").exists()
 
 
@@ -9480,17 +9517,24 @@ def test_recover_action_never_contacts_provider(
     monkeypatch.setattr(
         profile,
         "recover_interrupted_attempt",
-        lambda root: {"attempt_id": "attempt-0001", "state": "failed", "reason_category": "interrupted"},
+        lambda root: {
+            "attempt_id": "attempt-0001",
+            "state": "failed",
+            "reason_category": "interrupted",
+        },
     )
 
-    assert profile.main(
-        [
-            "--campaign-action",
-            "recover",
-            "--campaign-root",
-            str(tmp_path),
-        ]
-    ) == 0
+    assert (
+        profile.main(
+            [
+                "--campaign-action",
+                "recover",
+                "--campaign-root",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    )
 
 
 def test_safe_error_code_retains_only_stable_body_free_tokens() -> None:
@@ -9500,9 +9544,12 @@ def test_safe_error_code_retains_only_stable_body_free_tokens() -> None:
     assert safe_error_code(RuntimeError("mounted_sample_timeout")) == (
         "mounted_sample_timeout"
     )
-    assert safe_error_code(
-        RuntimeError("benchmark_owned_thread_survivor:change-review-baseline")
-    ) == "benchmark_owned_thread_survivor:change-review-baseline"
+    assert (
+        safe_error_code(
+            RuntimeError("benchmark_owned_thread_survivor:change-review-baseline")
+        )
+        == "benchmark_owned_thread_survivor:change-review-baseline"
+    )
     assert safe_error_code(RuntimeError("failed at /Users/person/secret")) == (
         "unclassified"
     )
@@ -9618,7 +9665,9 @@ def test_prepare_target_worktree_preserves_partial_when_git_proves_absent(
     def fake_run(command, **_kwargs):
         if command[2] == "add":
             target.mkdir(parents=True)
-            return subprocess.CompletedProcess(command, 2, stdout="", stderr="add failed")
+            return subprocess.CompletedProcess(
+                command, 2, stdout="", stderr="add failed"
+            )
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     with pytest.raises(BaseExceptionGroup, match="target_worktree_add_failed"):
@@ -9932,7 +9981,9 @@ def test_prepare_target_worktree_keeps_registered_partial_add_directory(
     def fake_run(command, **_kwargs):
         if command[2] == "add":
             target.mkdir(parents=True)
-            return subprocess.CompletedProcess(command, 2, stdout="", stderr="add failed")
+            return subprocess.CompletedProcess(
+                command, 2, stdout="", stderr="add failed"
+            )
         return subprocess.CompletedProcess(
             command, 0, stdout=f"worktree {target}\nHEAD {'1' * 40}\n\n", stderr=""
         )
@@ -9961,7 +10012,9 @@ def test_prepare_target_worktree_keeps_partial_directory_when_registration_unkno
     def fake_run(command, **_kwargs):
         if command[2] == "add":
             target.mkdir(parents=True)
-            return subprocess.CompletedProcess(command, 2, stdout="", stderr="add failed")
+            return subprocess.CompletedProcess(
+                command, 2, stdout="", stderr="add failed"
+            )
         return subprocess.CompletedProcess(command, 1, stdout="", stderr="list failed")
 
     with pytest.raises(BaseExceptionGroup) as caught:
@@ -10005,9 +10058,7 @@ def _init_real_worktree_repository(root: Path) -> Path:
     return repository
 
 
-def _add_real_worktree(
-    repository: Path, target: Path, *, branch: str
-) -> None:
+def _add_real_worktree(repository: Path, target: Path, *, branch: str) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         ["git", "worktree", "add", "-q", "-b", branch, str(target)],
@@ -10096,26 +10147,20 @@ def test_remove_target_worktree_real_git_rejects_replaced_admin_generation(
         replacement_identity = (metadata.st_dev, metadata.st_ino)
         original_move(common, target_text, admin_name, *claim)
 
-    monkeypatch.setattr(
-        profile, "_move_worktree_admin_to_marker", replace_then_move
-    )
+    monkeypatch.setattr(profile, "_move_worktree_admin_to_marker", replace_then_move)
 
     with pytest.raises(
         RuntimeError,
         match="^target_worktree_admin_identity_changed:candidate$",
     ):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert replacement_identity is not None
     restored = original_admin.stat()
     assert (restored.st_dev, restored.st_ino) == replacement_identity
     assert (original_admin / "replacement-sentinel").read_bytes() == b"preserve"
     assert detached_original.is_dir()
-    marker = repository / ".git" / profile._worktree_admin_marker_name(
-        str(target)
-    )
+    marker = repository / ".git" / profile._worktree_admin_marker_name(str(target))
     assert (marker / "identity-conflict").is_file()
     assert str(target) in profile._worktree_registrations(repository)
 
@@ -10130,9 +10175,7 @@ def test_remove_target_worktree_real_git_rejects_claim_replacement_before_delete
     original_delete = profile._delete_worktree_admin_marker
     detached_claim = repository / ".git" / "detached-claimed-admin"
 
-    def replace_then_delete(
-        common: Path, target_text: str, **kwargs
-    ) -> None:
+    def replace_then_delete(common: Path, target_text: str, **kwargs) -> None:
         marker = common / profile._worktree_admin_marker_name(target_text)
         claimed = marker / "admin"
         claimed.rename(detached_claim)
@@ -10140,21 +10183,15 @@ def test_remove_target_worktree_real_git_rejects_claim_replacement_before_delete
         (claimed / "replacement-sentinel").write_bytes(b"preserve")
         original_delete(common, target_text, **kwargs)
 
-    monkeypatch.setattr(
-        profile, "_delete_worktree_admin_marker", replace_then_delete
-    )
+    monkeypatch.setattr(profile, "_delete_worktree_admin_marker", replace_then_delete)
 
     with pytest.raises(
         RuntimeError,
         match="^target_worktree_admin_marker_conflict:candidate$",
     ):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
-    marker = repository / ".git" / profile._worktree_admin_marker_name(
-        str(target)
-    )
+    marker = repository / ".git" / profile._worktree_admin_marker_name(str(target))
     assert (marker / "admin/replacement-sentinel").read_bytes() == b"preserve"
     assert detached_claim.is_dir()
     assert target.is_dir()
@@ -10168,9 +10205,7 @@ def test_remove_target_worktree_identity_conflict_preserves_empty_canonical(
     target = run_root / "candidate"
     _add_real_worktree(repository, target, branch="candidate")
     canonical_admin = _linked_worktree_admin(target)
-    marker = repository / ".git" / profile._worktree_admin_marker_name(
-        str(target)
-    )
+    marker = repository / ".git" / profile._worktree_admin_marker_name(str(target))
     detached_claim = repository / ".git" / "detached-original-claim"
     original_rename = profile.os.rename
     empty_identity: tuple[int, int] | None = None
@@ -10179,11 +10214,7 @@ def test_remove_target_worktree_identity_conflict_preserves_empty_canonical(
     def replace_claim_and_create_empty(source, destination, *args, **kwargs):
         nonlocal empty_identity, injected
         result = original_rename(source, destination, *args, **kwargs)
-        if (
-            not injected
-            and source == canonical_admin.name
-            and destination == "admin"
-        ):
+        if not injected and source == canonical_admin.name and destination == "admin":
             injected = True
             original_rename(marker / "admin", detached_claim)
             shutil.copytree(detached_claim, marker / "admin")
@@ -10199,9 +10230,7 @@ def test_remove_target_worktree_identity_conflict_preserves_empty_canonical(
         RuntimeError,
         match="^target_worktree_admin_identity_changed:candidate$",
     ):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert empty_identity is not None
     canonical = canonical_admin.stat()
@@ -10219,9 +10248,7 @@ def test_remove_target_worktree_terminal_paths_are_never_unlinked_by_name(
     run_root = tmp_path / "run"
     target = run_root / "candidate"
     _add_real_worktree(repository, target, branch="candidate")
-    marker = repository / ".git" / profile._worktree_admin_marker_name(
-        str(target)
-    )
+    marker = repository / ".git" / profile._worktree_admin_marker_name(str(target))
     detached = repository / ".git" / f"detached-{boundary}"
     original_remove_contents = profile._remove_directory_contents_fd
     replacement_identity: tuple[int, int] | None = None
@@ -10243,14 +10270,10 @@ def test_remove_target_worktree_terminal_paths_are_never_unlinked_by_name(
             metadata = marker.stat()
             replacement_identity = (metadata.st_dev, metadata.st_ino)
 
-    monkeypatch.setattr(
-        profile, "_remove_directory_contents_fd", replace_empty_admin
-    )
+    monkeypatch.setattr(profile, "_remove_directory_contents_fd", replace_empty_admin)
 
     with pytest.raises(RuntimeError):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert replacement_identity is not None
     replacement = marker / "admin" if boundary == "admin" else marker
@@ -10268,17 +10291,13 @@ def test_remove_target_worktree_real_git_unregisters_absent_exact_target(
     _add_real_worktree(repository, target, branch="candidate")
     target.rename(detached)
 
-    profile._remove_target_worktree(
-        repository, run_root, name="candidate"
-    )
+    profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert detached.is_dir()
     assert profile._worktree_registrations(repository) == frozenset(
         {str(repository.resolve())}
     )
-    marker = repository / ".git" / profile._worktree_admin_marker_name(
-        str(target)
-    )
+    marker = repository / ".git" / profile._worktree_admin_marker_name(str(target))
     assert {entry.name for entry in marker.iterdir()} == {
         "admin",
         "pending.json",
@@ -10298,15 +10317,11 @@ def test_remove_target_worktree_real_git_unregisters_absent_exact_target(
     assert json.loads(receipt)["target_dev"] is None
     assert json.loads(receipt)["target_ino"] is None
     assert receipt == (
-        json.dumps(
-            json.loads(receipt), sort_keys=True, separators=(",", ":")
-        ).encode()
+        json.dumps(json.loads(receipt), sort_keys=True, separators=(",", ":")).encode()
         + b"\n"
     )
 
-    profile._remove_target_worktree(
-        repository, run_root, name="candidate"
-    )
+    profile._remove_target_worktree(repository, run_root, name="candidate")
 
 
 @pytest.mark.parametrize("replacement", ("path", "registration"))
@@ -10319,12 +10334,8 @@ def test_remove_target_worktree_terminal_tombstone_rejects_new_generation(
     _add_real_worktree(repository, target, branch="candidate")
     target_metadata = target.stat()
 
-    profile._remove_target_worktree(
-        repository, run_root, name="candidate"
-    )
-    marker = repository / ".git" / profile._worktree_admin_marker_name(
-        str(target)
-    )
+    profile._remove_target_worktree(repository, run_root, name="candidate")
+    marker = repository / ".git" / profile._worktree_admin_marker_name(str(target))
     receipt = json.loads((marker / "terminal.json").read_bytes())
     assert (receipt["target_dev"], receipt["target_ino"]) == (
         target_metadata.st_dev,
@@ -10346,9 +10357,7 @@ def test_remove_target_worktree_terminal_tombstone_rejects_new_generation(
         RuntimeError,
         match="^target_worktree_admin_marker_conflict:candidate$",
     ):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert target.is_dir()
     assert detached_original.is_dir()
@@ -10376,16 +10385,12 @@ def test_remove_target_worktree_registered_does_not_replace_injected_empty_quara
         injected_identity = (metadata.st_dev, metadata.st_ino)
         return result
 
-    monkeypatch.setattr(
-        profile, "_worktree_backlink_admin_name", validate_then_inject
-    )
+    monkeypatch.setattr(profile, "_worktree_backlink_admin_name", validate_then_inject)
     with pytest.raises(
         RuntimeError,
         match="^target_worktree_admin_marker_conflict:candidate$",
     ):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert injected_identity is not None
     current = quarantine.stat()
@@ -10412,30 +10417,22 @@ def test_remove_target_worktree_pending_receipt_rejects_foreign_quarantine(
         profile, "_delete_worktree_admin_marker", publish_then_interrupt
     )
     with pytest.raises(KeyboardInterrupt):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
-    marker = repository / ".git" / profile._worktree_admin_marker_name(
-        str(target)
-    )
+    marker = repository / ".git" / profile._worktree_admin_marker_name(str(target))
     pending_before = (marker / "pending.json").read_bytes()
     target.rename(quarantine)
     quarantine.rename(detached_original)
     quarantine.mkdir()
     foreign_sentinel = quarantine / "foreign-sentinel"
     foreign_sentinel.write_bytes(b"preserve")
-    monkeypatch.setattr(
-        profile, "_delete_worktree_admin_marker", original_delete
-    )
+    monkeypatch.setattr(profile, "_delete_worktree_admin_marker", original_delete)
 
     with pytest.raises(
         RuntimeError,
         match="^target_worktree_admin_marker_conflict:candidate$",
     ):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert detached_original.is_dir()
     assert foreign_sentinel.read_bytes() == b"preserve"
@@ -10470,17 +10467,13 @@ def test_remove_target_worktree_terminal_rejects_quarantine_path_swap(
             if replacement_content == "nonempty":
                 (target / "foreign-sentinel").write_bytes(b"preserve")
 
-    monkeypatch.setattr(
-        profile, "_remove_directory_contents_fd", clear_then_swap
-    )
+    monkeypatch.setattr(profile, "_remove_directory_contents_fd", clear_then_swap)
 
     with pytest.raises(
         RuntimeError,
         match="^target_worktree_admin_marker_conflict:candidate$",
     ):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert swapped
     assert detached_original.is_dir()
@@ -10504,9 +10497,7 @@ def test_remove_target_worktree_terminal_rejects_nonempty_exact_quarantine(
         RuntimeError,
         match="^target_worktree_admin_marker_conflict:candidate$",
     ):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert sentinel.read_bytes() == b"preserve"
 
@@ -10556,9 +10547,7 @@ def test_remove_target_worktree_terminal_rechecks_reappeared_target(
         RuntimeError,
         match="^target_worktree_admin_marker_conflict:candidate$",
     ):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
     if reappeared == "path":
         assert (target / "foreign-sentinel").read_bytes() == b"preserve"
@@ -10589,9 +10578,7 @@ def test_remove_target_worktree_rejects_malformed_target_receipt_identity(
     target = run_root / "candidate"
     _add_real_worktree(repository, target, branch="candidate")
     profile._remove_target_worktree(repository, run_root, name="candidate")
-    marker = repository / ".git" / profile._worktree_admin_marker_name(
-        str(target)
-    )
+    marker = repository / ".git" / profile._worktree_admin_marker_name(str(target))
     receipt_path = marker / "pending.json"
     receipt = json.loads(receipt_path.read_bytes())
     receipt[field] = malformed_identity
@@ -10603,9 +10590,7 @@ def test_remove_target_worktree_rejects_malformed_target_receipt_identity(
         RuntimeError,
         match="^target_worktree_admin_marker_conflict:candidate$",
     ):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
 
 @pytest.mark.parametrize("malformation", ("missing", "unknown", "noncanonical"))
@@ -10617,9 +10602,7 @@ def test_remove_target_worktree_rejects_malformed_target_receipt_schema(
     target = run_root / "candidate"
     _add_real_worktree(repository, target, branch="candidate")
     profile._remove_target_worktree(repository, run_root, name="candidate")
-    marker = repository / ".git" / profile._worktree_admin_marker_name(
-        str(target)
-    )
+    marker = repository / ".git" / profile._worktree_admin_marker_name(str(target))
     receipt_path = marker / "pending.json"
     receipt = json.loads(receipt_path.read_bytes())
     if malformation == "missing":
@@ -10629,18 +10612,14 @@ def test_remove_target_worktree_rejects_malformed_target_receipt_schema(
     if malformation == "noncanonical":
         payload = json.dumps(receipt, indent=2) + "\n"
     else:
-        payload = json.dumps(
-            receipt, sort_keys=True, separators=(",", ":")
-        ) + "\n"
+        payload = json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n"
     receipt_path.write_text(payload)
 
     with pytest.raises(
         RuntimeError,
         match="^target_worktree_admin_marker_conflict:candidate$",
     ):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
 
 @pytest.mark.parametrize(
@@ -10706,29 +10685,21 @@ def test_remove_target_worktree_real_git_resumes_namespace_checkpoints(
 
     monkeypatch.setattr(profile.os, "rename", interrupt_rename)
     monkeypatch.setattr(profile.os, "unlink", interrupt_unlink)
-    monkeypatch.setattr(
-        profile, "_publish_admin_tombstone", interrupt_publish
-    )
+    monkeypatch.setattr(profile, "_publish_admin_tombstone", interrupt_publish)
     monkeypatch.setattr(
         profile, "_remove_directory_contents_fd", interrupt_remove_contents
     )
     with pytest.raises(KeyboardInterrupt):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert target.is_dir()
     monkeypatch.setattr(profile.os, "rename", original_rename)
     monkeypatch.setattr(profile.os, "unlink", original_unlink)
-    monkeypatch.setattr(
-        profile, "_publish_admin_tombstone", original_publish
-    )
+    monkeypatch.setattr(profile, "_publish_admin_tombstone", original_publish)
     monkeypatch.setattr(
         profile, "_remove_directory_contents_fd", original_remove_contents
     )
-    profile._remove_target_worktree(
-        repository, run_root, name="candidate"
-    )
+    profile._remove_target_worktree(repository, run_root, name="candidate")
 
     _assert_retained_target_tombstone(run_root, "candidate")
     assert profile._worktree_registrations(repository) == frozenset(
@@ -10746,28 +10717,20 @@ def test_remove_target_worktree_real_git_resumes_after_admin_tombstone_published
     _add_real_worktree(repository, target, branch=name)
     original_delete_marker = profile._delete_worktree_admin_marker
 
-    def delete_then_interrupt(
-        common: Path, target_text: str, **kwargs
-    ) -> None:
+    def delete_then_interrupt(common: Path, target_text: str, **kwargs) -> None:
         original_delete_marker(common, target_text, **kwargs)
         raise KeyboardInterrupt("post-unregister checkpoint")
 
-    monkeypatch.setattr(
-        profile, "_delete_worktree_admin_marker", delete_then_interrupt
-    )
+    monkeypatch.setattr(profile, "_delete_worktree_admin_marker", delete_then_interrupt)
     with pytest.raises(KeyboardInterrupt):
-        profile._remove_target_worktree(
-            repository, run_root, name=name
-        )
+        profile._remove_target_worktree(repository, run_root, name=name)
 
     assert target.is_dir()
     assert str(target) not in profile._worktree_registrations(repository)
     monkeypatch.setattr(
         profile, "_delete_worktree_admin_marker", original_delete_marker
     )
-    profile._remove_target_worktree(
-        repository, run_root, name=name
-    )
+    profile._remove_target_worktree(repository, run_root, name=name)
 
     _assert_retained_target_tombstone(run_root, name)
 
@@ -10791,17 +10754,11 @@ def test_remove_target_worktree_resumes_legacy_registered_quarantine(
         profile, "_delete_worktree_admin_marker", publish_then_interrupt
     )
     with pytest.raises(KeyboardInterrupt):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
     target.rename(quarantine)
-    monkeypatch.setattr(
-        profile, "_delete_worktree_admin_marker", original_delete
-    )
+    monkeypatch.setattr(profile, "_delete_worktree_admin_marker", original_delete)
 
-    profile._remove_target_worktree(
-        repository, run_root, name="candidate"
-    )
+    profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert quarantine.is_dir()
     assert list(quarantine.iterdir()) == []
@@ -10822,9 +10779,7 @@ def test_remove_target_worktree_real_git_refuses_admin_marker_collision(
     with pytest.raises(
         RuntimeError, match="^target_worktree_admin_marker_conflict:candidate$"
     ):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert (marker / "foreign").read_bytes() == b"must survive"
     assert target.is_dir()
@@ -10849,9 +10804,7 @@ def test_remove_target_worktree_real_git_rejects_malformed_admin_contract(
     elif malformation == "duplicate":
         duplicate = admin.parent / "duplicate"
         duplicate.mkdir()
-        (duplicate / "gitdir").write_text(
-            f"{target / '.git'}\n", encoding="utf-8"
-        )
+        (duplicate / "gitdir").write_text(f"{target / '.git'}\n", encoding="utf-8")
     else:
         detached_admin = repository / ".git" / "detached-admin"
         admin.rename(detached_admin)
@@ -10863,9 +10816,7 @@ def test_remove_target_worktree_real_git_rejects_malformed_admin_contract(
         else "target_worktree_admin_invalid"
     )
     with pytest.raises(RuntimeError, match=expected_error):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert target.is_dir()
     assert not (run_root / ".candidate-cleanup").exists()
@@ -10884,9 +10835,7 @@ def test_remove_target_worktree_real_git_rejects_worktrees_symlink(
     worktrees.symlink_to(detached, target_is_directory=True)
 
     with pytest.raises(RuntimeError, match="target_worktree_admin_invalid"):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert target.is_dir()
     assert not (run_root / ".candidate-cleanup").exists()
@@ -10907,9 +10856,7 @@ def test_remove_target_worktree_real_git_rejects_common_directory_symlink(
     with pytest.raises(
         RuntimeError, match="^target_worktree_unregister_failed:candidate$"
     ):
-        profile._remove_target_worktree(
-            repository, run_root, name="candidate"
-        )
+        profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert target.is_dir()
     assert not (run_root / ".candidate-cleanup").exists()
@@ -10927,9 +10874,7 @@ def test_remove_target_worktree_real_git_preserves_missing_unrelated_registratio
     unrelated_detached = tmp_path / "unrelated-detached"
     unrelated.rename(unrelated_detached)
 
-    profile._remove_target_worktree(
-        repository, run_root, name="candidate"
-    )
+    profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert unrelated_detached.is_dir()
     assert profile._worktree_registrations(repository) == frozenset(
@@ -10956,13 +10901,9 @@ def test_remove_target_worktree_real_git_preserves_unrelated_that_goes_missing(
         unrelated.rename(detached)
         return claimed
 
-    monkeypatch.setattr(
-        profile, "_move_worktree_admin_to_marker", move_then_detach
-    )
+    monkeypatch.setattr(profile, "_move_worktree_admin_to_marker", move_then_detach)
 
-    profile._remove_target_worktree(
-        repository, run_root, name="candidate"
-    )
+    profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert detached.is_dir()
     assert profile._worktree_registrations(repository) == frozenset(
@@ -10988,15 +10929,11 @@ def test_remove_target_worktree_real_git_same_target_contention_is_resumable(
             barrier.wait(timeout=5)
         return result
 
-    monkeypatch.setattr(
-        profile, "_worktree_registrations", synchronized_registrations
-    )
+    monkeypatch.setattr(profile, "_worktree_registrations", synchronized_registrations)
 
     def cleanup() -> BaseException | None:
         try:
-            profile._remove_target_worktree(
-                repository, run_root, name="candidate"
-            )
+            profile._remove_target_worktree(repository, run_root, name="candidate")
         except BaseException as exc:
             return exc
         return None
@@ -11013,15 +10950,10 @@ def test_remove_target_worktree_real_git_same_target_contention_is_resumable(
             raise outcome
     assert any(outcome is None for outcome in outcomes)
     assert all(
-        outcome is None or str(outcome) in stable_errors
-        for outcome in outcomes
+        outcome is None or str(outcome) in stable_errors for outcome in outcomes
     ), [repr(outcome) for outcome in outcomes]
-    monkeypatch.setattr(
-        profile, "_worktree_registrations", original_registrations
-    )
-    profile._remove_target_worktree(
-        repository, run_root, name="candidate"
-    )
+    monkeypatch.setattr(profile, "_worktree_registrations", original_registrations)
+    profile._remove_target_worktree(repository, run_root, name="candidate")
 
     assert str(target) not in profile._worktree_registrations(repository)
     _assert_retained_target_tombstone(run_root, "candidate")
@@ -11069,9 +11001,7 @@ def test_remove_target_worktree_real_git_disappearance_race_is_stable(
 
     def cleanup() -> BaseException | None:
         try:
-            profile._remove_target_worktree(
-                repository, run_root, name="candidate"
-            )
+            profile._remove_target_worktree(repository, run_root, name="candidate")
         except BaseException as exc:
             return exc
         return None
@@ -11112,15 +11042,11 @@ def test_remove_target_worktree_real_git_different_targets_are_resumable(
             barrier.wait(timeout=5)
         return result
 
-    monkeypatch.setattr(
-        profile, "_worktree_registrations", synchronized_registrations
-    )
+    monkeypatch.setattr(profile, "_worktree_registrations", synchronized_registrations)
 
     def cleanup(name: str) -> BaseException | None:
         try:
-            profile._remove_target_worktree(
-                repository, run_root, name=name
-            )
+            profile._remove_target_worktree(repository, run_root, name=name)
         except BaseException as exc:
             return exc
         return None
@@ -11129,17 +11055,12 @@ def test_remove_target_worktree_real_git_different_targets_are_resumable(
         outcomes = tuple(executor.map(cleanup, ("control", "candidate")))
 
     assert all(
-        outcome is None
-        or str(outcome).startswith("target_worktree_unregister_failed:")
+        outcome is None or str(outcome).startswith("target_worktree_unregister_failed:")
         for outcome in outcomes
     )
-    monkeypatch.setattr(
-        profile, "_worktree_registrations", original_registrations
-    )
+    monkeypatch.setattr(profile, "_worktree_registrations", original_registrations)
     for name in ("control", "candidate"):
-        profile._remove_target_worktree(
-            repository, run_root, name=name
-        )
+        profile._remove_target_worktree(repository, run_root, name=name)
 
     assert profile._worktree_registrations(repository) == frozenset(
         {str(repository.resolve())}
@@ -11192,18 +11113,16 @@ def test_remove_target_worktrees_attempts_both_when_first_cleanup_fails(
         _add_real_worktree(repository, run_root / name, branch=name)
     original_move_admin = profile._move_worktree_admin_to_marker
 
-    def fail_candidate(
-        common: Path, target: str, admin_name: str, *claim
-    ) -> int:
+    def fail_candidate(common: Path, target: str, admin_name: str, *claim) -> int:
         if target.endswith("/candidate"):
             raise RuntimeError("target_worktree_unregister_failed")
         return original_move_admin(common, target, admin_name, *claim)
 
-    monkeypatch.setattr(
-        profile, "_move_worktree_admin_to_marker", fail_candidate
-    )
+    monkeypatch.setattr(profile, "_move_worktree_admin_to_marker", fail_candidate)
 
-    with pytest.raises(RuntimeError, match="target_worktree_unregister_failed:candidate"):
+    with pytest.raises(
+        RuntimeError, match="target_worktree_unregister_failed:candidate"
+    ):
         profile._remove_target_worktrees(
             repository,
             run_root,
@@ -11249,7 +11168,9 @@ def _write_fingerprint_tree(root: Path, *, candidate: bool) -> None:
         )
 
 
-def test_target_adapter_accepts_only_the_expected_revision_shape(tmp_path: Path) -> None:
+def test_target_adapter_accepts_only_the_expected_revision_shape(
+    tmp_path: Path,
+) -> None:
     target_adapter_type = getattr(profile, "TargetAdapter", None)
     control = tmp_path / "control"
     candidate = tmp_path / "candidate"
@@ -11258,20 +11179,22 @@ def test_target_adapter_accepts_only_the_expected_revision_shape(tmp_path: Path)
 
     assert target_adapter_type is not None
     assert target_adapter_type.for_arm(control, "control").revision_kind == "legacy"
-    assert target_adapter_type.for_arm(candidate, "disabled").revision_kind == "candidate"
-    assert target_adapter_type.for_arm(candidate, "enabled").revision_kind == "candidate"
+    assert (
+        target_adapter_type.for_arm(candidate, "disabled").revision_kind == "candidate"
+    )
+    assert (
+        target_adapter_type.for_arm(candidate, "enabled").revision_kind == "candidate"
+    )
     with pytest.raises(RuntimeError, match="target_fingerprint_mismatch"):
         target_adapter_type.for_arm(candidate, "control")
     with pytest.raises(RuntimeError, match="target_fingerprint_mismatch"):
         target_adapter_type.for_arm(control, "enabled")
 
     candidate_finalization = (
-        candidate
-        / "tldw_chatbook/Workspaces/change_review_finalization.py"
+        candidate / "tldw_chatbook/Workspaces/change_review_finalization.py"
     )
     candidate_finalization.write_text(
-        "class ChangeReviewFinalizationCoordinator:\n"
-        "    def finalize(self): pass\n"
+        "class ChangeReviewFinalizationCoordinator:\n    def finalize(self): pass\n"
     )
     with pytest.raises(RuntimeError, match="target_fingerprint_mismatch"):
         target_adapter_type.for_arm(candidate, "enabled")
@@ -11407,7 +11330,9 @@ def test_target_adapter_configures_only_its_matching_review_arm(
     assert app.change_review_consent_service == expected_service
 
 
-def test_generate_corpus_is_deterministic_and_uses_content_digest(tmp_path: Path) -> None:
+def test_generate_corpus_is_deterministic_and_uses_content_digest(
+    tmp_path: Path,
+) -> None:
     generate_corpus = getattr(profile, "generate_corpus", None)
     first = tmp_path / "first"
     second = tmp_path / "second"
@@ -11465,7 +11390,9 @@ def test_workspace_runtime_close_attempts_and_preserves_all_owned_cleanup() -> N
 # RecoveryRequired("raw_source_selection_changed") under the per-test env
 # redirect -- before any assertion ran. The collection-time profile lets these
 # report real results (the same mark sits on the scripted mounted sample).
-@pytest.mark.parametrize("boundary", ("readiness", "permission_gate", "definition_hash"))
+@pytest.mark.parametrize(
+    "boundary", ("readiness", "permission_gate", "definition_hash")
+)
 @pytest.mark.bootstrap_profile
 def test_prepare_workspace_runtime_cleans_resources_on_construction_failure(
     tmp_path: Path,
@@ -11603,9 +11530,7 @@ def test_prepare_workspace_runtime_aggregates_primary_and_construction_cleanup(
         ]
     finally:
         # The injected failures occur after the real close operations.
-        if consents and any(
-            worker.is_alive() for worker in consents[0]._workers
-        ):
+        if consents and any(worker.is_alive() for worker in consents[0]._workers):
             consent_shutdown(consents[0], timeout=2.0)
 
 
@@ -11618,7 +11543,9 @@ def test_prepare_workspace_runtime_disabled_has_rw_allow_without_shadow(
     assert callable(prepare_workspace_runtime)
     runtime = prepare_workspace_runtime(tmp_path / "disabled", arm="disabled")
     try:
-        assert runtime.registry.get_active_workspace().workspace_id == runtime.workspace_id
+        assert (
+            runtime.registry.get_active_workspace().workspace_id == runtime.workspace_id
+        )
         assert runtime.binding.metadata["access"] == "rw"
         assert runtime.review_state == "disabled"
         assert runtime.review_ready is False
@@ -11690,18 +11617,24 @@ def test_mounted_sample_mutation_path_tracks_revision_authority(tmp_path: Path):
 
     console_runtime = SimpleNamespace(scratch_spaces=ScratchSpaces())
 
-    assert profile.mounted_sample_mutation_path(
-        revision_kind="legacy",
-        workspace_root=tmp_path / "workspace",
-        console_runtime=console_runtime,
-        session_id="session-a",
-    ) == tmp_path / "workspace/measured/turn-two.txt"
-    assert profile.mounted_sample_mutation_path(
-        revision_kind="candidate",
-        workspace_root=tmp_path / "workspace",
-        console_runtime=console_runtime,
-        session_id="session-a",
-    ) == scratch_root / "measured/turn-two.txt"
+    assert (
+        profile.mounted_sample_mutation_path(
+            revision_kind="legacy",
+            workspace_root=tmp_path / "workspace",
+            console_runtime=console_runtime,
+            session_id="session-a",
+        )
+        == tmp_path / "workspace/measured/turn-two.txt"
+    )
+    assert (
+        profile.mounted_sample_mutation_path(
+            revision_kind="candidate",
+            workspace_root=tmp_path / "workspace",
+            console_runtime=console_runtime,
+            session_id="session-a",
+        )
+        == scratch_root / "measured/turn-two.txt"
+    )
 
 
 def test_mounted_queue_contract_tracks_both_acceptance_apis():

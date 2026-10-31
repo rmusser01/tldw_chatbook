@@ -76,6 +76,14 @@ not the file picker. (That control is labeled **Context rail** as of
 - **✕** removes **everything** staged at once — toast "Attachment cleared".
   There is no per-file removal; to drop one of three, clear all and
   re-attach the two you want.
+- A staged image is enough to send: with an image staged and an empty
+  draft, **Send** is ready and sends the image on its own, provided the
+  current model accepts images (otherwise Send is blocked; see the vision
+  check below). Clearing the image with **✕** returns Send to "Send
+  disabled: type a message" at once. After a send, Send shows the queue
+  copy while the reply runs and returns to "Send disabled: type a message"
+  once it finishes. An inserted text file is draft text, so it makes Send
+  ready like anything you type.
 
 ### Vision check before sending
 
@@ -100,6 +108,23 @@ action row:
 - **Save Image** — writes the message's images to disk; the default folder
   is `save_location` under `[chat.images]` in config.toml (`~/Downloads`).
 
+### Character radio portrait
+
+Open **Context → Character** to see the active character's portrait inside a
+recessed frame, with its identity above and voice status below. **Ready**,
+**Preparing voice**, **Transmitting**, **Paused** and **Voice unavailable**
+follow the character's owned speech activity. The level bar uses fresh measured
+output; silence empties it, and unavailable timing hides it while retaining
+status. Normal layouts reserve its row, so speech does not move the controls.
+Compact layouts omit the bar first. Authored image colors and the current theme
+are preserved; no radio noise or continuous static is added.
+
+Prepared living portraits use audio-reactive mouth poses plus independent blinking
+and subtle idle movement. Reduce motion, Static and existing animation/reaction
+preferences still apply. Click the portrait for its full-size viewer; the existing
+reaction picker still selects expressions. Prepare/import or generate the six poses
+under [Personas → Living portrait](../roleplay-chat-dictionaries/characters-and-personas.md).
+
 ### Generating images — `/generate-image`
 
 Type `/generate-image [:backend] [@style] <prompt>` in the composer to run
@@ -113,16 +138,21 @@ get: "No image generation backend configured. Set
 [image_generation].default_backend, or use /generate-image :backend
 <prompt>."
 
+If a batch fails, the command comes back into the composer so **Enter**
+runs it again. Anything you typed after sending it stays in the composer;
+if the composer has changed since (new text, another chat), your text is
+left alone and the failure message shows the command to send again.
+
 ### Voice dictation — the Mic button
 
 The **Mic** button walks through four states:
 
 | Button reads | Meaning | Pressing it |
 |---|---|---|
-| **Mic** | Idle | Starts dictation |
-| **Mic…** | Preparing the speech model | Cancels ("Dictation cancelled.") |
-| **Rec ●** | Recording | Stops and transcribes |
-| **Text…** | Transcribing | Disabled — wait for the text |
+| **Dictate** | Idle | Starts dictation |
+| **Cancel** | Preparing the speech model | Cancels ("Dictation cancelled."); in Hands-free it leaves the loop |
+| **Dictating** | Recording | Stops and transcribes |
+| **Dictate…** | Transcribing | Disabled — wait for the text |
 
 A status chip beside the draft tracks progress: "◌ Preparing microphone…",
 then `● 0:07` with the latest recognized words while recording, then

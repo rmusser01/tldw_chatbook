@@ -803,6 +803,41 @@ def test_initial_root_failure_keeps_root_specific_copy(
     assert next(row for row in projection.rows if row.kind == "pager").label == expected
 
 
+def test_an_uninitialized_unloading_root_folder_slice_emits_no_rows_and_a_loading_one_emits_the_loading_row() -> (
+    None
+):
+    """TASK-34000.14 negative control: the projection is not the defect.
+
+    After a Create arrival nothing had requested ``NotesBranchKey(None,
+    "folders")``, so the branch map either lacked the key or (after the
+    create's mutation fence) held it as ``uninitialized`` and not loading.
+    Both shapes project NO folder rows and NO "Loading folders…" row -- the
+    tree starts at Unfiled, exactly the review's capture -- while the same
+    slice marked ``loading`` projects the loading row at the top. The fix is
+    therefore the missing REQUEST (``_ensure_library_notes_tree_root_
+    loaded``), not a change here.
+    """
+    unfiled_note = _placement("loose", "Loose", None, None)
+    placements = _branch(None, "placements", items=(unfiled_note,), total=1)
+
+    def rows_with(folder_slice: NotesBranchSliceState | None) -> list[str]:
+        branches = {NotesBranchKey(None, "placements"): placements}
+        if folder_slice is not None:
+            branches[NotesBranchKey(None, "folders")] = folder_slice
+        projection = tree_state.build_paged_library_notes_tree(
+            branch_states=branches, expanded_folder_ids=set()
+        )
+        return [row.label for row in projection.rows]
+
+    fenced = _branch(None, "folders", freshness="uninitialized", loading=False)
+    assert fenced.item_ids == ()
+    assert rows_with(None) == ["Unfiled", "Loose"]
+    assert rows_with(fenced) == ["Unfiled", "Loose"]
+
+    loading = _branch(None, "folders", freshness="uninitialized", loading=True)
+    assert rows_with(loading) == ["Loading folders…", "Unfiled", "Loose"]
+
+
 @pytest.mark.parametrize(
     ("failed_direction", "expected"),
     (
@@ -1403,3 +1438,87 @@ def test_filter_reducer_ignores_superseded_generation_or_topology(
 
     assert result.kind == "ignored"
     assert result.state is loading
+
+
+def test_a_held_sync_folder_row_reads_needs_attention_instead_of_sync_managed():
+    """TASK-34000.2 AC#4 (review finding N-02): a root fenced on an open entry
+    is not syncing in either direction, yet its folder row kept reading
+    "⇄ Sync managed". The held state outranks the connected wording; a
+    folder that is not held is drawn exactly as before.
+    """
+    managed = _folder("managed", None, "/Managed")
+    other = _folder("other", None, "/Other")
+    branches = {
+        NotesBranchKey(None, "folders"): _branch(
+            None, "folders", items=(managed, other), total=2
+        ),
+    }
+
+    projection = tree_state.build_paged_library_notes_tree(
+        branch_states=branches,
+        expanded_folder_ids=set(),
+        protected_folder_ids=frozenset({"managed", "other"}),
+        attention_folder_ids=frozenset({"managed"}),
+    )
+
+    held_row = projection.row(FolderPlacementId.folder("managed"))
+    assert held_row is not None
+    assert held_row.status_text == tree_state.NOTES_TREE_SYNC_ATTENTION_STATUS
+    assert held_row.status_text == "⚠ Needs attention"
+    assert held_row.semantic_status == "needs_attention"
+
+    calm_row = projection.row(FolderPlacementId.folder("other"))
+    assert calm_row is not None
+    assert calm_row.status_text == "⇄ Sync managed"
+    assert calm_row.semantic_status == "connected"
+
+
+def test_an_unwatched_sync_folder_row_reads_sync_stopped_instead_of_sync_managed():
+    """TASK-34000.50 fix round 1 (review Minor 2, AC#2): a root whose lease has
+    no running watcher is not carrying changes either way, so its folder row
+    must not read "⇄ Sync managed". It wears the same wording the Manage sync
+    folders row wears for that state, at the same width; a held folder still
+    outranks it, and an unwatched folder that is not managed is untouched.
+    """
+    from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+        ROOT_STATUS_LABELS,
+    )
+
+    managed = _folder("managed", None, "/Managed")
+    held = _folder("held", None, "/Held")
+    other = _folder("other", None, "/Other")
+    plain = _folder("plain", None, "/Plain")
+    branches = {
+        NotesBranchKey(None, "folders"): _branch(
+            None, "folders", items=(managed, held, other, plain), total=4
+        ),
+    }
+
+    projection = tree_state.build_paged_library_notes_tree(
+        branch_states=branches,
+        expanded_folder_ids=set(),
+        protected_folder_ids=frozenset({"managed", "held", "other"}),
+        attention_folder_ids=frozenset({"held"}),
+        unwatched_folder_ids=frozenset({"managed", "held", "plain"}),
+    )
+
+    stopped_row = projection.row(FolderPlacementId.folder("managed"))
+    assert stopped_row is not None
+    assert stopped_row.status_text == tree_state.NOTES_TREE_SYNC_STOPPED_STATUS
+    assert stopped_row.status_text == ROOT_STATUS_LABELS["not_watching"]
+    assert stopped_row.status_text == "⚠ Sync stopped"
+    assert len(stopped_row.status_text) == len("⇄ Sync managed")
+    assert stopped_row.semantic_status == "needs_attention"
+
+    held_row = projection.row(FolderPlacementId.folder("held"))
+    assert held_row is not None
+    assert held_row.status_text == tree_state.NOTES_TREE_SYNC_ATTENTION_STATUS
+
+    calm_row = projection.row(FolderPlacementId.folder("other"))
+    assert calm_row is not None
+    assert calm_row.status_text == "⇄ Sync managed"
+    assert calm_row.semantic_status == "connected"
+
+    plain_row = projection.row(FolderPlacementId.folder("plain"))
+    assert plain_row is not None
+    assert (plain_row.status_text, plain_row.semantic_status) == ("", "normal")

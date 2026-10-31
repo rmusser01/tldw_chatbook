@@ -1,0 +1,151 @@
+{"operation": "capture", "args": ["boot1-initial"], "time": 1791058392.143729}
+{"operation": "capture", "args": ["boot1-ready"], "time": 1791058429.025045}
+{"operation": "keys", "args": ["M-w"], "time": 1791058465.510346}
+{"operation": "capture", "args": ["boot1-workspaces"], "time": 1791058476.7901819}
+{"operation": "keys", "args": ["Escape"], "time": 1791058489.93394}
+{"operation": "click", "args": ["16", "7"], "time": 1791058489.974738}
+{"operation": "capture", "args": ["boot1-workspace-rail"], "time": 1791058490.078022}
+{"operation": "capture", "args": ["boot1-workspace-rail-settled"], "time": 1791058503.181643}
+{"operation": "click", "args": ["37", "7"], "time": 1791058527.8231318}
+{"operation": "capture", "args": ["boot1-workspace-arrow"], "time": 1791058562.9000762}
+{"operation": "click", "args": ["16", "9"], "time": 1791058574.2462552}
+{"operation": "capture", "args": ["boot1-create-workspace"], "time": 1791058582.6186008}
+{"operation": "click", "args": ["108", "23"], "time": 1791058608.540504}
+{"operation": "keys", "args": ["C-u"], "time": 1791058608.602477}
+{"operation": "text", "args": ["DEV_WORKSPACE"], "time": 1791058608.667597}
+{"operation": "click", "args": ["143", "25"], "time": 1791058608.7739258}
+{"operation": "capture", "args": ["boot1-workspace-persona"], "time": 1791058618.332453}
+{"operation": "click", "args": ["95", "27"], "time": 1791058661.0768828}
+{"operation": "capture", "args": ["boot1-workspace-none"], "time": 1791058670.7191381}
+{"operation": "click", "args": ["144", "39"], "time": 1791058681.372463}
+{"operation": "capture", "args": ["boot1-workspace-created"], "time": 1791058726.797388}
+{"operation": "click", "args": ["95", "49"], "time": 1791058753.389994}
+{"operation": "text", "args": ["Call new_chat exactly once with these arguments: {\"title\": \"DEV_WS_DRAFT\", \"destination\": \"same_workspace\", \"mode\": \"draft\", \"opening_prompt\": \"Reply only DEV_WS_DRAFT_REPLY.\"}. Do not call other tools. After the tool result, reply with the returned status."], "time": 1791058753.450379}
+{"operation": "keys", "args": ["Enter"], "time": 1791058753.526387}
+{"operation": "capture", "args": ["boot1-ws-draft-request"], "time": 1791058793.131661}
+{"operation": "click", "args": ["98", "49"], "time": 1791058818.2638001}
+{"operation": "text", "args": ["SOURCE_COMPOSER_SENTINEL"], "time": 1791058818.396341}
+{"operation": "capture", "args": ["boot1-ws-draft-card-sentinel"], "time": 1791058826.682511}
+{"operation": "click", "args": ["53", "22"], "time": 1791058836.733717}
+{"operation": "capture", "args": ["boot1-ws-draft-result"], "time": 1791058882.7288089}
+{"operation": "click", "args": ["98", "49"], "time": 1791058920.775579}
+{"operation": "keys", "args": ["C-u"], "time": 1791058920.83727}
+{"operation": "text", "args": ["Call new_chat exactly once with these arguments: {\"title\": \"DEV_CASUAL_DRAFT\", \"destination\": \"casual\", \"mode\": \"draft\", \"opening_prompt\": \"Reply only DEV_CASUAL_DRAFT_REPLY.\", \"instructions\": \"[literal instructions] @everyone\\nFollow the opening prompt and reply briefly.\"}. Do not call other tools. After the tool result, reply with the returned status."], "time": 1791058920.9135768}
+{"operation": "keys", "args": ["Enter"], "time": 1791058921.007637}
+{"operation": "capture", "args": ["boot1-casual-draft-card"], "time": 1791058957.518614}
+{"operation": "keys", "args": ["Escape"], "time": 1791058994.226131}
+{"operation": "capture", "args": ["boot1-source-returned"], "time": 1791059004.810965}
+{"operation": "keys", "args": ["Escape"], "time": 1791059087.163666}
+{"operation": "capture", "args": ["boot1-source-focused-layout"], "time": 1791059098.683001}
+{"operation": "click", "args": ["24", "20"], "time": 1791059168.431173}
+{"operation": "keys", "args": ["Escape"], "time": 1791059168.589689}
+{"operation": "keys", "args": ["Tab"], "time": 1791059168.690667}
+{"operation": "capture", "args": ["boot1-source-after-trace-close"], "time": 1791059179.132587}
+{"operation": "keys", "args": ["C-p"], "time": 1791059266.827286}
+{"operation": "capture", "args": ["boot1-resume-palette"], "time": 1791059542.428093}
+{"operation": "keys", "args": ["Escape"], "time": 1791059562.740442}
+{"operation": "capture", "args": ["boot1-escape-current"], "time": 1791059575.3719249}
+{"operation": "click", "args": ["98", "50"], "time": 1791059590.523597}
+{"operation": "keys", "args": ["C-u"], "time": 1791059590.585857}
+{"operation": "text", "args": ["Call new_chat exactly once with these arguments: {\"title\": \"DEV_CASUAL_DRAFT\", \"destination\": \"casual\", \"mode\": \"draft\", \"opening_prompt\": \"Reply only DEV_CASUAL_DRAFT_REPLY.\", \"instructions\": \"[literal instructions] @everyone\\nFollow the opening prompt and reply briefly.\"}. Do not call other tools. After the tool result, reply with the returned status."], "time": 1791059590.640348}
+{"operation": "capture", "args": ["boot1-casual-draft-staged"], "time": 1791059605.5684822}
+{"operation": "keys", "args": ["Enter"], "time": 1791059627.7511292}
+{"operation": "capture", "args": ["boot1-casual-draft-approval"], "time": 1791059655.824998}
+{"operation": "text", "args": ["SOURCE_CASUAL_DRAFT_SENTINEL"], "time": 1791059707.877053}
+{"operation": "capture", "args": ["boot1-casual-draft-card-sentinel"], "time": 1791059723.71313}
+{"operation": "click", "args": ["53", "26"], "time": 1791059727.3037388}
+{"operation": "capture", "args": ["boot1-casual-draft-result"], "time": 1791059746.829157}
+{"operation": "click", "args": ["98", "50"], "time": 1791059768.704709}
+{"operation": "keys", "args": ["C-u"], "time": 1791059768.758241}
+{"operation": "text", "args": ["Call new_chat exactly once with these arguments: {\"title\": \"DEV_WS_START\", \"destination\": \"same_workspace\", \"mode\": \"start\", \"opening_prompt\": \"Reply only DEV_WS_START_OK.\"}. Do not call other tools. After the tool result, reply with the returned status."], "time": 1791059768.8045619}
+{"operation": "capture", "args": ["boot1-workspace-start-staged"], "time": 1791059791.365387}
+{"operation": "keys", "args": ["Enter"], "time": 1791059794.189926}
+{"operation": "capture", "args": ["boot1-workspace-start-card"], "time": 1791059810.554591}
+{"operation": "text", "args": ["SOURCE_WORKSPACE_START_SENTINEL"], "time": 1791059840.508967}
+{"operation": "capture", "args": ["boot1-workspace-start-card-sentinel"], "time": 1791059845.829885}
+{"operation": "click", "args": ["53", "22"], "time": 1791059850.004389}
+{"operation": "capture", "args": ["boot1-workspace-start-result"], "time": 1791059872.3503182}
+{"operation": "click", "args": ["98", "50"], "time": 1791059903.860321}
+{"operation": "keys", "args": ["C-u"], "time": 1791059903.9407659}
+{"operation": "text", "args": ["Call new_chat exactly once with these arguments: {\"title\": \"DEV_CASUAL_START\", \"destination\": \"casual\", \"mode\": \"start\", \"opening_prompt\": \"/settings @everyone\\nReply only DEV_CASUAL_START_OK.\"}. Do not call other tools. After the tool result, reply with the returned status."], "time": 1791059904.073506}
+{"operation": "capture", "args": ["boot1-casual-start-staged"], "time": 1791059906.711819}
+{"operation": "keys", "args": ["Enter"], "time": 1791059909.21555}
+{"operation": "capture", "args": ["boot1-casual-start-card"], "time": 1791059922.114111}
+{"operation": "text", "args": ["SOURCE_CASUAL_START_SENTINEL"], "time": 1791059941.85164}
+{"operation": "capture", "args": ["boot1-casual-start-card-sentinel"], "time": 1791059945.1414132}
+{"operation": "click", "args": ["53", "23"], "time": 1791059949.045123}
+{"operation": "capture", "args": ["boot1-casual-start-result"], "time": 1791059967.018272}
+{"operation": "click", "args": ["103", "4"], "time": 1791059996.884833}
+{"operation": "capture", "args": ["boot1-workspace-draft-open"], "time": 1791060000.962833}
+{"operation": "keys", "args": ["C-u"], "time": 1791060022.158748}
+{"operation": "text", "args": ["DEV_EDITED_WORKSPACE_DRAFT retained after restart"], "time": 1791060022.2395709}
+{"operation": "capture", "args": ["boot1-workspace-draft-edited"], "time": 1791060025.1560829}
+{"operation": "click", "args": ["127", "4"], "time": 1791060028.450525}
+{"operation": "capture", "args": ["boot1-casual-draft-open"], "time": 1791060052.8722088}
+{"operation": "keys", "args": ["C-u"], "time": 1791060056.366327}
+{"operation": "capture", "args": ["boot1-casual-draft-cleared"], "time": 1791060059.521182}
+{"operation": "keys", "args": ["C-q"], "time": 1791060076.7170198}
+{"operation": "capture", "args": ["boot2-restarted"], "time": 1791060120.8689559}
+{"operation": "click", "args": ["17", "16"], "time": 1791060140.894144}
+{"operation": "capture", "args": ["boot2-edited-draft-reopened"], "time": 1791060143.533165}
+{"operation": "click", "args": ["17", "33"], "time": 1791060146.166092}
+{"operation": "capture", "args": ["boot2-cleared-draft-reopened"], "time": 1791060148.922587}
+{"operation": "click", "args": ["17", "16"], "time": 1791060170.8152142}
+{"operation": "keys", "args": ["Enter"], "time": 1791060173.540339}
+{"operation": "capture", "args": ["boot2-edited-draft-activated"], "time": 1791060176.505264}
+{"operation": "click", "args": ["20", "18"], "time": 1791060208.931395}
+{"operation": "keys", "args": ["Enter"], "time": 1791060209.026907}
+{"operation": "capture", "args": ["boot2-source-reopened"], "time": 1791060213.895754}
+{"operation": "click", "args": ["98", "50"], "time": 1791060218.217878}
+{"operation": "keys", "args": ["C-u"], "time": 1791060218.331866}
+{"operation": "text", "args": ["Call new_chat exactly once with these arguments: {\"title\": \"DEV_REFUSED_START\", \"destination\": \"casual\", \"mode\": \"start\", \"opening_prompt\": \"Reply only DEV_SHOULD_NOT_AUTOSEND.\"}. Do not call other tools. After the tool result, reply with the returned status."], "time": 1791060218.425817}
+{"operation": "capture", "args": ["boot2-refusal-staged"], "time": 1791060221.2094011}
+{"operation": "keys", "args": ["Enter"], "time": 1791060224.592395}
+{"operation": "capture", "args": ["boot2-refusal-card"], "time": 1791060256.329626}
+{"operation": "text", "args": ["SOURCE_REFUSAL_SENTINEL"], "time": 1791060287.371327}
+{"operation": "capture", "args": ["boot2-refusal-card-sentinel"], "time": 1791060290.530137}
+{"operation": "click", "args": ["53", "22"], "time": 1791060293.430179}
+{"operation": "capture", "args": ["boot2-refusal-result"], "time": 1791060329.479637}
+{"operation": "keys", "args": ["C-q"], "time": 1791060336.1868448}
+{"operation": "capture", "args": ["boot3-restarted"], "time": 1791060401.643453}
+{"operation": "click", "args": ["11", "32"], "time": 1791060405.5230012}
+{"operation": "capture", "args": ["boot3-refused-reopened"], "time": 1791060409.944347}
+{"operation": "keys", "args": ["Enter"], "time": 1791060449.833576}
+{"operation": "capture", "args": ["boot3-manual-recovery-result"], "time": 1791060489.763668}
+{"operation": "keys", "args": ["C-q"], "time": 1791060495.744843}
+{"operation": "capture", "args": ["boot4-startup"], "time": 1791066704.772197}
+{"operation": "click", "args": ["16", "18"], "time": 1791066725.4213219}
+{"operation": "keys", "args": ["Enter"], "time": 1791066725.479904}
+{"operation": "capture", "args": ["boot4-source-selected"], "time": 1791066748.747751}
+{"operation": "click", "args": ["78", "50"], "time": 1791066773.5513}
+{"operation": "text", "args": ["Call new_chat exactly once with these arguments: {\"title\": \"DEV_FINAL_START\", \"destination\": \"casual\", \"mode\": \"start\", \"opening_prompt\": \"Reply only DEV_FINAL_START_OK.\"}. Do not call other tools. After the tool result, reply with the returned status."], "time": 1791066773.648274}
+{"operation": "capture", "args": ["boot4-first-request-entered"], "time": 1791066786.061069}
+{"operation": "keys", "args": ["Enter"], "time": 1791066811.76196}
+{"operation": "capture", "args": ["boot4-first-request-pending"], "time": 1791066830.367816}
+{"operation": "click", "args": ["78", "50"], "time": 1791066872.132075}
+{"operation": "text", "args": ["FINAL_SOURCE_SENTINEL"], "time": 1791066872.175734}
+{"operation": "capture", "args": ["boot4-remember-card-sentinel"], "time": 1791066886.8191848}
+{"operation": "click", "args": ["102", "22"], "time": 1791066897.6440141}
+{"operation": "capture", "args": ["boot4-first-start-progress"], "time": 1791066908.787112}
+{"operation": "click", "args": ["70", "22"], "time": 1791066928.864015}
+{"operation": "capture", "args": ["boot4-first-start-result"], "time": 1791066957.643852}
+{"operation": "click", "args": ["76", "50"], "time": 1791066975.6090162}
+{"operation": "keys", "args": ["C-u"], "time": 1791066975.653037}
+{"operation": "text", "args": ["Call new_chat exactly once with these arguments: {\"title\": \"DEV_FINAL_REMEMBERED_START\", \"destination\": \"casual\", \"mode\": \"start\", \"opening_prompt\": \"Reply only DEV_FINAL_REMEMBERED_START_OK.\"}. Do not call other tools. After the tool result, reply with the returned status."], "time": 1791066975.733252}
+{"operation": "capture", "args": ["boot4-second-request-entered"], "time": 1791067020.8968809}
+{"operation": "keys", "args": ["Enter"], "time": 1791067050.434037}
+{"operation": "click", "args": ["78", "50"], "time": 1791067076.543869}
+{"operation": "text", "args": ["FINAL_REMEMBERED_SOURCE_SENTINEL"], "time": 1791067076.579099}
+{"operation": "capture", "args": ["boot4-second-start-progress"], "time": 1791067103.68319}
+{"operation": "capture", "args": ["boot4-remembered-start-result"], "time": 1791067132.872993}
+{"operation": "click", "args": ["16", "32"], "time": 1791067137.880655}
+{"operation": "capture", "args": ["boot4-started-target-empty"], "time": 1791067159.734741}
+{"operation": "click", "args": ["78", "50"], "time": 1791067208.771216}
+{"operation": "text", "args": ["FINAL_LATER_TARGET_EDIT"], "time": 1791067208.823605}
+{"operation": "capture", "args": ["boot4-target-edit-entered"], "time": 1791067226.870281}
+{"operation": "click", "args": ["16", "16"], "time": 1791067230.839564}
+{"operation": "keys", "args": ["Enter"], "time": 1791067230.9021041}
+{"operation": "capture", "args": ["boot4-source-after-edit-switch"], "time": 1791067249.7576}
+{"operation": "click", "args": ["16", "33"], "time": 1791067277.296757}
+{"operation": "capture", "args": ["boot4-target-edit-reopened"], "time": 1791067302.417872}
+{"operation": "keys", "args": ["C-q"], "time": 1791067350.01439}

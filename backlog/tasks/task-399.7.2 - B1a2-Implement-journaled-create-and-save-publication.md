@@ -1,9 +1,10 @@
 ---
 id: TASK-399.7.2
 title: B1a2 Implement journaled create and save publication
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-07-23 15:35'
+updated_date: '2026-10-04'
 labels:
   - notes
   - filesystem
@@ -34,3 +35,15 @@ Implement the native path-safe mutation core for blank create and exact body sav
 - [ ] #6 No-op saves, stale editor generations, duplicate command submission, recovery-capacity refusal, permission changes, and crashes at every intent, safety-copy, publication, projection, and completion boundary are deterministic and fail closed.
 - [ ] #7 This child exposes no autosave integration, rename, move, delete, folder mutation, writable control, or read/write transition.
 <!-- AC:END -->
+
+## Closeout 2026-10-04
+
+Closed superseded, not implemented as written. Create and body save landed
+with different (ADR-029) semantics: re-hash current disk state, then
+hash-checked atomic write with no-clobber create and replica/projection/FTS
+updates in `tldw_chatbook/Notes/file_notes_service.py` (TASK-969
+implementation notes; PR #992). The durable journal / expected-state
+verification / native path-safe publication protocol specified above was
+never built.
+
+Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).

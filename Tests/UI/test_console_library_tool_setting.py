@@ -340,9 +340,7 @@ def test_factory_present_backend_serves_its_tool(monkeypatch):
     # ...while the missing media backend still reports feature_unavailable.
     media_result = provider.invoke("library:library_list_media", {})
     assert media_result.ok is False
-    assert (
-        json.loads(media_result.error)["error"]["code"] == ERROR_FEATURE_UNAVAILABLE
-    )
+    assert json.loads(media_result.error)["error"]["code"] == ERROR_FEATURE_UNAVAILABLE
 
 
 # --- Settings > Library/RAG compose -----------------------------------------
@@ -389,12 +387,14 @@ async def test_settings_library_rag_renders_separate_provider_mode_selector(
         # be mistaken for either per-conversation policy axis.
         assert "Automatic retrieval" in text
         assert "Agent Library access" in text
-        assert screen.query_one(
-            "#settings-library-rag-console-defaults-card"
-        ).border_title == "New Console conversations"
-        assert screen.query_one(
-            "#settings-library-rag-provider-mode-card"
-        ).border_title == "Allowed Library access"
+        assert (
+            screen.query_one("#settings-library-rag-console-defaults-card").border_title
+            == "New Console conversations"
+        )
+        assert (
+            screen.query_one("#settings-library-rag-provider-mode-card").border_title
+            == "Allowed Library access"
+        )
         assert "does not grant access" in text
         assert (
             "When assistant Library access is Allowed, agents can list, count, "
@@ -445,9 +445,7 @@ def test_persist_library_rag_save_writes_console_section_after_profile(
         saved_sections.append(dict(sections))
         return True
 
-    monkeypatch.setattr(
-        SettingsConfigAdapter, "save_sections", fake_save_sections
-    )
+    monkeypatch.setattr(SettingsConfigAdapter, "save_sections", fake_save_sections)
 
     app = _build_test_app()
     app.app_config["console"] = {"max_parallel_runs": 3}
@@ -503,9 +501,7 @@ def test_persist_library_rag_save_skips_console_write_when_profile_refuses(
     assert calls == []
 
 
-def test_persist_library_rag_save_reports_console_write_failure(
-    monkeypatch, tmp_path
-):
+def test_persist_library_rag_save_reports_console_write_failure(monkeypatch, tmp_path):
     """A failed config write surfaces as an unsuccessful save (draft stays)."""
     from Tests.UI.test_settings_configuration_hub import _wire_rag_profile_adapter
     from tldw_chatbook.UI.Screens.settings_config_adapter import (

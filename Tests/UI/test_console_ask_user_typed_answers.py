@@ -216,6 +216,7 @@ def test_malformed_card_answers_leave_the_draft_and_card_in_place():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer():
     """Integration: a real ConsoleChatController round waiting on a worker
     thread, the real ChatTaskCards/ChatQuestionCard under the consolidated
@@ -282,6 +283,15 @@ async def test_typed_answer_resolves_a_real_round_through_the_real_card_and_comp
                 return True
 
             screen = SimpleNamespace(
+                _console_pending_send=None,
+                _console_visible_draft_session_id=session.id,
+                _console_visible_send_session_id=lambda: session.id,
+                _ui_responsiveness_monitor=lambda: None,
+                _send_console_message_from_visible_action_observed=lambda **kwargs: (
+                    ChatScreen._send_console_message_from_visible_action_observed(
+                        screen, **kwargs
+                    )
+                ),
                 _console_pending_send_stash=None,
                 _raw_cli=SimpleNamespace(start_user_command=Mock()),
                 _console_composer_or_none=lambda: composer,

@@ -1,0 +1,13 @@
+{
+  "publication_base": "db0c9eecc5ce26147234b71a0e315c8157f8ec8a",
+  "prior_qa_files_verified": 12589,
+  "prior_qa_tree_sha256": "cbc0eac818390ad3a5e6f001f3b0a38fbf82739a762e152ab5c3d8d5019e679a",
+  "prior_qa_blobs_modes_paths_unchanged": true,
+  "zip_entries_verified": 395,
+  "new_paths": 7,
+  "projected_changed_paths": 2847,
+  "changed_path_limit": 3000,
+  "source_changed_by_export": false,
+  "raw_recovery_bundle_retained_privately": true,
+  "no_historical_checkpoints_rewritten": true
+}

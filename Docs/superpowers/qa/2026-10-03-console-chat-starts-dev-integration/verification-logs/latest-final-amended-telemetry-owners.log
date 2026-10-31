@@ -1,0 +1,48 @@
+........................................................................ [ 11%]
+........................................................................ [ 23%]
+........................................................................ [ 35%]
+........................................................................ [ 47%]
+........................................................................ [ 58%]
+........................................................................ [ 70%]
+........................................................................ [ 82%]
+........................................................................ [ 94%]
+...................................                                      [100%]
+=============================== warnings summary ===============================
+Tests/UI/test_console_cost_chip_screen.py::test_build_console_cost_state_returns_none_without_native_session
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/UI/Screens/chat_screen.py:24890: RuntimeWarning: coroutine 'Timer._run_timer' was never awaited
+    logger.error(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+Tests/UI/test_console_spend_projection.py::test_idle_refresh_coalesces_and_uses_late_bound_callbacks
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/conftest.py:600: UserWarning: open file descriptors grew by 452 over the test session (start=14, end=466, limit=200) — possible fd leak; bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests @pytest.mark.requires_cleanup
+    warnings.warn(message, UserWarning, stacklevel=0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+8.25s call     Tests/UI/test_console_cost_chip_screen.py::test_cost_chip_state_isolated_across_session_tabs
+7.72s call     Tests/UI/test_console_cost_chip_screen.py::test_cost_chip_shows_dollar_figure_after_priced_send
+6.52s call     Tests/UI/test_console_cost_chip_screen.py::test_reverting_the_edit_clears_the_alert
+6.13s call     Tests/UI/test_console_cost_chip_screen.py::test_ttl_timer_expires_the_chip_and_stops_itself
+6.13s call     Tests/UI/test_console_cost_chip_screen.py::test_system_prompt_revert_after_genuine_ttl_lapse_still_reports_expired
+6.02s call     Tests/UI/test_console_cost_chip_screen.py::test_projected_delta_estimator_skipped_when_warm_without_break_reason
+5.94s call     Tests/UI/test_console_cost_chip_screen.py::test_cost_chip_press_opens_the_breakdown_modal
+5.91s call     Tests/UI/test_console_cost_chip_screen.py::test_followup_draft_does_not_change_completed_current_spend
+5.89s call     Tests/UI/test_console_cost_chip_screen.py::test_fingerprint_recompute_is_skipped_while_streaming
+5.68s call     Tests/UI/test_console_cost_chip_screen.py::test_editing_earlier_history_alerts_the_warm_cache_chip
+5.48s call     Tests/UI/test_console_cost_chip_screen.py::test_reverting_system_prompt_edit_with_ttl_remaining_returns_to_warm
+5.23s call     Tests/UI/test_console_cost_chip_screen.py::test_cost_tooltip_ends_its_info_with_the_providers_rate_limit
+4.62s call     Tests/UI/test_console_cost_chip_screen.py::test_keyboard_send_cancels_idle_refresh_before_run_starts
+4.57s call     Tests/UI/test_console_cost_chip_screen.py::test_unaccepted_predispatch_echo_is_visible_but_excluded_from_context_and_current
+4.29s call     Tests/UI/test_console_cost_chip_screen.py::test_active_edit_cancels_an_already_armed_idle_cost_timer
+4.26s call     Tests/UI/test_console_cost_chip_screen.py::test_runtime_custody_cancels_before_validating_and_leaves_other_chat_idle
+4.23s call     Tests/UI/test_console_cost_chip_screen.py::test_idle_draft_edit_burst_coalesces_one_cost_refresh
+4.14s call     Tests/UI/test_console_cost_chip_screen.py::test_staged_evidence_changes_next_send_but_not_current_spend
+4.12s call     Tests/UI/test_console_cost_chip_screen.py::test_first_send_draft_changes_next_send_without_changing_current
+4.11s call     Tests/UI/test_console_cost_chip_screen.py::test_build_console_cost_state_includes_a_survivors_post_turn_spend
+4.05s call     Tests/UI/test_console_cost_chip_screen.py::test_excluded_historical_media_keeps_next_send_priced[missing-data]
+4.01s call     Tests/UI/test_console_cost_chip_screen.py::test_context_cost_refresh_does_not_materialize_attachment_payloads
+4.01s call     Tests/UI/test_console_cost_chip_screen.py::test_dispatched_echo_keeps_context_full_and_current_frozen
+4.00s call     Tests/UI/test_console_cost_chip_screen.py::test_live_draft_increases_context_fullness
+3.95s call     Tests/UI/test_console_cost_chip_screen.py::test_excluded_historical_media_keeps_next_send_priced[unaccepted]
+611 passed, 2 warnings in 267.35s (0:04:27)

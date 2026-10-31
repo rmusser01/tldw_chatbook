@@ -1,0 +1,107 @@
+name: Eval recovery regressions
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'tldw_chatbook/Evals/**'
+      - 'tldw_chatbook/Backup_Recovery/**'
+      - 'Tests/Backup_Recovery/**'
+      - 'Tests/windows_private_fixture_runner.py'
+      - 'Tests/Backup_Recovery/test_pending_directory_durability.py'
+      - 'Tests/subprocess_pipes.py'
+      - 'Tests/test_subprocess_pipes.py'
+      - '.github/workflows/eval-recovery-regressions.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  eval-recovery:
+    name: Eval recovery (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Select the POSIX source checkout
+        if: runner.os != 'Windows'
+        run: echo "EVAL_SOURCE_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+      - name: Stage the same commit under a private Windows ancestor
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $checkoutRoot = (Resolve-Path -LiteralPath $env:GITHUB_WORKSPACE).Path
+          $checkoutCommit = git -C $checkoutRoot rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Source commit could not be read' }
+          $privateSource = Join-Path $env:USERPROFILE ('.config/eval-recovery-source-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+          if (Test-Path -LiteralPath $privateSource) { throw 'Private source target already exists' }
+          New-Item -ItemType Directory -Path (Split-Path -Parent $privateSource) -Force | Out-Null
+          git clone --local --no-hardlinks --config core.longpaths=true $checkoutRoot $privateSource
+          if ($LASTEXITCODE -ne 0) { throw 'Private source clone failed' }
+          git -C $privateSource checkout --detach $checkoutCommit
+          if ($LASTEXITCODE -ne 0) { throw 'Selecting the exact reviewed commit failed' }
+          if ((git -C $privateSource rev-parse HEAD) -ne $checkoutCommit) { throw 'Private source commit differs' }
+          $checkoutOwner = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+          icacls $privateSource /setowner $checkoutOwner /Q
+          if ($LASTEXITCODE -ne 0) { throw 'Native fixture root ownership could not be established' }
+          foreach ($runtimeDirectory in @('tldw_chatbook', 'packages')) {
+            $runtimeRoot = Join-Path $privateSource $runtimeDirectory
+            icacls $runtimeRoot /setowner $checkoutOwner /T /Q
+            if ($LASTEXITCODE -ne 0) { throw 'Native runtime resource ownership could not be established' }
+          }
+          "EVAL_SOURCE_ROOT=$privateSource" >> $env:GITHUB_ENV
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e ".[dev]"
+        working-directory: ${{ env.EVAL_SOURCE_ROOT }}
+      - name: Install Windows fixture support
+        if: runner.os == 'Windows'
+        run: python -m pip install pywin32
+      - name: Select a private Windows temporary ancestor
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $evalTemp = Join-Path $env:USERPROFILE '.config/eval-recovery-temp'
+          New-Item -ItemType Directory -Path $evalTemp -Force | Out-Null
+          "TEMP=$evalTemp" >> $env:GITHUB_ENV
+          "TMP=$evalTemp" >> $env:GITHUB_ENV
+      - name: Verify override classification and recovery lifetimes
+        working-directory: ${{ env.EVAL_SOURCE_ROOT }}
+        run: >-
+          python -m Tests.windows_private_fixture_runner
+          Tests/Backup_Recovery/test_eval_private_overrides.py
+          Tests/Backup_Recovery/test_pending_directory_durability.py
+          Tests/Backup_Recovery/test_profile_launch_environment.py
+          Tests/test_subprocess_pipes.py
+          Tests/Backup_Recovery/test_eval_retained_definitions.py
+          Tests/Backup_Recovery/test_eval_selective_retention.py
+          Tests/Backup_Recovery/test_eval_rollback_retention.py
+          Tests/Backup_Recovery/test_eval_later_snapshot.py
+          -q --timeout=180 --junitxml=${{ runner.temp }}/eval-recovery.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-recovery-${{ matrix.os }}
+          path: ${{ runner.temp }}/eval-recovery.xml
+          if-no-files-found: error
+      - name: Preserve owned failed subprocess diagnostics
+        if: failure() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-recovery-windows-child-logs
+          path: |
+            ${{ env.TEMP }}/pytest-of-*/pytest-*/*/original/restart-output.log
+            ${{ env.TEMP }}/pytest-of-*/pytest-*/*/restored/restart-output.log
+            ${{ env.TEMP }}/pytest-of-*/pytest-*/*/reopen.log
+          if-no-files-found: ignore

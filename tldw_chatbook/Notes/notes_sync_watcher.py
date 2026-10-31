@@ -7,7 +7,7 @@ import random
 import time
 from collections.abc import Callable, Iterable
 
-_DEFAULT_MAX_INTERVAL_SECONDS = 10.0
+_DEFAULT_MAX_INTERVAL_SECONDS = 30.0
 _JITTER_LOW = 0.5
 _JITTER_HIGH = 1.5
 
@@ -56,9 +56,7 @@ class PollingNotesSyncWatcher:
                 float(interval_seconds), _DEFAULT_MAX_INTERVAL_SECONDS
             )
         if max_interval_seconds < interval_seconds:
-            raise ValueError(
-                "max_interval_seconds must be at least interval_seconds."
-            )
+            raise ValueError("max_interval_seconds must be at least interval_seconds.")
         self._changed_root_ids = changed_root_ids
         self._schedule_hint = schedule_hint
         self._interval = float(interval_seconds)
@@ -80,9 +78,7 @@ class PollingNotesSyncWatcher:
         if changed:
             self._current_interval = self._interval
         else:
-            self._current_interval = min(
-                self._current_interval * 2, self._max_interval
-            )
+            self._current_interval = min(self._current_interval * 2, self._max_interval)
         for root_id in changed:
             self._pending.add(root_id)
 

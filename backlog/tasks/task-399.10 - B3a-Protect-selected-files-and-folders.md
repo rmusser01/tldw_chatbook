@@ -1,9 +1,10 @@
 ---
 id: TASK-399.10
 title: B3a Protect selected files and folders
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-07-23 14:24'
+updated_date: '2026-10-04'
 labels:
   - notes
   - recovery
@@ -36,3 +37,15 @@ Maintain an independent exact current replica only for selected files and folder
 - [ ] #8 Selection, inheritance, external lag, corruption, capacity, free-space, and independent verify/export tests pass.
 - [ ] #9 An explicit per-file protection override follows its UUID across a verified Chatbook or paired-watcher rename/move. Folder-prefix protection remains path-based and is reevaluated at the destination; a Chatbook move previews and confirms any coverage/capacity change before mutation, and no moved file is labeled protected/current until its destination bytes independently verify.
 <!-- AC:END -->
+
+## Closeout 2026-10-04
+
+Closed superseded with reslice. The minimal protection rules landed under
+ADR-029: `FileNotesReplica.protect` / `FileNotesService.protect_path` with
+editing-session checkpoints and pre-edit exact bytes (TASK-969, PR #992). The
+per-file/folder-prefix coverage preview, verified-coverage claims, and the
+fixed 1 GiB capacity/floor contract specified above were not built as
+written.
+
+Resliced 2026-10-04 — the caps/coverage slices now live in TASK-34382.
+Superseded by ADR-029 (backlog/decisions/029-file-notes-disk-authority.md).

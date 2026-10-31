@@ -131,9 +131,7 @@ def _counting_factory(calls):
 def _make_image_item(service, backing_id: int, *, content: str, png: bytes) -> dict:
     """Reshape one seeded row into an image-typed item with a local original."""
     source = next(
-        item
-        for item in service.media_items
-        if item["id"] == f"media-{backing_id}"
+        item for item in service.media_items if item["id"] == f"media-{backing_id}"
     )
     source["type"] = "image"
     source["content"] = content
@@ -181,9 +179,7 @@ async def test_no_change_traversal_builds_no_preview_and_copies_no_content():
         _, backing_id_0, _ = _row_identity(
             screen.query_one("#library-media-row-0", Button)
         )
-        _make_image_item(
-            service, backing_id_0, content=content, png=_png_bytes(64, 48)
-        )
+        _make_image_item(service, backing_id_0, content=content, png=_png_bytes(64, 48))
         await _load_row(screen, pilot, service, 0)
         await _wait_for_selector(screen, pilot, "#library-media-image-preview")
         await pilot.pause()
@@ -350,9 +346,7 @@ async def test_image_item_traversal_wall_time_probe():
 
         screen.query_one("#library-media-row-0", Button).focus()
         await pilot.pause()
-        final_id, _, _ = _row_identity(
-            screen.query_one("#library-media-row-5", Button)
-        )
+        final_id, _, _ = _row_identity(screen.query_one("#library-media-row-5", Button))
         per_keystroke_ms: list[float] = []
         with _count_state_builds() as state_counts:
             for _ in range(5):
