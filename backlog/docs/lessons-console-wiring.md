@@ -11,6 +11,34 @@ bring the incident.
 
 ---
 
+## Do not carry a code inside a `str` subclass: it is lost at `.strip()`, and kept it leaks (TASK-33621.11, 2026-10-30)
+
+**Incident.** The setup blocker's sentence was given its readiness code by making
+it a `str` subclass (`ConsoleBlockedReason`), so every consumer that shows the
+sentence kept working unchanged. The unit tests went green. The mounted ChatScreen
+test still painted "Send blocked — finish provider setup to continue ›" for a
+staged image, because `ConsoleComposerBar.sync_action_state` normalizes with
+`setup_blocked_reason.strip()`. `str.strip()` returns a plain `str`, so the code
+was gone before the strip builder read it. Nothing raised: the uncoded sentence
+simply fell to the generic copy.
+
+**Second incident (the review of the same task).** The first fix overrode
+`strip()` to return the subclass, as this entry first advised. The code then
+survived the composer, and also everything after it: prompt_queue's `.strip()`
+kept it too, so a refused Enter wrote a `ConsoleBlockedReason` as a System row's
+content. Its `__new__` took a keyword-only `code`, so `copy.deepcopy` and
+`pickle` raised `TypeError`. The Inspect Context view deep-copies every row, so
+staging an image the model can't take, pressing Enter and opening that view
+showed "Preview unavailable · Refresh to retry" (live A/B: evidence U09/34 on
+the pre-fix head, U09/35 after). No unit test copied a row.
+
+**What to do.** Carry the code beside the sentence, not inside it: a small frozen
+dataclass (`text`, `code`, `notice`) passed only to the consumer that reads the
+code (the composer strip, the refused-Enter row choice), with the existing
+`str` accessors returning `.text` for every tooltip, row and toast. A `str`
+subclass either loses its payload at the first `str` method or, once those are
+overridden, spreads to every sink that stores or copies text.
+
 ## A correct model Apply can be hidden by a stale workspace activation (TASK-37620, 2026-10-29)
 
 **Incident.** A user selected a model in a character chat and landed in another

@@ -6079,7 +6079,10 @@ async def test_stream_chat_generic_provider_error_raises_sanitized_exception() -
 
 
 @pytest.mark.asyncio
-async def test_stream_bad_request_names_model_and_offers_picker_recovery() -> None:
+async def test_stream_bad_request_offers_no_model_advice() -> None:
+    """TASK-33621.11 AC#3: a 400 is no evidence about the model, so it no
+    longer says "Confirm the model is still available, or choose another
+    model"; only a 404 or an explicit model_not_found names the model."""
     def fake_chat_api_call(**_kwargs):
         raise ChatBadRequestError(
             "retired model; Authorization: Bearer SECRET-CANARY",
@@ -6112,9 +6115,9 @@ async def test_stream_bad_request_names_model_and_offers_picker_recovery() -> No
     assert str(exc_info.value) == str(ChatBadRequestError())
     message = exc_info.value.console_copy
     assert "Provider error from Anthropic" in message
-    assert "claude-3-haiku-20240307" in message
-    assert "Confirm the model is still available" in message
-    assert "choose another model from the model picker" in message
+    assert "claude-3-haiku-20240307" not in message
+    assert "Confirm the model is still available" not in message
+    assert "choose another model" not in message
     assert "Status: 400" in message
     assert "SECRET-CANARY" not in message
 

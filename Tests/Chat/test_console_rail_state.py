@@ -33,6 +33,12 @@ class Row:
     status: str = "ready"
     value: str = ""
     text: str = ""
+    #: TASK-33621.11: the structured identity the badge reads.
+    code: str = ""
+
+
+#: A blocked Provider row as the Inspector builds it (coded).
+BLOCKED_PROVIDER = Row("Provider", status="blocked", code="provider")
 
 
 def test_console_rail_state_uses_first_start_defaults():
@@ -286,24 +292,10 @@ def test_console_inspector_rail_badge_prioritizes_run_and_review_state():
     assert build_console_inspector_rail_badge(approval_count=1) == "1 approval"
     assert build_console_inspector_rail_badge(approval_count=2) == "2 approvals"
     assert (
-        build_console_inspector_rail_badge(
-            tool_count=3,
-            inspector_rows=(Row("Artifacts", value="Chatbook artifact available"),),
-        )
+        build_console_inspector_rail_badge(tool_count=3, can_save_chatbook=True)
         == "tools"
     )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("Artifacts", value="Chatbook artifact available"),),
-        )
-        == "artifact"
-    )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("RAG/source", value="3 sources staged"),),
-        )
-        == "source"
-    )
+    assert build_console_inspector_rail_badge(can_save_chatbook=True) == "artifact"
     assert build_console_inspector_rail_badge() == ""
 
 
@@ -339,7 +331,7 @@ def test_console_inspector_rail_badge_shows_running_from_structured_status(
     assert (
         build_console_inspector_rail_badge(
             run_status=run_status,
-            inspector_rows=(Row("Provider", status="blocked"),),
+            inspector_rows=(BLOCKED_PROVIDER,),
         )
         == "setup"
     )
@@ -354,18 +346,20 @@ def test_console_inspector_rail_badge_is_not_running_when_no_run_is_active(
     assert build_console_inspector_rail_badge(run_status=run_status) != "running"
 
 
-def test_console_inspector_rail_badge_detects_blocked_from_row_fields():
+def test_console_inspector_rail_badge_detects_blocked_from_row_status_only():
+    """TASK-33621.11 AC#5: the row's status decides, never its words."""
     assert (
         build_console_inspector_rail_badge(
-            inspector_rows=(Row("Policy blocked"),),
+            inspector_rows=(Row("Policy", status="blocked"),),
         )
         == "blocked"
     )
+    assert build_console_inspector_rail_badge(inspector_rows=(Row("Policy blocked"),)) == ""
     assert (
         build_console_inspector_rail_badge(
             inspector_rows=(Row("Policy", value="BLOCKED by workspace"),),
         )
-        == "blocked"
+        == ""
     )
 
 
@@ -373,31 +367,36 @@ def test_console_inspector_rail_badge_names_provider_setup_blockers():
     assert (
         build_console_inspector_rail_badge(
             run_status="blocked",
-            inspector_rows=(Row("Provider", status="blocked"),),
+            inspector_rows=(BLOCKED_PROVIDER,),
         )
         == "setup"
     )
+    # Only the coded Provider row is a setup blocker; a label that merely
+    # says "Model" with "blocked" copy is not (TASK-33621.11 AC#5), and an
+    # uncoded "Provider" label is just another blocked row.
     assert (
         build_console_inspector_rail_badge(
             inspector_rows=(Row("Model", value="Missing", text="blocked"),),
         )
-        == "setup"
-    )
-
-
-def test_console_inspector_rail_badge_detects_failed_from_row_fields():
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("Run", text="failed"),),
-        )
-        == "failed"
+        == ""
     )
     assert (
         build_console_inspector_rail_badge(
-            inspector_rows=(Row("FAILED run"),),
+            inspector_rows=(Row("Provider", status="blocked"),),
+        )
+        == "blocked"
+    )
+
+
+def test_console_inspector_rail_badge_detects_failed_from_row_status_only():
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("Run", status="failed"),),
         )
         == "failed"
     )
+    assert build_console_inspector_rail_badge(inspector_rows=(Row("Run", text="failed"),)) == ""
+    assert build_console_inspector_rail_badge(inspector_rows=(Row("FAILED run"),)) == ""
 
 
 def test_console_inspector_rail_badge_ignores_idle_inspector_rows():
@@ -420,44 +419,23 @@ def test_console_inspector_rail_badge_ignores_not_requested_source_rows():
     assert build_console_inspector_rail_badge(inspector_rows=state.rows) == ""
 
 
-def test_console_inspector_rail_badge_detects_positive_artifact_and_source_readiness():
+def test_console_inspector_rail_badge_reads_artifact_from_the_structured_flag():
+    """TASK-33621.11 AC#5: ``artifact`` comes from ``can_save_chatbook``.
+
+    The retired row-text fallbacks ("artifact"/"chatbook" or "source"/"rag"
+    labels with "available"/"staged" copy) never saw a production row -- the
+    badge rows are the coded Provider and Evidence rows -- and chose a badge
+    from display words.
+    """
     assert build_console_inspector_rail_badge(can_save_chatbook=True) == "artifact"
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("Artifacts", value="available"),),
-        )
-        == "artifact"
-    )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("Artifacts", value="Chatbook artifact available"),),
-        )
-        == "artifact"
-    )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("RAG/source", value="available"),),
-        )
-        == "source"
-    )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("RAG/source", value="staged from Library Search/RAG"),),
-        )
-        == "source"
-    )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("RAG/source", value="staged"),),
-        )
-        == "source"
-    )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("RAG/source", status="ready"),),
-        )
-        == "source"
-    )
+    for row in (
+        Row("Artifacts", value="available"),
+        Row("Artifacts", value="Chatbook artifact available"),
+        Row("RAG/source", value="available"),
+        Row("RAG/source", value="staged from Library Search/RAG"),
+        Row("RAG/source", status="ready"),
+    ):
+        assert build_console_inspector_rail_badge(inspector_rows=(row,)) == ""
 
 
 def test_console_inspector_rail_badge_does_not_treat_staged_as_source_category():
@@ -469,7 +447,7 @@ def test_console_inspector_rail_badge_does_not_treat_staged_as_source_category()
     )
 
 
-def test_console_inspector_rail_badge_requires_label_category_for_artifact_and_source():
+def test_console_inspector_rail_badge_ignores_artifact_and_source_words():
     assert (
         build_console_inspector_rail_badge(
             inspector_rows=(Row("Review", value="source available"),),
@@ -481,18 +459,6 @@ def test_console_inspector_rail_badge_requires_label_category_for_artifact_and_s
             inspector_rows=(Row("Review", value="artifact available"),),
         )
         == ""
-    )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("Artifacts", value="available"),),
-        )
-        == "artifact"
-    )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("RAG/source", value="available"),),
-        )
-        == "source"
     )
 
 
@@ -537,7 +503,7 @@ def test_console_rail_badges_do_not_mutate_open_booleans():
         stored_preferences={"left_open": False, "right_open": False},
         staged_source_count=2,
         run_status="blocked",
-        inspector_rows=(Row("Provider", status="blocked"),),
+        inspector_rows=(BLOCKED_PROVIDER,),
     )
 
     assert state.left_open is False

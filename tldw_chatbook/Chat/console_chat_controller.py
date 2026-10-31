@@ -515,8 +515,10 @@ from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandServ
 from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 from tldw_chatbook.Utils.input_validation import validate_console_draft
 from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
-    describe_console_stream_failure,
+    IMAGE_REFUSAL_HINT,
+    console_failure_copy,
     describe_stream_failure,
+    image_refusal_hint,
 )
 from tldw_chatbook.Chat.console_cost_tracker import (
     PayloadFingerprint,
@@ -22138,11 +22140,9 @@ class ConsoleChatController:
 
     @staticmethod
     def _blocked_visible_copy(copy: str) -> str:
-        if "Provider blocked" in copy:
-            return copy
-        if copy.startswith("WIP:"):
-            return f"Provider blocked: {copy}"
-        return copy or "Provider blocked."
+        # TASK-33621.11 AC#5: the gateway's sentence is the row, never
+        # rewritten by its words; only a silent resolution gets a generic one.
+        return str(copy or "").strip() or "Provider blocked."
 
     def _block(self, session_id: str, visible_copy: str) -> ConsoleSubmitResult:
         self._set_run_state(
@@ -22616,11 +22616,7 @@ class ConsoleChatController:
                 "Prompt-history recording failed for an accepted send."
             )
 
-    _IMAGE_REJECTION_RECOVERY_HINT = (
-        " This conversation includes an image attachment; if the model can't accept "
-        "images, switch to a vision-capable model, or type /rewind and restore to the "
-        "prompt that added the image (nothing is deleted; later turns stay a branch)."
-    )
+    _IMAGE_REJECTION_RECOVERY_HINT = IMAGE_REFUSAL_HINT
 
     def _session_history_carries_images(self, session_id: str) -> bool:
         """Return whether any message in the session carries an image.
@@ -25724,8 +25720,9 @@ class ConsoleChatController:
             # Provider failures are surfaced as run status plus a transcript
             # system row; they must never be written into assistant message
             # content, which is persisted and replayed as model context.
-            visible_copy = (
-                f"Provider stream failed: {describe_console_stream_failure(exc)}"
+            visible_copy = console_failure_copy(exc, "Provider stream failed")
+            visible_copy += image_refusal_hint(
+                exc, lambda: self._session_history_carries_images(owner_id)
             )
             self.store.record_trajectory_timing(
                 assistant_message_id, model_status="failed"
@@ -27067,11 +27064,10 @@ class ConsoleChatController:
             # the pre-regenerate base + status for a failed regenerate;
             # preserves whatever partial content already streamed
             # otherwise).
-            visible_copy = f"Agent run failed: {describe_console_stream_failure(exc)}"
-            if getattr(
-                getattr(exc, "response", None), "status_code", None
-            ) is not None and self._session_history_carries_images(session_id):
-                visible_copy += self._IMAGE_REJECTION_RECOVERY_HINT
+            visible_copy = console_failure_copy(exc, "Agent run failed")
+            visible_copy += image_refusal_hint(  # TASK-33621.11 AC#3: typed
+                exc, lambda: self._session_history_carries_images(session_id)
+            )
             try:
                 self.store.mark_message_failed(assistant_message_id)
             except KeyError:
@@ -27380,10 +27376,9 @@ class ConsoleChatController:
         ``_record_run_assistant_message``).
         """
         visible_copy = self._agent_failure_visible_copy(outcome)
-        if "provider returned HTTP" in visible_copy and (
-            self._session_history_carries_images(session_id)
-        ):
-            visible_copy += self._IMAGE_REJECTION_RECOVERY_HINT
+        visible_copy += image_refusal_hint(  # TASK-33621.11 AC#3: typed
+            outcome, lambda: self._session_history_carries_images(session_id)
+        )
         placeholder = self._ensure_assistant_placeholder(
             assistant_message_id, session_id
         )
@@ -27664,7 +27659,8 @@ class ConsoleChatController:
                 f"Agent run stuck: {reason or 'budget or loop limit reached'}.{suffix}"
             )
         if outcome.status == RUN_ERROR and getattr(outcome, "console_copy", None):
-            return f"Agent run failed: {outcome.console_copy}"
+            # TASK-33621.11 AC#4: the gateway's sentence is the whole row.
+            return outcome.console_copy
         return f"Agent run failed: {(reason or outcome.status).rstrip('.')}."
 
     @staticmethod

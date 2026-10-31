@@ -38,6 +38,7 @@ from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
     ACTION_SAVE_CHATBOOK,
 )
 from tldw_chatbook.Chat.console_display_state import (
+    ConsoleBlockedReason,
     ConsoleControlState,
     ConsoleInspectorState,
     ConsoleStagedContextState,
@@ -856,7 +857,10 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
             run_active=False,
             can_save_chatbook=False,
             send_blocked=True,
-            setup_blocked_reason="Choose a model in Chat settings before sending.",
+            setup_blocked_reason=ConsoleBlockedReason(  # TASK-33621.11: coded
+                "Choose a model in Chat settings before sending.",
+                code="model_missing",
+            ),
         )
         await pilot.pause(0.1)
 

@@ -2903,7 +2903,7 @@ def build_console_controllers(
         ensure_active_session=(
             lambda: screen._session._ensure_active_console_session_settings()
         ),
-        blocked_reason_accessor=lambda: screen._console_send_blocked_reason(),
+        blocked_reason_accessor=lambda: screen._console_send_gate(),
         setup_blocked_reason_accessor=(lambda: screen._console_setup_blocked_reason()),
         append_system_message=(
             lambda text: screen._append_native_console_system_message(text)

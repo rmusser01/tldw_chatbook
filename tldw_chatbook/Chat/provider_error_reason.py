@@ -241,3 +241,84 @@ def attach_provider_reason(
         except Exception:  # noqa: BLE001 -- slotted exception types
             pass
     return exc
+
+
+#: TASK-33621.11 AC#3: the statuses a provider refuses an image input with.
+#: Any other status (a 401, a 429, a 500 that happens to mention the image)
+#: says nothing about whether the image can be read.
+IMAGE_REFUSAL_STATUSES = frozenset({400, 413, 415, 422})
+#: "image"/"vision" not preceded by a letter: "invalid_image_format",
+#: "content.1.image.source", "Image does not match", "vision input".
+_IMAGE_WORDS = re.compile(r"(?<![a-z])(?:image|vision)", re.IGNORECASE)
+
+
+def _body_mentions_image(body: str) -> bool:
+    """Whether an error body's own error fields are about image input."""
+    try:
+        payload = json.loads(body[:_MAX_BODY_BYTES]) if body.strip() else None
+    except (TypeError, ValueError):
+        return bool(_IMAGE_WORDS.search(body))  # a plain-text error body
+    if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+        payload = payload[0]  # Google can wrap the error object in a list.
+    if not isinstance(payload, dict):
+        return False
+    error = payload.get("error")
+    if isinstance(error, dict):
+        fields = [error.get(key) for key in ("message", "type", "code", "param")]
+    else:
+        fields = [error, payload.get("message"), payload.get("detail")]
+    return any(isinstance(field, str) and _IMAGE_WORDS.search(field) for field in fields)
+
+
+def is_image_input_rejection(exc: BaseException) -> bool:
+    """Whether the provider refused this request because of its image input.
+
+    True only for a 400, 413, 415 or 422 whose provider body names image or
+    vision input. The body is classification evidence only and is never
+    shown. A gateway projection, whose body is gone, carries the verdict it
+    reached from the original error as ``image_input_rejected``.
+
+    Args:
+        exc: The provider failure (any exception on its unsuppressed chain
+            may carry the status, the response or the verdict).
+
+    Returns:
+        True for an image refusal; False otherwise, including when the
+        status or the body is unknown. It never raises: it runs inside the
+        failure paths (the gateway's error leg, the agent's run guard).
+    """
+    try:
+        return _is_image_input_rejection(exc)
+    except Exception:  # noqa: BLE001 -- classification is optional copy
+        return False
+
+
+def _is_image_input_rejection(exc: BaseException) -> bool:
+    seen: set[int] = set()
+    status: int | None = None
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if getattr(current, "image_input_rejected", False) is True:
+            return True
+        response: Any = getattr(current, "response", None)
+        raw_status = getattr(current, "status_code", None)
+        if type(raw_status) is not int:
+            raw_status = getattr(response, "status_code", None)
+        if status is None and type(raw_status) is int:
+            status = raw_status
+        if status in IMAGE_REFUSAL_STATUSES:
+            reason = getattr(current, "provider_reason", None)
+            if isinstance(reason, str) and _IMAGE_WORDS.search(reason):
+                return True
+            if response is not None and _body_mentions_image(
+                bounded_response_body(response)
+            ):
+                return True
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif not current.__suppress_context__:
+            current = current.__context__
+        else:
+            current = None
+    return False

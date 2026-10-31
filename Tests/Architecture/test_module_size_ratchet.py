@@ -149,11 +149,15 @@ _BUDGETS: dict[str, int] = {
     # TASK-33621.51 (2026-10-29): the Library preparation record builders
     # moved to console_library_preparation (preparation_contribution,
     # bypass_contribution): 29,055 -> 29,038 on dev ed7481a30c.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29030,
     # TASK-35582 review fixes: review delivery, project-dispatch callbacks and
     # continuation binding moved to console_review_delivery/_project_dispatch/
     # _continuation_binding; rows below re-pinned at their measured sizes.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29036,
+    # 2026-10-30, TASK-33621.11: shrank to the exact measurement, 29055 -> 29053.
+    # 2026-10-30, TASK-33621.11: shrank to the exact measurement on dev
+    # 7536ac3b87, 29038 -> 29036; its review's blocked-row fix (no copy
+    # rewritten by its words) shrinks it again, 29036 -> 29034.
+    # 2026-10-31: re-measured after rebasing onto dev 92ecd2c0aa (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 29034 -> 29032.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29032,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
@@ -566,7 +570,11 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/config.py": 12233,
     "tldw_chatbook/Chat/console_agent_bridge.py": 11604,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
-    "tldw_chatbook/Agents/agent_service.py": 9570,
+    # 2026-10-30, TASK-33621.11 (owner decision: a fix over a size ratchet
+    # raises the row with a dated comment): 9620 -> 9624 (+4). A failed run's
+    # outcome carries the typed image-refusal verdict for the Console hint.
+    # 2026-10-31: re-measured after rebasing onto dev 92ecd2c0aa (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 9570 -> 9574.
+    "tldw_chatbook/Agents/agent_service.py": 9574,
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9532,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
@@ -576,13 +584,23 @@ _BUDGETS: dict[str, int] = {
     # so the two can no longer disagree.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8747 -> 8763.
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8160,
+    # 2026-10-30, TASK-33621.11 (same owner decision): 8179 -> 8201 (+22).
+    # The gateway marks its own finished sentences by type, classifies image
+    # refusals before projecting the error, and narrows model advice.
+    # 2026-10-31: re-measured after rebasing onto dev 92ecd2c0aa (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 8160 -> 8182.
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8182,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
     # ConsoleComposerBar.has_sendable_payload, read by both sync sites and
     # the Workbench, fed by the screen's send-gate attachment predicate.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
+    # 2026-10-30, TASK-33621.11 (same owner decision): 7043 -> 7047 (+4). The
+    # setup-wizard link follows the blocker's code, not any non-empty reason.
+    # 2026-10-30 (owner decision, 2026-10-04 rule: a genuine fix raises the
+    # row by exactly its growth rather than contorting code): TASK-33621.11's
+    # review fix carries the Send blocker's code beside its sentence (a typed
+    # value, not a str subclass), +3: 7047 -> 7050.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7050,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
