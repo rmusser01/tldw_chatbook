@@ -173,9 +173,13 @@ def turn_recovery_label(
         budget: Cells the label may use on the shelf.
 
     Returns:
-        ``Not sent: <reason>`` (ellipsized), or the generic label.
+        ``Not sent: <reason>`` (ellipsized), or the generic label. A reason
+        that already starts "Not sent" is not prefixed twice (TASK-33621.4).
     """
     text = " ".join(str(reason or "").split()).rstrip(".")
+    for lead in ("Not sent:", "Not sent —"):
+        if text.startswith(lead):
+            text = text[len(lead) :].lstrip()
     if not text:
         return "Unsent turn needs attention"
     label = f"Not sent: {text}"
