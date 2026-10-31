@@ -63,6 +63,9 @@ class TagFilterPicker(ModalScreen[str | None]):
         # One rebuild at a time, and a pick waits for the one in flight, so
         # it always reads the rows the list shows.
         self._rows_lock = asyncio.Lock()
+        # The box holds a query no tag matches: the list shows "All" alone
+        # with nothing highlighted, and the arrows must not reach it.
+        self._no_match = False
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -99,6 +102,7 @@ class TagFilterPicker(ModalScreen[str | None]):
             )
             self._row_tags = rows
             listing.index = current_index
+            self._no_match = searching and not tags
 
     @on(Input.Changed, "#tag-filter-search")
     def _filter(self, event: Input.Changed) -> None:
@@ -152,6 +156,12 @@ class TagFilterPicker(ModalScreen[str | None]):
         ):
             # The box keeps focus (and the typing); the arrows move the list.
             event.stop()
+            if self._no_match:
+                # Nothing matches: Textual's cursor_down would go from no
+                # highlight to row 0, "All (clear filter)", so Enter would
+                # clear the filter being narrowed to (new with B2b's
+                # combobox, closed in its final fix wave).
+                return
             listing = self.query_one("#tag-filter-list", ListView)
             if event.key == "down":
                 listing.action_cursor_down()
