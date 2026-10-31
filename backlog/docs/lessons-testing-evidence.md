@@ -318,6 +318,32 @@ leaks from a worker, print the owning thread's current stack, not only the
 stack that opened the resource. The current stack showed whether the worker
 had finished; the opening stack could not.
 
+## On Windows, every Textual timer sleep holds a default-executor thread (TASK-38206, 2026-10-31)
+
+**Incident.** The GGUF recompose test failed only on windows-latest (runs
+40798969907 and 41091204880). Its 10 s settle expired before the rebuilt
+`LLMManagementWindow` reached `_finish_deferred_mount`. On macOS that takes
+0.33 s and one pause. The obvious reading was "slow runner". The pytest-timeout
+thread dumps in the same jobs said otherwise. All 8 `asyncio_N` default-executor
+threads (min(32, 4 vCPU + 4)) were parked in `textual/_win_sleep.py`
+`wait_inner`, and the main thread sat idle in the IOCP poll. The startup
+diagnostic also caught coroutines waiting in `_win_sleep.cancel` and
+`Timer._stop_all`, plus 20+ `_win_sleep.wait` calls queued for up to 47 s. On
+Windows, Textual runs each timer sleep as a blocking executor job, and cancelling
+a timer needs a second job. The app has three 24 h timers plus 120 s and 65 s
+ones, and up to 48 sleeps were in flight. So timer teardown, and every
+`thread=True` worker, waits for one of those threads. A local proxy of
+`_win_sleep` with an 8-thread pool took 12.8-23.6 s and failed 3 of 3 at 10 s.
+The same proxy with 64 threads took about 1 s. Host CPU load alone (load
+average 37-41 on 18 cores) took 0.6-1.1 s.
+
+**What to do.** When a Tests/UI wait fails only on Windows, check the job's
+thread dump for `_win_sleep.wait_inner` before blaming CPU speed. To reproduce
+it on macOS, route `textual.timer.sleep` and `textual._time.sleep` through
+`run_in_executor`, both the sleep and its cancel, and cap the app's
+`FreshContextExecutor` at 8 workers. Size Windows wait budgets for executor
+queueing, which CPU load does not reproduce.
+
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
 **Incident.** To stop the Console rail's filter input being replaced under
