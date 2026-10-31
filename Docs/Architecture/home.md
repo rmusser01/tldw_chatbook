@@ -21,7 +21,7 @@ Completion behind another screen records pending presentation instead of rebuild
 the hidden dashboard (TASK-35612). The next successful cache warm replays it even
 when the snapshot/cache contents are unchanged; failed or cancelled warming leaves
 it pending. The adapter TTL and native checks remain unchanged. Content builds
-stop issuing further queries once the mounted Home is hidden (TASK-35645). A
+stop issuing further queries once the mounted Home is hidden (TASK-38267). A
 read already issued remains awaited through its existing cleanup; a hidden
 partial build never replaces the last complete snapshot. The next visit starts
 the ordinary refresh. This suspension rule does not change the preexisting

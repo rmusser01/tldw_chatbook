@@ -176,3 +176,8 @@ No unrelated temporary files were removed. See `memory-cleanup.json`.
 ADR required: no. ADR path: N/A. This adopts existing disposable presentation and
 strengthens its reader-source key under ADR126/230 without changing storage,
 permission, service or native ownership boundaries.
+
+
+## 2026-10-31 integration qualification note
+
+The checked config proof now preserves its original issue time across optional tokenizer preparation (48 focused checked-display/tokenizer tests passed). This does not qualify the three connected tab-publication controls above. On the b1ca1b11 integration base, a bounded original-reader trace returned a real native proof after 10.641s, beyond the unchanged ten-second setup predicate. The original control assertions remain intact; root deferred qualification until the final current-dev integration. TASK-35679 AC2 remains open. Exact source patches, adverse receipts, native-owner diagnostics and the unrelated historical cadence 6-versus-5 limit are in [the review-repair record](../pr3166-review-2026-10-31/RESULTS.md). Historical timings and speedup conclusions are unchanged.

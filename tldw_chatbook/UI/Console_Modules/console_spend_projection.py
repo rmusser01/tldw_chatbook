@@ -451,6 +451,7 @@ class ConsoleReadinessConfigProjection:
                 reader, creator=self, session_id=key[5], reads=self._reads,
                 observers=observers, require_current=lambda: None,
             )
+            read_at = time.monotonic()
             if (
                 tokenizer_request is not None
                 and tokenizer_request is self._tokenizer_request
@@ -523,7 +524,7 @@ class ConsoleReadinessConfigProjection:
                     self._tokenizer_prepared = None
                 self._tokenizer_retry_at = time.monotonic() + self.max_age
             self._runtime_owner = runtime
-            self.key, self.value, self.at = current_key, value, time.monotonic()
+            self.key, self.value, self.at = current_key, value, read_at
             self.context_policy = result.context_policy
             self.pricing = result.pricing
             proof = result._display_proof
@@ -540,7 +541,8 @@ class ConsoleReadinessConfigProjection:
                 # The existing pristine-default handoff may change only this
                 # owner's settings revision. Bind the issued display copy to
                 # that final exact owner and its original one-second clock.
-                published = replace(proof, owner=current_key, at=self.at)
+                published = replace(proof, owner=current_key)
+                self.at = proof.at
                 _checked_display_proofs.add(published)
                 self._display_proof = published
         except Exception:  # noqa: BLE001 - remain cold and retryable.

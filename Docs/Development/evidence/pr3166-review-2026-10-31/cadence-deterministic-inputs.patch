@@ -1,0 +1,145 @@
+diff --git a/Tests/UI/test_console_checked_display_scope.py b/Tests/UI/test_console_checked_display_scope.py
+index ff60383a36..e4fa16cd9c 100644
+--- a/Tests/UI/test_console_checked_display_scope.py
++++ b/Tests/UI/test_console_checked_display_scope.py
+@@ -807,3 +807,74 @@ async def test_spoofed_bound_key_attributes_retain_fresh_native_scope(tmp_path):
+     finally:
+         await asyncio.gather(*tasks, return_exceptions=True)
+         database.close()
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("expire_during_tokenizer", [False, True])
++async def test_tokenizer_wait_never_renews_original_checked_display(
++    tmp_path, monkeypatch, expire_during_tokenizer
++):
++    """A tokenizer completion cannot grant a new config-read freshness window."""
++    from Tests.UI.test_console_tokenizer_preparation import HeldPreparation
++
++    database, _store, _controller, screen, tasks = _screen(tmp_path)
++    projection = spend.ConsoleReadinessConfigProjection.for_screen(screen)
++    request = HeldPreparation("model", "provider")
++    projection._tokenizer_request = request
++    original_current = spend._tokenizer_display.preparation_current
++    monkeypatch.setattr(
++        spend._tokenizer_display,
++        "preparation_current",
++        lambda candidate: candidate is request or original_current(candidate),
++    )
++    issued, rendered, retries = [], [], []
++    screen._request_console_control_bar_sync = lambda **_: retries.append(True)
++    monitor = sys.monitoring
++    tool = next(slot for slot in range(6) if monitor.get_tool(slot) is None)
++    code = projection.read_current.__code__
++
++    def observed(actual_code, _offset, result):
++        assert actual_code is code
++        if isinstance(result, spend.ConsoleReadinessConfigRead):
++            issued.append(result._display_proof)
++
++    monitor.use_tool_id(tool, "tokenizer-original-display-age")
++    monitor.register_callback(tool, monitor.events.PY_RETURN, observed)
++    monitor.set_local_events(tool, code, monitor.events.PY_RETURN)
++    try:
++        assert not projection.run(lambda: None)
++        assert await asyncio.to_thread(request.entered.wait, 3)
++        assert len(issued) == 1 and issued[0] in spend._checked_display_proofs
++        assert request.thread != threading.get_ident()
++        assert projection._reads, "tokenizer escaped the finite preparation owner"
++        if expire_during_tokenizer:
++            await asyncio.sleep(1.05)
++        request.release.set()
++        await asyncio.gather(*tasks)
++        assert not projection._reads
++        assert projection._tokenizer_prepared is request
++        with _actual_calls() as calls:
++            accepted = run_console_presentation_sync(
++                screen, lambda: rendered.append(True)
++            )
++        assert accepted is not expire_during_tokenizer
++        assert rendered == ([] if expire_during_tokenizer else [True])
++        assert retries == ([True] if expire_during_tokenizer else [])
++        assert calls["main_scopes"] == calls["main_opens"] == 0, calls
++        assert projection._display_proof.at == issued[0].at
++        assert projection.at == issued[0].at
++        if expire_during_tokenizer:
++            assert projection.pending
++            await asyncio.gather(*tasks)
++            assert len(issued) == 2 and issued[1].at > issued[0].at
++            assert run_console_presentation_sync(
++                screen, lambda: rendered.append(True)
++            )
++            assert rendered == [True]
++    finally:
++        request.release.set()
++        await asyncio.gather(*tasks, return_exceptions=True)
++        monitor.set_local_events(tool, code, 0)
++        monitor.register_callback(tool, monitor.events.PY_RETURN, None)
++        monitor.free_tool_id(tool)
++        database.close()
+diff --git a/Tests/UI/test_console_config_sync_cadence_inputs.py b/Tests/UI/test_console_config_sync_cadence_inputs.py
+index 0f1637a859..de7dc037e7 100644
+--- a/Tests/UI/test_console_config_sync_cadence_inputs.py
++++ b/Tests/UI/test_console_config_sync_cadence_inputs.py
+@@ -727,3 +727,30 @@ async def test_the_input_read_of_the_agent_rail_starts_no_historical_read(tmp_pa
+         assert reads() == 1
+     finally:
+         database.close()
++
++
++@pytest.mark.parametrize("defer_first_projection", [False, True])
++def test_late_tail_publication_is_a_new_input_and_refusal_remains_owed(
++    clock, defer_first_projection
++):
++    """A publication after quiet ticks is new work even at the same clock."""
++    screen = _settled(clock)
++    screen._console_chat_controller.states["s1"] = ConsoleRunState(
++        ConsoleRunStatus.COMPLETED
++    )
++    assert _tick(screen) == 1
++    screen._console_transcript_sync_timer = object()
++    assert [_tick(screen) for _ in range(3)] == [0, 0, 0]
++    cadence = config_sync._cadence(screen)
++    before = cadence.published
++    config_sync.publish_console_presentation(screen, "console-context-publication")
++    assert cadence.published == before + 1
++    screen.result = not defer_first_projection
++    assert _tick(screen) == 1
++    if defer_first_projection:
++        assert screen.replays_requested == 1
++        assert cadence.values[9] == before
++        screen.result = True
++        assert _tick(screen) == 1
++    assert cadence.values[9] == before + 1
++    assert [_tick(screen) for _ in range(3)] == [0, 0, 0]
+diff --git a/tldw_chatbook/UI/Console_Modules/console_spend_projection.py b/tldw_chatbook/UI/Console_Modules/console_spend_projection.py
+index eef80d37e6..1eecce2dc9 100644
+--- a/tldw_chatbook/UI/Console_Modules/console_spend_projection.py
++++ b/tldw_chatbook/UI/Console_Modules/console_spend_projection.py
+@@ -449,6 +449,7 @@ class ConsoleReadinessConfigProjection:
+                 reader, creator=self, session_id=key[5], reads=self._reads,
+                 observers=observers, require_current=lambda: None,
+             )
++            read_at = time.monotonic()
+             if (
+                 tokenizer_request is not None
+                 and tokenizer_request is self._tokenizer_request
+@@ -521,7 +522,7 @@ class ConsoleReadinessConfigProjection:
+                     self._tokenizer_prepared = None
+                 self._tokenizer_retry_at = time.monotonic() + self.max_age
+             self._runtime_owner = runtime
+-            self.key, self.value, self.at = current_key, value, time.monotonic()
++            self.key, self.value, self.at = current_key, value, read_at
+             self.context_policy = result.context_policy
+             self.pricing = result.pricing
+             proof = result._display_proof
+@@ -538,7 +539,8 @@ class ConsoleReadinessConfigProjection:
+                 # The existing pristine-default handoff may change only this
+                 # owner's settings revision. Bind the issued display copy to
+                 # that final exact owner and its original one-second clock.
+-                published = replace(proof, owner=current_key, at=self.at)
++                published = replace(proof, owner=current_key)
++                self.at = proof.at
+                 _checked_display_proofs.add(published)
+                 self._display_proof = published
+         except Exception:  # noqa: BLE001 - remain cold and retryable.

@@ -1,5 +1,5 @@
 ---
-id: TASK-35645
+id: TASK-38267
 title: Reduce measured native Console attachment waits
 status: In Progress
 assignee:
@@ -35,3 +35,8 @@ ADR required: no. ADR path: N/A. Reason: bounded Home display-demand correction 
 <!-- SECTION:NOTES:BEGIN -->
 Stopped unissued mounted-hidden Home content queries while awaiting each already-issued read through its existing cleanup. Hidden partial builds preserve the preceding complete snapshot; ordinary revisit refresh and direct unmounted callers remain. ADR required: no; existing ADR126/230 boundaries retained. Original regression6fail/1pass, focusedGREEN7pass, final50targeted checks pass158.23s. Independent final review has no additional findings; Home architecture and monitoring-API lesson updated. Twelve safety/ownership modules are unchanged. Serial Home-only d249 baseline/current ABBA retains all24drafts/attachments, four exits0 and allguards0. Pooled attachment2152.17->1639.77ms(-23.8%) and input262.72->238.43ms, but reverse attachment pair+6.2%worse and worst input566.69->731.16msworse: no consistent latency or threshold qualification. Separate corrected-observer controls verify22->8actualcontentworkers; both six-return journeys succeed and guards0. Failed local PY_UNWIND setup exit1 retained and corrected with a filtered global event; earlier fixture marker mistakes recorded without bypass. Remaining direct control-bar native fallback is documented. Fourteen exact disposable roots removed after all-target validation; unrecorded earlier error root not inferred/deleted. Lint/format pass; no full suite. Published code and all evidence to PR3166, with the leading description recording adverse as well as improved results. Final independent review passes with no additional findings. Auto-merge is verified off. Keep In Progress because consistent latency and tail-performance qualification remain unmet; the measured direct control-bar native fallback is documented as remaining work.
 <!-- SECTION:NOTES:END -->
+
+
+## Renumbering provenance — 2026-10-31
+
+Renumbered incoming PR3166 TASK-35645 (native Console attachment waits) to TASK-38267 because current dev already owns TASK-35645 for Console refreshes waiting out config rebuilds. The landed task and this task's existing status/content remain intact. Root's refreshed census scanned 71 worktrees and 290326 task paths without errors, found maximum 38237, allocated 38267 with a 30-ID buffer, and found no all-ref history claim. A same-title search found only this incoming task; the local all-ref history recheck also found no 38267 task claim. Current refs/worktrees require another collision check before publication. Historical raw logs and code revision identifiers are unchanged.

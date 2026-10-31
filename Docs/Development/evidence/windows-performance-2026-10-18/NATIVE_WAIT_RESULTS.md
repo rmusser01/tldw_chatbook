@@ -1,4 +1,4 @@
-# Native preparation waits and Console attachment — TASK-35645
+# Native preparation waits and Console attachment — TASK-38267
 
 Baseline: `d24919ab402d503ca8210dc5ee6b0fd186adbd64`. Candidate product:
 `bf1463078c`. Native Windows 10, Python 3.12.10, Textual 8.2.8,

@@ -39,6 +39,17 @@ Reason: rebase the reviewed display scheduling work onto current native admissio
 2. Preserve finite native retirement, custom-callback affinity, exact drafts and attachment authority, measured Current cost on unavailable tokenizers, conservative CSS matching and deferred hidden Home reads.
 3. Run focused native Windows checks with genuine private config/temp roots and targeted static checks. Review any diagnostic inventory changes individually; do not weaken behavioral guards or timing bounds. Hosted CI and size limits are waived by the user's 2026-10-31 backlog instruction.
 4. Record current-base results and unresolved historical performance/safety qualifications, then obtain fresh independent review before any root-agent publication or merge. AC2 and existing In Progress qualification remain open unless directly established.
+
+### 2026-10-31 independent-review repairs
+
+ADR required: no.
+ADR path: N/A; existing ADR-126/230 apply.
+Reason: restore the existing checked-read freshness deadline and qualify the existing cadence/tab-publication contracts without changing authority, TTLs or native retirement.
+
+1. Reproduce the slow-tokenizer proof-age reset through the original native config reader and presentation entry. Preserve the checked read's original timestamp through tokenizer preparation; test expiry refusal and fresh-read recovery.
+2. Preserve the already-landed TASK35645 and rename only the incoming native-attachment task to root-allocated TASK38267 with provenance and maintained reference updates.
+3. Instrument the actual extra tail projection decision and publication source without replacing qualified production readers. Repair the responsible product or deterministic fixture contract, retaining refusal/replay and current timing bounds.
+4. Qualify the three existing connected tab-publication paths with targeted functional controls; retain original failures and reconstructible tested-source patches. Run focused adjacent checks only, then obtain fresh independent review through root.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -49,4 +60,7 @@ Implemented qualified transcript reuse of existing finite context inputs with so
 ### 2026-10-31 integration notes
 
 Rebased onto b1ca1b11 with current native source/owner/config-lock callers retained. Deferred Library preparation restores the existing app startup handoff; stale appearance display reuse now retains service identity; reconciliation diagnostics omit exception bodies. Current-dev fixture seams and reviewed diagnostic/size inventories were updated. Results and unresolved qualifications: `Docs/Development/evidence/pr3166-integration-2026-10-31/RESULTS.md`. Existing ADR-126/230 apply; AC2 and In Progress remain unchanged. Root coordinates fresh independent review and final current-base publication.
+### 2026-10-31 independent-review handoff
+
+Preserved the original authenticated config proof timestamp across optional tokenizer preparation; the actual native-proof regression failed before repair and the focused checked-display/tokenizer files passed 48 tests after it. Incoming native-attachment task 35645 was renumbered to 38267 with provenance, leaving landed 35645 intact. The exact six-case cadence selection passed with original-code decision traces; deterministic late-publication/refusal controls passed with the 51-case input suite. The historical 6-versus-5 tail failure remains unattributed, not fixed or attributed to baseline. All three connected tab-publication contracts remain unqualified on base b1ca1b11; the original tab tests are unchanged, and the bounded native-child trace identifies an original config reader returning a real proof after 10.641s beyond its ten-second setup bound. Root deferred their final qualification until current-base integration. See `Docs/Development/evidence/pr3166-review-2026-10-31/RESULTS.md` for raw failures, source patches, exact receipts and limits. ADR-126/230 apply; AC2 and In Progress remain unchanged.
 <!-- SECTION:NOTES:END -->

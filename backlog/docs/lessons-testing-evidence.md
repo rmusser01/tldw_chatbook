@@ -956,7 +956,7 @@ the operation can.
 The 57 tests from the first round passed throughout. No test interrupted a changed check.
 
 **What to do.** When you fold step B into step A, list everything B did on entry, such as clearing a marker, advancing a generation or publishing a loading state. Then check every exit of the merged path against that list: each return, each exception, and cancellation. Write one test per exit class, not per return statement. A barrier that cancels the task, or makes a loop accessor raise, while the worker is held, will cover the raising exits.
-## Validate monitoring event masks before booting the app (TASK-35645, 2026-10-19)
+## Validate monitoring event masks before booting the app (TASK-38267, originally TASK-35645, 2026-10-19)
 
 **Incident.** A review correctly noticed missing unwind accounting in a Windows
 native-read observer, but adding `PY_UNWIND` to `set_local_events` failed before
@@ -21620,7 +21620,7 @@ The independently authenticated actual primary-agent RED XML is two failures in 
 
 ## Bounded consumer selections can install a wheel through an imported fixture
 
-**PR2918 / TASK34200 integration, October4,2026.** The changed identity/selected-owner modules completed18PASS in53.924s XML. A broader178-case admission/binding/replacement/rollback/startup selection was interrupted with exit130 after its native_package fixture was discovered: it had built a local wheel and used pip --no-index --no-deps --target in pytest-9200/f9-native-package0/installed, with3064 installed files recorded by the fixture. The raw output has88 progress dots, including the first mapped-source wheel case; the second wheel case was in progress. There is no completed XML for that selection and no packaging, native-release or installed-behavior certificate. No prefix case or wheel fixture was rerun, and no fixture, marker, readiness, runtime or config guard was changed.
+**PR2918 / TASK34200 integration, October4,2026.** The changed identity/selected-owner modules completed18PASS in53.924s XML. A broader178-case admission/binding/replacement/rollback/startup selection was interrupted with exit130 after its native_package fixture was discovered: it had built a local wheel and used pip --no-index --no-deps --target in pytest-9200/f9-native-package 0/installed, with3064 installed files recorded by the fixture. The raw output has88 progress dots, including the first mapped-source wheel case; the second wheel case was in progress. There is no completed XML for that selection and no packaging, native-release or installed-behavior certificate. No prefix case or wheel fixture was rerun, and no fixture, marker, readiness, runtime or config guard was changed.
 
 The89 remaining source-only nodes then completed89PASS in64.314s XML, exit0, zero failures/errors/skips. These and the separate18-case result are not summed with interrupted progress or historical incoming sweeps. Inspect imported fixtures and their subprocess commands before choosing a bounded module selection; a module can invoke build/install work without an install command in the root launcher. Preserve interrupted raw output and the actual task-owned side effect, and continue only the required untouched source controls. Late pytest rm_rf warnings remain; no foreign cleanup occurred.
 
@@ -23216,3 +23216,8 @@ poll/heartbeat intervals with results and rerun both versions after correcting
 the probe. Do not credit removal of an observer-induced timeout as a product fix.
 Evidence: `Docs/Development/evidence/windows-performance-2026-10-18/STORAGE_RESULTS.md`
 and `asyncio_polling_probe.py` in the same directory.
+
+
+## Test freshness at the original checked read, after every unrelated await (PR3166, 2026-10-31)
+
+Independent review held optional tokenizer preparation after the original native config reader had issued a one-second proof. Publication re-dated that proof: its actual age was 1.218s, but the presentation gate saw age 0 and rendered without a fresh native entry. Preserve the original issue time when rebinding an otherwise qualified display owner. The regression must exercise the actual presentation gate and verify refusal/replay plus fresh-read recovery, not just compare timestamps. The RED/GREEN receipts and native reader/source checks are in `Docs/Development/evidence/pr3166-review-2026-10-31/RESULTS.md`.
