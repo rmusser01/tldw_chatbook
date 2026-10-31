@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -300,6 +301,14 @@ async def _press_until_focus(
     raise AssertionError(f"{key} did not reach {target.id}; visited={visited}")
 
 
+# Textual's Windows timer sleep (textual/_win_sleep.py) parks a default-executor
+# thread for each sleeping timer and needs a free one to cancel it. The 4-vCPU
+# windows-latest runner's pool has 8 threads, all seen parked in `wait_inner`,
+# so a screen recompose's timer teardown queues for seconds (TASK-38206: over
+# 10 s in CI; 12.8-23.6 s under a local 8-thread proxy, ~1 s with 64 threads).
+_SETTLE_SECONDS = 60.0 if sys.platform == "win32" else 10.0
+
+
 async def _settle_pilot_until(
     pilot: Any,
     predicate: Any,
@@ -309,7 +318,7 @@ async def _settle_pilot_until(
     """Pump bounded Pilot cycles until deferred Textual work reaches a condition."""
 
     try:
-        async with asyncio.timeout(10):
+        async with asyncio.timeout(_SETTLE_SECONDS):
             while True:
                 await pilot.pause()
                 if predicate():
