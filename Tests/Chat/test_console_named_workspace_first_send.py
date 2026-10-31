@@ -23,9 +23,13 @@ user takes instead:
   the Inspector picker's commit seam;
 - the real controller sends with Capture On over a real SQLite file.
 
-Only the provider stream itself is replaced. On dafecd3a78 this test fails:
-the send ends BLOCKED, paused for trace provenance, and the provider is never
-entered.
+``_stream_assistant_response`` is replaced whole, from provider entry on: the
+agent runtime, project-instruction resolution, the "Send project
+instructions?" notice, the folder picker and the gateway do not run here. The
+reported block happened before that call, at trace provenance, so this is
+enough for it; the notice and Change Review variants rest on live checks. On
+dafecd3a78 this test fails: the send ends BLOCKED, paused for trace
+provenance, and the provider is never entered.
 """
 
 from __future__ import annotations
