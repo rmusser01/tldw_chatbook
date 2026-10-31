@@ -346,9 +346,13 @@ from ...Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from ...Chat.console_display_state import (
+    CONSOLE_BLOCKER_ARCHIVE_INFLIGHT,
+    CONSOLE_BLOCKER_LIBRARY_EVIDENCE,
+    CONSOLE_BLOCKER_PROVIDER_SETUP,
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
+    ConsoleBlockedReason,
     ConsoleControlState,
     ConsoleDisplayRow,
     ConsoleInspectorState,
@@ -359,9 +363,11 @@ from ...Chat.console_display_state import (
     build_console_evidence_display_state,
     build_console_staged_evidence_strip_state,
     coerce_non_negative_int,
-    console_image_blocked_reason,
+    console_image_blocker,
     console_prompted_source_count,
+    console_send_gate_setup_copy,
     console_setup_blocked_reason,
+    console_setup_blocker,
     console_staged_source_count,
 )
 from ...Chat.console_onboarding_state import (
@@ -13852,6 +13858,13 @@ class ChatScreen(BaseAppScreen):
         _settings, readiness = self._active_console_settings_readiness()
         return console_setup_blocked_reason(readiness)
 
+    def _console_composer_send_blocker(self) -> ConsoleBlockedReason:
+        """The composer's Send blocker, coded: setup first, then a staged image."""
+        settings, readiness = self._active_console_settings_readiness()
+        return console_setup_blocker(readiness) or console_image_blocker(
+            self._console_attachment_blocked_reason(), settings.model
+        )
+
     def _console_provider_recovery_field(self) -> str:
         """Return the Settings Providers & Models field targeted by recovery."""
         _settings, readiness = self._active_console_settings_readiness()
@@ -17979,61 +17992,47 @@ class ChatScreen(BaseAppScreen):
         if self._console_pending_image_attachment() is None:
             return ""
         effective_settings, _readiness = self._active_console_settings_readiness()
-        return console_image_blocked_reason(  # TASK-33621.11: coded, never setup
-            vision_block_reason(effective_settings.provider, effective_settings.model),
-            effective_settings.model,
+        return (
+            vision_block_reason(effective_settings.provider, effective_settings.model)
+            or ""
         )
 
     def _console_send_blocked_reason(self) -> str:
         """Return a user-facing reason if Console send cannot safely run."""
+        return self._console_send_gate().text
+
+    def _console_send_gate(self) -> ConsoleBlockedReason:
+        """The send gate's refusal, coded with the blocker it stopped on.
+
+        TASK-33621.11: prompt_queue picks a refused Enter's System row by
+        this code, never by the sentence's words.
+        """
         conversation_id = self._current_console_conversation_id()
         if conversation_id in getattr(
             self.app_instance, "_conversation_archive_inflight", ()
         ):
-            return "Archive change in progress. Your draft is preserved."
+            return ConsoleBlockedReason(
+                "Archive change in progress. Your draft is preserved.",
+                code=CONSOLE_BLOCKER_ARCHIVE_INFLIGHT,
+            )
         # A cached archive flag may predate a restore by another writer.
         # The awaited submit boundary checks durable state before any send.
         pending_launch = self._consume_pending_console_launch()
         if pending_launch is not None and _source_mentions_rag(pending_launch.source):
             evidence_state = build_console_evidence_display_state(pending_launch)
             if evidence_state is None or evidence_state.available_count == 0:
-                return (
+                return ConsoleBlockedReason(
                     "Console send blocked: Library search has no available evidence. "
-                    "Review source authority before sending."
+                    "Review source authority before sending.",
+                    code=CONSOLE_BLOCKER_LIBRARY_EVIDENCE,
                 )
-        _readiness_settings, readiness = self._active_console_settings_readiness()
-        if (
-            readiness.operability == "not_ready"
-            and readiness.recovery_action != "wait_for_active_run"
-        ):
-            # Active-run admission belongs to the prompt queue. It refuses
-            # while the turn is preparing and admits Queue after acceptance;
-            # only actual provider setup gaps belong in this gate.
-            if readiness.recovery_action == "configure_credential":
-                if readiness.subscription_status == "pending":
-                    return "Checking Claude subscription credential. Your draft is preserved."
-                if readiness.subscription_status in {"missing", "expired"}:
-                    return "Console send blocked: Log in with Claude Code to refresh the subscription credential."
-                provider = readiness.provider_display_name or "this provider"
-                return (
-                    f"Console send blocked: Add an API key for {provider} before "
-                    "sending."
-                )
-            if readiness.recovery_action == "select_model":
-                return "Console send blocked: Select a model before sending."
-            if readiness.recovery_action == "save_endpoint":
-                return (
-                    "Console send blocked: Save the provider endpoint before sending."
-                )
-            if readiness.recovery_action == "configure_endpoint":
-                return "Console send blocked: Enter a valid provider endpoint before sending."
-            if readiness.recovery_action == "retry_connection":
-                return "Console send blocked: Retry the provider connection before sending."
-            return "Console send blocked: Finish provider setup before sending."
-        attachment_reason = self._console_attachment_blocked_reason()
-        if attachment_reason:
-            return attachment_reason
-        return ""
+        readiness_settings, readiness = self._active_console_settings_readiness()
+        setup_copy = console_send_gate_setup_copy(readiness)
+        if setup_copy:
+            return ConsoleBlockedReason(setup_copy, code=CONSOLE_BLOCKER_PROVIDER_SETUP)
+        return console_image_blocker(
+            self._console_attachment_blocked_reason(), readiness_settings.model
+        )
 
     async def handle_console_send_message(self, event: Button.Pressed) -> bool:
         """Route the Console composer send action through the native controller.
@@ -21347,13 +21346,9 @@ class ChatScreen(BaseAppScreen):
         )
         run_active = run_active or videogen_active or image_edit_active
         send_blocked = send_blocked or image_edit_active
-        setup_blocked_reason = self._console_setup_blocked_reason()
-        attachment_blocked_reason = self._console_attachment_blocked_reason()
-        send_blocked = (
-            send_blocked
-            or bool(setup_blocked_reason)
-            or bool(attachment_blocked_reason)
-        )
+        # TASK-33621.11: the blocker's code rides beside its sentence.
+        send_blocker = self._console_composer_send_blocker()
+        send_blocked = send_blocked or bool(send_blocker)
 
         composer.sync_action_state(
             has_draft=composer.has_sendable_payload(),  # TASK-33620.15.22
@@ -21363,7 +21358,7 @@ class ChatScreen(BaseAppScreen):
             can_save_chatbook=can_save_chatbook,
             send_blocked=send_blocked,
             dispatch_recovery_blocked=dispatch_recovery_blocked,
-            setup_blocked_reason=setup_blocked_reason or attachment_blocked_reason,
+            setup_blocked_reason=send_blocker,
             queue_blocked_reason=(
                 queue_presentation.send_tooltip
                 if queue_presentation is not None
@@ -24311,6 +24306,7 @@ _CONSOLE_RECEIVED_SCREEN_SELECTORS = tuple(
         "_build_console_provider_selection_from_settings",
         "_provider_readiness_app_config",
         "_console_send_blocked_reason",
+        "_console_send_gate",
         "_console_setup_blocked_reason",
     )
 )
