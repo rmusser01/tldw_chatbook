@@ -158,8 +158,9 @@ gives the numbers and the way on: run `/compact`, then try again, or change
 **When limit nears**.
 A message that starts with `$` (a skill) or `/` while Capture is off cannot
 show the card either. Over the trigger it is not sent: the note starts "Not
-sent", and the message waits on the shelf above the composer. Run `/compact`,
-then choose **Restore** to put it back in the composer and send it.
+sent", your text stays in the composer, and the shelf above the composer lists
+the message with **Restore** and **Discard**. To go on, clear the composer and
+run `/compact`, then choose **Restore** to put the message back and send it.
 Queued prompts and Buddy replies cannot show it either. A queued prompt that
 reaches the trigger is not sent: it goes back to the front of the queue, the
 queue pauses on **Start refused**, and the note starts "Not sent from the
