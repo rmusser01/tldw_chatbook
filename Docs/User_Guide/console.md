@@ -111,7 +111,10 @@ Top to bottom:
   why. When setup is the blocker, that reason is clickable and opens the
   setup wizard directly. A staged image the model can't read is not setup:
   the reason reads "Send blocked — \<model\> can't accept images" and is not
-  a link.
+  a link. Pressing Enter while Send is blocked keeps the draft and writes
+  the reason as a System row. That row names the first thing that blocks the
+  send: when none of the staged Library evidence is available, it says so,
+  even if provider setup is also unfinished.
   You can just start typing from almost anywhere on
   the screen — printable keys go straight into the draft. A physically typed
   `! ` prefix switches to a red raw-host-command state only after the saved
@@ -360,7 +363,10 @@ the Key check's **Test (t)** in Settings — was refused or timed out, the Conso
 for example, "Not ready · refused :9099" (the header badge, the Model
 section, the Chat settings rows, the Inspector's **Setup** row and this
 card's "Reconnect the provider server" step), and the composer reads "Send
-blocked — retry the connection to continue". After a 401 ("Not ready · key
+blocked — retry the connection to continue". A test that reached the server
+but got an error answer (an HTTP error, or a reply that is not a model list)
+reads "Send blocked — finish provider setup to continue" instead, because
+retrying cannot fix it. After a 401 ("Not ready · key
 rejected") it reads "Send blocked — key rejected; update the API key",
 never "add an API key". **Retry connection** tests that same server again
 in place; it opens no settings. If the server now answers, the chat is Ready and Send
