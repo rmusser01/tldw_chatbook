@@ -103,7 +103,6 @@ def _console(tmp_path, hooks, call, *, agent: bool, bridge_type=ConsoleAgentBrid
             store=store,
             provider_gateway=gateway,
         )
-        store.bridge = extra["agent_bridge"]  # test handle only
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
@@ -137,7 +136,7 @@ def _system_row(store, session) -> str:
     return rows[-1]
 
 
-async def _projected(gateway, call_kind: str = "stream") -> ChatAPIError:
+async def _projected(gateway) -> ChatAPIError:
     """The exception the real gateway raises for the injected failure."""
     resolution = await gateway.resolve_for_send(
         ConsoleProviderSelection(provider="anthropic", explicit_model=MODEL)
@@ -215,7 +214,7 @@ async def test_escaped_bridge_failure_reads_as_one_sentence(tmp_path, hooks):
     )
     projected = await _projected(gateway)
     assert projected.console_copy == AUTH_COPY
-    store.bridge.escaping = projected
+    controller._agent_bridge.escaping = projected
     await controller.submit_draft("hello")
     visible = _system_row(store, session)
     assert visible.startswith(AUTH_COPY)
@@ -302,7 +301,8 @@ async def test_escaped_401_with_an_image_in_history_gets_no_image_hint(
         tmp_path, hooks, _auth_failure(), agent=True, bridge_type=_EscapingBridge
     )
     _with_image_turn(store, session)
-    store.bridge.escaping = _raw_http_error(401, "invalid x-api-key")
+    assert isinstance(controller._agent_bridge, _EscapingBridge)
+    controller._agent_bridge.escaping = _raw_http_error(401, "invalid x-api-key")
     await controller.submit_draft("hello")
     assert _system_row(store, session) == (
         "Agent run failed: provider returned HTTP 401 (invalid x-api-key)"
