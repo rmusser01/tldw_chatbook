@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-07-25 11:20'
-updated_date: '2026-10-31 10:04'
+updated_date: '2026-10-31 10:12'
 labels:
   - skills
   - trust
@@ -36,6 +36,7 @@ Found by live TUI verification (task-579). Unit tests cannot catch this class of
 - [x] #7 Repeated failed automatic unlocks avoid salt/keyring reads for 60 seconds after failure completes, then retry; all backend failure variants remain fail-closed
 - [x] #8 Explicit Library Retry and direct convenience unlock can recover immediately; passphrase unlock, reset and recovery activation guards remain effective
 - [x] #9 A successful explicit Retry refreshes the current Skills page so previously blocked rows and totals become usable immediately; cancelled, navigated-away, and superseded requests cannot refresh it
+- [x] #10 A filter submitted while Retry is waiting remains the current request and visible filter when Retry succeeds, including while that newer search is still loading
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -94,8 +95,8 @@ to dev); existing formatter debt remains outside the changed blocks. All touched
 Python compiles and git diff --check passes. Initial overlapping automatic
 workers are not serialized; the cooldown bounds subsequent attempts.
 
-Task stays In Progress because backlog-py is broken on this host and independent
-review/remote integration are handled at handoff. No push, PR comment, auto-merge
+Task stays In Progress pending independent review/remote integration at handoff.
+The initially broken CLI trampoline now has a working installed-Python entry point. No push, PR comment, auto-merge
 or merge was performed.
 
 ### Independent review correction (2026-10-31)
@@ -121,6 +122,22 @@ touched Python files). The controller formats cleanly; the canvas test keeps
 only its two pre-existing formatter hunks. No full sweep, native OS keyring run,
 or remote operation was performed. ADR-009 remains the governing decision.
 
+### Retry/filter ordering correction (2026-10-31)
+
+Re-review caught Retry refreshing the last applied page while a newer submitted
+filter was still loading. The real-button test now holds keyring and search
+calls independently, submits `newer` through the actual Input Enter handler,
+and releases Retry first. It failed with current query `demo` instead of
+`newer`. Retry now explicitly refreshes the browse controller's latest requested
+scope, preserving pending filter/page intent while recomputing trust rows.
+
+Fresh targeted run: 15 passed, 2 deselected, 2 existing warnings in 49.92s,
+including all fourteen earlier controls and the held-search regression.
+Both touched Python files compile; baseline lint comparison has no new findings
+(four existing controller findings and one existing test finding). The controller
+and changed test block format cleanly; the test file retains its two unrelated
+formatter hunks. git diff --check passes. No full suite or remote writes.
+
 <!-- SECTION:NOTES:END -->
 
 ## Implementation Plan
@@ -137,6 +154,7 @@ Reason: restores the existing recoverable, fail-closed convenience contract with
 3. Limit the failure cooldown to automatic attempts and make explicit Retry invalidate transient keyring read caches within the existing activation guards; preserve worker dispatch.
 4. Run targeted Skills and Library/activation checks plus touched-file static analysis, review the diff and record exact evidence. No full suite.
 5. Review follow-up: reproduce Retry with a genuinely blocked source page, refresh that page only after a successful current Retry, and verify cancellation/navigation/generation fences before committing the correction.
+6. Ordering follow-up: hold Retry and a newer real Enter-submitted filter request independently; prove the refresh preserves the latest requested scope, then rerun the previous targeted controls.
 
-The installed backlog-py CLI currently fails before execution (uv trampoline cannot canonicalize its script path); this repair updates the existing record directly and leaves it In Progress pending CLI closeout.
+The installed backlog-py trampoline failed before execution, so initial updates used the task file directly. The host now has a working `AppData/Roaming/uv/tools/backlog-md-py/Scripts/python.exe -m backlog_py` entry point; task status remains In Progress pending independent review and integration.
 <!-- SECTION:PLAN:END -->

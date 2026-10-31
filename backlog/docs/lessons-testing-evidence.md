@@ -22767,3 +22767,10 @@ regression requires the row glyph, blocked total, and page actions to recover
 through the scoped browse refresh, and keeps cancellation/route/generation
 controls. Seed the real failure state when testing recovery; a healthy row
 can hide a missing refresh behind a healthy header.
+
+Re-review exposed a second interleaving: while Retry waited on the keyring, a
+new filter was submitted but its service page had not finished. The mutation
+refresh defaulted to the old applied scope and reset that newer request. An
+independently gated real Input Enter test failed with query demo instead of
+newer; Retry must refresh the latest requested scope, since route and snapshot
+generation fences do not change when the user submits a filter.

@@ -4524,7 +4524,7 @@ async def test_skill_trust_buttons_carry_reason_tooltips():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "interruption", [None, "cancel", "route", "generation", "backend_failure"]
+    "interruption", [None, "cancel", "route", "generation", "backend_failure", "search"]
 )
 async def test_library_retry_recovers_immediately_through_real_posture_worker(
     tmp_path, monkeypatch, interruption
@@ -4559,6 +4559,15 @@ async def test_library_retry_recovers_immediately_through_real_posture_worker(
                 raise KeyringError("keyring locked")
             return super().get_password(service_name, username)
 
+    class GatedSkillsScopeService(SkillsScopeService):
+        async def list_skills(self, **kwargs):
+            if kwargs.get("query") == "newer":
+                search_started.set()
+                assert search_release.wait(30), "Newer search gate was not released."
+            return await super().list_skills(**kwargs)
+
+    search_started = threading.Event()
+    search_release = threading.Event()
     reads = []
     retry_started = threading.Event()
     retry_release = threading.Event()
@@ -4587,7 +4596,7 @@ async def test_library_retry_recovers_immediately_through_real_posture_worker(
     monkeypatch.setattr(store_module, "time", clock)
     backend.failed = True
     local_service = LocalSkillsService(store_dir=tmp_path, trust_service=fresh)
-    scope_service = SkillsScopeService(local_service=local_service)
+    scope_service = GatedSkillsScopeService(local_service=local_service)
     scope = SkillBrowseScope(query="demo", sort="status")
     initial_page = await asyncio.to_thread(
         lambda: asyncio.run(
@@ -4670,8 +4679,47 @@ async def test_library_retry_recovers_immediately_through_real_posture_worker(
                 screen._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
             elif interruption == "generation":
                 screen._library_snapshot_state_generation += 1
+            elif interruption == "search":
+                filter_input = screen.query_one("#library-skills-filter", Input)
+                filter_input.value = "newer"
+                filter_input.focus()
+                await pilot.press("enter")
+                await _wait_for_condition(
+                    pilot,
+                    search_started.is_set,
+                    message="The newer Enter-submitted filter did not reach its service.",
+                )
+                assert controller.scope.query == "newer"
+                assert controller.applied_result.scope.query == "demo"
         finally:
             retry_release.set()
+        if interruption == "search":
+            try:
+                await _wait_for_condition(
+                    pilot,
+                    lambda: screen._skills_state.trust_posture == "ready",
+                    message="Retry did not finish while the newer search was held.",
+                )
+                assert controller.scope.query == "newer"
+                assert (
+                    screen.query_one("#library-skills-filter", Input).value == "newer"
+                )
+            finally:
+                search_release.set()
+            await pilot.pause()
+            await host.workers.wait_for_complete()
+            await _wait_for_condition(
+                pilot,
+                lambda: controller.freshness == "fresh",
+                message="The preserved newer search did not finish.",
+            )
+            assert controller.applied_result.scope == SkillBrowseScope(
+                query="newer", sort="status"
+            )
+            assert screen.query_one("#library-skills-filter", Input).value == "newer"
+            assert screen._build_library_skills_state().rows == ()
+            assert controller.blocked_total == 0
+            return
         if interruption == "cancel":
             with pytest.raises(WorkerCancelled):
                 await host.workers.wait_for_complete(cancelled)

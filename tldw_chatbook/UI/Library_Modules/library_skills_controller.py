@@ -1245,7 +1245,10 @@ class LibrarySkillsController:
         ):
             return LibraryEntryReconcileResult.SUPERSEDED
         if retry and posture == "ready":
-            self._refresh_library_skills_after_committed_mutation()
+            # A newer filter/page request may still be loading while Retry waits.
+            self._refresh_library_skills_after_committed_mutation(
+                scope=self._library_skills_browse_controller.scope
+            )
         identity = self._capture_library_entry_focus()
         prior_callback: Callable[[], None] | None = None
         pending = (generation, route_key)
