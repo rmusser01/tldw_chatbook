@@ -630,7 +630,12 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Library outcome line on a mounted ChatScreen (four cases, about 24 s
 # locally) and its projection helper (16 cases, about 12 s), so no
 # existing entry changes shard: dev's 1149 + 2 = 1151.
-MINIMUM_FILES = 1163
+# TASK-36380 (2026-10-29) appends 1 node entry at the tail: the koboldcpp
+# Discover journey (about 23 s locally), so no existing entry changes shard.
+# An increment of 1 for that entry. The floor now equals the entry count,
+# which also absorbs any lag in dev's floor (tail entries a merge added
+# without raising it).
+MINIMUM_FILES = 1164
 
 
 def read_census(path: Path) -> list[str]:

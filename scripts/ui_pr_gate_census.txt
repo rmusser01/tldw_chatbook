@@ -1634,3 +1634,7 @@ Tests/UI/test_console_rail_filter_typing.py::test_a_rebuild_never_writes_state_i
 # cases, about 12 s), appended at the tail; existing slots stay fixed.
 Tests/UI/test_console_library_outcome_line.py
 Tests/UI/test_console_library_outcome_lines.py
+# TASK-36380 (2026-10-29): koboldcpp's Discover models lists a bare root and a
+# prefix root where Switch model probes, and a contract-refused endpoint names
+# its reason (one private-profile journey, about 23 s locally).
+Tests/UI/test_settings_default_model_picker.py::test_koboldcpp_root_and_prefix_root_list_where_switch_model_probes
