@@ -476,6 +476,16 @@ def test_a_request_runs_once_its_owner_is_idle_and_the_user_quiet() -> None:
     assert ops.calls == ["refreeze:run_settled"]
 
 
+def test_seconds_since_input_reads_the_last_stamp() -> None:
+    """The first-send warm-up reads how long ago the user acted (TASK-33620.15.18)."""
+    clock = Clock()
+    refreezer = make(clock, Ops())
+    assert refreezer.seconds_since_input() == float("inf")
+    refreezer.note_input()
+    clock.now += 0.2
+    assert refreezer.seconds_since_input() == pytest.approx(0.2)
+
+
 def test_input_inside_the_quiet_period_defers_the_refreeze() -> None:
     """A key 1.5 s after the request pushes the re-freeze to 2 s after the key."""
     clock, ops, owner = Clock(), Ops(), Owner()
