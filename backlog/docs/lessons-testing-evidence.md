@@ -129,6 +129,38 @@ tests read and leave out `Docs/superpowers` and `Docs/QA`. A red that appears
 only in such a tree (a missing `.git` or doc) is not a branch regression.
 Compare failing ids only.
 
+## Pre-decoded SSE fixtures hide charset corruption (TASK-37600, 2026-10-29)
+
+A user screenshot showed repeated accented characters in llama.cpp agent
+replies, also present in copied/exported text. Raw UTF-8 SSE bytes through the
+shared local adapter reproduced eight Unicode failures while 28 ASCII,
+escaped-JSON and explicit-UTF-8 controls passed. Requests inferred Latin-1 from
+charset-less `text/event-stream`; pre-decoded string fixtures bypass that step.
+Test encoding behavior with raw `ensure_ascii=False` JSON bytes and real HTTP
+response construction, including missing/misleading charsets and one-byte reads.
+
+## Retained rows do not acknowledge preparatory navigation (TASK-38060, 2026-10-29)
+
+PR3308's UI gate timed out opening a later note in the preview-link journey.
+The shared setup posted a hidden-rail button press, then waited for any retained
+note row; its click helper also sampled a painted offset only once. An unchanged
+local run instead failed finding the later Gone link, while a diagnostic run
+with extra compositor reads passed. The harness now awaits canonical navigation
+and the current painted click target, retaining the real mouse click and all
+link/browser assertions. The exact hosted interleaving was not captured; this
+evidence supports readiness hardening, not a claim of a proven production race.
+
+## A shared-method spy can count unrelated background work (TASK-38061, 2026-10-30)
+
+PR3308's acceptance-projection test expected one deferred action-row sync but
+counted two. A local stack trace reproduced one queued projection callback and
+one background session-draft refresh calling the same spied method. Restore the
+method before yielding: Textual's `call_later` already captured the projection's
+recorder, while later background lookups use the original method. The five-test
+file then passed; removing, inlining or duplicating the projection callback each
+still failed its own assertion. These are local stacks and mutation controls;
+the hosted runner's extra invocation was not stack-traced.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen

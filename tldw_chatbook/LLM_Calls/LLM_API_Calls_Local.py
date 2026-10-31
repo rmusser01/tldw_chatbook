@@ -319,6 +319,8 @@ def _chat_with_openai_compatible_local_server(
                 timeout=timeout + 60,
             )
             response.raise_for_status()
+            # SSE is UTF-8; Requests otherwise defaults charset-less text to Latin-1.
+            response.encoding = "utf-8"
             logging.debug(f"{provider_name}: Streaming response received.")
 
             # Log streaming success metrics

@@ -99,6 +99,16 @@ Config (`[model_catalog]`): `auto_refresh_enabled` (default true), `refresh_cons
 
 Local handlers read the immutable `[api_settings]` runtime snapshot. Managed server starts live in `Event_Handlers/LLM_Management_Events/`: per-backend command builders (`--model/-m --host --port` for llamacpp/llamafile), a claim-based lifecycle (`reserve_server_launch`, `run_server_subprocess`, bounded terminate) keyed to app-held `Popen` handles, and the Lab/Models UI for start/stop. Transformers/ONNX participate via local summarization/embedding paths rather than the chat handlers.
 
+The shared local OpenAI-compatible sender fixes SSE decoding to UTF-8 before
+iterating response lines, including when the response omits or misstates its
+charset. Requests otherwise defaults charset-less `text/event-stream` to
+Latin-1 and corrupts literal Unicode before JSON parsing. Console llama.cpp
+requests with native tools use this shared sender; tool-free llama.cpp requests
+use the separate HTTPX gateway path. `Tests/LLM_Calls/test_local_sse_encoding.py`
+exercises real Requests response construction and byte decoding with fragmented
+Unicode, escaped JSON, ASCII, normal exhaustion and consumer Stop. This corrects
+new streamed replies; it does not reconstruct previously corrupted messages.
+
 ### External Strata and PolyStrata servers
 
 `strata` and `polystrata` are separate canonical local providers, with independent
