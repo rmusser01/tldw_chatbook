@@ -108,8 +108,12 @@ def _without_trailing_cursor(text: str) -> str:
     with a plain space instead of the glyph (see
     ``ConsoleComposerBar._draft_renderable``), so a test can race the real
     blink timer under load; strip that placeholder form too. Draft-content
-    assertions should stay agnostic to that focus/blink state.
+    assertions should stay agnostic to that focus/blink state. An unfocused
+    composer also shows its "Esc to type" cue (TASK-33622.3), ahead of the
+    placeholder or after a draft; strip that too.
     """
+    cue = ConsoleComposerBar.FOCUS_CUE
+    text = text.removeprefix(f"{cue} · ").removesuffix(f" · {cue}")
     glyph = ConsoleComposerBar.CURSOR_GLYPH
     if text.startswith(glyph):
         return text[len(glyph) :]

@@ -2199,3 +2199,33 @@ assertions like `"Session summary" in svg` fail on fully-rendered text.
 **Card modals: fixed width. Screenshot asserts: normalize `&#160;`/`\xa0`
 to spaces first, and pair any screen-popped assertion with a render
 assertion so it cannot pass vacuously.**
+
+---
+
+## A widget method named `_detach` silently replaces Textual's own, and closed widgets stay "attached" (TASK-37960, 2026-10-29)
+
+**Incident.** The Console's conversation- and workspace-row action menus named
+their memoized removal helper `_detach`. Textual already has a
+`MessagePump._detach` (it sets `_parent = None`), and
+`Widget._message_loop_exit` calls it at the end of every removal. The menus'
+version returned their `AwaitRemove` instead. So a closed menu left the DOM
+but kept its parent. Their registries (`*_action_menus_on_screen`, which skip
+`parent is None`) went on reporting it as open, and ChatScreen's Esc
+"dismissed" the ghost instead of returning focus to the composer. The ghost
+lasted for as long as anything referenced the menu: a young object went away
+at the next collection, a long-lived one at the next full GC. That is why
+nobody saw it. The tests that opened and closed these menus dropped their
+references, and live use usually outlived the ghost. It surfaced only when a
+test held its `menu` variable across an Esc (TASK-33622.3's fold test). The
+Personas widgets had already been bitten once: `personas_character_dictionaries.py`
+names its handler `_detach_pressed` with a comment saying why. `MeetingsScreen`
+still defines `_detach` (TASK-37622).
+
+**What to do.** Before giving a widget or screen a private `_name`, check that
+Textual does not already use it (`grep -rn "def _name" .venv/lib/python3.12/site-packages/textual/`).
+`_detach` and `_close_messages` (on `MessagePump`) and `_refresh_styles`
+(on `Widget`) are all called by Textual itself. A registry that decides "still open"
+from `parent is None` depends on `_detach` running. A test of a dismissal
+path should hold a reference to the dismissed widget and assert
+`widget.parent is None`, because dropping the reference lets GC hide this
+class of bug.

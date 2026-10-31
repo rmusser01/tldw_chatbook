@@ -111,7 +111,12 @@ Top to bottom:
   why. When setup is the blocker, that reason is clickable and opens the
   setup wizard directly.
   You can just start typing from almost anywhere on
-  the screen — printable keys go straight into the draft. A physically typed
+  the screen: a printable key that the focused control does not use moves
+  focus to the draft and lands there, from a status-strip segment, a rail or
+  header button or a tab. Text fields, the Terminal and the transcript keep
+  their keys (the transcript's single letters are commands), and Space still
+  presses a focused button. While focus is outside the composer its draft
+  area says **Esc to type**. A physically typed
   `! ` prefix switches to a red raw-host-command state only after the saved
   unlock and per-launch Arm gates; see
   [Chat basics](console/chat-basics.md#raw-cli-user-commands--full-host-authority).

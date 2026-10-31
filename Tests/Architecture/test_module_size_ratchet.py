@@ -427,7 +427,17 @@ _BUDGETS: dict[str, int] = {
     # branch's delta only: dev ed7481a30c already measures 8,821 against the
     # old 8,353, and that overrun is not this task's to absorb, so the row
     # stays red until it is decomposed or re-pinned by its owner.
-    "tldw_chatbook/Widgets/Console/console_transcript.py": 8380,
+    # TASK-33622.4 (2026-10-27, owner rule: a fix raises the row with a dated
+    # comment): Esc stops only when it cleared something, the clear binding is
+    # gated on the same test, and a focused action parks focus on the
+    # transcript (+31). Dev b5150753eb already measures 8,821 against this
+    # row's 8,353; the row moves by this fix's +31 only and does not absorb
+    # dev's overrun, so it stays red exactly as on dev.
+    # dev's overrun, so it stays red exactly as on dev. Review follow-up
+    # (2026-10-29, same owner rule): has_escape_layer answers "nothing to
+    # clear" for a transcript with no screen instead of raising (+4).
+    # 2026-10-30: re-measured after rebasing onto dev 7536ac3b87 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 8380 -> 8415.
+    "tldw_chatbook/Widgets/Console/console_transcript.py": 8415,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
     # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source
@@ -578,9 +588,20 @@ _BUDGETS: dict[str, int] = {
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
     # ConsoleComposerBar.has_sendable_payload, read by both sync sites and
     # the Workbench, fed by the screen's send-gate attachment predicate.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
+    # TASK-33622.3 (2026-10-27, owner rule: a fix raises the row with a dated
+    # comment): the draft area's "Esc to type" cue while focus is outside
+    # the composer, measured into the row count so it is never cropped, and
+    # set_draft_focusable, which repaints it when the setup card blocks
+    # typing (+54). Dev b5150753eb measures 7,024; with the fix, 7,078.
+    # Rebased 2026-10-29 onto dev 7b9fb3d555 (7,043 after TASK-33620.15.22):
+    # 7,043 + 54 = 7,097.
+    # Review follow-up (2026-10-29, same owner rule): the cue is left off
+    # where it would wrap onto a row the focused draft does not use, so focus
+    # leaving the composer never grows the bar (+17): 7,114.
+    # 2026-10-29: re-measured after rebasing onto dev ed7481a30c (owner rule: the row is the exact measurement): 7043 -> 7114.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7114,
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,

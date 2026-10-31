@@ -40,6 +40,7 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_IMPROVE_CURRENT_DRAFT,
     build_composer_menu_entries,
 )
+from ...Widgets.Console.console_transcript import ConsoleTranscript
 
 if TYPE_CHECKING:
     from textual.events import Key
@@ -182,6 +183,164 @@ def route_composer_control_key(
         event.stop()
         event.prevent_default()
     return True
+
+
+#: TASK-33622.4: the transcript is the Console's announced list mode (the
+#: ADR-031 refinement of 2026-10-27): its single letters act on messages, so
+#: while it holds focus the footer leads with that and with the way back.
+TRANSCRIPT_KEYS_FOOTER = (
+    ("", "Transcript keys · Esc to type"),
+    ("j/k", "select"),
+    ("Y", "trace"),
+)
+#: Hints that name something the key does not do while the transcript has
+#: focus (there Enter shows the selected message's actions).
+_NOT_TRANSCRIPT_HINTS = (("Enter", "send / queue"), ("Y", "trace"))
+
+
+def focus_in_transcript(focused: Any) -> bool:
+    """Whether ``focused`` is the transcript or one of its rows' controls.
+
+    Args:
+        focused: The focused widget, or None.
+
+    Returns:
+        True inside the transcript (its list mode), False anywhere else.
+    """
+
+    return focused is not None and any(
+        isinstance(node, ConsoleTranscript)
+        for node in getattr(focused, "ancestors_with_self", ())
+    )
+
+
+def transcript_focus_shortcuts(
+    shortcuts: tuple[tuple[str, str], ...],
+) -> tuple[tuple[str, str], ...]:
+    """Return the footer hints for focus inside the transcript (TASK-33622.4).
+
+    Args:
+        shortcuts: The footer's ``(key label, description)`` hints, in order.
+
+    Returns:
+        The transcript's announcement and keys first (the footer drops hints
+        from the end as width runs out), then ``shortcuts`` without the hints
+        that do not hold there.
+    """
+
+    rest = tuple(pair for pair in shortcuts if pair not in _NOT_TRANSCRIPT_HINTS)
+    return (*TRANSCRIPT_KEYS_FOOTER, *rest)
+
+
+def with_transcript_keys(
+    screen: Any, shortcuts: tuple[tuple[str, str], ...]
+) -> tuple[tuple[str, str], ...]:
+    """Apply `transcript_focus_shortcuts` while the transcript holds focus.
+
+    Records which variant the footer got, so `sync_transcript_keys_footer`
+    re-registers the hints only when focus crosses the transcript's edge.
+
+    Args:
+        screen: The Console screen whose footer hints are being built.
+        shortcuts: The footer's hints so far.
+
+    Returns:
+        The transcript variant inside the transcript, else ``shortcuts``.
+    """
+
+    inside = focus_in_transcript(screen.focused)
+    screen._console_transcript_keys_footer = inside
+    return transcript_focus_shortcuts(shortcuts) if inside else shortcuts
+
+
+def sync_transcript_keys_footer(screen: Any, focused: Any) -> None:
+    """Re-register the footer hints when focus enters or leaves the transcript.
+
+    Args:
+        screen: The Console screen.
+        focused: The widget focus moved to, or None.
+    """
+
+    if focus_in_transcript(focused) != getattr(
+        screen, "_console_transcript_keys_footer", False
+    ):
+        screen._register_console_footer_shortcuts()
+
+
+def type_to_compose(screen: Any, composer: ConsoleComposerBar, event: Key) -> None:
+    """Focus the draft for a printable key that no focused control claims.
+
+    TASK-33622.3 (owner ruling 2026-10-27, the ADR-031 refinement): a
+    status-strip chip, rail button or header action has no use for a letter,
+    and the Console's one text target is the composer. Keys typed there were
+    dropped, and a bare ``y`` opened Trace. Runs in `ChatScreen.on_key` just
+    before the capture check: once the draft has focus, the capture path
+    types this key and every key after it there.
+
+    A key keeps its normal route when:
+
+    * it is Space (a focused control's activation key), a modified chord, or
+      not printable;
+    * focus is already in the composer, in the transcript (the announced list
+      mode, whose letters are commands), in the Terminal workspace, or in a
+      text field (``check_consume_key``);
+    * an active binding in the focus chain claims it (a tree's row keys);
+    * the composer is collapsed or an explicit Resume owns focus;
+    * the activation's arrival window is open: `claim_arrival_key` (called
+      just before) already decided, and it refuses on purpose (the setup
+      card, even before its first sync, or a restore aimed elsewhere).
+
+    A key typed in an open popup menu folds the menu as it moves focus, so
+    no menu is left open without focus (Esc from the draft does not close
+    the message menus).
+
+    Args:
+        screen: The Console screen routing the key.
+        composer: The mounted composer.
+        event: The key being routed.
+    """
+
+    focused = screen.focused
+    if (
+        focused is None
+        or focused is getattr(screen, "_console_arrival_focus", None)
+        or event.key == "space"
+        or not ConsoleComposerBar.is_text_entry_key(event)
+        or composer.collapsed
+        or screen._resume_navigation_startup_in_progress
+        or screen._is_descendant_or_self(focused, composer)
+        or focus_in_transcript(focused)
+        or screen._is_descendant_or_self(
+            focused, getattr(screen, "_console_terminal_workspace", None)
+        )
+        or focused.check_consume_key(event.key, event.character)
+    ):
+        return
+    binding = screen.active_bindings.get(event.key)
+    if binding is not None and binding.enabled:
+        return
+    menu = _popup_menu_holding(focused)
+    composer.focus_draft_from(focused)
+    if menu is not None and screen.focused is not focused:
+        # The letter moved focus on deliberately: fold the menu it left
+        # rather than leave it floating out of Esc's reach, and do not hand
+        # focus back to its opener.
+        menu.dismiss_menu(restore_focus=False)
+
+
+def _popup_menu_holding(focused: Any) -> Any:
+    """Return the focus-taking popup menu ``focused`` sits in, or None.
+
+    The Console's four (a message's More menu, the text-selection menu, and
+    the conversation- and workspace-row action menus) share
+    ``dismiss_menu(*, restore_focus)``; matching on it keeps their modules out
+    of this one's imports (ADR-097).
+    """
+
+    for node in focused.ancestors_with_self:
+        if callable(getattr(node, "dismiss_menu", None)):
+            return node
+    return None
 
 
 def hand_paste_to_draft(screen: Any, composer: ConsoleComposerBar) -> None:
