@@ -23,7 +23,7 @@ import tempfile
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import BinaryIO, Literal
+from typing import TYPE_CHECKING, BinaryIO, Literal
 
 from tldw_chatbook.Chat.console_command_grammar import (
     COMMAND_PREFIX,
@@ -38,6 +38,9 @@ from tldw_chatbook.Video_Generation.video_store import (
     VideoStoreSaveError,
 )
 
+if TYPE_CHECKING:
+    from tldw_chatbook.Video_Generation.exceptions import VideoGenerationCancelled
+
 GENERATE_VIDEO_COMMAND_WORD = COMMAND_PREFIX + GENERATE_VIDEO_COMMAND_NAME
 """The full leading command word (``"/generate-video"``), as registered."""
 
@@ -47,6 +50,18 @@ GENERATE_VIDEO_USAGE_TEXT = "Usage: /generate-video [:backend] <prompt>"
 #: Backends billed per generated second (for the cost-confirm gate). Local
 #: backends (comfyui, stable_diffusion_cpp) are free at the margin.
 _PAID_BACKENDS = frozenset({"minimax"})
+
+#: Display names for paid backends in Stop copy (TASK-33621.50).
+_PAID_BACKEND_NAMES = {"minimax": "MiniMax"}
+
+#: What Stop can and cannot do on a paid backend, measured live against
+#: MiniMax on 2026-10-30: a task that has not started rendering is cancelled
+#: and not billed; once rendering starts MiniMax refuses the cancel, and the
+#: task runs to the end and is billed.
+_PAID_STOP_CAVEAT = (
+    "Stop cancels it only until {name} starts rendering; after that it runs "
+    "to the end and may still be billed."
+)
 
 PendingReason = Literal["over_capacity", "store_failure"]
 
@@ -176,9 +191,64 @@ def estimate_video_cost_text(backend: str, duration_seconds: int | None) -> str:
     if is_paid_backend(backend):
         return (
             f"This generates a {duration}s video on '{backend}', billed per "
-            "generated second at MiniMax's current rates."
+            "generated second at MiniMax's current rates. "
+            + _PAID_STOP_CAVEAT.format(name=_paid_backend_name(backend))
         )
     return f"This generates a {duration}s video on '{backend}' (local, no per-clip charge)."
+
+
+def _paid_backend_name(backend: str) -> str:
+    key = backend.strip().lower()
+    return _PAID_BACKEND_NAMES.get(key, backend.strip())
+
+
+def video_generating_text(backend: str) -> str:
+    """Return the in-progress row shown while a generation runs.
+
+    A paid backend's row says what Stop cannot undo (TASK-33621.50) rather
+    than promising a cancel.
+    """
+    if is_paid_backend(backend):
+        return f"⏳ Generating video on {backend}… " + _PAID_STOP_CAVEAT.format(
+            name=_paid_backend_name(backend)
+        )
+    return f"⏳ Generating video on {backend}… (Stop cancels)"
+
+
+def video_stopped_text(
+    stop: VideoGenerationCancelled,
+    *,
+    backend: str,
+    noun: str = "Video generation",
+) -> str:
+    """Return the row reporting a Stop, never as a failure (TASK-33621.45).
+
+    Args:
+        stop: The cancellation the adapter raised; ``stop.remote_cancel``
+            says what a paid backend did with the cancel request.
+        backend: The backend the generation ran on.
+        noun: What was stopped ("Video generation", "Video regeneration").
+
+    Returns:
+        A stop row that says plainly when the remote task keeps running and
+        may still be billed, and claims a cancel only when the backend
+        confirmed one.
+    """
+    name = _paid_backend_name(backend)
+    if stop.remote_cancel == "cancelled":
+        return f"{noun} stopped. {name} cancelled the remote task, so it is not billed."
+    if stop.remote_cancel == "refused":
+        return (
+            f"{noun} stopped here, but {name} had already started rendering and "
+            "refused to cancel. The remote task keeps running and may still be "
+            "billed."
+        )
+    if stop.remote_cancel == "unconfirmed":
+        return (
+            f"{noun} stopped here, but {name} did not confirm the cancel. The "
+            "remote task may keep running and may still be billed."
+        )
+    return f"{noun} stopped."
 
 
 def run_video_generation(

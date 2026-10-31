@@ -49,6 +49,7 @@ from tldw_chatbook.Video_Generation.config import (
 )
 from tldw_chatbook.Video_Generation.exceptions import (
     VideoBackendUnavailableError,
+    VideoGenerationCancelled,
     VideoGenerationError,
 )
 from tldw_chatbook.Video_Generation.video_formats import (
@@ -128,8 +129,9 @@ class ComfyUIVideoAdapter:
         Raises:
             VideoBackendUnavailableError: When the base URL/workflow is not
                 usable or the server is missing workflow node classes.
+            VideoGenerationCancelled: When ``cancel_event`` stops the run.
             VideoGenerationError: For malformed workflows, queue/poll/upload/
-                download failures, cancellation, timeout, or unsupported output.
+                download failures, timeout, or unsupported output.
         """
         output_format = request.format
         try:
@@ -849,7 +851,9 @@ class ComfyUIVideoAdapter:
                 break
             if cancel_event is not None and cancel_event.is_set():
                 self._interrupt(base_url)
-                raise VideoGenerationError("ComfyUI video generation cancelled by user")
+                raise VideoGenerationCancelled(
+                    "ComfyUI video generation cancelled by user"
+                )
             try:
                 history = fetch_json(
                     method="GET",
