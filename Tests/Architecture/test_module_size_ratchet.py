@@ -842,7 +842,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6054,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     "tldw_chatbook/Agents/local_tool_provider.py": 5851,
-    "tldw_chatbook/Tools/remote_worker_bundle.py": 5706,
+    "tldw_chatbook/Tools/remote_worker_bundle.py": 5705,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5167,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,

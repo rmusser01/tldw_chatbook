@@ -298,6 +298,26 @@ before you lengthen a wait. The queued-dispatch case in
 `Tests/UI/test_console_send_start_window.py` holds in the stream and stubs
 only the archive check.
 
+## A leaked worker connection: print the owner's current stack before trusting a code-read mechanism (TASK-38205, 2026-10-31)
+
+**Incident.** `test_tool_marker_with_brackets_renders_literally_not_escaped`
+failed at teardown in 9 of 12 loaded xdist runs: an `AgentRunsDB` connection was
+still registered after the main thread closed the database. Code reading
+blamed a late close: `worker_guard` closes the child's handle only after
+`fleet.finish` and the settle signal. Instrumentation showed something else.
+It printed the owner thread from `lease.resource_thread` and that thread's
+live stack from `sys._current_frames()`. The owner was the child's
+`fleet-*` thread, still alive and still in its first model call. The log
+also showed `_settle_fleet: 1 sub-agents are outliving their turn`. Since
+PR3a-1, a child outlives `run_reply` by design. Its sibling test already
+calls `_join_fleet_threads()` for this reason; this test did not.
+
+**What to do.** When a test that spawns a sub-agent asserts on the database,
+the fleet, or teardown state, join the fleet threads first. When a resource
+leaks from a worker, print the owning thread's current stack, not only the
+stack that opened the resource. The current stack showed whether the worker
+had finished; the opening stack could not.
+
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
 **Incident.** To stop the Console rail's filter input being replaced under
