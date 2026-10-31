@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections.abc import Mapping
 from typing import Any
@@ -28,7 +29,11 @@ from tldw_chatbook.Chat.console_trace_service import (
     ConsoleTraceService,
     ReconstructedRequestHeader,
 )
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
+_PROVIDER_USAGE_FIELDS = frozenset(
+    field.name for field in dataclasses.fields(ProviderUsage)
+)
 _CONTINUATION_COMPONENTS = frozenset(
     {"continuation", TraceTransformKind.CONTINUATION_ATTACHMENT.value}
 )
@@ -134,11 +139,28 @@ class ConsoleTraceNativeReader:
             or call.settled_at
             or "recorded-before-dispatch"
         )
-        usage_json = (
-            json.dumps(dict(call.usage), separators=(",", ":"), sort_keys=True)
-            if call.usage is not None
-            else None
-        )
+        # TASK-33621.9: settled usage is the provider's raw nested payload,
+        # frozen all the way down. ``json.dumps(dict(usage))`` raised on its
+        # mappingproxy children, and the raw keys would still fail the
+        # capture contract, which carries normalized ProviderUsage (as the
+        # gateway's own capture does). Usage is supplementary: one that
+        # cannot be normalized is omitted (and listed as such), never the
+        # whole call; an empty payload reported nothing, so it stays None
+        # rather than becoming an all-zero "reported" record.
+        try:
+            usage_json = (
+                _normalized_usage_json(
+                    call.usage,
+                    provider=call.provider_name or "",
+                    model=call.model_name or "",
+                )
+                if call.usage
+                else None
+            )
+        except (TypeError, ValueError, RecursionError):
+            usage_json = None
+        if call.usage and usage_json is None:
+            omitted.append("usage")
         capture = ExchangeCapture(
             run_tag=call.run_id,
             seq=call.call_sequence,
@@ -423,6 +445,56 @@ class ConsoleTraceNativeReader:
         if artifact is None:
             raise ValueError("trace_artifact_unavailable")
         return json.loads(artifact.sanitized_bytes)
+
+
+def _thaw_json(value: object) -> object:
+    """Return plain JSON containers for a repository-frozen value.
+
+    Args:
+        value: A decoded column whose objects are ``MappingProxyType`` and
+            whose arrays are tuples, at any depth.
+
+    Returns:
+        The same value built from ``dict`` and ``list``.
+    """
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    return value
+
+
+def _normalized_usage_json(
+    usage: Mapping[str, object], *, provider: str, model: str
+) -> str | None:
+    """Normalize one call's stored usage into ProviderUsage JSON.
+
+    Args:
+        usage: Stored usage: the provider's raw payload, or ProviderUsage
+            fields for rows imported from legacy captures.
+        provider: The call's provider, used when the payload names none.
+        model: The call's model, used when the payload names none.
+
+    Returns:
+        ``ProviderUsage.to_json()``, or None for an unrecognized shape.
+    """
+    payload = _thaw_json(usage)
+    if not isinstance(payload, dict):
+        return None
+    if set(payload) <= _PROVIDER_USAGE_FIELDS:
+        normalized = ProviderUsage.from_json(json.dumps(payload))
+        if normalized is not None:
+            # A legacy row that never named them takes the call's own.
+            normalized = dataclasses.replace(
+                normalized,
+                provider=normalized.provider or provider,
+                model=normalized.model or model,
+            )
+    else:
+        normalized = ProviderUsage.from_provider_payload(
+            payload, provider=provider, model=model
+        )
+    return None if normalized is None else normalized.to_json()
 
 
 __all__ = ["ConsoleTraceNativeReader"]

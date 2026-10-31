@@ -202,6 +202,19 @@ Copy and export obey the active Safe or Full projection and every frozen mask.
 Full copy/export asks for confirmation. Exported files are independent copies;
 later trace deletion cannot recall them.
 
+A shared Trace export (**w** in the Trace view) checks that every parent,
+source and replacement link names an event in the trace. A link to an event
+the trace does not hold (usually one that was never recorded) is cleared and
+listed in the bundle's missing metadata with the reason
+`reference_not_recorded`, so the rest of the conversation still exports; the
+preflight counts such links as unavailable. Chats that answered from staged
+Library sources before this check stored such a link on each of those turns.
+If the bundle still fails its checks, the dialog says nothing was written and
+points you to the app log, which records the full error with the conversation
+id; include it if you report the problem. Exporting the same trace again gives
+the same result. When the last check finds something that still looks like a
+password or key after redaction, the dialog says so instead.
+
 When a trace contains token-level text, reasoning, or tool-call stream events,
 Console may store a consecutive run as one compact physical row. This changes
 only database layout: the Inspector, replay, copy, and export paths receive the
