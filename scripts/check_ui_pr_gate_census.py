@@ -642,7 +642,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # among them is one test, ~1 s. The floor now equals the entry count, which
 # also absorbs any lag in dev's floor (tail entries a merge added without
 # raising it).
-MINIMUM_FILES = 1173
+# TASK-33621.50 (2026-10-30) appends 1 whole-file entry at the tail: Stop on a
+# MiniMax /generate-video reports what MiniMax did with the cancel (four
+# cases, about 22 s locally), so no existing entry changes shard: dev's
+# 1163 + 1 = 1164.
+MINIMUM_FILES = 1174
 
 
 def read_census(path: Path) -> list[str]:
