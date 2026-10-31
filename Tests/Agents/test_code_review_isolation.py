@@ -180,13 +180,52 @@ def test_refusal_projection_keeps_only_a_code_shaped_reason(dispatch_case):
     for audience in ("display", "log", "continuation", "cycle"):
         for error, label in (
             ("invalid_report_reference", "invalid_report_reference"),
+            ("source_authority_unavailable", "source_authority_unavailable"),
             ("Deferred because project instructions were loaded", "review_refused"),
             ("hook: /private/secret refused", "review_refused"),
+            # Code-shaped but not a review refusal: an upstream routing code
+            # and a content digest must not reach the durable projection.
+            ("provider_not_ready", "review_refused"),
+            ("a" + "0" * 63, "review_refused"),
         ):
             projection = provider.project_tool_record(
                 audience, call, ToolResult(ok=False, error=error)
             )
             assert projection.error == label
+
+
+def test_refusal_code_allowlist_matches_the_review_refusals_raised():
+    """Every literal ``ReviewRefused`` reason projects; no invented codes."""
+    import ast
+    from pathlib import Path
+
+    from tldw_chatbook.Agents import code_review_tool_provider as provider
+
+    def reasons(node):
+        if isinstance(node, ast.IfExp):
+            return reasons(node.body) | reasons(node.orelse)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return {node.value}
+        return set()
+
+    sources = [
+        path.read_text(encoding="utf-8")
+        for path in Path(provider.__file__).parent.glob("code_review_*.py")
+    ]
+    raised = {
+        reason
+        for source in sources
+        for call in ast.walk(ast.parse(source))
+        if isinstance(call, ast.Call)
+        and getattr(call.func, "id", None) == "ReviewRefused"
+        and call.args
+        for reason in reasons(call.args[0])
+    }
+    assert raised <= provider._REVIEW_REFUSAL_CODES
+    assert all(
+        any(f'"{code}"' in source for source in sources)
+        for code in provider._REVIEW_REFUSAL_CODES
+    )
 
 
 def test_cycle_projection_preserves_call_identity_without_bodies(dispatch_case):

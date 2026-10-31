@@ -381,11 +381,16 @@ def _ephemeral_promotion_global_lifecycle(
     return transitioned
 
 
-def _fork_continuation_event_transition(
+def _continuation_event_owner_scope(
     method: Callable[..., Any],
 ) -> Callable[..., Any]:
-    """Hold the owner's generation lock: owner-loop Stop/fail terminal writes
-    must not interleave with this worker-thread version check (TASK-37653)."""
+    """Run a continuation event write inside its owner's generation scope.
+
+    The scope is the owner's generation lock plus its fork source-transition
+    marker: owner-loop Stop/fail terminal writes must not interleave with this
+    worker-thread version check (TASK-37653). A managed checkpoint is sealed
+    first, outside the scope (``_presealed_continuation_finalizer``).
+    """
 
     @wraps(method)
     def transitioned(
@@ -397,6 +402,11 @@ def _fork_continuation_event_transition(
         owner_id = event.context.owner_message_id
         if owner_id not in self._message_session_index:
             return method(self, event, *args, **kwargs)
+        finalizer = kwargs.get("checkpoint_finalizer")
+        if finalizer is not None:
+            kwargs["checkpoint_finalizer"] = self._presealed_continuation_finalizer(
+                event, kwargs.get("continuation_target"), finalizer
+            )
         with self._generation_owner_scope(owner_id):
             return method(self, event, *args, **kwargs)
 
@@ -5083,9 +5093,21 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 or preparation_id in self._durable_commit_in_flight
             ):
                 raise RuntimeError("Durable acceptance commit is still owned.")
-        with self._first_persistence_lock:
-            self.invalidate_response_rule_source(session_id, "closed")
-            return self._close_session_locked(session_id)
+        # Lock order is generation owner -> first persistence (see
+        # _generation_owner_scope): an owner holder, e.g. a worker's continuation
+        # write, may persist this session, and the purge re-enters every owner.
+        # Claim them first or close and that worker deadlock (TASK-37653 review).
+        # Index order puts a parent before descendants, as the edit path nests.
+        with ExitStack() as owners:
+            for message_id in [
+                message_id
+                for message_id, owner in list(self._message_session_index.items())
+                if owner == session_id
+            ]:
+                owners.enter_context(self._generation_owner_scope(message_id))
+            with self._first_persistence_lock:
+                self.invalidate_response_rule_source(session_id, "closed")
+                return self._close_session_locked(session_id)
 
     def _close_session_locked(self, session_id: str) -> ConsoleChatSession | None:
         """Close while excluding first persistence and temporary promotion."""
@@ -21027,33 +21049,49 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 and self._message_is_on_active_path(message_id),
             )
 
-    @_fork_continuation_event_transition
-    def persist_provider_continuation_event(
+    def _presealed_continuation_finalizer(
         self,
         event: ProviderContinuationEvent,
-        *,
-        continuation_target: ContinuationRestoreTarget | None = None,
-        checkpoint_finalizer: (
-            Callable[..., ProviderContinuationCheckpoint] | None
-        ) = None,
-    ) -> None:
-        """Commit one runtime continuation event before its next side effect.
+        continuation_target: ContinuationRestoreTarget | None,
+        checkpoint_finalizer: Callable[..., ProviderContinuationCheckpoint],
+    ) -> Callable[..., ProviderContinuationCheckpoint]:
+        """Seal a managed checkpoint before its owner's generation scope.
 
-        The runtime callback is synchronous because it is invoked on the
-        controller's existing agent worker thread. Persistent primary runs
-        use the schema-v37 dedicated create/update operations; explicitly
-        ephemeral runs retain no checkpoint and remain non-resumable.
+        The finalizer blocks on the plugin worker loop, and Stop on the owner
+        loop waits for that scope (TASK-37653 review). The seal is a pure
+        signature over its four arguments, so the locked write gets it back
+        only for identical arguments; an owner that moved meanwhile refuses.
+        """
+        sealed: list[tuple[tuple[Any, ...], ProviderContinuationCheckpoint]] = []
 
-        Args:
-            event: Typed lifecycle event emitted by the shared agent runtime.
+        def seal(*inputs: Any) -> ProviderContinuationCheckpoint:
+            sealed.append((inputs, checkpoint_finalizer(*inputs)))
+            return sealed[-1][1]
 
-        Raises:
-            RuntimeError: If ownership, optimistic state, persistence, or the
-                durability barrier cannot be proven without private details.
+        self._continuation_write_value(event, continuation_target, seal)
+
+        def presealed(*inputs: Any) -> ProviderContinuationCheckpoint:
+            if not sealed or sealed[0][0] != inputs:
+                raise RuntimeError(
+                    "Continuation owner changed while sealing; reload and retry."
+                )
+            return sealed[0][1]
+
+        return presealed
+
+    def _continuation_write_value(
+        self,
+        event: ProviderContinuationEvent,
+        continuation_target: ContinuationRestoreTarget | None,
+        checkpoint_finalizer: Callable[..., ProviderContinuationCheckpoint] | None,
+    ) -> tuple[ConsoleChatMessage, ProviderContinuationCheckpoint, str] | None:
+        """Validate a durable continuation event and resolve its sealed value.
+
+        Returns ``None`` for an ephemeral run, which retains nothing.
         """
         context = event.context
         if context.durability == "ephemeral":
-            return
+            return None
         if context.agent_kind != "primary" or not context.owner_message_id:
             raise RuntimeError("Durable continuation needs a distinct assistant owner.")
         message = self._message_or_raise(context.owner_message_id)
@@ -21094,6 +21132,40 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             validate_continuation_restore(checkpoint, continuation_target)
             if checkpoint.managed_resume is None:
                 raise RuntimeError("Managed continuation seal is unavailable.")
+        return message, checkpoint, content
+
+    @_continuation_event_owner_scope
+    def persist_provider_continuation_event(
+        self,
+        event: ProviderContinuationEvent,
+        *,
+        continuation_target: ContinuationRestoreTarget | None = None,
+        checkpoint_finalizer: (
+            Callable[..., ProviderContinuationCheckpoint] | None
+        ) = None,
+    ) -> None:
+        """Commit one runtime continuation event before its next side effect.
+
+        The runtime callback is synchronous because it is invoked on the
+        controller's existing agent worker thread. Persistent primary runs
+        use the schema-v37 dedicated create/update operations; explicitly
+        ephemeral runs retain no checkpoint and remain non-resumable.
+
+        Args:
+            event: Typed lifecycle event emitted by the shared agent runtime.
+
+        Raises:
+            RuntimeError: If ownership, optimistic state, persistence, or the
+                durability barrier cannot be proven without private details.
+        """
+        resolved = self._continuation_write_value(
+            event, continuation_target, checkpoint_finalizer
+        )
+        if resolved is None:
+            return
+        message, checkpoint, content = resolved
+        persistence = self.persistence
+        database = persistence.db
         private_json = dump_provider_continuation_json(checkpoint)
         if private_json is None:
             raise RuntimeError("Durable continuation state is unavailable.")

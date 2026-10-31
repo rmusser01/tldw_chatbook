@@ -266,6 +266,7 @@ def test_refused_read_is_not_deferred_as_an_instruction_scope_change(review_case
 @pytest.mark.parametrize(
     "failure",
     [
+        "invalid_arguments",
         "forged_ref",
         "malformed_cursor",
         "excluded",
@@ -277,6 +278,15 @@ def test_refused_read_is_not_deferred_as_an_instruction_scope_change(review_case
     ],
 )
 def test_public_authority_failures_do_not_produce_paths(review_case, failure):
+    """Argument refusals map to no path; state refusals still defer the batch.
+
+    TASK-37653 review: invoke refuses the same arguments, so a refused read
+    touches nothing. An authority/state refusal can clear between ledger
+    prepare and invoke, so it must keep raising (the ledger defers it).
+    """
+    from tldw_chatbook.Agents.code_review_models import ReviewRefused
+    from tldw_chatbook.Agents.code_review_tool_provider import _ARGUMENT_REFUSALS
+
     c = review_case
     prepared = c.prepare()
     with c.participant(prepared) as provider:
@@ -292,6 +302,8 @@ def test_public_authority_failures_do_not_produce_paths(review_case, failure):
             },
         )["records"][0]["source_ref"]
         args = dict(review_id=prepared.review_id, view="source", document_ref=ref)
+        if failure == "invalid_arguments":
+            args["unexpected"] = True
         if failure == "forged_ref":
             args["document_ref"] = "forged"
         if failure == "malformed_cursor":
@@ -311,7 +323,17 @@ def test_public_authority_failures_do_not_produce_paths(review_case, failure):
             provider.service.app_config["tools"]["code_review_enabled"] = False
         if failure == "absent_actor":
             provider.service.actor = c.actor
-        assert provider.path_targets("code_review:code_review_read", args) == ()
+        if failure in {
+            "invalid_arguments",
+            "forged_ref",
+            "malformed_cursor",
+            "excluded",
+        }:
+            assert provider.path_targets("code_review:code_review_read", args) == ()
+        else:
+            with pytest.raises(ReviewRefused) as refused:
+                provider.path_targets("code_review:code_review_read", args)
+            assert refused.value.reason not in _ARGUMENT_REFUSALS
         assert not provider.invoke("code_review:code_review_read", args).ok
 
 

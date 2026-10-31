@@ -14,6 +14,7 @@ import io
 import json
 import socket
 import threading
+import time
 from unittest.mock import patch
 
 import httpx
@@ -206,3 +207,190 @@ async def test_stop_racing_a_tool_result_ends_cancelled_not_persistence_error(
         with chat.quiesce_connections(timeout_seconds=2):
             assert chat.registered_connection_count() == 0
         runs.close()
+
+
+def _continuation_store(tmp_path, *, persist_owner: bool):
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    database = CharactersRAGDB(str(tmp_path / "owner.db"), client_id="owner-order")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+    session = store.create_session(title="Owner order")
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="hi", persist=True
+    )
+    owner = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=persist_owner,
+    )
+    return database, store, session, owner
+
+
+def test_close_racing_a_continuation_write_cannot_deadlock(tmp_path):
+    """TASK-37653 review: owner scope -> first persistence is the one order.
+
+    The continuation write holds the owner's generation scope and then
+    persists the session; close used to take first persistence and then the
+    owner scope while purging -- an AB/BA deadlock between the agent worker
+    and the UI thread.
+    """
+    from Tests.Chat.test_console_provider_continuation import (
+        _MOONSHOT_RUN_TARGET,
+        _active_checkpoint,
+    )
+    from tldw_chatbook.Agents.agent_models import (
+        ContinuationEventContext,
+        ToolBatchReady,
+    )
+
+    database, store, session, owner = _continuation_store(tmp_path, persist_owner=False)
+    original_persist = store.persist_session_if_needed
+    outcomes: dict[str, object] = {}
+    entered = threading.Event()
+
+    def persist_after_close_waits(session_id, **kwargs):
+        if threading.current_thread().name == "continuation-worker":
+            # The worker holds the owner scope here. Let close reach it --
+            # with or without first persistence held, which is the fix.
+            entered.set()
+            deadline = time.monotonic() + 5
+            while store._generation_runtime_counts(owner.id)[1] < 2:
+                assert time.monotonic() < deadline, "close never reached the owner"
+                time.sleep(0.001)
+        return original_persist(session_id, **kwargs)
+
+    store.persist_session_if_needed = persist_after_close_waits
+
+    def run(name, operation):
+        try:
+            outcomes[name] = operation()
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            outcomes[name] = exc
+        finally:
+            database.close_connection()
+
+    event = ToolBatchReady(
+        ContinuationEventContext(owner.id, "run-1", "primary", "persistent"),
+        _active_checkpoint(),
+        None,
+    )
+    worker = threading.Thread(
+        target=run,
+        args=(
+            "persist",
+            lambda: store.persist_provider_continuation_event(
+                event, continuation_target=_MOONSHOT_RUN_TARGET
+            ),
+        ),
+        name="continuation-worker",
+        daemon=True,
+    )
+    closer = threading.Thread(
+        target=run,
+        args=("close", lambda: store.close_session(session.id)),
+        name="console-close",
+        daemon=True,
+    )
+    try:
+        worker.start()
+        assert entered.wait(5), "the continuation write never took its owner"
+        closer.start()
+        worker.join(10)
+        closer.join(10)
+        assert not worker.is_alive() and not closer.is_alive(), (
+            "close and the continuation write deadlocked"
+        )
+        assert outcomes["persist"] is None
+        assert not isinstance(outcomes["close"], BaseException), outcomes["close"]
+        assert session.id not in {item.id for item in store.sessions()}
+        assert database.get_message_by_id(owner.id)["provider_continuation_json"]
+    finally:
+        database.close_connection()
+
+
+def _sealed(checkpoint):
+    from dataclasses import replace
+
+    envelope = {
+        "schema_version": 1,
+        "namespace_id": "a" * 64,
+        "session_id": "session",
+        "run_id": "run-1",
+        "conversation_id": "conversation",
+        "message_id": "message",
+        "installations": [],
+        "checkpoint_digest": "b" * 64,
+        "mac": "c" * 64,
+    }
+    return replace(checkpoint, schema_version=2, managed_resume=json.dumps(envelope))
+
+
+def test_managed_seal_runs_outside_the_owner_scope_and_rechecks_its_owner(
+    tmp_path,
+):
+    """TASK-37653 review: Stop must not wait behind a blocked plugin seal.
+
+    The finalizer blocks on the plugin worker loop with no timeout. Sealed
+    under the owner's generation scope, it froze every Stop on the owner
+    loop; the seal is pure, so the locked write only rechecks its inputs.
+    """
+    from dataclasses import replace
+
+    from Tests.Chat.test_console_provider_continuation import (
+        _MOONSHOT_RUN_TARGET,
+        _active_checkpoint,
+    )
+    from tldw_chatbook.Agents.agent_models import (
+        ContinuationEventContext,
+        ToolBatchReady,
+        ToolCallExecuting,
+    )
+
+    database, store, _session, owner = _continuation_store(tmp_path, persist_owner=True)
+    context = ContinuationEventContext(owner.id, "run-1", "primary", "persistent")
+    stop_got_owner: list[bool] = []
+
+    def finalize(checkpoint, conversation_id, message_id, run_id):
+        stopped = threading.Event()
+
+        def stop_on_owner_loop():
+            with store._generation_owner_scope(owner.id):
+                stopped.set()
+
+        stopper = threading.Thread(target=stop_on_owner_loop, daemon=True)
+        stopper.start()
+        stop_got_owner.append(stopped.wait(2))
+        stopper.join(5)
+        return _sealed(checkpoint)
+
+    try:
+        store.persist_provider_continuation_event(
+            ToolBatchReady(context, _active_checkpoint(), None),
+            continuation_target=_MOONSHOT_RUN_TARGET,
+            checkpoint_finalizer=finalize,
+        )
+        assert stop_got_owner == [True]
+        assert store.get_message(owner.id).provider_continuation.managed_resume
+
+        def finalize_while_owner_changes(checkpoint, *args):
+            # Another writer moves the owner after the seal's inputs were read.
+            message = store._message_or_raise(owner.id)
+            current = message.provider_continuation
+            message.provider_continuation = replace(
+                current,
+                rounds=(replace(current.rounds[0], assistant_content="moved"),),
+            )
+            return _sealed(checkpoint)
+
+        with pytest.raises(RuntimeError, match="changed while sealing"):
+            store.persist_provider_continuation_event(
+                ToolCallExecuting(context, "PRIVATE-CALL-ID", 1),
+                continuation_target=_MOONSHOT_RUN_TARGET,
+                checkpoint_finalizer=finalize_while_owner_changes,
+            )
+    finally:
+        database.close_connection()
