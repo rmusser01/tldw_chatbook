@@ -889,7 +889,7 @@ def test_git_status_and_git_diff_resolve_the_denylist_context_exactly_once(
 def test_review_tree_and_blob_share_sensitive_exclusions(tmp_path):
     import subprocess
 
-    from tldw_chatbook.Tools.git_tool_impls import ReviewGitReader
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
     from tldw_chatbook.Tools.local_tool_impls import LocalToolError
     from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 

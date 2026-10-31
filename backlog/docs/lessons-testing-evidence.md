@@ -100,6 +100,14 @@ returned it to 5706 without changing the builder or budget. Run the existing
 size envelope beside bundle generation early; source parity alone does not
 establish that the generated artifact fits its governed envelope.
 
+A later conflict-free queue rebase of PR #3314 integrated host-only immutable
+Git review helpers into a shared worker module. Rebuilding then produced 5934
+lines while the committed 5706-line artifact was stale. The builder embeds
+whole closure modules, including dormant classes: keeping the unchanged review
+reader in its existing host source owner restored parity at 5705 lines without
+changing the builder, closure list, guards or budget. Check generated parity
+and size after integration even when every replayed patch is unchanged.
+
 Selecting the full bundle contracts next exposed an AST-census false positive:
 `_write_file_os`'s native Windows import was counted as reachable on a POSIX SSH
 host. Keep platform reachability explicit and narrow: only the true body of

@@ -68,6 +68,13 @@ jobs:
           Tests/Tools/test_raw_cli_executor_contract.py
           Tests/Tools/test_remote_executor_loopback.py::test_fs_list_long_roundtrip_retains_exclusions_and_plain_output
           -q -o addopts= --timeout=120 --junitxml=cli-worker-results.xml
+      - name: Run host review Git source contracts
+        run: >-
+          python -m pytest
+          Tests/Agents/test_code_review_source.py
+          Tests/Tools/test_git_tool_impls.py
+          Tests/Tools/test_git_tool_sensitive_paths.py
+          -q -o addopts= --timeout=120 --junitxml=cli-review-results.xml
       - name: Check generated CLI worker bundle
         run: |
           python -m tldw_chatbook.Tools.build_remote_worker_bundle --check
@@ -113,4 +120,5 @@ jobs:
             tool-recovery-results.xml
             cli-agent-results.xml
             cli-worker-results.xml
+            cli-review-results.xml
           if-no-files-found: warn

@@ -3649,45 +3649,48 @@ def _read_bounded_stream(stream, max_output_bytes: int) -> tuple[bytes, bool]:
             return (bytes(output[:max_output_bytes]), True)
     return (bytes(output[:max_output_bytes]), True)
 
+@dataclass(frozen=True, slots=True)
+class GitBytesResult:
+    """Internal bounded bytes; a failed stream is never successful empty output."""
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+    truncated: bool = False
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+
 def run_git(argv: list[str], *, cwd: Path | None=None, executable: Path | None=None, own_process_group: bool=True, timeout: float=GIT_TIMEOUT_SECONDS, max_output_bytes: int=GIT_MAX_OUTPUT_BYTES) -> GitCommandResult:
-    """Run an allowlisted git command with bounded output and a timeout.
-
-    Fixed argv only: ``argv[0]`` must be logical ``git``, the only permitted
-    global option is ``--no-pager`` (``--version`` must stand alone), and the
-    subcommand must be in ``_ALLOWED_GIT_SUBCOMMANDS``. The absolute executable
-    replaces logical argv zero only at launch. The environment is sanitized
-    (PATH + git safety vars only) and stdin is
-    DEVNULL. Output per stream is capped at ``max_output_bytes`` — the
-    process is killed when the cap is exceeded (never fully buffered) and a
-    truncation marker is appended. Timeout kills the process and raises.
-
-    NOTE: validation stops at the subcommand. Everything AFTER the
-    subcommand is caller-constructed and NOT validated at this layer — e.g.
-    ``["git", "diff", "--output=/tmp/pwn"]`` passes ``_validate_argv``.
-    Callers (the tool cores below) must therefore build argv only from
-    fixed literals plus values they have validated themselves (see the
-    ``commit_range`` leading-dash/regex checks in :func:`git_diff`) and
-    must never splice raw model-controlled strings into flag positions.
-
-    Raises:
-        LocalToolError: argv validation failure, git unavailable, or timeout.
-    """
+    """Preserve the allowlisted public text API over the bounded byte runner."""
     _validate_argv(argv)
+    result = _run_git_bytes(argv, cwd=cwd, executable=executable, own_process_group=own_process_group, timeout=timeout, max_output_bytes=max_output_bytes)
+    return GitCommandResult(argv=list(argv), returncode=result.returncode, stdout=result.stdout.decode('utf-8', errors='replace') + (GIT_TRUNCATED_MARKER if result.truncated and result.stdout_truncated else ''), stderr=result.stderr.decode('utf-8', errors='replace') + (GIT_TRUNCATED_MARKER if result.truncated and result.stderr_truncated else ''), truncated=result.truncated)
+
+def _run_git_bytes(argv: list[str], *, cwd: Path | None=None, executable: Path | None=None, own_process_group: bool=True, timeout: float=GIT_TIMEOUT_SECONDS, max_output_bytes: int=GIT_MAX_OUTPUT_BYTES, immutable_objects: bool=False) -> GitBytesResult:
+    """Run host-built fixed argv, preserving bytes and bounded failure signals.
+
+    Public callers enter through run_git's allowlist. Internal object readers
+    construct every flag here themselves and validate their OIDs and paths.
+    """
     resolved_executable = executable or (Path(found) if (found := shutil.which('git')) is not None else None)
     if resolved_executable is None:
         raise LocalToolError('git is not available on this system')
     resolved_executable = resolved_executable.resolve()
     if not isinstance(max_output_bytes, int) or isinstance(max_output_bytes, bool) or max_output_bytes <= 0:
         max_output_bytes = GIT_MAX_OUTPUT_BYTES
-    process = subprocess.Popen([str(resolved_executable), *argv[1:]], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=_git_environment(), start_new_session=own_process_group and os.name == 'posix')
+    environment = _git_environment()
+    if immutable_objects:
+        environment.update({'GIT_NO_REPLACE_OBJECTS': '1', 'GIT_NO_LAZY_FETCH': '1', 'GIT_GRAFT_FILE': os.devnull})
+    process = subprocess.Popen([str(resolved_executable), *argv[1:]], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=environment, start_new_session=own_process_group and os.name == 'posix')
     results: dict[str, tuple[bytes, bool]] = {}
+    read_errors: list[Exception] = []
     done: queue.Queue[tuple[str, tuple[bytes, bool]]] = queue.Queue()
 
     def _reader(name: str, stream) -> None:
         try:
             done.put((name, _read_bounded_stream(stream, max_output_bytes)))
-        except Exception:
-            done.put((name, (b'', False)))
+        except Exception as exc:
+            read_errors.append(exc)
+            done.put((name, (b'', True)))
     for name, stream in (('stdout', process.stdout), ('stderr', process.stderr)):
         threading.Thread(target=_reader, args=(name, stream), daemon=True).start()
     deadline = time.monotonic() + float(timeout)
@@ -3709,13 +3712,9 @@ def run_git(argv: list[str], *, cwd: Path | None=None, executable: Path | None=N
         process.wait(timeout=REPOSITORY_DISCOVERY_TIMEOUT_SECONDS)
     stdout_bytes, stdout_truncated = results.get('stdout', (b'', False))
     stderr_bytes, stderr_truncated = results.get('stderr', (b'', False))
-    stdout = stdout_bytes.decode('utf-8', errors='replace')
-    stderr = stderr_bytes.decode('utf-8', errors='replace')
-    if stdout_truncated:
-        stdout += GIT_TRUNCATED_MARKER
-    if stderr_truncated:
-        stderr += GIT_TRUNCATED_MARKER
-    return GitCommandResult(argv=list(argv), returncode=int(process.returncode if process.returncode is not None else -1), stdout=stdout, stderr=stderr, timed_out=False, truncated=stdout_truncated or stderr_truncated)
+    if read_errors:
+        raise LocalToolError('git output read failed') from read_errors[0]
+    return GitBytesResult(returncode=int(process.returncode if process.returncode is not None else -1), stdout=stdout_bytes, stderr=stderr_bytes, truncated=stdout_truncated or stderr_truncated, stdout_truncated=stdout_truncated, stderr_truncated=stderr_truncated)
 
 def _kill_process(process: subprocess.Popen, *, own_process_group: bool=True) -> None:
     """Kill the whole process group on POSIX; fall back to the direct child."""
@@ -5703,4 +5702,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("8adf494f27973e6deb71e2776ebc6f13d84f0c983caf195f5b0c4d99473f049a")
+BUNDLE_SHA256 = _enter_worker_exchange("7954131274050989da442c58af60a3586538d57cf4c574b6590fc0470f4494f9")

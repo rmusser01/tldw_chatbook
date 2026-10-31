@@ -146,3 +146,17 @@ failure reproduced natively before the guard repair. Final targeted checks:
 bundle bytes still match the unchanged builder and lint adds no findings.
 No production source, artifact, budget, workflow or permission changed.
 ADR required: no; this verifies the existing ADR-181 platform boundary.
+
+
+## Queue integration bundle follow-up (TASK-37632)
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/281-primary-agent-multi-model-code-review.md and backlog/decisions/181-ssh-remote-workspace-bindings.md.
+Reason: mechanically restore the existing host review/source ownership boundary without changing authority, public Git tools, worker closure, or generation policy.
+
+The queue integration includes upstream host-only ReviewGitReader code inside the bundled Git tools module. Both Linux versions passed 200 recovery tests but failed committed-artifact parity. The canonical builder now emits 5934 lines against the unchanged 5706 ceiling.
+
+1. Retain CI failure receipts and reproduce the parity failure; baseline real Git reader, byte preservation, refusal, object-format and exclusion contracts.
+2. Move the unchanged review-only reader, entry and argv chunker into the existing Agents/code_review_source.py owner. Retain dynamic calls to the shared hardened Git runner and all validations. Simplify only the public text wrapper's one-use decoded-result locals while preserving truncation predicates.
+3. Regenerate with the unchanged builder; verify byte parity, unchanged size guards, stdlib/platform contracts, real review capture, Git safety and native write controls. Correct the existing UTF-8/CRLF fixture to write its intended bytes explicitly on Windows.
+4. Select the existing host review/source and complete Git safety tests in their own Linux recovery invocation, retain its JUnit evidence, and pin the routing. Native source fixtures require unavailable file-symlink privileges; Linux must exercise them unchanged. Obtain independent exact-head review, update task/evidence notes, safely push the scoped repair and re-arm after confirming the head and review threads. No full local test sweep.

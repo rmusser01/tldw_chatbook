@@ -133,6 +133,10 @@ Workspace folder indexing is a separate, explicit binding capability. Its derive
 
 ## Captured code-review authority (ADR-281)
 
+The host-only `ReviewGitReader` and its entry records live in
+`Agents/code_review_source.py`; they reuse `Tools/git_tool_impls.py`'s bounded
+byte runner without joining the remote worker closure.
+
 `Agents/code_review_source.py` captures PR/range exact commits, patch bytes with
 matching preimage, or selected working-tree layers and explicit mutable context.
 Children receive opaque refs into that frozen view. Bounded list/literal-search/
