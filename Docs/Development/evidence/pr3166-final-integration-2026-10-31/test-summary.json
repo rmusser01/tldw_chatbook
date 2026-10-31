@@ -1,0 +1,51 @@
+[
+  {
+    "label": "after-close-event-control",
+    "exit_code": 0,
+    "summary": "1 passed, 2 warnings in 28.04s",
+    "source_diff_sha256": "72e735f5feb5045170eb8ce7f7679310d2e8ae45e89e9337573fb30c5f5c3208",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-9c5e2249541e"
+  },
+  {
+    "label": "after-close-original",
+    "exit_code": 1,
+    "summary": "1 failed, 2 warnings in 39.45s",
+    "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-c35cd5ddedb7"
+  },
+  {
+    "label": "coalesced-event-control",
+    "exit_code": 1,
+    "summary": "1 failed, 2 warnings in 89.03s (0:01:29)",
+    "source_diff_sha256": "72e735f5feb5045170eb8ce7f7679310d2e8ae45e89e9337573fb30c5f5c3208",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-d357c74881eb"
+  },
+  {
+    "label": "coalesced-startup-control",
+    "exit_code": 0,
+    "summary": "1 passed, 2 warnings in 31.40s",
+    "source_diff_sha256": "028a57bf0b25c4fccb253111aed5c6f49739f865afe58d29c0f75577fb08273e",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-30c87263d482"
+  },
+  {
+    "label": "same-session-drain-event-control",
+    "exit_code": 1,
+    "summary": "1 failed, 2 warnings in 69.38s (0:01:09)",
+    "source_diff_sha256": "72e735f5feb5045170eb8ce7f7679310d2e8ae45e89e9337573fb30c5f5c3208",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-28d3ff0e4671"
+  },
+  {
+    "label": "same-session-drain-retirement-control",
+    "exit_code": 0,
+    "summary": "1 passed, 2 warnings in 34.27s",
+    "source_diff_sha256": "d71d8092e924745c58a0b998d8f19701605f5842d5d1898a79ed3c8f97b0872a",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-1b72b9141533"
+  },
+  {
+    "label": "same-session-drain-startup-control",
+    "exit_code": 1,
+    "summary": "1 failed, 2 warnings in 50.20s",
+    "source_diff_sha256": "028a57bf0b25c4fccb253111aed5c6f49739f865afe58d29c0f75577fb08273e",
+    "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-e299d932a89d"
+  }
+]

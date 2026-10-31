@@ -114,6 +114,11 @@ multiplicities and formatter differences match their exact baseline per file
 (`memory-lint-comparison.json`). Exact-type safety checks and unrelated formatting
 debt are retained.
 
+
+## 2026-10-31 final integrated tab followup
+
+The three tab-publication gaps recorded above now have passing targeted functional controls on product head `0c39d774c13e0860a0afeb6ed174991dc1afd4cc`, based on actual PR3162 merge `a0dbc1174c3dbd4d2732b0212786ec9e08bfc3b5`: after_close 28.04s, coalesced 31.40s and same_session_drain 34.27s. The original reader/native proof, real Close click, keeper-only DOM and exact non-cancelled physical retirement assertions remain. Test-only event waits retain existing deadlines; the two deliberately held-Surface phases first finish the identified deferred startup publication within the same setup budget. All original failures and source patches are retained. See `../pr3166-final-integration-2026-10-31/RESULTS.md` for the exact diagnosis, receipts and limits. This does not change the historical timing results or attribute the old cadence 6-versus-5 failure. TASK35679 AC2 remains open pending fresh independent review.
+
 ## Serial profiling
 
 Plain original/current runs restore only ChatScreen and
