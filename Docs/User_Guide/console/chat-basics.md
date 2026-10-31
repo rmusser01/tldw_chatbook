@@ -339,15 +339,34 @@ as its block format.
 ### Large pastes
 
 Pasting more than 50 characters (configurable) collapses the paste into a
-single token reading "Pasted Text: N Characters". Press Enter (or click the
-token) once to turn it into "Unfurl?", and again to expand the full text in
-place; clicking elsewhere resets a pending "Unfurl?" back to the collapsed
-token. Whatever the display state, **the full pasted text is always what
-sends** — collapsing is purely visual. While the draft contains a paste
-token, slash-command parsing is skipped and the draft sends as plain text.
-The collapse behavior is set by `collapse_large_pastes` and
-`paste_collapse_threshold` under `[console]` in config.toml, also editable
-in **Settings > Console Behavior**.
+single token reading "Pasted text | N characters | Ctrl+E expand". A text file
+you insert and a large `/prompt` insert become tokens too; a file's token shows
+its name, for example "📄 notes.md · 4 KB | Ctrl+E expand". Nothing collapses
+inside a raw CLI command (see Raw CLI user commands below).
+
+**Enter always sends** the draft, every token in full, wherever the caret is
+and whatever a token is showing: paste then Enter, a question then a paste, a
+question typed in front of a paste, a `/prompt` insert or an inserted file each
+send on one Enter. Enter never expands a token. To expand one from the
+keyboard, press **Ctrl+E**: it puts the full text of the token right before or
+right after the caret in place at once. With no token beside the caret, Ctrl+E
+expands the nearest one, so paste, type a question, Ctrl+E works too. A paste
+that starts or ends with a line break draws that break outside its token;
+Ctrl+E reaches it all the same. **Ctrl+Z** right after an expand puts the
+collapsed token back and keeps everything you typed. Some editors' built-in
+terminals keep Ctrl+E for themselves (VS Code on Windows and Linux opens Quick
+Open with it); there, click the token instead.
+Clicking a token still expands it: the first click asks "Expand pasted text (N
+characters)? Ctrl+E: yes · Esc: no" (a file's question names the file) and puts
+the caret right after that token, and a second click or Ctrl+E puts the full
+text in place. Esc, or moving the caret off the token, answers no and puts the
+collapsed token back. Enter while the question shows sends the draft, the
+token in full. The **Send** button always sends too. Whatever the display
+state, **the full pasted text is always what sends** — collapsing is purely
+visual. While the draft contains a paste token, slash-command parsing is
+skipped and the draft sends as plain text. The collapse behavior is set by
+`collapse_large_pastes` and `paste_collapse_threshold` under `[console]` in
+config.toml, also editable in **Settings > Console Behavior**.
 
 ### Raw CLI user commands — full host authority
 
@@ -363,21 +382,39 @@ It has two separate gates:
    accept the danger confirmation, and save. This writes
    `raw_cli_permitted = true` under `[console]` in `config.toml`; the default is
    `false`.
-2. Press **Arm host access** and accept the second confirmation. Arming exists
-   only in process memory. Every Chatbook launch starts unarmed even when the
-   saved unlock remains on; locking, disarming, or leaving the app cancels
-   active raw commands with bounded best-effort cleanup.
+2. Arm it for this launch: press **Arm raw CLI** there, or choose **Arm…** in
+   the composer (see below), and accept the second confirmation. That
+   confirmation also says that while raw CLI is armed, models get the
+   host-shell tool `shell_exec` when local tools are on. A model must ask
+   before it runs a command: you can run it once, allow shell commands for
+   that Console session, or deny. Arming exists only in process memory. Every Chatbook launch starts
+   unarmed even when the saved unlock remains on; locking, disarming, or
+   leaving the app cancels active raw commands with bounded best-effort
+   cleanup.
 
 To run a command, physically type the exact prefix `! ` (exclamation mark,
 space), then type or paste the command body and send. Pasting the prefix cannot
 select raw mode; this prevents a pasted prompt from silently turning into host
 execution. A physically typed prefix may be followed by pasted command text.
-Start with `\! ` to send an ordinary chat message beginning with literal `! `;
+Text you paste or a file you insert after the prefix is never collapsed into
+a token, however long it is, so the whole command is on screen before Enter
+or **Run** starts it. Start with `\! ` to send an ordinary chat message beginning with literal `! `;
 it is sent without the backslash and leaves the composer like any message.
-When raw mode is recognized, the composer turns red and identifies host access
-before you send. Enter, **Send** and the Workbench's send all take the command
-out of the composer; if Console refuses it (raw CLI locked or not armed, for
-example), the exact draft comes back once.
+When raw mode is recognized, the composer turns red and its status names the
+raw CLI state before you send:
+
+- **RAW CLI · HOST ACCESS**: armed. The primary action reads **Run**.
+- **RAW CLI · NOT ARMED**: unlocked but not armed for this launch. The primary
+  action reads **Arm…**. Enter, **Arm…** and the Workbench's send open the arm
+  confirmation, with **Cancel** focused. Confirming arms raw CLI for this
+  launch and leaves the command in the composer; press Enter (or **Run**) again
+  to run it. Cancelling changes nothing.
+- **RAW CLI · LOCKED**: the saved unlock is off. The primary action reads
+  **Locked**; unlock raw CLI in Settings first.
+
+Enter, **Run** and the Workbench's send all take an armed command out of the
+composer. If Console refuses it (raw CLI locked, for example), the exact draft
+comes back once, however many times you press Enter.
 
 Console raw commands use automatic shell selection. The shared executor
 supports **Bash**, **PowerShell**, and **CMD**, invokes them with fixed
@@ -814,7 +851,8 @@ Composer:
 
 | Key | Action |
 |---|---|
-| Enter | Send now, queue after an accepted turn, or advance a focused paste token |
+| Enter | Send now or queue after an accepted turn, whatever the caret is on; it never expands a collapsed token (see Large pastes) |
+| Ctrl+E | Expand the collapsed paste, file or `/prompt` token beside the caret, or the nearest one |
 | Ctrl+J | Insert a newline (works in any terminal) |
 | Shift+Enter | Insert a newline (where the terminal delivers it) |
 | Ctrl+A | Select the whole draft |

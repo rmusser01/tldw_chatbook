@@ -435,12 +435,11 @@ async def test_console_blocked_send_retains_exact_recovery_after_runtime_custody
         await pilot.pause()
         composer.insert_text_as_paste("pasted payload " * 20)
         composer.insert_text(" tail")
-        # Unfurl the token fully (collapsed -> confirm -> expanded); Enter
-        # only sends once no token is awaiting the unfurl flow, and expanded
-        # segments retain their paste provenance.
-        assert composer.activate_focused_paste_token()
-        assert composer.activate_focused_paste_token()
-        assert not composer.activate_focused_paste_token()
+        # TASK-33622.1: this used to unfurl the token fully first (collapsed
+        # -> confirm -> expanded), because Enter only sent once no token was
+        # left to step. Enter always sends now (owner decision 2026-10-30),
+        # so the collapsed draft sends as it is, in full.
+        assert not composer.has_pending_paste_confirmation()
         assert composer.has_paste_segments()
         expected = composer.draft_text()
         turn_ids: list[str] = []

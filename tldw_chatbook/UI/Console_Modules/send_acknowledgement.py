@@ -450,11 +450,16 @@ def request_visible_send(
     """
     if screen._session.refuse_send_from_unbound_composer():  # TASK-33622.7
         return
+    composer = screen._console_composer_or_none()
+    # TASK-33622.9: an unarmed ``! `` draft's primary action is "Arm…": it
+    # opens the arm confirmation and leaves the draft where it is.
+    if composer is not None and composer.raw_cli_draft_authority() == "unarmed":
+        screen._raw_cli.request_arm()
+        return
     session_id = screen._console_visible_send_session_id()
     if session_id is None:
         screen.app_instance.notify("Console send is unavailable.", severity="error")
         return
-    composer = screen._console_composer_or_none()
     stash = composer.capture_draft_for_send() if composer is not None else None
     request = _Request(session_id, stash, guard)
     flight = _flight(screen)

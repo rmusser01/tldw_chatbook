@@ -44,6 +44,14 @@ RAW_CLI_DISCLOSURE = (
     "Command text and bounded output may persist in local run logs.",
     "This is not a sandbox and is not limited to your workspace.",
 )
+#: TASK-33622.9: every arm confirmation also names the model-facing shell tool
+#: arming registers (ADR-093); the Settings card keeps the seven lines above.
+RAW_CLI_ARM_DISCLOSURE = RAW_CLI_DISCLOSURE + (
+    "Arming also gives models the host-shell tool shell_exec while local tools "
+    "are on. A model must ask before it runs a command: you can run it once, "
+    "allow shell commands for that Console session, or deny. There is no "
+    "permanent Allow.",
+)
 #: Ceiling for a mounted-destination predicate, not a fixed delay or a
 #: performance assertion. The helper returns as soon as Settings arrives.
 MOUNTED_DESTINATION_TIMEOUT_SECONDS = 30.0
@@ -261,7 +269,7 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
         await _wait_until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
         arm_dialog = host.screen
         assert arm_dialog.title == "Arm raw CLI for this launch"
-        assert arm_dialog.message == "\n\n".join(RAW_CLI_DISCLOSURE)
+        assert arm_dialog.message == "\n\n".join(RAW_CLI_ARM_DISCLOSURE)
         await _wait_until(
             pilot,
             lambda: getattr(host.focused, "id", None) == "cancel-button",

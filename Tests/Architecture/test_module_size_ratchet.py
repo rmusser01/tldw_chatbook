@@ -362,7 +362,8 @@ _BUDGETS: dict[str, int] = {
     # TASK-36361: staged completion delegates to the same-owner helper (-45).
     # TASK-36387: five badge branches read the category list's table (-3).
     # TASK-36388: the context-window suppress queue nothing wrote goes (-13).
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35602,
+    # 2026-10-30: re-measured after rebasing onto dev 1eaa6a9429 (owner rule: the row is the exact measurement): 35602 -> 35593.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35593,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -578,7 +579,31 @@ _BUDGETS: dict[str, int] = {
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
     # ConsoleComposerBar.has_sendable_payload, read by both sync sites and
     # the Workbench, fed by the screen's send-gate attachment predicate.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
+    # 2026-10-29, TASK-33622.1 (same owner rule: a fix over a size ratchet
+    # raises the row with a dated comment): 7043 -> 7074 (+31). Enter steps
+    # only the token the caret is on, Esc and caret moves answer a pending
+    # confirm, a click puts the caret on its token, and chips/confirms name
+    # the token and its keys.
+    # 2026-10-29, TASK-33622.9 (same owner rule): 7074 -> 7136 (+62). The
+    # composer reads the raw-CLI arm through an injected provider and shows
+    # each state (armed / not armed / locked) with its own status, primary
+    # action and tooltip, so only an armed draft reads "Run".
+    # 2026-10-29, TASK-33622.1 review fix (same owner rule): 7136 -> 7143
+    # (+7). A paste's edge line break, drawn outside its chip, parts that
+    # edge from the chip, so Enter there sends instead of arming the expand.
+    # 2026-10-29, TASK-37800: 7143 -> 7142 (-1), pinned at the measured size
+    # after only a token's left edge counts as the caret being on it.
+    # 2026-10-29, TASK-37873 (same owner rule): 7142 -> 7155 (+13). A paste
+    # or file inserted into a trusted raw-CLI command is never collapsed, so
+    # a host command is on screen in full before Enter or Run starts it.
+    # 2026-10-30, TASK-37870/37871 (same owner rule): 7155 -> 7174 (+19).
+    # Owner decision 2026-10-30: Enter always sends; Ctrl+E (EXPAND_TOKEN_KEY)
+    # expands the token beside the caret, or the nearest one, and every chip
+    # and click confirm names it.
+    # 2026-10-30, TASK-37870 review fix (same owner rule): 7174 -> 7178 (+4).
+    # An expand (Ctrl+E or a second click) is its own undo step, so Ctrl+Z
+    # collapses the token again instead of dropping the typed run before it.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7178,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,

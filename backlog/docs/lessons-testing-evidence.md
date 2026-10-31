@@ -1,5 +1,41 @@
 # Lessons: what counts as evidence a change works
 
+## "Same red as dev" by test id can hide two different reds (TASK-37870 review, 2026-10-30)
+
+**Incident.** The branch's gate compared the composer keymap file with origin/dev by
+test id and reported "15/16, same red as dev". The review reran it six times: the
+printable-key case went red 4 of 6 on the branch and 0 of 6 on dev, and the edit-key
+case was red on both every run. All of those reds were the precondition `host.focused
+is None`: the Console's activation focuses the composer more than once in its first
+~0.3 s after mount, and the tests cleared focus once, inside that window. With the
+precondition made deterministic (clear focus again until it stays cleared), the
+printable case passed every run on both trees, and the edit-key case went red on its
+real assertion, `'abc' == 'ac'`, on dev too: a routing defect (TASK-38412) that the
+racing precondition had been hiding. Neither the "same red" comparison nor the
+earlier precondition red could have shown it.
+
+**What to do.** When a red appears on both trees, compare the failing line and message,
+not only the test id. A red at a precondition is a setup fact, not the test's verdict;
+make the precondition deterministic before calling the red "inherited".
+
+## A new-copy precondition in a behaviour test hides whether the behaviour is red (TASK-37870, 2026-10-30)
+
+**Incident.** The owner decision "Enter always sends; Ctrl+E expands a token" changed
+the chip copy ("| Expand" became "| Ctrl+E expand") and the Enter behaviour in one
+change. The rewritten Enter tests asserted the new chip copy as a precondition before
+pressing Enter. Their first run on the pre-change code went 12 red, every one on
+`'| Ctrl+E expand' in 'Q: Pasted text | 199 characters | Expand'`, so not one of them
+showed whether Enter sent. With the preconditions made copy-agnostic (the body's text
+is hidden; the copy is pinned in the expand-key file instead), the same run went 3 red,
+each "one Enter did not send; the draft shows 'Q: Expand pasted text (199
+characters)? Enter: yes · Esc: no'" -- the actual defect -- and the other 11 flows
+were already green there.
+
+**What to do.** When a change moves copy and behaviour together, pin the copy in its
+own test and keep a behaviour test's preconditions free of the new copy. Read each
+pre-fix red's message, not the count: a red on a precondition is no evidence the
+assertion after it would have caught anything.
+
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
 **Incident.** To stop the Console rail's filter input being replaced under
@@ -128,6 +164,25 @@ keep a disk guard running beside it. For a baseline, archive only what the
 tests read and leave out `Docs/superpowers` and `Docs/QA`. A red that appears
 only in such a tree (a missing `.git` or doc) is not a branch regression.
 Compare failing ids only.
+
+## A Tests/UI file that dies locally on RecoveryRequired can still run (TASK-33622.1, 2026-10-29)
+
+**Incident.** The composer files this task changed failed at setup on this machine
+with `RecoveryRequired: raw_source_selection_changed`: keymap 15 of 16, caret_nav 14
+of 18, undo 19 of 62, internals_decomposition 130 of 142. Only files marked
+`bootstrap_profile` ran, so the edited Enter/token assertions in the rest could not be
+checked at all. A six-line collection hook under `Tests/` that adds the
+`bootstrap_profile` marker to every item, loaded with `-p`, made them run: caret_nav
+18/18, undo 62/62, keymap 15/16, with the same reds as a detached origin/dev worktree
+by test id. It also caught real breakage the copy edits had missed: a click test whose
+caret now lands on the token, and confirm assertions that broke only because the new
+copy soft-wraps.
+
+**What to do.** When a file you touched dies at setup locally, force the marker with a
+throwaway hook (delete it before committing) and compare reds with origin/dev run the
+same way. Expect the setup-modal and caret-blink cases to flip from run to run under the
+shared profile, on dev as well; rerun a suspect alone on both trees before you call it a
+regression.
 
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 

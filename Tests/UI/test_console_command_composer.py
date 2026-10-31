@@ -150,7 +150,10 @@ class _RawCliComposerHarness(ConsolidatedCSSApp):
     CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self):
-        yield ConsoleComposerBar(id="console-native-composer")
+        # TASK-33622.9: the composer reads the raw-CLI arm; this harness is armed.
+        yield ConsoleComposerBar(
+            id="console-native-composer", raw_cli_authority_provider=lambda: "armed"
+        )
 
 
 def _type_raw_cli_prefix(composer: ConsoleComposerBar) -> None:

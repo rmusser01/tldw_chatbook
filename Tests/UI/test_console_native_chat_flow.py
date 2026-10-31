@@ -6147,13 +6147,13 @@ async def test_console_collapsed_paste_sends_full_payload_not_visible_token():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.insert_pasted_text(long_text)
 
-        assert "Pasted text | 80 characters | Expand" in _visible_text(console)
+        assert "Pasted text | 80 characters | Ctrl+E expand" in _visible_text(console)
         console.query_one("#console-send-message", Button).press()
         await _wait_for_reply(console, pilot)
 
     assert gateway.sent_messages[-1][-1]["content"] == long_text
     assert (
-        "Pasted text | 80 characters | Expand"
+        "Pasted text | 80 characters | Ctrl+E expand"
         not in gateway.sent_messages[-1][-1]["content"]
     )
 
@@ -13639,7 +13639,8 @@ def test_insert_file_segment_collapses_with_custom_label():
     composer.insert_file_segment("file body text", "📄 notes.md · 4 KB")
 
     assert composer.draft_text() == "file body text"
-    assert composer._display_draft_text() == "📄 notes.md · 4 KB"
+    # TASK-33622.1: a labelled chip names its affordance like a paste chip.
+    assert composer._display_draft_text() == "📄 notes.md · 4 KB | Ctrl+E expand"
 
 
 def test_insert_file_segment_appends_after_typed_draft():
@@ -13648,14 +13649,14 @@ def test_insert_file_segment_appends_after_typed_draft():
     composer.insert_file_segment("file body", "📄 a.md · 9 B")
 
     assert composer.draft_text() == "see attached: file body"
-    assert composer._display_draft_text() == "see attached: 📄 a.md · 9 B"
+    assert composer._display_draft_text() == "see attached: 📄 a.md · 9 B | Ctrl+E expand"
 
 
 def test_paste_collapse_label_still_defaults_to_character_count():
     composer = ConsoleComposerBar(paste_collapse_threshold=5)
     composer.insert_pasted_text("0123456789")
 
-    assert composer._display_draft_text() == "Pasted text | 10 characters | Expand"
+    assert composer._display_draft_text() == "Pasted text | 10 characters | Ctrl+E expand"
 
 
 @pytest.mark.asyncio

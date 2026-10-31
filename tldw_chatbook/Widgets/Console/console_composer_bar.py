@@ -414,6 +414,12 @@ ATTACHMENT_ACTIONS_WIDTH = BASE_ACTIONS_WIDTH + 4
 REDIRECT_ACTION_WIDTH = 10
 
 
+#: Owner decision 2026-10-30 (TASK-37870/37871): Enter always sends. This
+#: key expands the collapsed token beside the caret, and every chip names it.
+#: Free in the Console and in ADR-031's grammar; 0x05 in every terminal.
+EXPAND_TOKEN_KEY = "ctrl+e"
+EXPAND_TOKEN_KEY_LABEL = "Ctrl+E"
+
 #: TASK-25826: every label this control can display for a given state, so its
 #: width can be fixed once instead of tracking the current string. The price
 #: suffix appears mid-typing (`sync_action_state` runs on the keystroke path),
@@ -425,9 +431,33 @@ _SEND_BUTTON_LABEL_VARIANTS = (
     "Queue",
     "Queue | $",
     "Run",
+    "Arm…",
+    "Locked",
     "Queue full",
     "Preparing...",
 )
+
+
+#: TASK-33622.9: a trusted ``! `` draft's (status, primary label, Send tooltip)
+#: for each raw-CLI authority; only an armed one reads "Run".
+_RAW_CLI_PRESENTATION = {
+    "armed": (
+        "RAW CLI · HOST ACCESS",
+        "Run",
+        "Run this raw command with host-user authority.",
+    ),
+    "unarmed": (
+        "RAW CLI · NOT ARMED",
+        "Arm…",
+        "Raw CLI is not armed for this launch. Arm it here, behind its danger "
+        "disclosure.",
+    ),
+    "locked": (
+        "RAW CLI · LOCKED",
+        "Locked",
+        "Raw CLI is Locked. Unlock it in Settings > Privacy & Security.",
+    ),
+}
 
 
 def send_button_width_for(label: str) -> int:
@@ -676,7 +706,7 @@ class ConsoleComposerBar(Horizontal):
     #: `_apply_history_snapshot` must NOT reuse `paste_collapse_threshold`
     #: -- that constant is a cosmetic PASTE-display preference (shipped
     #: default 50 characters) and, applied to undo/redo, converted ORDINARY
-    #: TYPED draft text into an opaque "Pasted text | N characters | Expand" token on
+    #: TYPED draft text into an opaque "Pasted text | N characters" token on
     #: every restore over 50 characters, including the AC's own flagship
     #: Ctrl+U -> Ctrl+Z recovery path (one Backspace then destroyed the
     #: whole recovered draft in a single step, since a collapsed token
@@ -722,6 +752,7 @@ class ConsoleComposerBar(Horizontal):
         send_price_tooltip_provider: Callable[[str], str | None] | None = None,
         send_price_available_provider: Callable[[str], bool] | None = None,
         sendable_attachment_provider: Callable[[], bool] | None = None,
+        raw_cli_authority_provider: Callable[[], str] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -736,6 +767,9 @@ class ConsoleComposerBar(Horizontal):
         #: empty draft, asked live of the screen's send gate predicate. The
         #: attachment label is presentation and never makes Send ready.
         self._sendable_attachment_provider = sendable_attachment_provider
+        #: TASK-33622.9: "armed" / "unarmed" / "locked" for a raw draft; a
+        #: composer nobody wired reads as locked (never "Run").
+        self._raw_cli_authority_provider = raw_cli_authority_provider
         #: Whether the last `sync_action_state` decided a price tooltip
         #: exists. Gates the hover handlers so they never overwrite a
         #: blocked/idle Send tooltip.
@@ -814,7 +848,7 @@ class ConsoleComposerBar(Horizontal):
         # syncs. `None` never equals a real value, so the first pass after
         # mount always runs in full.
         self._improvement_recovery_visible: bool | None = None
-        self._raw_cli_status_visible: bool | None = None
+        self._raw_cli_status_visible: str | None = None
         self._hidden_input_mirror: str | None = None
         self._send_button_width = 6
         self._send_label = "Send"
@@ -1102,19 +1136,52 @@ class ConsoleComposerBar(Horizontal):
     ) -> None:
         """Preserve trust only when a mutation began after the typed prefix."""
         if mutation_start is not None:
-            preserve_trusted_prefix = (
-                preserve_trusted_prefix
-                and not replaces_selection
-                and mutation_start >= 2
+            preserve_trusted_prefix = self._keeps_raw_cli_prefix(
+                preserve_trusted_prefix, mutation_start, replaces_selection
             )
         self._raw_cli_prefix_typed = bool(
             preserve_trusted_prefix and self.draft_text().startswith("! ")
         )
 
+    @staticmethod
+    def _keeps_raw_cli_prefix(preserve: bool, start: int, replaces: bool) -> bool:
+        """Whether an edit at ``start`` leaves a trusted ``! `` prefix trusted.
+
+        TASK-37873: such an insert lands in a host command, which is shown
+        in full before it runs, so it is never display-collapsed.
+        """
+        return preserve and not replaces and start >= 2
+
     def _clear_raw_cli_provenance(self) -> None:
         """Fail closed across wholesale or non-physical draft replacement."""
         self._raw_cli_prefix_stage_one = False
         self._raw_cli_prefix_typed = False
+
+    def raw_cli_draft_authority(self) -> str | None:
+        """Return the raw-CLI authority for a trusted ``! `` draft, else None.
+
+        TASK-33622.9: "armed", "unarmed" or "locked", read live from the
+        screen's provider; no provider, or one that fails, reads as locked.
+        """
+        if not (self._raw_cli_prefix_typed and self.draft_text().startswith("! ")):
+            return None
+        provider = self._raw_cli_authority_provider
+        try:
+            authority = provider() if provider is not None else "locked"
+        except Exception:  # noqa: BLE001 -- presentation fails closed
+            authority = "locked"
+        return authority if authority in {"armed", "unarmed"} else "locked"
+
+    def _raw_cli_status_label(self) -> str:
+        """Return the raw-mode status copy for the current authority, or ''."""
+        authority = self.raw_cli_draft_authority()
+        return "" if authority is None else _RAW_CLI_PRESENTATION[authority][0]
+
+    def refresh_raw_cli_authority(self) -> None:
+        """Repaint a raw draft after the arm changed elsewhere (TASK-33622.9)."""
+        if self.raw_cli_draft_authority() is not None:
+            self._sync_raw_cli_state()
+            self._sync_current_action_state()
 
     def _sync_raw_cli_state(self) -> None:
         """Project trusted raw mode into one persistent, text-labeled danger state."""
@@ -1123,20 +1190,21 @@ class ConsoleComposerBar(Horizontal):
             self._raw_cli_prefix_typed = False
         self.set_class(active, "console-raw-cli-danger")
         self._sync_collapsed_presentation()
+        label = self._raw_cli_status_label() if active else ""
         # task-24453: `active` is False for every keystroke that is not part of
         # a raw-CLI draft, which is nearly all of them. The status row's
         # content and geometry below are a pure function of it, so re-asserting
         # them per keypress only bought a `Static.update` and four style writes
         # on an already-hidden row.
-        if active == self._raw_cli_status_visible:
+        if label == self._raw_cli_status_visible:
             return
         try:
             status = self.query_one("#console-raw-cli-status", Static)
         except NoMatches:
             return
-        self._raw_cli_status_visible = active
+        self._raw_cli_status_visible = label
         status.set_class(active, "console-raw-cli-danger")
-        status.update(Content("RAW CLI · HOST ACCESS" if active else ""))
+        status.update(Content(label))
         status.styles.display = "block" if active else "none"
         status.remove_class(*(name for name in status.classes if name.startswith("w-")))
         status.set_styles(width=None)
@@ -2010,25 +2078,27 @@ class ConsoleComposerBar(Horizontal):
 
     @staticmethod
     def _segment_display_text(segment: _DraftSegment) -> str:
-        """Return display text for a single draft segment."""
+        """Return display text for a single draft segment.
+
+        Every collapsed chip ends in its expand key (TASK-37870/37871); a
+        click's confirm keeps the token's name and the keys that answer it.
+        """
+        key = EXPAND_TOKEN_KEY_LABEL
         if segment.collapse_state == "collapsed":
             if segment.label:
-                return segment.label
-            token = f"Pasted text | {len(segment.text)} characters | Expand"
-            if segment.origin == "paste":
-                leading, trailing = ConsoleComposerBar._paste_edge_line_breaks(
-                    segment.text
-                )
-                return leading + token + trailing
-            return token
-        if segment.collapse_state == "confirm":
-            if segment.origin == "paste":
-                leading, trailing = ConsoleComposerBar._paste_edge_line_breaks(
-                    segment.text
-                )
-                return leading + "Expand?" + trailing
-            return "Expand?"
-        return segment.text
+                return f"{segment.label} | {key} expand"
+            token = f"Pasted text | {len(segment.text)} characters | {key} expand"
+        elif segment.collapse_state == "confirm":
+            name = segment.label or f"pasted text ({len(segment.text)} characters)"
+            token = f"Expand {name}? {key}: yes · Esc: no"
+        else:
+            return segment.text
+        if segment.origin == "paste" and not segment.label:
+            leading, trailing = ConsoleComposerBar._paste_edge_line_breaks(
+                segment.text
+            )
+            return leading + token + trailing
+        return token
 
     @staticmethod
     def _paste_edge_line_breaks(text: str) -> tuple[str, str]:
@@ -2513,7 +2583,14 @@ class ConsoleComposerBar(Horizontal):
         if price_available:
             price_available = self._send_price_is_available()
         self._send_price_available = price_available
-        displayed_send_label = "Run" if raw_cli_ready else normalized_send_label
+        raw_presentation = (
+            _RAW_CLI_PRESENTATION[self.raw_cli_draft_authority() or "locked"]
+            if raw_cli_ready
+            else None
+        )
+        displayed_send_label = (
+            raw_presentation[1] if raw_presentation else normalized_send_label
+        )
         if price_available:
             displayed_send_label = f"{normalized_send_label} | $"
 
@@ -2540,8 +2617,8 @@ class ConsoleComposerBar(Horizontal):
         # feedback (toast + transcript system row) survives the flag.
         send_button.disabled = not send_ready
         send_button.variant = "primary" if send_ready else "default"
-        if raw_cli_ready:
-            send_button.tooltip = "Run this raw command with host-user authority."
+        if raw_presentation:
+            send_button.tooltip = raw_presentation[2]
         elif effective_send_blocked and dispatch_recovery_blocked:
             send_button.tooltip = "Resolve the response recovery above before sending."
         elif effective_send_blocked and wake_turn_active:
@@ -3501,7 +3578,7 @@ class ConsoleComposerBar(Horizontal):
     def _collapsed_status_text(self) -> str:
         """Build presence-only status copy without exposing retained content."""
         if self._raw_cli_prefix_typed and self.draft_text().startswith("! "):
-            return "RAW CLI · HOST ACCESS"
+            return self._raw_cli_status_label()
         parts = ["Composer hidden"]
         if self._run_active:
             parts.append("Generating")
@@ -4566,7 +4643,7 @@ class ConsoleComposerBar(Horizontal):
         docstring for the measurements behind the threshold value.
 
         An oversized restored token remains a generic
-        "Pasted text | N characters | Expand" collapse because carrying a
+        "Pasted text | N characters" collapse because carrying a
         potentially unbounded segment graph would defeat the history bound.
 
         Collapsed tokens are atomic for the caret everywhere else in this
@@ -4781,6 +4858,15 @@ class ConsoleComposerBar(Horizontal):
         )
         if self._raw_cli_prefix_stage_one and not completes_raw_cli_prefix:
             self._raw_cli_prefix_stage_one = False
+        # TASK-33622.1: Esc answers "no" to a pending expand confirm.
+        if event.key == "escape" and self.reset_pending_unfurl():
+            event.stop()
+            event.prevent_default()
+            return True
+        if event.key == EXPAND_TOKEN_KEY and self.expand_token_at_caret():
+            event.stop()
+            event.prevent_default()
+            return True
         if event.key in {"ctrl+a", "super+a", "cmd+a", "meta+a"}:
             self.select_all_draft()
             event.stop()
@@ -5057,11 +5143,14 @@ class ConsoleComposerBar(Horizontal):
             self._cursor_index = 0
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
+        insertion_offset = self._cursor_index
         should_collapse = (
             self.collapse_large_pastes_enabled
             and len(text) > self.paste_collapse_threshold
+            and not self._keeps_raw_cli_prefix(
+                preserve_raw_cli_prefix, insertion_offset, replaces_selection
+            )
         )
-        insertion_offset = self._cursor_index
         if should_collapse:
             paste_index = self._insert_segment_at_cursor(
                 _DraftSegment(
@@ -5140,11 +5229,14 @@ class ConsoleComposerBar(Horizontal):
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
         insertion_offset = self._cursor_index
+        in_raw_command = self._keeps_raw_cli_prefix(
+            preserve_raw_cli_prefix, insertion_offset, replaces_selection
+        )
         self._insert_segment_at_cursor(
             _DraftSegment(
                 text,
                 origin="inline_file",
-                collapse_state="collapsed",
+                collapse_state="literal" if in_raw_command else "collapsed",
                 label=label,
             )
         )
@@ -5372,6 +5464,10 @@ class ConsoleComposerBar(Horizontal):
         previous = self._cursor_index
         self._cursor_index = index
         self._clamp_cursor()
+        # TASK-33622.1: the caret leaving a pending confirm answers no.
+        caret_token = self._caret_token()
+        if caret_token is None or caret_token.collapse_state != "confirm":
+            self._reset_pending_unfurl_state()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
         return self._cursor_index != previous
@@ -5857,7 +5953,7 @@ class ConsoleComposerBar(Horizontal):
         """Return whether a collapsed paste token is waiting on confirm.
 
         Returns:
-            True when at least one pasted segment is showing the `Expand?` prompt.
+            True when at least one pasted segment is asking to expand.
         """
         return any(segment.collapse_state == "confirm" for segment in self._segments)
 
@@ -5903,43 +5999,75 @@ class ConsoleComposerBar(Horizontal):
         self._suppress_next_draft_click = False
         return True
 
-    def activate_focused_paste_token(self) -> bool:
-        """Advance a collapsed paste token for keyboard-only users.
+    def _caret_token(self) -> _DraftSegment | None:
+        """Return a pending confirm at either caret edge, else the token after it.
 
-        The visible composer draft renders paste tokens inline rather than as
-        individually focusable widgets. When the composer owns focus, Enter
-        advances the active confirmation if present, otherwise it prompts the
-        first collapsed paste token.
+        Owner decision 2026-10-30 (TASK-37870/37871): the caret never sits
+        inside a token. A token right before the caret is the nearest one in
+        `_expand_target`'s fallback (gap 0), so it needs no branch here.
+        """
+        cursor = self._cursor_index
+        start = 0
+        pending = under = None
+        for segment in self._segments:
+            end = start + len(segment.text)
+            if segment.collapse_state in {"collapsed", "confirm"}:
+                if segment.collapse_state == "confirm" and start <= cursor <= end:
+                    pending = pending or segment
+                if cursor == start:
+                    under = under or segment
+            start = end
+        return pending or under
+
+    def _expand_target(self) -> _DraftSegment | None:
+        """Return the token beside the caret, else the nearest collapsed one."""
+        target = self._caret_token()
+        if target is not None:
+            return target
+        cursor, start, best, best_gap = self._cursor_index, 0, None, None
+        for segment in self._segments:
+            end = start + len(segment.text)
+            if segment.collapse_state == "collapsed":
+                gap = start - cursor if start >= cursor else cursor - end
+                # A tie goes to the token ahead of the caret, as beside it.
+                ahead = gap == best_gap and start >= cursor
+                if best_gap is None or gap < best_gap or ahead:
+                    best, best_gap = segment, gap
+            start = end
+        return best
+
+    def _advance_paste_token(self, segment: _DraftSegment) -> None:
+        """Step one token collapsed -> confirm -> expanded; one confirm at a time."""
+        if segment.collapse_state == "confirm":
+            self._expand_token(segment)
+            return
+        self._reset_pending_unfurl_state()
+        segment.collapse_state = "confirm"
+        self._refresh_visible_draft()
+
+    def _expand_token(self, segment: _DraftSegment) -> None:
+        """Expand one token as its own undo step, so Ctrl+Z collapses it again."""
+        self._reset_pending_unfurl_state()
+        self._record_undo_snapshot(coalesce=False)
+        segment.collapse_state = "expanded"
+        self._refresh_visible_draft()
+
+    def expand_token_at_caret(self) -> bool:
+        """Expand the collapsed token beside the caret, for ``EXPAND_TOKEN_KEY``.
+
+        Owner decision 2026-10-30 (TASK-37870/37871): Enter always sends and
+        never expands a token. This key expands one in a single press, a
+        click's pending confirm included; with no token beside the caret it
+        expands the nearest one, so a chip's hint holds after typing.
 
         Returns:
-            True when a paste token was advanced.
+            True when a token was expanded.
         """
-        if not self._segments_initialized:
+        segment = self._expand_target() if self._segments_initialized else None
+        if segment is None:
             return False
-
-        try:
-            visible_draft = self.query_one("#console-command-visible-text", Static)
-            refocus_composer = self.app.focused in {self, visible_draft}
-        except NoMatches:
-            refocus_composer = self.app.focused is self
-
-        for segment in self._segments:
-            if segment.collapse_state == "confirm":
-                segment.collapse_state = "expanded"
-                self._refresh_visible_draft()
-                if refocus_composer:
-                    self.focus()
-                return True
-
-        for segment in self._segments:
-            if segment.collapse_state == "collapsed":
-                segment.collapse_state = "confirm"
-                self._refresh_visible_draft()
-                if refocus_composer:
-                    self.focus()
-                return True
-
-        return False
+        self._expand_token(segment)
+        return True
 
     def _display_index_at(
         self, click_x: int, click_y: int, *, padding_left: int = 0
@@ -6064,11 +6192,18 @@ class ConsoleComposerBar(Horizontal):
             if changed:
                 self._refresh_visible_draft()
             return changed
-        if segment.collapse_state == "collapsed":
-            segment.collapse_state = "confirm"
-        elif segment.collapse_state == "confirm":
-            segment.collapse_state = "expanded"
-        self._refresh_visible_draft()
+        # TASK-33622.1: the caret moves beside the clicked token (its right
+        # edge), so the Ctrl+E its confirm names answers this token.
+        self._raw_cli_prefix_stage_one = False
+        self._clear_draft_selection()
+        self._coalescing_active = False
+        end = 0
+        for item in self._segments:
+            end += len(item.text)
+            if item is segment:
+                break
+        self._cursor_index = end
+        self._advance_paste_token(segment)
         return True
 
     @staticmethod
