@@ -1,7 +1,8 @@
 """TASK-33621.4 AC#2: turns that cannot show the hold card stop before commit.
 
-Queued and Buddy sends are refused by ``refuse_without_card`` (the real
-screen flow is in Tests/UI/test_console_compaction_hold_cardless_sends.py).
+Queued and Buddy sends are refused by ``refuse_without_card``, and a send
+with no preparation by ``refuse_unprepared`` (the real screen flows are in
+Tests/UI/test_console_compaction_hold_cardless_sends.py).
 
 Continue, Regenerate and Retry over the Ask trigger used to commit an
 assistant row, mark it Failed and explain afterwards ("Use Compact now in
@@ -20,6 +21,7 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
 from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
 from tldw_chatbook.Chat.console_compaction_gate import (
     refuse_at_ask_trigger,
+    refuse_unprepared,
     refuse_without_card,
 )
 from tldw_chatbook.Chat.console_context_budget_copy import ask_trigger_refusal_copy
@@ -195,3 +197,56 @@ def test_below_the_trigger_a_cardless_send_goes_on_untouched() -> None:
         is None
     )
     assert controller.abandoned == [] and controller.blocked == []
+
+
+class _UnpreparedController:
+    """The echo and block seams ``refuse_unprepared`` drives."""
+
+    def __init__(self) -> None:
+        self.deleted: list[str] = []
+        self.blocked: list[tuple[str, str]] = []
+        self.store = SimpleNamespace(delete_message=self.deleted.append)
+
+    def _block(self, session_id: str, copy: str):
+        self.blocked.append((session_id, copy))
+        return ConsoleSubmitResult(False, False, copy)
+
+
+def test_an_unprepared_send_over_the_trigger_drops_its_echo_and_is_refused() -> None:
+    controller = _UnpreparedController()
+
+    result = refuse_unprepared(
+        controller,
+        "session-1",
+        _HOLD,
+        echoed_user=SimpleNamespace(id="echo-1"),
+        origin=ConsoleSubmissionOrigin.MANUAL,
+        queue_entry_id=None,
+    )
+
+    assert controller.deleted == ["echo-1"]
+    assert not result.accepted
+    assert result.visible_copy.startswith("Not sent:")
+    assert "/compact" in result.visible_copy
+    assert controller.blocked == [("session-1", result.visible_copy)]
+    assert (result.session_id, result.origin) == (
+        "session-1",
+        ConsoleSubmissionOrigin.MANUAL,
+    )
+
+
+def test_below_the_trigger_an_unprepared_send_goes_on_untouched() -> None:
+    controller = _UnpreparedController()
+
+    assert (
+        refuse_unprepared(
+            controller,
+            "session-1",
+            None,
+            echoed_user=SimpleNamespace(id="echo-1"),
+            origin=ConsoleSubmissionOrigin.QUEUED,
+            queue_entry_id="entry-1",
+        )
+        is None
+    )
+    assert controller.deleted == [] and controller.blocked == []

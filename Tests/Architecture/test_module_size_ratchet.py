@@ -165,6 +165,10 @@ _BUDGETS: dict[str, int] = {
     # import moves from module scope into its four call sites (four imports
     # and the formatter's blank line after each, less the four-line module
     # import) so the UI-ready module census (ADR-097) stays at dev's count.
+    # 2026-10-30 (TASK-33621.4, same owner rule): +24, review fixes. Edit &
+    # resend asks console_compaction_gate before it forks (+6), and the
+    # admission check refuses a send with no preparation ("$" or "/" while
+    # capture is off) at the Ask trigger (+18); both were marked Failed.
     "tldw_chatbook/Chat/console_chat_controller.py": 29038,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,

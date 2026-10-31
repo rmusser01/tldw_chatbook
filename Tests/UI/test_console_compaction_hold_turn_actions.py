@@ -111,6 +111,69 @@ async def test_regenerate_over_the_ask_trigger_stops_before_the_sibling_not_fail
 
 
 @private_profile_test
+async def test_edit_and_resend_over_the_ask_trigger_forks_nothing_and_is_not_failed(
+    request, monkeypatch, tmp_path
+):
+    """Edit & resend over the trigger forks no sibling and marks nothing Failed.
+
+    The held message is sent without compacting first, then edited and
+    resent: everything before it is still over the trigger. On dev the
+    edited sibling and an empty assistant row were committed, then the
+    stream preflight marked that row Failed (review 2026-10-30).
+    """
+    app, database, host, adapter, adapter_calls = await _held_console(
+        monkeypatch, tmp_path
+    )
+    console = None
+    try:
+        async with host.run_test(size=(160, 45)) as pilot:
+            console, controller, session, runtime, draft = await _drive_to_hold(
+                host, pilot, monkeypatch, adapter, adapter_calls
+            )
+            held = controller.store.preparation_for_session(session.id)
+            await dispatch_trace_call_recovery_action(
+                controller, "send_without_compacting", held.preparation_id
+            )
+            await _settle(console, pilot, controller, session.id)
+            before = [
+                (m.id, m.role, m.status)
+                for m in controller.store.messages_for_session(session.id)
+            ]
+            edited = next(
+                m
+                for m in reversed(controller.store.messages_for_session(session.id))
+                if m.role is ConsoleMessageRole.USER
+            )
+            assert edited.content == draft, edited.content
+            calls = len(adapter_calls)
+
+            result = await controller.edit_and_resend_message(
+                edited.id, draft + " (edited)"
+            )
+
+            assert not result.accepted, result
+            assert "Not resent" in result.visible_copy, result.visible_copy
+            assert "/compact" in result.visible_copy
+            assert len(adapter_calls) == calls
+            rows = controller.store.messages_for_session(session.id)
+            assert [m for m in rows if m.status == "failed"] == []
+            # Nothing forked: the active path is the same rows, plus the
+            # refusal's own System note.
+            assert [
+                (m.id, m.role, m.status)
+                for m in rows
+                if m.role is not ConsoleMessageRole.SYSTEM
+            ] == [row for row in before if row[1] is not ConsoleMessageRole.SYSTEM]
+            assert rows[-1].role is ConsoleMessageRole.SYSTEM
+            assert rows[-1].content.startswith("Not resent:"), rows[-1].content
+            assert runtime.recoveries_for_session(session.id) == ()
+    finally:
+        if console is not None:
+            await console._console_runtime().dispose()
+        database.close()
+
+
+@private_profile_test
 async def test_retry_over_the_ask_trigger_stops_before_a_new_attempt(
     request, monkeypatch, tmp_path
 ):
