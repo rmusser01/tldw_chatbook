@@ -809,6 +809,11 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
     get_context = service.get_context
 
     context_code = get_context.__func__.__code__
+    body_codes = {
+        inspect.unwrap(getattr(ChatScreen, name)).__code__: name
+        for name in ("_sync_console_identity_surfaces", "_adapt_console_workspace_to_width")
+    }
+    bodies = []
     monitor = None
     for candidate in range(5, 0, -1):
         try:
@@ -833,29 +838,34 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
             hold.set()
             assert held.wait(3)
             watchdog.start()
+        if code in body_codes and observed_entry and frame.f_locals.get("self") is observed_entry[0]:
+            bodies.append((body_codes[code], "after" if release.is_set() else "hold"))
         if code is context_code and frame.f_locals.get("self") is service:
             fetches.append("after" if release.is_set() else "hold" if held.is_set() else "before")
 
     entry_event = sys.monitoring.events.PY_START
     sys.monitoring.register_callback(monitor, entry_event, observe)
-    for code in (step.__code__, context_code):
+    observed_codes = {step.__code__, context_code, *body_codes}
+    for code in observed_codes:
         sys.monitoring.set_local_events(monitor, code, entry_event)
-    holder.start()
-    try:
-        async with ConsoleHarness(app).run_test(size=(120, 35)) as pilot:
-            console = pilot.app.screen_stack[-1]
-            async with asyncio.timeout(5):
+    async def coordinate_hold():
+        # run_test may wait for readiness work blocked by this artificial hold.
+        # Observe loop progress and release independently of entering its body.
+        try:
+            async with asyncio.timeout(30):
                 while not held.is_set():
                     await asyncio.sleep(0.01)
-            # The step's refresh must defer under the hold: a decorator retry,
-            # or skill discovery waiting without having fetched.
+            console = observed_entry[0]
             expected = {
                 "mount": "_adapt_console_workspace_to_width",
                 "roleplay": "_sync_console_identity_surfaces",
             }.get(start)
             deferred, discovery_waited = set(), False
+            heartbeats = 0
             deadline = asyncio.get_running_loop().time() + 2
-            for tick in itertools.count():  # >= 0.75 s: the mount's timers, workers, polls
+            for tick in itertools.count():
+                if held.is_set() and not release.is_set():
+                    heartbeats += 1
                 deferred.update(getattr(console, "_console_config_retries", None) or ())
                 discovery_waited = discovery_waited or any(
                     worker.group == "console-skill-discovery" and not worker.is_finished
@@ -867,22 +877,43 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
                 if (tick >= 15 and seen) or asyncio.get_running_loop().time() > deadline:
                     break
                 await asyncio.sleep(0.05)
-            waited = release.is_set()
-            release.set()
-            holder.join(3)
-            assert not waited, "the Console mount waited for the config rebuild:\n" + "".join(
+            assert not release.is_set(), "the Console mount waited for the config rebuild:\n" + "".join(
                 blocked[-14:]
             )
-            assert observed_entry == [console], "the intended native refresh never started"
+            assert heartbeats >= 15, "the UI loop did not progress during the hold"
             assert expected is None or expected in deferred, deferred
             assert discovery_waited or start != "view-start"
             assert "hold" not in fetches, "skill discovery fetched in the hold"
+            assert not bodies, "a display refresh entered its body during the hold"
+            return deferred
+        finally:
+            release.set()
+            watchdog.cancel()
+
+    holder.start()
+    coordinator = asyncio.create_task(coordinate_hold())
+    try:
+        await asyncio.sleep(0)  # the heartbeat runs before mount readiness waits
+        async with ConsoleHarness(app).run_test(size=(120, 35)) as pilot:
+            console = pilot.app.screen_stack[-1]
+            deferred = await coordinator
+            holder.join(3)
+            assert not holder.is_alive()
+            assert observed_entry == [console], "the intended native refresh never started"
+            # An already-issued native readiness read may acquire the locks as
+            # soon as our holder releases. Its filesystem work is not delivery
+            # time for the pending display callbacks; await its own completion.
+            projection = getattr(console, "_console_readiness_config_projection", None)
+            if projection is not None and projection.pending:
+                async with asyncio.timeout(30):
+                    await projection._settled.wait()
             # Deferred, not dropped: every retry runs, and discovery fetches
             # unless it already had before the hold began.
             try:
                 async with asyncio.timeout(5):
                     while (
                         getattr(console, "_console_config_retries", None)
+                        or not deferred.issubset({name for name, phase in bodies if phase == "after"})
                         or not console._console_attach_reconciled
                         or not {"before", "after"} & set(fetches)
                         or any(
@@ -895,6 +926,7 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
                 pytest.fail(
                     "after-release refreshes did not settle: "
                     f"retries={getattr(console, '_console_config_retries', None)!r}, "
+                    f"bodies={bodies!r}, "
                     f"reconciled={console._console_attach_reconciled}, "
                     f"fetches={fetches!r}, "
                     f"skill_workers={[str(worker) for worker in console.workers if worker.group == 'console-skill-discovery']!r}, "
@@ -904,7 +936,9 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
             assert console._last_console_workspace_width_band is not None
             await console._console_runtime().dispose()
     finally:
-        for code in (step.__code__, context_code):
+        coordinator.cancel()
+        await asyncio.gather(coordinator, return_exceptions=True)
+        for code in observed_codes:
             sys.monitoring.set_local_events(monitor, code, 0)
         sys.monitoring.register_callback(monitor, entry_event, None)
         sys.monitoring.free_tool_id(monitor)
