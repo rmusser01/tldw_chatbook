@@ -630,7 +630,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Library outcome line on a mounted ChatScreen (four cases, about 24 s
 # locally) and its projection helper (16 cases, about 12 s), so no
 # existing entry changes shard: dev's 1149 + 2 = 1151.
-MINIMUM_FILES = 1163
+# TASK-33621.11 (2026-10-30) appends 1 whole-file entry at the tail: the
+# Send strip and refused-Enter rows chosen by blocker code on a mounted
+# ChatScreen (three cases, about 12 s locally): dev's 1163 + 1 = 1164.
+MINIMUM_FILES = 1164
 
 
 def read_census(path: Path) -> list[str]:
