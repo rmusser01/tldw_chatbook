@@ -3,7 +3,7 @@ id: TASK-33787
 title: >-
   Roleplay: the rail search box hides what you type once focused, and the list
   below jumps a row
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-10-02 04:56'
 labels:
@@ -41,15 +41,17 @@ Line refs below were re-checked on origin/dev @ ab4df99959. Paths are under `tld
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 In all four modes at 80x24, 120x36 and 160x45, the focused search box shows the typed query in at least one visible text row.
-- [ ] #2 Focusing, typing in and leaving the search box do not move any other rail widget: the list rows keep their screen positions.
-- [ ] #3 The search box has the same height focused and unfocused.
-- [ ] #4 At the widths where the rail stacks its toolbars today (including 80x24 and 120x36), the last toolbar action (Tag) still lies inside the pane.
-- [ ] #5 Regression tests assert at 120x36 and 160x45 that the focused search box has at least one content row and that the first list row's position is the same before focus, while focused and after typing; they fail on the current code.
+- [x] #1 In all four modes at 80x24, 120x36 and 160x45, the focused search box shows the typed query in at least one visible text row.
+- [x] #2 Focusing, typing in and leaving the search box do not move any other rail widget: the list rows keep their screen positions.
+- [x] #3 The search box has the same height focused and unfocused.
+- [x] #4 At the widths where the rail stacks its toolbars today (including 80x24 and 120x36), the last toolbar action (Tag) still lies inside the pane.
+- [x] #5 Regression tests assert at 120x36 and 160x45 that the focused search box has at least one content row and that the first list row's position is the same before focus, while focused and after typing; they fail on the current code.
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 - 2026-10-29 (Roleplay frame B2b): absorbed by TASK-33910.4 (spec 5.5, S): still To Do on dev at B2b's start, so its AC#1-#5 are TASK-33910.4's AC#19-#23, delivered by B2b's one-row toolbar (Task 7) and the placeholder lift (Task 8). It stays To Do until B2b's close-out sets it Done with the evidence.
+
+- 2026-10-30 (Roleplay frame B2b, TASK-33910.4): delivered by B2b's one-row toolbar (fbb2260768), as TASK-33910.4 AC#19-#23 (spec 5.5, S, absorbed). The search box is one row high at rest and focused, so the typed query always shows and nothing below it moves; Tag and every other control lie inside the pane at every size. Pinned by Tests/UI/test_roleplay_item_list_app.py::test_the_focused_search_shows_what_you_type_and_nothing_moves[80x24|120x36|160x45] (all four modes per size: AC#1, #2, #3 and #5) and ::test_every_toolbar_control_is_whole_and_inside_the_pane[80x24|120x36|160x45|220x55] (AC#4). On dev 38623632e9 they fail (B2b's dry run: the box's rows went from (1, 1, 18) to (2, 0, 19) on focus at 80x24, 120x36 and 160x45). The focused placeholder paints at AA too (B2b Task 8).
 <!-- SECTION:NOTES:END -->
