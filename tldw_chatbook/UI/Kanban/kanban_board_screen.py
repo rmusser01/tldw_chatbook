@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import Any
+from uuid import uuid4
 
 from textual import work
 from textual.app import ComposeResult
@@ -68,7 +69,9 @@ class NewCardModal(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="kanban-new-card-dialog"):
             yield Static(
-                f"New card in {self.column_name}", id="kanban-new-card-label"
+                f"New card in {self.column_name}",
+                id="kanban-new-card-label",
+                markup=False,
             )
             yield Input(placeholder="Card title", id="kanban-new-card-input")
 
@@ -99,15 +102,15 @@ class KanbanBoardScreen(BaseAppScreen):
     #kanban-board-header {
         height: auto;
         min-height: 0;
-        padding: 0 1;
+        padding: $ds-space-0 $ds-space-1;
     }
     #kanban-board-title {
         width: auto;
-        padding: 0 1 0 0;
+        padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     }
     #kanban-board-meta {
         width: 1fr;
-        color: $text-muted;
+        color: $ds-text-muted;
     }
     #kanban-filter-text {
         height: auto;
@@ -122,32 +125,32 @@ class KanbanBoardScreen(BaseAppScreen):
         width: auto;
     }
     .kanban-board-column {
-        width: 34;
-        min-width: 26;
+        width: $ds-size-34;
+        min-width: $ds-size-26;
         height: 100%;
-        border: round $border;
-        margin: 0 1 0 0;
-        padding: 0 1;
+        border: round $ds-control-edge;
+        margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+        padding: $ds-space-0 $ds-space-1;
     }
     .kanban-column-title {
-        padding: 0 0 1 0;
+        padding: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     }
     .kanban-empty-column {
-        color: $text-muted;
+        color: $ds-text-muted;
     }
     .kanban-card {
         height: auto;
-        margin: 0 0 1 0;
-        padding: 0 1;
+        margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+        padding: $ds-space-0 $ds-space-1;
     }
     .kanban-card.selected {
-        border: heavy $accent;
+        border: heavy $ds-focus-accent;
     }
     #kanban-card-inspector {
-        height: 10;
-        min-height: 3;
-        border: round $border;
-        padding: 0 1;
+        height: $ds-size-10;
+        min-height: $ds-control-height;
+        border: round $ds-control-edge;
+        padding: $ds-space-0 $ds-space-1;
     }
     """
 
@@ -168,7 +171,9 @@ class KanbanBoardScreen(BaseAppScreen):
         Binding("r", "refresh_board", "Refresh"),
     )
 
-    def __init__(self, app_instance: Any, screen_name: str = "kanban", **kwargs) -> None:
+    def __init__(
+        self, app_instance: Any, screen_name: str = "kanban", **kwargs
+    ) -> None:
         super().__init__(app_instance, screen_name, **kwargs)
         #: Injectable for tests; None means the default store loader.
         self.snapshot_loader: SnapshotLoader | None = None
@@ -245,11 +250,15 @@ class KanbanBoardScreen(BaseAppScreen):
         """Map ``LocalKanbanService`` rows onto the board view-models."""
         service = getattr(self.app_instance, "local_kanban_service", None)
         if service is None:
-            return BoardSnapshot(board_id=None, board_name="Kanban", statuses=(), columns={})
+            return BoardSnapshot(
+                board_id=None, board_name="Kanban", statuses=(), columns={}
+            )
         boards_payload = await service.list_boards()
         boards = boards_payload.get("boards") or []
         if not boards:
-            return BoardSnapshot(board_id=None, board_name="Kanban", statuses=(), columns={})
+            return BoardSnapshot(
+                board_id=None, board_name="Kanban", statuses=(), columns={}
+            )
         board = boards[0]
         board_id = int(board["id"])
         lists_payload = await service.list_lists(board_id)
@@ -263,14 +272,21 @@ class KanbanBoardScreen(BaseAppScreen):
         # first's cards.
         list_ids: dict[str, int] = {}
         columns: dict[str, tuple[CardView, ...]] = {}
-        name_counts: dict[str, int] = {}
+        # Reserve literal names before allocating suffixes, including names
+        # that already look generated (e.g. "Done (2)").
+        literal_names = {
+            str(item.get("name") or f"List {int(item['id'])}") for item in board_lists
+        }
         for board_list in board_lists:
             list_id = int(board_list["id"])
             name = str(board_list.get("name") or f"List {list_id}")
-            count = name_counts.get(name, 0) + 1
-            name_counts[name] = count
-            if count > 1:
-                name = f"{name} ({count})"
+            if name in list_ids:
+                stem = name
+                suffix = 2
+                name = f"{stem} ({suffix})"
+                while name in list_ids or name in literal_names:
+                    suffix += 1
+                    name = f"{stem} ({suffix})"
             list_ids[name] = list_id
             cards_payload = await service.list_cards(list_id)
             columns[name] = tuple(
@@ -321,7 +337,9 @@ class KanbanBoardScreen(BaseAppScreen):
         else:
             await strip.mount(
                 Static(
-                    "No cards match the filter." if self.filter_state.text.strip() else "No cards yet — press n to add one.",
+                    "No cards match the filter."
+                    if self.filter_state.text.strip()
+                    else "No cards yet — press n to add one.",
                     id="kanban-board-loading",
                 )
             )
@@ -357,7 +375,9 @@ class KanbanBoardScreen(BaseAppScreen):
         for status in self.visible_snapshot.statuses:
             for row, card in enumerate(self.visible_snapshot.columns.get(status, ())):
                 if card.id == card_id:
-                    self.selection = SelectionState(card_id=card.id, status=status, row=row)
+                    self.selection = SelectionState(
+                        card_id=card.id, status=status, row=row
+                    )
                     self.call_later(self._render_board)
                     return
 
@@ -420,7 +440,9 @@ class KanbanBoardScreen(BaseAppScreen):
             self._bootstrap_first_board()
             return
         status = self.selection.status or (
-            self.visible_snapshot.statuses[0] if self.visible_snapshot and self.visible_snapshot.statuses else None
+            self.visible_snapshot.statuses[0]
+            if self.visible_snapshot and self.visible_snapshot.statuses
+            else None
         )
         if status is None:
             self.notify(
@@ -449,7 +471,9 @@ class KanbanBoardScreen(BaseAppScreen):
     async def _create_card_operation(self, list_id: int, title: str) -> None:
         service = getattr(self.app_instance, "local_kanban_service", None)
         if service is not None:
-            await service.create_card(list_id, {"title": title})
+            await service.create_card(
+                list_id, {"title": title, "client_id": str(uuid4())}
+            )
 
     def _move_selected_card(self, delta: int) -> None:
         card = self._selected_card()
@@ -467,9 +491,7 @@ class KanbanBoardScreen(BaseAppScreen):
         target_list_id = self._list_ids_by_status.get(target_status)
         if target_list_id is None:
             return
-        self._run_mutation(
-            self._move_card_operation(card.id, target_list_id), card.id
-        )
+        self._run_mutation(self._move_card_operation(card.id, target_list_id), card.id)
 
     async def _move_card_operation(self, card_id: int, target_list_id: int) -> None:
         service = getattr(self.app_instance, "local_kanban_service", None)
@@ -492,10 +514,15 @@ class KanbanBoardScreen(BaseAppScreen):
         service = getattr(self.app_instance, "local_kanban_service", None)
         if service is None:
             return
-        board = await service.create_board({"name": _DEFAULT_BOARD_NAME})
+        board = await service.create_board(
+            {"name": _DEFAULT_BOARD_NAME, "client_id": str(uuid4())}
+        )
         board_id = int(board["id"])
         for position, name in enumerate(_DEFAULT_BOARD_LISTS):
-            await service.create_list(board_id, {"name": name, "position": position})
+            await service.create_list(
+                board_id,
+                {"name": name, "position": position, "client_id": str(uuid4())},
+            )
 
     def _run_mutation(self, operation: Any, reselect_hint: Any) -> None:
         self._run_mutation_worker(operation, reselect_hint)
@@ -577,9 +604,7 @@ def moved_row_selection(
     return SelectionState(card_id=cards[row].id, status=selection.status, row=row)
 
 
-def _selected_card(
-    snapshot: BoardSnapshot, card_id: int | None
-) -> CardView | None:
+def _selected_card(snapshot: BoardSnapshot, card_id: int | None) -> CardView | None:
     if card_id is None:
         return None
     for cards in snapshot.columns.values():

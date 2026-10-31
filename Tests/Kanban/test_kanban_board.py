@@ -15,6 +15,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Input
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.UI.Kanban.board_models import (
     BoardSnapshot,
     CardView,
@@ -105,7 +106,9 @@ class TestSelectAfterRefresh:
         before = _snapshot(
             {"To Do": (_card("task-1"),), "Doing": (), "Done": (_card("task-9"),)}
         )
-        after = _snapshot({"Other": (_card("task-5"),), "Doing": (), "Done": (_card("task-9"),)})
+        after = _snapshot(
+            {"Other": (_card("task-5"),), "Doing": (), "Done": (_card("task-9"),)}
+        )
 
         selection = select_after_refresh(
             before, after, SelectionState(card_id="task-1", status="To Do", row=0)
@@ -183,7 +186,7 @@ class TestRegistration:
         assert TAB_KANBAN == "kanban"
 
 
-class _KanbanHarness(App[None]):
+class _KanbanHarness(ConsolidatedCSSApp[None]):
     """Mounts the board screen with an injected snapshot loader."""
 
     def __init__(self, loader: SnapshotLoader) -> None:
@@ -252,9 +255,7 @@ async def test_board_screen_renders_columns_and_navigates_by_keyboard(
         assert screen.selection.status == "Done"
         assert screen.selection.card_id == 3
 
-        inspector_text = str(
-            app.query_one("#kanban-card-inspector", Static).renderable
-        )
+        inspector_text = str(app.query_one("#kanban-card-inspector", Static).renderable)
         assert "Done card" in inspector_text
 
 
@@ -345,7 +346,9 @@ async def test_new_card_flow_bootstraps_and_creates_through_the_store(request) -
 
     def _snapshot() -> BoardSnapshot:
         if not created_boards:
-            return BoardSnapshot(board_id=None, board_name="Kanban", statuses=(), columns={})
+            return BoardSnapshot(
+                board_id=None, board_name="Kanban", statuses=(), columns={}
+            )
         names = ("To Do", "Doing", "Done")
         list_ids = {name: 70 + index for index, name in enumerate(names)}
         columns = {name: () for name in names}
@@ -385,7 +388,9 @@ async def test_new_card_flow_bootstraps_and_creates_through_the_store(request) -
         screen.action_new_card()
         screen.action_new_card()
         await pilot.pause(0.3)
-        assert created_boards == [{"name": "Personal"}]
+        assert len(created_boards) == 1
+        assert created_boards[0]["name"] == "Personal"
+        assert created_boards[0]["client_id"]
         assert [data["name"] for _board, data in created_lists] == [
             "To Do",
             "Doing",
@@ -416,4 +421,112 @@ async def test_new_card_flow_bootstraps_and_creates_through_the_store(request) -
         await pilot.press("enter")
         await pilot.pause(0.3)
 
-        assert created_cards == [(70, {"title": "Hello"})]
+        assert len(created_cards) == 1
+        assert created_cards[0][0] == 70
+        assert created_cards[0][1]["title"] == "Hello"
+        assert created_cards[0][1]["client_id"]
+
+
+@pytest.mark.asyncio
+async def test_real_store_columns_keep_cards_when_names_and_suffixes_collide(tmp_path):
+    from tldw_chatbook.Kanban_Interop.local_kanban_service import LocalKanbanService
+
+    service = LocalKanbanService(db_path=tmp_path / "kanban.db")
+    board = await service.create_board(
+        {"name": "Personal", "client_id": "board-control"}
+    )
+    stored_lists = []
+    stored_cards = []
+    for position, name in enumerate(
+        ("Done", "Done", "Done (2)", "Done (3)", "Done (2)")
+    ):
+        column = await service.create_list(
+            board["id"],
+            {"name": name, "position": position, "client_id": f"list-{position}"},
+        )
+        stored_lists.append(column)
+        stored_cards.append(
+            await service.create_card(
+                column["id"],
+                {"title": f"Card {position}", "client_id": f"card-{position}"},
+            )
+        )
+    app_instance = _FakeAppInstance()
+    app_instance.local_kanban_service = service
+    screen = KanbanBoardScreen(app_instance)
+
+    snapshot = await screen._default_snapshot_loader()
+
+    assert len(snapshot.statuses) == len(stored_lists)
+    assert list(snapshot.list_ids.values()) == [column["id"] for column in stored_lists]
+    assert [snapshot.columns[label][0].id for label in snapshot.statuses] == [
+        card["id"] for card in stored_cards
+    ]
+    # A generated label cannot take a literal name owned by a later list.
+    assert snapshot.list_ids["Done (2)"] == stored_lists[2]["id"]
+    assert snapshot.list_ids["Done (3)"] == stored_lists[3]["id"]
+    destination = snapshot.list_ids[snapshot.statuses[1]]
+    await screen._move_card_operation(stored_cards[0]["id"], destination)
+    await screen._create_card_operation(destination, "New in duplicate column")
+    refreshed = await screen._default_snapshot_loader()
+    assert {card.title for card in refreshed.columns[refreshed.statuses[1]]} == {
+        "Card 0",
+        "Card 1",
+        "New in duplicate column",
+    }
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_new_card_modal_renders_the_column_name_literally(request):
+    from textual.widgets import Static
+    from tldw_chatbook.UI.Kanban.kanban_board_screen import NewCardModal
+
+    app = App()
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(NewCardModal("[bold]Done[/bold]"))
+        await pilot.pause()
+        label = app.screen.query_one("#kanban-new-card-label", Static)
+        assert label.visual.plain == "New card in [bold]Done[/bold]"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_keyboard_bootstrap_and_create_use_real_local_store(request, tmp_path):
+    from tldw_chatbook.Kanban_Interop.local_kanban_service import LocalKanbanService
+    from tldw_chatbook.UI.Kanban.kanban_board_screen import NewCardModal
+
+    service = LocalKanbanService(db_path=tmp_path / "kanban.db")
+
+    class RealKanbanApp(ConsolidatedCSSApp[None]):
+        def compose(self):
+            app_instance = _FakeAppInstance()
+            app_instance.local_kanban_service = service
+            yield KanbanBoardScreen(app_instance)
+
+    app = RealKanbanApp()
+    async with app.run_test(size=(120, 30)) as pilot:
+        screen = app.query_one(KanbanBoardScreen)
+        await screen.workers.wait_for_complete()
+        await pilot.press("n")
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        boards = (await service.list_boards())["boards"]
+        assert len(boards) == 1
+        columns = (await service.list_lists(boards[0]["id"]))["lists"]
+        assert [column["name"] for column in columns] == ["To Do", "Doing", "Done"]
+        await pilot.press("n")
+        await pilot.pause()
+        assert isinstance(app.screen, NewCardModal)
+        app.screen.query_one(Input).value = "Real card"
+        await pilot.press("enter")
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        cards = (await service.list_cards(columns[0]["id"]))["cards"]
+        assert [card["title"] for card in cards] == ["Real card"]
+        client_ids = [
+            boards[0]["client_id"],
+            *(column["client_id"] for column in columns),
+            cards[0]["client_id"],
+        ]
+        assert len(set(client_ids)) == 5

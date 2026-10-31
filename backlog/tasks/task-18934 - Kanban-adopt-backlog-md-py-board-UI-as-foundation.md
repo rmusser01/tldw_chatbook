@@ -1,11 +1,11 @@
 ---
 id: TASK-18934
 title: 'Kanban: adopt the backlog-md-py board UI as the foundation'
-status: Done
+status: In Progress
 assignee:
 - '@Robert'
 created_date: 2026-08-19 09:55
-updated_date: 2026-10-18 16:56
+updated_date: 2026-10-31 18:43
 labels:
 - kanban
 - ui
@@ -42,8 +42,8 @@ Reason: long-lived application-structure decision — replaces an existing (brok
 3. Port/adapt the backlog-md-py board UI as a self-contained Textual surface
 4. Shell entry points + keyboard conventions per ADR-031
 5. Tests + user guide page
+2026-10-31 backlog integration: ADR required: no new ADR. ADR paths: backlog/decisions/237-kanban-board-port-and-data-ownership.md;150 design tokens;031/152 navigation. Reason: repair existing board data mapping and literal rendering while preserving LocalKanbanService ownership. Rebase onto current dev, preserve retired MCP routing, then reproduce duplicate-name/suffix collisions and markup rendering with real store/mounted controls. Repair collision-safe labels, literal user text and token-backed layout without new runtime/store. Run targeted Kanban/navigation tests and independent requesting-code-review, fix blockers and publish oldest-first with exact lease. Hosted CI and size ceilings are explicitly waived by user. Reconcile shortcut after earlier Plugins PR lands; no release or excluded PR actions.
 <!-- SECTION:PLAN:END -->
-
 ## Deferral note (2026-10-11, dev `9f8533686c`)
 
 DEFERRED from the t2-hermes porting slice — untouched, deliberately, and
@@ -140,4 +140,5 @@ Data ownership: exclusively app.local_kanban_service (ADR-237); server REST/scop
 Files: UI/Kanban/{__init__,board_models,board_widgets,kanban_board_screen}.py; Constants.py; UI/Navigation/{screen_registry,shell_destinations}.py; Docs/User_Guide/kanban.md (new page, AC#6); backlog/decisions/237-...md; Tests/Kanban/test_kanban_board.py (12 tests: filter/selection/movement pure logic, registration lockstep incl. route+constant, screen render+navigate, store move mutation).
 
 Verification: 12/12 green; ruff clean; nav/lockstep battery has the identical 58 pre-existing setup errors (RecoveryRequired env condition) verified byte-identical on pristine via stash — no regression.
+2026-10-31 integration repair (ADR237/150/161/031/152/240): rebased on57e330, retained retired MCP route, fixed duplicate/suffixed column label collisions without losing store IDs, supplied required unique client IDs to real board/list/card creation, rendered modal column names literally, used existing design tokens and production CSS in mounted tests.16 focused tests pass including real SQLite keyboard bootstrap/create and duplicate-column move/create; RED controls recorded. QA:Docs/superpowers/qa/2026-10-31-pr3157-backlog-rebase.md. User waived hostedCI/size limits; independent review pending. Keep In Progress until review and oldest-first integration; shortcut must reconcile if Plugins lands first.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

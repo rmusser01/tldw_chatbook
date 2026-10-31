@@ -40,6 +40,66 @@ ConsolePromptQueueRegion #console-prompt-queue-pause {
     padding: 0 1;
 }
 
+/* ===== WIDGET: KanbanBoardScreen (UI/Kanban/kanban_board_screen.py) ===== */
+
+KanbanBoardScreen #kanban-board-root {
+    height: 100%;
+    min-height: 0;
+}
+KanbanBoardScreen #kanban-board-header {
+    height: auto;
+    min-height: 0;
+    padding: 0 1;
+}
+KanbanBoardScreen #kanban-board-title {
+    width: auto;
+    padding: 0 1 0 0;
+}
+KanbanBoardScreen #kanban-board-meta {
+    width: 1fr;
+    color: $text-muted;
+}
+KanbanBoardScreen #kanban-filter-text {
+    height: auto;
+    min-height: 0;
+}
+KanbanBoardScreen #kanban-board-columns {
+    height: 1fr;
+    min-height: 0;
+}
+KanbanBoardScreen #kanban-column-strip {
+    height: 100%;
+    width: auto;
+}
+KanbanBoardScreen .kanban-board-column {
+    width: 34;
+    min-width: 26;
+    height: 100%;
+    border: round $tldw-boundary;
+    margin: 0 1 0 0;
+    padding: 0 1;
+}
+KanbanBoardScreen .kanban-column-title {
+    padding: 0 0 1 0;
+}
+KanbanBoardScreen .kanban-empty-column {
+    color: $text-muted;
+}
+KanbanBoardScreen .kanban-card {
+    height: auto;
+    margin: 0 0 1 0;
+    padding: 0 1;
+}
+KanbanBoardScreen .kanban-card.selected {
+    border: heavy $primary;
+}
+KanbanBoardScreen #kanban-card-inspector {
+    height: 10;
+    min-height: 3;
+    border: round $tldw-boundary;
+    padding: 0 1;
+}
+
 /* ===== WIDGET: LLMManagementWindow (UI/LLM_Management_Window.py) ===== */
 
 
