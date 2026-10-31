@@ -232,7 +232,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: send gate (_console_send_gate) and composer blocker
     #: (_console_composer_send_blocker) from the sentence accessors, and moves
     #: the gate's setup copy out to console_display_state: 24332/737 -> 24328/739.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24335, 737),
+    #: 2026-10-31: re-measured after rebasing onto dev 92ecd2c0aa (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24335/737 -> 24332/739.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24332, 739),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

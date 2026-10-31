@@ -156,7 +156,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-30, TASK-33621.11: shrank to the exact measurement on dev
     # 7536ac3b87, 29038 -> 29036; its review's blocked-row fix (no copy
     # rewritten by its words) shrinks it again, 29036 -> 29034.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29034,
+    # 2026-10-31: re-measured after rebasing onto dev 92ecd2c0aa (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 29034 -> 29032.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29032,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
@@ -572,7 +573,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-30, TASK-33621.11 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment): 9620 -> 9624 (+4). A failed run's
     # outcome carries the typed image-refusal verdict for the Console hint.
-    "tldw_chatbook/Agents/agent_service.py": 9570,
+    # 2026-10-31: re-measured after rebasing onto dev 92ecd2c0aa (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 9570 -> 9574.
+    "tldw_chatbook/Agents/agent_service.py": 9574,
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9532,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
@@ -585,7 +587,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-30, TASK-33621.11 (same owner decision): 8179 -> 8201 (+22).
     # The gateway marks its own finished sentences by type, classifies image
     # refusals before projecting the error, and narrows model advice.
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8160,
+    # 2026-10-31: re-measured after rebasing onto dev 92ecd2c0aa (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 8160 -> 8182.
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8182,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
