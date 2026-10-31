@@ -24,12 +24,27 @@ writing them into your chat database.
   `anime`. Your own styles live in config.toml under
   `[video_generation.styles.<id>]`.
 - One generation runs per session at a time; the composer's **Stop**
-  button cancels (a queued MiniMax task is cancelled remotely and does
-  not bill to completion).
+  button stops it, and the row it leaves says what happened. A stop is
+  never reported as a failure.
+- **Stopping a MiniMax generation.** Stop also asks MiniMax to cancel the
+  remote task. Until MiniMax starts rendering, the task is cancelled and
+  not billed ("MiniMax cancelled the remote task, so it is not billed").
+  Once rendering has started, MiniMax refuses: the task runs to the end
+  on MiniMax's side and may still be billed, although the video is not
+  shown here ("…refused to cancel. The remote task keeps running and may
+  still be billed"). If MiniMax cannot be reached, or answers with
+  anything other than a confirmed cancel or that refusal, the row says
+  MiniMax did not confirm the cancel, so the task may keep running and
+  may still be billed. The Console
+  cannot see when rendering starts (MiniMax reports both stages as
+  running), so treat a confirmed MiniMax generation as one you may pay
+  for.
 - **Paid backends ask first.** When `[video_generation]
   confirm_cost_estimate` is on (default), cloud backends show the
-  billing shape (per generated second) and wait for confirmation.
-  **Escape** (or **Cancel**) starts nothing and keeps your draft.
+  billing shape (per generated second), say that Stop cannot undo a
+  render that has started, and wait for confirmation. The
+  "Generating video…" row repeats that. **Escape** (or **Cancel**)
+  starts nothing and keeps your draft.
 - The Console stays responsive while a video generates, whether you sent
   with **Enter** or the **Send** button: **Stop**, **F1** help, **Ctrl+Q**
   and other commands (`/stop`, `/help`, …) keep working. Sending the same
