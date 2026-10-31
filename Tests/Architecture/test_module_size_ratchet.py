@@ -436,7 +436,8 @@ _BUDGETS: dict[str, int] = {
     # dev's overrun, so it stays red exactly as on dev. Review follow-up
     # (2026-10-29, same owner rule): has_escape_layer answers "nothing to
     # clear" for a transcript with no screen instead of raising (+4).
-    "tldw_chatbook/Widgets/Console/console_transcript.py": 8380,
+    # 2026-10-30: re-measured after rebasing onto dev 7536ac3b87 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 8380 -> 8415.
+    "tldw_chatbook/Widgets/Console/console_transcript.py": 8415,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
     # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source
