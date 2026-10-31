@@ -48,6 +48,10 @@ class SendDiagnostic:
     started: float = field(default_factory=time.monotonic)
     phase: str = "controller_submit"
     outcome: str = "completed"
+    #: TASK-33621.23: a code-owned token naming why the outcome is what it
+    #: is (a blocked submit's blocker), written as the final line's
+    #: ``error_category``. Never user content.
+    outcome_category: str | None = None
     count: int = 0
     submission_started: bool = False
     metadata: dict[str, object] = field(default_factory=dict)
@@ -230,7 +234,10 @@ async def send_diagnostic_scope(
         )
         raise
     finally:
-        record_send_stage(phase, current.outcome)
+        category = current.outcome_category
+        record_send_stage(
+            phase, current.outcome, **({"error_category": category} if category else {})
+        )
         if token is not None:
             _CURRENT.reset(token)
         if owns_monitor:

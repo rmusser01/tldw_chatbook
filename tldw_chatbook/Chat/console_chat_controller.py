@@ -85,6 +85,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunMarker,
     ConsoleRunState,
     ConsoleRunStatus,
+    ConsoleSubmitBlocker,
     ConsoleSessionCloseTicket,
     ConsoleQueuedAcceptanceEvent,
     ConsoleSubmissionOrigin,
@@ -3238,6 +3239,8 @@ class ConsoleSubmitResult:
     queue_notice: str = ""
     #: Cancel restored this original draft revision before any UI await.
     cancelled_draft_revision: int | None = None
+    #: TASK-33621.23: why a BLOCKED submit stopped; ``submit_draft`` logs it.
+    blocker: ConsoleSubmitBlocker | None = None
 
 
 @dataclass(frozen=True)
@@ -9206,14 +9209,18 @@ class ConsoleChatController:
                 if result.accepted
                 else "refused"
             )
+            if result.blocker is not None:  # TASK-33621.23: name the cause.
+                diagnostic.outcome_category = result.blocker.value
             if not result.accepted or result.terminal_status in {
                 ConsoleRunStatus.BLOCKED,
                 ConsoleRunStatus.FAILED,
             }:
                 logger.warning(
-                    "Console submit requires attention | accepted={} status={}",
+                    "Console submit requires attention | accepted={} status={} "
+                    "blocker={}",
                     result.accepted,
                     diagnostic.outcome,
+                    diagnostic.outcome_category or "-",
                 )
             return result
 
@@ -11434,6 +11441,7 @@ class ConsoleChatController:
                                 assistant.id if assistant is not None else None
                             ),
                             terminal_status=ConsoleRunStatus.BLOCKED,
+                            blocker=ConsoleSubmitBlocker.TRACE_CALL,
                             origin=origin,
                             queue_entry_id=queue_entry_id,
                             committed_context_epoch=committed_context_epoch,
@@ -11992,6 +12000,7 @@ class ConsoleChatController:
                 user_message_id=continuation.commit.user_message_id,
                 assistant_message_id=continuation.commit.assistant_message_id,
                 terminal_status=ConsoleRunStatus.BLOCKED,
+                blocker=ConsoleSubmitBlocker.TRACE_PROVENANCE,
                 origin=continuation.origin,
                 queue_entry_id=continuation.queue_entry_id,
                 committed_context_epoch=continuation.committed_context_epoch,
@@ -12313,6 +12322,7 @@ class ConsoleChatController:
                     user_message_id=commit.user_message_id,
                     assistant_message_id=commit.assistant_message_id,
                     terminal_status=self.run_state_for(session_id).status,
+                    blocker=ConsoleSubmitBlocker.DELIVERY_UNKNOWN,
                     origin=continuation.origin,
                     queue_entry_id=continuation.queue_entry_id,
                     committed_context_epoch=continuation.committed_context_epoch,
@@ -12694,6 +12704,7 @@ class ConsoleChatController:
                     user_message_id=commit.user_message_id,
                     assistant_message_id=commit.assistant_message_id,
                     terminal_status=ConsoleRunStatus.BLOCKED,
+                    blocker=ConsoleSubmitBlocker.PREREQUISITES_ONLY,
                     origin=continuation.origin,
                     queue_entry_id=continuation.queue_entry_id,
                     committed_context_epoch=continuation.committed_context_epoch,
@@ -12826,6 +12837,7 @@ class ConsoleChatController:
                 user_message_id=commit.user_message_id,
                 assistant_message_id=commit.assistant_message_id,
                 terminal_status=ConsoleRunStatus.BLOCKED,
+                blocker=ConsoleSubmitBlocker.DISPATCH_SETTLEMENT,
                 origin=continuation.origin,
                 queue_entry_id=continuation.queue_entry_id,
                 committed_context_epoch=continuation.committed_context_epoch,
@@ -12856,6 +12868,7 @@ class ConsoleChatController:
                     user_message_id=commit.user_message_id,
                     assistant_message_id=commit.assistant_message_id,
                     terminal_status=ConsoleRunStatus.BLOCKED,
+                    blocker=ConsoleSubmitBlocker.SETTLEMENT_FAILED,
                     origin=continuation.origin,
                     queue_entry_id=continuation.queue_entry_id,
                     committed_context_epoch=continuation.committed_context_epoch,
@@ -13005,6 +13018,7 @@ class ConsoleChatController:
                                 user_message_id=commit.user_message_id,
                                 assistant_message_id=commit.assistant_message_id,
                                 terminal_status=ConsoleRunStatus.BLOCKED,
+                                blocker=ConsoleSubmitBlocker.TRACE_CALL,
                                 origin=continuation.origin,
                                 queue_entry_id=continuation.queue_entry_id,
                                 committed_context_epoch=(
@@ -13057,6 +13071,7 @@ class ConsoleChatController:
                     user_message_id=commit.user_message_id,
                     assistant_message_id=commit.assistant_message_id,
                     terminal_status=self.run_state_for(session_id).status,
+                    blocker=ConsoleSubmitBlocker.SETTLEMENT_FAILED,
                     origin=continuation.origin,
                     queue_entry_id=continuation.queue_entry_id,
                     committed_context_epoch=continuation.committed_context_epoch,
