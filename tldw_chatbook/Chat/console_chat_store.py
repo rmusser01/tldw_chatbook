@@ -17331,6 +17331,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         message.thinking_warning = None
         message.thinking_actions_enabled = True
         message.status = "pending"
+        message.evidence_source_count = None  # a retry never resends evidence
         self._begin_new_terminal_attempt(message)
         if (
             message.metadata is not None
@@ -21854,6 +21855,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             restored = replace(
                 message,
                 citation_presentation=None,
+                evidence_source_count=None,
                 activity_presentation=None,
                 raw_cli_presentation=None,
             )
@@ -21916,6 +21918,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 if node.persisted_message_id in owner_ids
                 else node.id,
                 citation_presentation=None,
+                evidence_source_count=None,
                 activity_presentation=None,
                 raw_cli_presentation=None,
             )

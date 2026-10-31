@@ -41,8 +41,11 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_display_state import (
     build_console_staged_evidence_strip_state,
 )
@@ -474,3 +477,70 @@ async def test_unstage_on_a_stale_strip_redraws_every_staged_surface(
         await _settle(pilot)
 
         _assert_nothing_staged(console, sent=2)
+
+
+def test_a_retried_reply_drops_the_sources_line_its_retry_did_not_send() -> None:
+    """A failed reply's sources went out with the FAILED attempt only.
+
+    Retry rebuilds the request from history without the released evidence,
+    so "Sources (N) · sent with this turn" would describe an answer written
+    without them.
+    """
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    reply = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    store.set_evidence_source_count(reply.id, 2)
+    store.mark_message_failed(reply.id)
+    assert store.get_message(reply.id).evidence_source_count == 2
+
+    token = store.begin_generation_attempt(reply.id)
+    retried = store.prepare_message_retry(reply.id, generation_token=token)
+
+    assert retried.evidence_source_count is None
+    assert store.get_message(reply.id).evidence_source_count is None
+
+
+def test_a_restored_reply_carries_no_session_only_source_count() -> None:
+    """Session-only like ``citation_presentation``: never restored."""
+    store = ConsoleChatStore()
+    session = ConsoleChatSession(id="session-a", title="Chat 1")
+    reply = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer [S1]",
+        evidence_source_count=2,
+    )
+
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: [reply]},
+        active_session_id=session.id,
+    )
+
+    assert store.get_message(reply.id).evidence_source_count is None
+
+
+def test_a_failing_reply_source_count_never_costs_the_send(monkeypatch) -> None:
+    """The count is display only; its docstring promises the send survives."""
+    from tldw_chatbook.Chat import console_display_state
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("count unavailable")
+
+    monkeypatch.setattr(console_display_state, "console_sent_source_count", broken)
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    reply = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    sent = LocalRagContextResult(context=EVIDENCE, citation_builder=None)
+    lease = SimpleNamespace(released=False, capture_result=sent, launch=_launch(2))
+    controller = SimpleNamespace(store=store)
+
+    ConsoleChatController._note_reply_evidence_sources(
+        controller, reply.id, SimpleNamespace(staged_evidence=lease), None
+    )
+
+    assert store.get_message(reply.id).evidence_source_count is None
