@@ -27,6 +27,8 @@ The Library screen captures form options through `Library/library_ingest_state.p
 
 1. **Admission**: the source is classified — `article`, `audio`, or `video` (video hosts: youtube/youtu.be/vimeo/dailymotion); URLs are canonicalized and egress-guarded (`Utils/egress.guarded_fetch_httpx`); local files are typed by extension.
    Local Library form submissions check the selected transcription runtime and exact model off-thread before queue creation. Missing selected packages block Start; a fresh import check catches incomplete Whisper caches and missing managed Parakeet models/VAD. Directory checks use the admission scan limit, and generation/snapshot fences discard stale results. Checks never download or load model weights. Explicit external Parakeet folders retain their verified-source and VAD-install consent flow; server imports do not consult local STT readiness. Worker admission remains authoritative if files change afterwards.
+Library local-STT dispatch preserves HTTP(S) input as an immutable `URLIngestSource` in the executor request; it never passes URL text through filesystem `Path`. The worker forwards the original text to this same guarded parse pipeline. File and PCM-buffer sources retain their existing contracts.
+
 2. **Extraction** per type: web articles (trafilatura, streamed with a size cap; permanent vs retryable errors distinctly typed), video (yt-dlp download → audio extraction → STT; transcripts keyed by whisper model), audio (STT), PDF, ebooks, images (OCR), plaintext. Empty extraction hard-fails (`_reject_empty_extraction`).
 3. **Optional LLM analysis** runs in-band during parse; a literal `"Error: …"` analysis body is forbidden — failures degrade to a recorded `analysis_failed_reason`.
 4. **Persist** (single writer thread): `add_media_with_keywords` — Media row (unique url/content-hash dedup, `overwrite` flag, Library-only `restore_trashed`), keyword links, Python-side FTS sync, chunks into `UnvectorizedMediaChunks` with `chunk_engine_version` and `chunking_template`/`chunking_params` stamped on every chunk, optional `DocumentVersions`.
@@ -83,3 +85,9 @@ ADR-013 (library ingest ownership and job lifecycle), ADR-014 (ingest service au
 
 - [rag.md](./rag.md) — what happens after the post-commit hook
 - [database-layer.md](./database-layer.md) — the Media DB schema and write seam
+
+
+The local STT default parser adapter translates the parent-minted
+UrlProvenance enum into the parser's explicit argument (ADR-207), matching
+the ordinary ingest worker. Missing or forged string values remain unknown;
+preserving URL text does not establish user entry or bypass egress policy.

@@ -940,7 +940,17 @@ def test_folder_siblings_reuse_one_real_verified_snapshot(
     assert first["local_source"] is second["local_source"]
 
 
-def test_library_submission_forwards_exact_dependency_refs_to_coordinator() -> None:
+@pytest.mark.parametrize(
+    "source_path",
+    [
+        "/tmp/audio.wav",
+        "https://www.youtube.com/watch?v=demo&next=https://example.org/a%2Fb",
+        "http://example.org/audio/path.wav?literal=a/b",
+    ],
+)
+def test_library_submission_forwards_exact_dependency_refs_to_coordinator(
+    source_path,
+) -> None:
     app = _minimal_stt_app()
     dependency_refs = (("silero-vad", "rev", "onnx"),)
     dispatch = {
@@ -962,12 +972,18 @@ def test_library_submission_forwards_exact_dependency_refs_to_coordinator() -> N
     app._ensure_local_stt_dispatch_coordinator = lambda: _Coordinator()  # type: ignore[method-assign]
     app._marshal_local_stt_call = lambda callback, *args: callback(*args)  # type: ignore[method-assign]
     app._on_ingest_local_stt_submitted = lambda *_args: None  # type: ignore[method-assign]
-    job = _parakeet_job(job_id="job-1")
+    from dataclasses import replace
+
+    job = replace(_parakeet_job(job_id="job-1"), source_path=source_path)
     app._ingest_local_stt_jobs[job.job_id] = (0, "job-1-attempt-1")
 
     app._dispatch_local_stt_job(job, {}, "job-1-attempt-1")
 
     assert calls[0]["managed_dependency_refs"] == dependency_refs
+    if source_path.startswith(("http://", "https://")):
+        assert getattr(calls[0]["source"], "url", None) == source_path
+    else:
+        assert calls[0]["source"].path == Path(source_path)
 
 
 def test_parakeet_submission_registers_source_listener_before_dispatch_thread() -> None:
@@ -2090,6 +2106,64 @@ class TestIngestJobOptions:
         }
         assert "transcription_model_path" not in options
         assert secret_path not in str(job.ingest_options)
+
+    def test_retry_without_failure_provenance_omits_retry_of_job_id(
+        self,
+    ) -> None:
+        """(TASK-38207) A retry with no stored attempt provenance pairs None.
+
+        ``retry_of_job_id`` taken from the job alone would reach the worker
+        without ``retry_of_attempt_id``; STT provenance validation rejects
+        that pair AFTER transcription ("retry_of_job_id requires
+        retry_of_attempt_id"), failing the retry -- the observed fate of
+        every faster-whisper retry of a parakeet ``inference_failed`` job,
+        which stores no failed-attempt provenance.
+        """
+        app = _minimal_app()
+        job = LibraryIngestJob(
+            job_id="ingest-job-23",
+            source_path="https://www.youtube.com/watch?v=wtTd8PJPMVg",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "faster-whisper",
+                    "language": "en",
+                }
+            },
+            retry_count=1,
+            retry_of_job_id="ingest-job-22",
+            retry_source_failure_provenance=None,
+        )
+
+        options = app._ingest_job_options(job)
+
+        context = options["transcription_context"]
+        assert context["retry_of_attempt_id"] is None
+        assert context["retry_of_job_id"] is None
+        assert context["retry_source_failure_provenance"] is None
+
+    def test_retry_with_failure_provenance_pairs_both_retry_ids(self) -> None:
+        app = _minimal_app()
+        failed_attempt = _direct_failed_attempt()
+        job = LibraryIngestJob(
+            job_id="ingest-job-23",
+            source_path="https://www.youtube.com/watch?v=wtTd8PJPMVg",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "faster-whisper",
+                    "language": "en",
+                }
+            },
+            retry_count=1,
+            retry_of_job_id="ingest-job-22",
+            retry_source_failure_provenance=failed_attempt,
+        )
+
+        options = app._ingest_job_options(job)
+
+        context = options["transcription_context"]
+        assert context["retry_of_attempt_id"] == failed_attempt["attempt_id"]
+        assert context["retry_of_job_id"] == "ingest-job-22"
+        assert context["retry_source_failure_provenance"] == failed_attempt
 
     def test_untouched_exact_faster_whisper_model_uses_visible_base_default(
         self,

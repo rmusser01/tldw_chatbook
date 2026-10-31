@@ -129,6 +129,7 @@ from tldw_chatbook.STT.executor import (
     ExecutorUnavailableError,
     LocalSTTExecutor,
     ModelIdentity,
+    URLIngestSource,
     WorkerPhase,
     snapshot_local_source,
 )
@@ -2788,7 +2789,11 @@ class LibraryIngestQueueMixin:
             generation = coordinator.submit_library(
                 attempt_id=attempt_id,
                 job_id=job.job_id,
-                source=FileAudioSource(Path(job.source_path)),
+                source=(
+                    URLIngestSource(job.source_path)
+                    if job.source_path.lower().startswith(("http://", "https://"))
+                    else FileAudioSource(Path(job.source_path))
+                ),
                 identity=dispatch["identity"],
                 options=options,
                 local_source=dispatch["local_source"],

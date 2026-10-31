@@ -115,7 +115,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-03 (PR #2993): TASK-20973's provenance block added 16 lines;
     # the signature probe moved beside the poller's other pure helpers in
     # Library/server_ingest_reconcile.py: 5,015 -> 4,985.
-    "tldw_chatbook/app_ingest_queue.py": 4985,
+    # 2026-10-31 backlog owner size waiver: explicit URL source handoff.
+    "tldw_chatbook/app_ingest_queue.py": 5020,
     # TASK-33011: TldwCli's service composition moved verbatim out of app.py.
     # It was governed there; without its own row, wiring code could regrow in
     # the mixin unchecked.
