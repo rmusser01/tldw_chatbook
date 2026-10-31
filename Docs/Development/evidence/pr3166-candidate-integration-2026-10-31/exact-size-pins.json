@@ -1,0 +1,78 @@
+[
+  {
+    "ratchet": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/app_service_wiring.py",
+    "target_pin": 3690,
+    "integrated_exact_pin": 3701
+  },
+  {
+    "ratchet": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+    "target_pin": 35674,
+    "integrated_exact_pin": 35726
+  },
+  {
+    "ratchet": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/UI/Console_Modules/workspace.py",
+    "target_pin": 8774,
+    "integrated_exact_pin": 8935
+  },
+  {
+    "ratchet": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Widgets/Console/console_composer_bar.py",
+    "target_pin": 7043,
+    "integrated_exact_pin": 7047
+  },
+  {
+    "ratchet": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/UI/Console_Modules/session.py",
+    "target_pin": 6990,
+    "integrated_exact_pin": 7002
+  },
+  {
+    "ratchet": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Chat/console_runtime.py",
+    "target_pin": 6943,
+    "integrated_exact_pin": 7067
+  },
+  {
+    "ratchet": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Widgets/Library/library_notes_canvas.py",
+    "target_pin": 4646,
+    "integrated_exact_pin": 4648
+  },
+  {
+    "ratchet": "Tests/Architecture/test_screen_size_ratchet.py",
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "target_pin": [
+      "ChatScreen",
+      24301,
+      739
+    ],
+    "integrated_exact_pin": [
+      "ChatScreen",
+      24409,
+      741
+    ]
+  },
+  {
+    "ratchet": "Tests/Architecture/test_screen_size_ratchet.py",
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "target_pin": [
+      "LibraryScreen",
+      37759,
+      1361
+    ],
+    "integrated_exact_pin": [
+      "LibraryScreen",
+      37805,
+      1362
+    ]
+  },
+  {
+    "ratchet": "Tests/Architecture/test_library_modules_size_ratchet.py",
+    "path": "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py",
+    "target_pin": 2461,
+    "integrated_exact_pin": 2468
+  }
+]
