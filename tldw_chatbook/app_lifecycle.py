@@ -2170,35 +2170,32 @@ class LifecycleMixin:
         return bool(await await_quit_prompt(self, dialog, no_answer=False))
 
     async def _confirm_console_runtime_quit(self) -> bool:
-        """Revision-pin Console loss even when a non-Console screen is mounted."""
+        """Revision-pin Console loss even when a non-Console screen is mounted.
 
+        TASK-33628.1: the loss is every open tab's close impact, summed, so an
+        unsent draft, a Temporary chat, a staged attachment or a parked turn
+        asks too, not only live runs and queued prompts.
+        """
         self._console_quit_approved_revision = None
         runtime = getattr(self, "console_runtime", None)
-        controller = getattr(runtime, "chat_controller", None)
-        if controller is None:
+        if getattr(runtime, "chat_controller", None) is None:
             return True
+        from .UI.Console_Modules import loss_inventory
 
         while True:
-            impact = controller.lifecycle_impact()
+            impact = loss_inventory.console_quit_impact(runtime)
             if not impact.has_loss_risk:
                 self._console_quit_approved_revision = impact.revision
                 return True
             dialog = ConfirmationDialog(
                 title="Quit Chatbook?",
-                message=(
-                    "Quitting Chatbook will cancel or discard:\n\n"
-                    f"Live agent runs: {impact.live_run_count}\n"
-                    f"Delegated agents: {impact.delegated_child_count}\n"
-                    f"Sessions with queued prompts: {impact.queued_session_count}\n"
-                    f"Unsent queued prompts: {impact.unsent_prompt_count}\n\n"
-                    "Quit Chatbook?"
-                ),
+                message=loss_inventory.quit_dialog_message(impact),
                 confirm_label="Quit",
                 cancel_label="Stay",
             )
             if not await self._await_console_quit_confirmation(dialog):
                 return False
-            if controller.lifecycle_impact() == impact:
+            if loss_inventory.console_quit_impact(runtime) == impact:
                 self._console_quit_approved_revision = impact.revision
                 return True
             self.notify(

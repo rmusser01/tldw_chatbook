@@ -13,6 +13,8 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.mark.parametrize(
     ("persisted_message_ids", "expected_unsaved_count"),
@@ -55,9 +57,138 @@ def test_session_close_impact_counts_only_unsaved_conversation_tree_nodes(
     controller._chat_store_accessor = lambda: store
     controller._composer_accessor = lambda: None
     controller._ensure_console_chat_controller_fn = lambda: runtime
+    controller._console_runtime_accessor = lambda: SimpleNamespace(
+        recoveries_for_session=lambda _session_id: ()
+    )
 
     impact = controller._session_close_impact("session-1")
 
     assert impact is not None
     assert impact.transcript_message_count == expected_unsaved_count
     assert impact.lifecycle is lifecycle
+    assert impact.unsent_turn_count == 0
+
+
+def _idle_lifecycle() -> ConsoleLifecycleImpact:
+    return ConsoleLifecycleImpact(
+        revision=3, live_run_count=0, queued_session_count=0, unsent_prompt_count=0
+    )
+
+
+def test_session_close_impact_counts_parked_unsent_turns_as_loss() -> None:
+    """TASK-33628.1 AC#3: a parked recovery alone is a reason to ask."""
+    store = SimpleNamespace(
+        all_messages_for_session=lambda _session_id: [],
+        sessions=lambda: (SimpleNamespace(id="session-1", pending_attachments=[]),),
+        session_draft=lambda _session_id: "",
+    )
+    chat_controller = SimpleNamespace(
+        lifecycle_impact=lambda *, session_id: _idle_lifecycle(),
+        pending_round_kinds=lambda _session_id: frozenset(),
+    )
+    parked = {"session-1": ("turn-a", "turn-b"), "session-2": ("turn-c",)}
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._chat_store_accessor = lambda: store
+    controller._composer_accessor = lambda: None
+    controller._ensure_console_chat_controller_fn = lambda: chat_controller
+    controller._console_runtime_accessor = lambda: SimpleNamespace(
+        recoveries_for_session=lambda session_id: parked.get(session_id, ())
+    )
+
+    impact = controller._session_close_impact("session-1")
+
+    assert impact is not None
+    assert impact.unsent_turn_count == 2
+    assert impact.has_loss_risk is True
+
+
+def test_close_dialog_lists_only_non_zero_rows_including_unsent_turns() -> None:
+    """The close copy names parked turns and leaves every zero row out."""
+    from tldw_chatbook.UI.Console_Modules.loss_inventory import close_dialog_message
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionCloseImpact
+
+    message = close_dialog_message(
+        ConsoleSessionCloseImpact(
+            session_id="session-1",
+            transcript_message_count=0,
+            lifecycle=_idle_lifecycle(),
+            unsent_turn_count=2,
+        )
+    )
+
+    assert message.splitlines() == [
+        "Saved history stays in Library.",
+        "Closing will discard or cancel:",
+        "Unsent turns needing attention: 2",
+    ]
+
+
+def _draft_only_impact(session_id: str) -> object:
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionCloseImpact
+
+    return ConsoleSessionCloseImpact(
+        session_id=session_id,
+        transcript_message_count=0,
+        lifecycle=_idle_lifecycle(),
+        has_draft=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("tab_count", "expected_names"),
+    [
+        (5, '"Tab 1", "Tab 2", "Tab 3", "Tab 4", "Tab 5"'),
+        (6, '"Tab 1", "Tab 2", "Tab 3", "Tab 4", "Tab 5" and 1 more'),
+        (8, '"Tab 1", "Tab 2", "Tab 3", "Tab 4", "Tab 5" and 3 more'),
+    ],
+)
+def test_quit_dialog_names_five_tabs_then_counts_the_rest(
+    tab_count: int, expected_names: str
+) -> None:
+    """Quit names at most five affected tabs, then says how many more."""
+    from tldw_chatbook.UI.Console_Modules.loss_inventory import (
+        ConsoleQuitImpact,
+        quit_dialog_message,
+    )
+
+    impact = ConsoleQuitImpact(
+        revision=3,
+        tabs=tuple(
+            (f"Tab {index}", _draft_only_impact(f"session-{index}"))
+            for index in range(1, tab_count + 1)
+        ),
+    )
+
+    lines = quit_dialog_message(impact).splitlines()
+
+    assert f"Unsent drafts: {tab_count}" in lines
+    assert f"Affected tabs: {expected_names}" in lines
+
+
+@pytest.mark.parametrize(
+    ("stored_title", "expected_label"),
+    [
+        ("", "Untitled"),
+        ("[bold]Plan[/bold]", "[bold]Plan[/bold]"),
+        ("x" * 80, None),
+    ],
+)
+def test_close_and_quit_label_a_tab_the_same_way(
+    stored_title: str, expected_label: str | None
+) -> None:
+    """The close dialog, its failure toasts and the quit list share one label."""
+    from tldw_chatbook.UI.Console_Modules.loss_inventory import tab_display_title
+
+    store = SimpleNamespace(
+        sessions=lambda: (SimpleNamespace(id="session-1", title=stored_title),)
+    )
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._chat_store_accessor = lambda: store
+
+    close_label = controller._session_close_display_title("session-1")
+
+    assert close_label == tab_display_title(stored_title)
+    if expected_label is None:
+        assert 0 < len(close_label) <= 60
+    else:
+        assert close_label == expected_label
