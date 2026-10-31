@@ -2061,6 +2061,26 @@ def test_also_in_follows_the_ascii_glyph_mode(ascii_mode):
     assert [t.label for t in view.targets] == ["Characters 3 >"]
 
 
+def test_a_capped_count_reads_as_a_lower_bound():
+    """Deferred minor T10a: a server character search answers at most 100
+    rows with no total (its list says ``100+``), so an Also in count at that
+    cap is a lower bound and reads "Characters 100+ ›", never an exact
+    "Characters 100 ›" (the exact form was new with B2b)."""
+    view = frame_state.no_match_view(
+        "lore",
+        query="remote",
+        tag=None,
+        total=None,
+        counts={"character": 100, "persona": 0, "dictionary": 2},
+        capped={"character"},
+    )
+    assert [t.label for t in view.targets] == [
+        "Characters 100+ ›",
+        "Chat dictionaries 2 ›",
+    ]
+    assert [(t.kind, t.count) for t in view.targets] == [("character", 100), ("dictionary", 2)]
+
+
 def test_not_found_elsewhere_only_when_every_count_succeeded_with_zero():
     zero = {"persona": 0, "lore": 0, "dictionary": 0}
     view = frame_state.no_match_view(
