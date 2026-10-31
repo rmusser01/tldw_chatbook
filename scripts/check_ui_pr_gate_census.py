@@ -640,6 +640,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # sends with the caret right after the token, and Left onto a trailing token
 # then Enter still expands it; about 9 s each locally), so no existing entry
 # changes shard: 1152 + 2 = 1154.
+# Rebased 2026-10-30 onto dev's 1163 (TASK-37870 swaps the 2 TASK-37800 node
+# ids in place, so the count is unchanged): 1163 + 3 + 2 = 1168.
 MINIMUM_FILES = 1168
 
 
