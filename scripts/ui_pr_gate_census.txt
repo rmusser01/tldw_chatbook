@@ -1656,3 +1656,8 @@ Tests/UI/test_modal_wide_tier.py::test_every_wide_tier_rule_is_registered
 Tests/UI/test_modal_wide_tier.py::test_every_registered_anchor_has_a_wide_tier_rule
 Tests/UI/test_llamacpp_setup_refresh_gate.py
 Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped
+# TASK-33621.50/.45 (2026-10-30): Stop on a MiniMax /generate-video reports
+# what MiniMax did with the cancel (recorded live responses, real adapter and
+# fetch_json under the real Console), never as a failure. Four tests, ~21 s
+# whole locally; appended at the tail, so no existing entry changes shard.
+Tests/UI/test_console_video_stop_outcome.py

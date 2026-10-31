@@ -71,6 +71,71 @@ def test_estimate_video_cost_text_shapes():
     assert "no per-clip charge" in local
 
 
+# -- Stop copy (TASK-33621.45/.50) --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("remote_cancel", "backend", "expected"),
+    [
+        (
+            "cancelled",
+            "minimax",
+            "Video generation stopped. MiniMax cancelled the remote task, so it "
+            "is not billed.",
+        ),
+        (
+            "refused",
+            "minimax",
+            "Video generation stopped here, but MiniMax had already started "
+            "rendering and refused to cancel. The remote task keeps running and "
+            "may still be billed.",
+        ),
+        (
+            "unconfirmed",
+            "minimax",
+            "Video generation stopped here, but MiniMax did not confirm the "
+            "cancel. The remote task may keep running and may still be billed.",
+        ),
+        # A local backend: stopping costs nothing, so no billing claim at all.
+        (None, "comfyui", "Video generation stopped."),
+    ],
+)
+def test_video_stopped_text_says_what_the_backend_did(
+    remote_cancel, backend, expected
+):
+    from tldw_chatbook.Chat.console_generate_video import video_stopped_text
+    from tldw_chatbook.Video_Generation.exceptions import VideoGenerationCancelled
+
+    stop = VideoGenerationCancelled("stopped", remote_cancel=remote_cancel)
+
+    text = video_stopped_text(stop, backend=backend)
+
+    assert text == expected
+    assert "failed" not in text.lower()
+
+
+def test_video_stopped_text_names_a_regeneration():
+    from tldw_chatbook.Chat.console_generate_video import video_stopped_text
+    from tldw_chatbook.Video_Generation.exceptions import VideoGenerationCancelled
+
+    stop = VideoGenerationCancelled("stopped", remote_cancel="refused")
+
+    text = video_stopped_text(stop, backend="minimax", noun="Video regeneration")
+
+    assert text.startswith("Video regeneration stopped here, but MiniMax")
+
+
+def test_video_generating_text_carries_the_stop_caveat_only_when_paid():
+    from tldw_chatbook.Chat.console_generate_video import video_generating_text
+
+    paid = video_generating_text("minimax")
+    local = video_generating_text("comfyui")
+
+    assert "Stop cancels it only until MiniMax starts rendering" in paid
+    assert "may still be billed" in paid
+    assert local == "⏳ Generating video on comfyui… (Stop cancels)"
+
+
 # -- blocking generation --------------------------------------------------------
 
 
