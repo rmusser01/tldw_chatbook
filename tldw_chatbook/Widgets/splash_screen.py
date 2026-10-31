@@ -20,8 +20,8 @@ from ..Constants import DEFAULT_SPLASH_DURATION_SECONDS
 from ..config import get_cli_setting
 
 # Import the registration system and load all effects
-from ..Utils.Splash_Screens import load_all_effects, get_effect_class
-from ..Utils.Splash_Screens.card_definitions import get_all_card_definitions
+from ..UI.Splash_Screens import load_all_effects, get_effect_class
+from ..UI.Splash_Screens.card_definitions import get_all_card_definitions
 from tldw_chatbook.Widgets.pausable_progress import PausableProgressBar
 
 

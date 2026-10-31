@@ -140,7 +140,7 @@ class AppearanceStep(SetupStep):
     @staticmethod
     def _card_names() -> list[str]:
         try:
-            from tldw_chatbook.Utils.Splash_Screens.card_definitions import (
+            from tldw_chatbook.UI.Splash_Screens.card_definitions import (
                 get_all_card_definitions,
             )
 

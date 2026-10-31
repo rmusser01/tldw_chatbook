@@ -136,8 +136,8 @@ def test_app_import_does_not_load_legacy_feature_windows(tmp_path: Path) -> None
 
         guards = (
             "tldw_chatbook.UI.STTS_Window",
-            "tldw_chatbook.Utils.Splash_Screens.classic.glitch_reveal",
-            "tldw_chatbook.Utils.Splash_Screens.tech.code_scroll",
+            "tldw_chatbook.UI.Splash_Screens.classic.glitch_reveal",
+            "tldw_chatbook.UI.Splash_Screens.tech.code_scroll",
         )
         print(json.dumps({"loaded": [name for name in guards if name in sys.modules]}))
         """,

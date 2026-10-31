@@ -20,7 +20,7 @@ from ..config import (
     apply_settings_mutation_to_cli_config,
     get_cli_setting,
 )
-from ..Utils.Splash_Screens.card_definitions import get_all_card_definitions
+from ..UI.Splash_Screens.card_definitions import get_all_card_definitions
 from ..Widgets.splash_screen import SplashScreen
 from ..Widgets.state_checkbox import StateCheckbox
 

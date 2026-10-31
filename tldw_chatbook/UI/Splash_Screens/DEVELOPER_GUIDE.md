@@ -14,7 +14,7 @@ The splash screen system has been refactored from a monolithic file (`splash_ani
 ## Directory Structure
 
 ```
-Utils/Splash_Screens/
+UI/Splash_Screens/
 ├── __init__.py              # Auto-discovery and registration system
 ├── base_effect.py           # Base class and registration decorator
 ├── card_definitions.py      # All card configurations
@@ -173,7 +173,7 @@ ESCAPED_CLOSE_BRACKET = r'\]'
 Create a test script to verify your effect works:
 
 ```python
-from tldw_chatbook.Utils.Splash_Screens import load_all_effects, get_effect_class
+from tldw_chatbook.UI.Splash_Screens import load_all_effects, get_effect_class
 
 # Load all effects
 load_all_effects()
