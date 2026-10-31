@@ -233,6 +233,12 @@ CONSOLE_DICTATION_MAX_BYTES = pcm_byte_limit(
     channels=CONSOLE_DICTATION_CHANNELS,
     sample_width=CONSOLE_DICTATION_SAMPLE_WIDTH,
 )
+#: How long a dictation failure toast stays up. Every one names a next step,
+#: and a fast model failure lands while the first-run "Preparing the speech
+#: model…" detail (Textual's 5 s default) is still showing. At 80x24 the two
+#: do not fit: live, the failure was cut off until the detail expired and gone
+#: about a second later (TASK-33621.21).
+CONSOLE_DICTATION_FAILURE_TOAST_SECONDS = 10.0
 
 
 class ConsoleDictationEvent(Message):
@@ -1333,7 +1339,15 @@ class ConsoleDictationController:
         except Exception:  # noqa: BLE001 - diagnostics must never break dictation
             logger.opt(exception=True).debug("Could not persist dictation failure")
         logger.warning("Console dictation failed: {}", exc)
-        self.app_instance.notify(reason, severity="error")
+        # Plain text, never markup: the reason carries runtime text, and the
+        # missing-microphone remedy's "[speech_recording]" read as a style tag
+        # and vanished from the install command it names.
+        self.app_instance.notify(
+            reason,
+            severity="error",
+            timeout=CONSOLE_DICTATION_FAILURE_TOAST_SECONDS,
+            markup=False,
+        )
         self._speak_status(reason)
 
     def _emit_console_dictation_event(self, session: Any, event: Any) -> None:
