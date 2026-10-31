@@ -641,6 +641,18 @@ ADMISSION_2_TARGETS = (
     # own control, never the rail's subtree (the mounted Console;
     # bootstrap_profile, two tests, ~18 s).
     "Tests/UI/test_console_edge_focus_restyle_scope.py",
+    # TASK-33620.10: every provider streams by default -- the shipped template
+    # and config loads (bootstrap_profile by Tests/conftest.py's test_config_
+    # rule, 68 cases, ~4 s) and a mounted Console send that shows partial
+    # reply text from a drip provider (bootstrap_profile, ~22 s).
+    "Tests/test_config_streaming_default.py",
+    "Tests/UI/test_console_streaming_default_screen.py",
+    # TASK-37421: a self-hosted server that refuses streaming is retried once
+    # without streaming -- real adapters against a loopback server
+    # (bootstrap_profile, ten cases, ~12 s) and a mounted Console send that
+    # persists one reply with the retry's usage (bootstrap_profile, ~8 s).
+    "Tests/Chat/test_console_refused_stream_retry.py",
+    "Tests/UI/test_console_refused_stream_retry_screen.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the

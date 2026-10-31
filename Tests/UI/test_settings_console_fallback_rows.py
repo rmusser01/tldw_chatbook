@@ -879,15 +879,17 @@ async def test_saving_global_streaming_off_reaches_a_new_chat_and_model_defaults
 @pytest.mark.parametrize(
     "seed",
     [{"streaming": False}, {"enable_streaming": False}, {}],
-    ids=["saved-off", "legacy-off-only", "unset"],
+    ids=["saved-off", "legacy-off-only", "unset-reads-shipped-on-saves-nothing"],
 )
 async def test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value(
     request, monkeypatch, seed
 ):
     """Review M7(a) and I1's decision, with the real writer on a private
-    profile: On over a saved Off, over a legacy-only enable_streaming = false
-    (the written streaming = true then wins) and over nothing saved (Off,
-    then On) all write chat_defaults.streaming = true."""
+    profile: On over a saved Off and over a legacy-only enable_streaming =
+    false (the written streaming = true then wins) writes
+    chat_defaults.streaming = true. TASK-33620.10: with nothing saved, the
+    shipped `[chat_defaults] streaming = true` already reads On from Console
+    Behavior, so there is nothing to pin."""
     from Tests.UI.test_console_session_settings import (
         _build_live_config_test_app,
         _wait_for_screen,
@@ -899,6 +901,11 @@ async def test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_val
 
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
     adapter = SettingsConfigAdapter()
+    if "streaming" not in seed:
+        # TASK-33620.10: a new file is written from the shipped template, which
+        # now holds `[chat_defaults] streaming = true`. Remove it so the file
+        # reads like one an older template wrote.
+        assert adapter.delete_values("chat_defaults", ["streaming"])
     for section, values in (
         ("splash_screen", {"enabled": False}),
         ("first_run", {"setup_completed": True}),
@@ -907,7 +914,9 @@ async def test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_val
     ):
         assert adapter.save_values(section, values), section
     before = config_module.load_settings(force_reload=True)["chat_defaults"]
-    assert "streaming" in before if "streaming" in seed else "streaming" not in before
+    # The shipped default fills an unset key in; a legacy-only file keeps it
+    # out, so its enable_streaming is still the value read.
+    assert ("streaming" in before) is ("enable_streaming" not in seed)
     app = _build_live_config_test_app()
 
     async with app.run_test(size=_SIZE) as pilot:
@@ -920,11 +929,10 @@ async def test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_val
         await pilot.pause()
         streaming = screen.query_one(f"#{_cid('streaming')}", Select)
         assert streaming.value == ("false" if seed else "true")
-        assert _row_copy(screen, "streaming")[0] == (
-            "Console Behavior" if seed else "built-in"
-        )
+        assert _row_copy(screen, "streaming")[0] == "Console Behavior"
         if not seed:
-            await _choose_streaming(pilot, streaming, "false")
+            assert not screen._category_has_unsaved_changes(CONSOLE_BEHAVIOR)
+            return
         await _choose_streaming(pilot, streaming, "true")
         assert _row_copy(screen, "streaming")[0] == "edited *"
         assert screen._category_has_unsaved_changes(CONSOLE_BEHAVIOR)

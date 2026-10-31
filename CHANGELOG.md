@@ -7,6 +7,26 @@ and this project adheres to Some kind of Versioning
     
 ## [Unreleased]
 
+### Changed
+- Console replies now stream by default for every provider, including
+  OpenAI, Anthropic and the Custom OpenAI-compatible slots: the shipped
+  `[chat_defaults] streaming = true` outranks each `[api_settings.<provider>]
+  streaming` value, and applies to an existing `config.toml` that does not
+  set `[chat_defaults] streaming` (or the older `enable_streaming`) itself.
+  A self-hosted server or Custom OpenAI-compatible slot (Custom, Custom 2)
+  that cannot stream (it refuses a streamed request with a client error such
+  as HTTP 400, or sends no text) is asked once more without streaming, as
+  llama.cpp already was, and the reply arrives whole; a Custom slot pointed
+  at a paid service is asked again too. To skip that extra request, turn
+  Streaming off for that model ("Save as model default" in Chat settings) or
+  provider (`[console.provider_defaults.<provider>] streaming = false`). A
+  cloud provider is never retried this way, nor for now is a named
+  OpenAI-compatible custom endpoint; when one refuses a streamed request
+  before any text, the failure now says how to turn Streaming off. OpenAI
+  is the exception for now: its refused streamed request is still sent up
+  to three times and fails as a general provider error (HTTP 502) without
+  OpenAI's message or that advice.
+
 ## [0.2.3] - 2026-10-02
 
 Includes committed development changes since 0.2.2 and retains the evaluation

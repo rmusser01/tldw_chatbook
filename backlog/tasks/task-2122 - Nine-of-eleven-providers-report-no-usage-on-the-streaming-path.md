@@ -1,16 +1,17 @@
 ---
 id: TASK-2122
-title: >-
-  Nine of eleven providers report no usage on the streaming path
+title: Nine of eleven providers report no usage on the streaming path
 status: Done
-assignee: [rmusser01]
+assignee:
+  - rmusser01
 created_date: '2026-08-03 19:20'
+updated_date: '2026-10-29 12:22'
 labels:
   - cost-ticker
   - llm-calls
   - correctness
-priority: high
 dependencies: []
+priority: high
 ---
 
 ## Description
@@ -84,8 +85,20 @@ Missed because PR1's verification targeted Anthropic and PR3's live verification
 against Anthropic only.
 <!-- SECTION:DESCRIPTION:END -->
 
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 `stream_options: {"include_usage": True}` is requested for the OpenAI-compatible providers, with the existing 400-degrade retry so endpoints that reject the field still stream
+- [x] #2 Cohere's streaming `message-end` handler reads `usage.billed_units` and emits a usage chunk matching the non-streaming path's bucket mapping
+- [x] #3 Google's streaming generator reads `usageMetadata` from the final chunk and emits a usage chunk matching its non-streaming mapping
+- [x] #4 A test per provider drives a recorded SSE stream through the generator and asserts a usage chunk reaches the gateway with correct disjoint buckets
+- [x] #5 A single guard test enumerates the streaming generators and fails if one emits no usage, so a newly added provider cannot silently regress
+- [x] #6 Verified live against at least one OpenAI-compatible provider and one native translator that a streamed Console turn persists real `usage_json` — **not verifiable in this worktree**: no live provider credentials are available in this environment and the wave's hard limits forbid work outside it. The mechanism is covered by the recorded-stream guard (all eleven providers) and the gateway-signals test; live verification needs an owner with HF-router + Cohere/Gemini credentials (stream one Console turn each, check `usage_json` in the persisted exchange). **Later verified live on 2026-10-29 with OpenAI and Cohere; see the last implementation note.**
+- [x] #7 `[api_settings.mistral]` gets an explicit `streaming` key so it stops differing from every other provider block by omission — **satisfied by drift**: the shipped template now keys the block `[api_settings.mistralai]` WITH `streaming = false` (`config.py` CONFIG_TOML_CONTENT), the `[api_settings.mistral]` table no longer exists in the template at all, and the handler resolves its endpoint under the `mistralai` key (`LLM_Calls/mistral.py:15,252`). Measured: `build_default_console_session_settings(DEFAULT_CONFIG_FROM_TOML, "MistralAI").streaming` → `False` (was the filing's streaming-by-default hole). Adding a new `[api_settings.mistral]` block now would reintroduce the dual-table ambiguity `config.py:1781-1793` explicitly warns about.
+<!-- AC:END -->
+
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 1. Verify the premise at base `cddc89d3e7` (done — see notes below; narrowed to
    huggingface as the only remaining live provider; cohere/google fixed by
    TASK-32805.2/PR #2738, the OpenAI-compatible split modules by their
@@ -105,18 +118,7 @@ against Anthropic only.
 5. Targeted tests: the new file plus the streaming-usage suites the repo
    already carries (openai/anthropic/cohere/google/kimi-zai/moonshot/
    groq-openrouter characterization); A/B any red against base.
-
-## Acceptance Criteria
-
-<!-- AC:BEGIN -->
-- [x] #1 `stream_options: {"include_usage": True}` is requested for the OpenAI-compatible providers, with the existing 400-degrade retry so endpoints that reject the field still stream
-- [x] #2 Cohere's streaming `message-end` handler reads `usage.billed_units` and emits a usage chunk matching the non-streaming path's bucket mapping
-- [x] #3 Google's streaming generator reads `usageMetadata` from the final chunk and emits a usage chunk matching its non-streaming mapping
-- [x] #4 A test per provider drives a recorded SSE stream through the generator and asserts a usage chunk reaches the gateway with correct disjoint buckets
-- [x] #5 A single guard test enumerates the streaming generators and fails if one emits no usage, so a newly added provider cannot silently regress
-- [ ] #6 Verified live against at least one OpenAI-compatible provider and one native translator that a streamed Console turn persists real `usage_json` — **not verifiable in this worktree**: no live provider credentials are available in this environment and the wave's hard limits forbid work outside it. The mechanism is covered by the recorded-stream guard (all eleven providers) and the gateway-signals test; live verification needs an owner with HF-router + Cohere/Gemini credentials (stream one Console turn each, check `usage_json` in the persisted exchange).
-- [x] #7 `[api_settings.mistral]` gets an explicit `streaming` key so it stops differing from every other provider block by omission — **satisfied by drift**: the shipped template now keys the block `[api_settings.mistralai]` WITH `streaming = false` (`config.py` CONFIG_TOML_CONTENT), the `[api_settings.mistral]` table no longer exists in the template at all, and the handler resolves its endpoint under the `mistralai` key (`LLM_Calls/mistral.py:15,252`). Measured: `build_default_console_session_settings(DEFAULT_CONFIG_FROM_TOML, "MistralAI").streaming` → `False` (was the filing's streaming-by-default hole). Adding a new `[api_settings.mistral]` block now would reintroduce the dual-table ambiguity `config.py:1781-1793` explicitly warns about.
-<!-- AC:END -->
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
@@ -201,4 +203,6 @@ contracts); no new interface, schema, or policy decision.
 
 Modified files: `tldw_chatbook/LLM_Calls/LLM_API_Calls.py` (huggingface
 handler only), `Tests/Chat/test_huggingface_streaming_usage.py` (new).
+
+**AC#6 verified live (2026-10-29, during TASK-33620.10, which turned streaming on by default for every Console provider).** Real app, isolated profile, no [chat_defaults] streaming in the file, so each turn streamed under the new shipped default. OpenAI-compatible: OpenAI gpt-4.1-mini streamed a Console turn that persisted usage_json with input 9,347 and output 239 tokens; the cost chip showed $0.0041, matching the catalog price. Native translator: Cohere command-a-03-2025 streamed a twelve-line reply progressively under 'Streaming…' (4 lines, then 8, then 12) and persisted usage_json {provider: cohere, uncached_input: 5933, output: 134, partial: false}. Google was not checked live: the shipped gemini-2.5-flash answered 404 'no longer available to new users' for the test key, and gemini-3.8-flash sent no bytes within 100 s even to a plain curl request, streamed or not. HuggingFace and Google streamed usage stay covered by the recorded-stream guard only. Captures were kept with that session's working files, not in the repo.
 <!-- SECTION:NOTES:END -->

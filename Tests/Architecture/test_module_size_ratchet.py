@@ -558,8 +558,15 @@ _BUDGETS: dict[str, int] = {
     # Console rail filter's count and page match titles, as a literal
     # substring), threaded through the shared filter and the page query.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 25693 -> 25705.
+    # 2026-10-27 (TASK-33620.10, owner decision: a fix over a size ratchet
+    # raises the row): 12258 -> 12298 (+40) -- the shipped
+    # `[chat_defaults] streaming = true` with its comment, and the one merge
+    # helper every published config view now uses so that key cannot shadow
+    # a file's legacy `enable_streaming`.
+    # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 12251 -> 12291.
+    # 2026-10-30: re-measured after rebasing onto dev 1eaa6a9429 (owner rule: the row is the exact measurement): 12251 -> 12291.
+    "tldw_chatbook/config.py": 12291,
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 25705,
-    "tldw_chatbook/config.py": 12251,
     "tldw_chatbook/Chat/console_agent_bridge.py": 12088,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     "tldw_chatbook/Agents/agent_service.py": 9620,
@@ -571,8 +578,26 @@ _BUDGETS: dict[str, int] = {
     # asks storage for its count by title only (owner decision 2026-10-27),
     # so the two can no longer disagree.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8747 -> 8763.
+    # 2026-10-29 (TASK-37421, owner decision: every self-hosted and Custom
+    # OpenAI-compatible server gets llama.cpp's one-time non-streaming retry;
+    # a fix over a size ratchet raises the row): 8184 -> 8333 (+149) -- the
+    # generic path's retry in stream_chat, sharing the llama.cpp fallback's
+    # two trace steps (hoisted, not duplicated), the refused/empty-stream
+    # hand-back in _stream_generic_chat, and the retry's usage hand-over.
+    # Classification and copy live in Chat/refused_stream.py.
+    # 2026-10-29 (TASK-37421 review fixes, same owner rule): 8333 -> 8362
+    # (+29) -- the retry's usage replaces the replaced call's instead of
+    # key-merging into it, the retry runs after the refusal handler (no
+    # exception chaining), an empty tools stream with terminal metadata and
+    # an unreadable Custom-endpoint stream are retried too.
+    # 2026-10-29 (TASK-37421 review fixes, same owner rule): 8333 -> 8355
+    # (+22) -- the retry's usage replaces the replaced call's instead of
+    # key-merging into it, and the retry runs after the refusal handler so
+    # its own failure is not chained to the internal signal.
+    # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8179 -> 8350.
+    # 2026-10-30: re-measured after rebasing onto dev 1eaa6a9429 (owner rule: the row is the exact measurement): 8179 -> 8350.
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8350,
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8179,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,

@@ -2556,7 +2556,7 @@ briefing content remains Console-only.
   [Stopping a run vs. stopping its sub-agents](#stopping-a-run-vs-stopping-its-sub-agents)
   for the contract and the sub-agent kill switches (per-row Delete,
   Cancel all agents, closing the session, the config switch). The partial
-  reply is `[stopped]` and a System row records "Response stopped by
+  reply is marked "Stopped" and a System row records "Response stopped by
   user." If that tab has queued prompts, they pause. Choose **Retry
   stopped** to retry the stopped turn before continuing, or **Resume
   next** to keep the stopped turn and continue with the next prompt.
