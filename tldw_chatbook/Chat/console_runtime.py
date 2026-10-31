@@ -2286,8 +2286,10 @@ class ConsoleRuntime:
             callback()
         self._schedule_project_instruction_projection()
         getattr(controller, "review_session_activated", lambda: None)()
+        shown = self._staged_evidence_shown()
         self._prune_staged_evidence()
-        self._project_staged_evidence_change()
+        if shown:
+            self._project_staged_evidence_change()
 
     def ensure_prompt_history(self) -> Any:
         """Return the app-owned prompt-history sink shared by every view."""
@@ -2776,6 +2778,13 @@ class ConsoleRuntime:
         if state is not None and state.sent_source_count is not None:
             state.sent_source_count = None
             self._project_staged_evidence_change()
+
+    def _staged_evidence_shown(self) -> bool:
+        """Whether any chat has staged evidence or a receipt a view may show."""
+        return any(
+            state.launch is not None or state.sent_source_count is not None
+            for state in self._staged_evidence.values()
+        )
 
     def _prune_staged_evidence(self) -> None:
         """Drop closed chats' staged evidence; its owner can never send it."""
@@ -6077,7 +6086,8 @@ class ConsoleRuntime:
         self._rearm_delivery_ui_hook()
         self._project_pending_project_instruction_decisions()
         # A send may have released its evidence while no view was attached.
-        self._project_staged_evidence_change()
+        if self._staged_evidence_shown():
+            self._project_staged_evidence_change()
         return True
 
     def attach_view(
