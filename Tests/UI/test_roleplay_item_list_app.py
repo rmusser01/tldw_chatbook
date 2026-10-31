@@ -1195,8 +1195,9 @@ async def test_ctrl_n_while_a_picked_create_runs_opens_no_second_chooser(
         monkeypatch.setattr(screen, "_begin_create_lore", held_create)
         monkeypatch.setattr(screen, "_open_new_chooser", counted_open)
         monkeypatch.setattr(screen, "_new_chooser_worker", counted_worker)
-        await start_new(pilot, "lore")
-        await wait_until(pilot, lambda: creates == [1], what="the held create")
+        # The create is held inside this test's own patch, so start_new's
+        # default "the create has begun" never holds: wait for the patch.
+        await start_new(pilot, "lore", until=lambda: creates == [1])
         # settle() would wait on the held worker: pause instead.
         await pilot.press("ctrl+n")
         await wait_until(pilot, lambda: len(opened) == 2, what="the second Ctrl+N")
@@ -1223,6 +1224,117 @@ async def test_ctrl_n_while_a_picked_create_runs_opens_no_second_chooser(
         await wait_for_chooser(pilot)
         await pilot.press("escape")
         await pilot.pause()
+
+
+async def test_a_create_that_fails_toasts_and_frees_the_chooser(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Final review F2: the chooser's worker runs with ``exit_on_error=False``
+    and had no try/except, so a create that raised showed nothing. New with
+    B2b: on dev the create ran inline and Textual surfaced the error. Now it
+    toasts a literal "Could not start a new <kind>.", logs the category with
+    no user text, and frees the chooser slot, so Ctrl+N opens it again."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=(160, 45), character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        notices = _record_notices(monkeypatch, screen)
+
+        async def failing_create() -> None:
+            raise RuntimeError("disk I/O error [b]x")
+
+        monkeypatch.setattr(screen, "_begin_create_lore", failing_create)
+        await start_new(pilot, "lore")
+        await wait_until(
+            pilot, lambda: bool(notices), what="the failure toast", timeout=8.0
+        )
+        assert notices == ["Could not start a new lore book."]
+        assert pilot.app.is_running and pilot.app.return_code is None
+        assert screen._edit_mode != "create"
+        await wait_until(
+            pilot, lambda: not screen._new_chooser_open, what="the chooser slot"
+        )
+        screen.query_one(RoleplayItemList).focus()
+        await pilot.press("ctrl+n")
+        await wait_for_chooser(pilot)
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+async def test_a_pick_after_the_runtime_went_server_is_refused_with_the_reason(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Deferred minor T2c: the chooser computed its rows before the modal
+    opened, so a runtime that switched to server while it was open let
+    "Character · Blank" be picked, and the create silently did nothing. New
+    with B2b. The pick now re-checks the variant and refuses with the literal
+    server reason."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=(160, 45), character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        notices = _record_notices(monkeypatch, screen)
+        screen.query_one(RoleplayItemList).focus()
+        await pilot.press("ctrl+n")
+        options = await wait_for_chooser(pilot)
+        assert options.highlighted_option.id == "character:blank"
+        remote = [{"id": 1, "name": "Remote 001"}]
+
+        async def list_characters(*, mode, limit, offset):
+            return [dict(record) for record in remote[offset : offset + limit]]
+
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "server-a"
+        service = SimpleNamespace(
+            list_characters=list_characters,
+            search_characters=AsyncMock(return_value=[]),
+            get_character=AsyncMock(return_value=dict(remote[0])),
+        )
+        # The mock app copies the service at construction: set both.
+        mock_app_instance.character_persona_scope_service = service
+        pilot.app.character_persona_scope_service = service
+        await screen.handle_runtime_backend_changed("server")
+        await wait_until(
+            pilot,
+            lambda: screen.state.runtime_source == "server",
+            what="the server runtime",
+        )
+        assert pilot.app.focused is options  # the chooser is still open
+        await pilot.press("enter")
+        await wait_until(
+            pilot, lambda: bool(notices), what="the refusal toast", timeout=8.0
+        )
+        assert notices == [frame_state.SERVER_CHARACTERS_READ_ONLY]
+        await wait_until(
+            pilot, lambda: not screen._new_chooser_open, what="the chooser slot"
+        )
+        assert screen._edit_mode != "create"
+        assert not _editor_shown(screen, "characters")
+        assert pilot.app.screen is screen
+
+
+async def test_start_new_returns_only_once_the_create_has_begun(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Deferred minor T2d (the harness): ``start_new`` returned after Enter
+    plus one pause, before the chooser's worker had run the create, so a
+    site asserting ``_edit_mode == "create"`` right after it was a flake. It
+    now waits until the create has begun: a slow create is still a draft by
+    the time it returns."""
+    begin = PersonasScreen._begin_create_character
+
+    async def slow_begin(self, **kwargs) -> None:
+        await asyncio.sleep(0.6)
+        await begin(self, **kwargs)
+
+    monkeypatch.setattr(PersonasScreen, "_begin_create_character", slow_begin)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=(160, 45), character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await start_new(pilot)
+        assert screen._edit_mode == "create"
+        assert _editor_shown(screen, "characters")
 
 
 async def test_space_turns_a_lore_book_off_with_the_undo_toast_and_on_again(
