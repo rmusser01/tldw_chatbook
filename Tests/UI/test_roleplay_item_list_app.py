@@ -1244,6 +1244,32 @@ async def test_ctrl_n_while_a_picked_create_runs_opens_no_second_chooser(
         await pilot.pause()
 
 
+async def test_ctrl_n_is_inert_on_server_characters(mock_app_instance):
+    """Deferred minors T12a and T2b: on server Characters Ctrl+N opens no
+    chooser and creates nothing, the same rule as the disabled + New. This
+    exists on dev and is unchanged by B2b; the guide now says so beside the
+    server quirk for + New, and this pins it."""
+    remote = [{"id": n, "name": f"Remote {n:03d}"} for n in range(1, 4)]
+    _server_world(mock_app_instance, remote=remote, search=[])
+    async with open_styled_roleplay("mock", mock_app_instance, size=SIZE) as pilot:
+        screen = pilot.app.screen
+        await wait_until(
+            pilot, lambda: len(visible_item_ids(screen)) == 3, what="the server rows"
+        )
+        assert screen.state.runtime_source == "server"
+        assert screen.query_one("#personas-library-new", Button).disabled
+        screen.query_one(RoleplayItemList).focus()
+        await pilot.press("ctrl+n")
+        for _ in range(5):
+            await pilot.pause()
+        assert not screen._new_chooser_open
+        assert not any(
+            stacked.query(f"#{CHOOSER_OPTIONS_ID}") for stacked in pilot.app.screen_stack
+        )
+        assert pilot.app.screen is screen and screen._edit_mode != "create"
+        assert not _editor_shown(screen, "characters")
+
+
 async def test_a_create_that_fails_toasts_and_frees_the_chooser(
     mock_app_instance, volume_348, monkeypatch
 ):
