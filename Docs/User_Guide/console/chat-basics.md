@@ -152,7 +152,10 @@ badge for its full text. While a turn is in flight the Inspect handle reads
 **running** unless something more urgent outranks it (a failed turn, a real
 setup or blocked problem, or approvals waiting on you, e.g. "1 appr");
 **setup** appears only when the provider or model genuinely needs
-configuring, never merely because a run is active.
+configuring, never merely because a run is active. **blocked** means the
+next send really is blocked (for example, none of the staged evidence is
+available); a row whose text merely mentions a blocked source does not
+raise it.
 
 Console Behavior uses category-wide drafts: **Save** writes every pending edit
 in that category, and **Revert** discards every pending edit there, not just the
