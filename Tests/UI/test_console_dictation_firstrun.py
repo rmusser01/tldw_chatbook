@@ -520,6 +520,9 @@ def _assert_plain_failure_toast(text: str) -> None:
     assert "/" not in text, text
     assert "may be slow" not in lowered
     assert "microphone" not in lowered
+    # The Hands-free entry shows this same toast: it names no one button.
+    assert "press dictate" not in lowered
+    assert "settings ▸ speech & tts" in lowered
 
 
 async def _wait_for_notices(notify, pilot, count: int, timeout: float = 4.0):

@@ -2048,6 +2048,11 @@ def _assert_plain_model_failure(text: str) -> None:
     # The capture is not going ahead, so nothing may say it is.
     assert "may be slow" not in lowered
     assert "microphone" not in lowered
+    # Hands-free reaches this same failure, so the retry names no one button,
+    # and a cause the network does not explain (a bad model name, a corrupt
+    # cache) gets the settings pointer AC#1 names.
+    assert "press dictate" not in lowered
+    assert "settings ▸ speech & tts" in lowered
 
 
 def test_a_failed_model_load_is_fatal_and_never_opens_the_microphone(monkeypatch):
@@ -2157,7 +2162,12 @@ def test_a_load_that_stops_making_progress_fails_within_the_bound(monkeypatch):
         assert state == cvi.STATE_IDLE, "preparing outlived the stall bound"
         text = _failure_text(events)
         _assert_plain_model_failure(text)
-        assert "progress" in text.lower()
+        # Only bytes in the Hugging Face cache count as progress, so a
+        # provider that downloads elsewhere, or a long load after the
+        # download, can reach this too: say what was measured, and name the
+        # setting that gives it longer.
+        assert "no download progress" in text.lower()
+        assert "dictation.model_prepare_stall_seconds" in text
         assert service.started is False
     finally:
         gate.set()
@@ -2210,6 +2220,54 @@ def test_a_download_that_keeps_growing_is_shown_and_never_cut_off(monkeypatch):
     )
     # Repainted only when the shown size changes, not on every poll.
     assert len(progress) == len(set(progress))
+
+
+def test_a_pause_inside_a_download_restarts_the_stall_clock(monkeypatch):
+    """Growth resets the clock: a pause is measured from the last growth.
+
+    A real download stalls briefly (a slow mirror, a reconnect). Here the
+    first burst alone outlasts the bound and the pause after it does not, so
+    a clock that kept counting from the start of the load would end a
+    healthy download in that pause. The previous test cannot tell: every one
+    of its polls grows.
+    """
+    gate = threading.Event()
+    entered = threading.Event()
+    transcriber = _Transcriber(gate=gate, entered=entered)
+    service = _WarmableService(transcriber=transcriber)
+    step = 40_000_000
+    # One baseline read, a burst of at least 0.6 s (twelve 0.05 s polls),
+    # a three-poll pause, then a second burst that outlives the test.
+    first_burst = [n * step for n in range(1, 13)]
+    pause = [first_burst[-1]] * 3
+    second_burst = [first_burst[-1] + n * step for n in range(1, 200)]
+    script = [0, *first_burst, *pause, *second_burst]
+    progress = _ScriptedProgress(script, then=second_burst[-1])
+    controller, events, _ = _threaded_controller(
+        monkeypatch, service, stall_seconds=0.6, progress=progress
+    )
+    past_the_pause = 1 + len(first_burst) + len(pause) + 4
+
+    try:
+        controller.start()
+        assert entered.wait(timeout=5), "the warm-up never ran"
+        deadline = time.monotonic() + 5
+        while progress.reads < past_the_pause and time.monotonic() < deadline:
+            if controller.state != cvi.STATE_PREPARING:
+                break
+            time.sleep(0.02)
+
+        assert [e for e in events if isinstance(e, cvi.VoiceFailed)] == [], (
+            "a pause shorter than the bound ended a download that was growing"
+        )
+        assert controller.state == cvi.STATE_PREPARING
+        assert progress.reads >= past_the_pause
+    finally:
+        gate.set()
+    assert _wait_for_state(controller, cvi.STATE_LISTENING, timeout=3.0) == (
+        cvi.STATE_LISTENING
+    )
+    assert service.started is True
 
 
 @pytest.mark.parametrize("raw", [0, -5, "soon", float("nan"), float("inf"), None])

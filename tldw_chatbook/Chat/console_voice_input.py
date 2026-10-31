@@ -118,16 +118,27 @@ WARMUP_DETAIL_FIRST_RUN = (
 #: load that hung forever. Each press builds a fresh service and warms again,
 #: so a transient error costs one press, and pressing again is the retry. The
 #: raw error (errno values, cache paths, parakeet-mlx's misleading local-path
-#: fallback) goes to the log only.
+#: fallback) goes to the log only. Dictate and Hands-free both reach this
+#: copy, so the retry names neither button, and a cause the network does not
+#: explain (a bad model name, a corrupt cache) gets the settings pointer.
 WARMUP_REASON_TEMPLATE = (
     "The '{provider}' speech model could not be downloaded or loaded."
 )
-WARMUP_STALLED_REASON_TEMPLATE = (
-    "The '{provider}' speech model stopped loading: no progress for {seconds} seconds."
-)
 WARMUP_REMEDY = (
-    "Nothing was recorded. Check your network connection and press Dictate "
-    "to try again. The log has the details."
+    "Nothing was recorded. Check your network connection and try again, or "
+    "choose another model in Settings ▸ Speech & TTS. The log has the details."
+)
+#: The stall bound counts bytes landing in the Hugging Face cache only, so a
+#: provider that downloads somewhere else, or a long load after the download,
+#: can reach it while still working: say what was measured, and name the
+#: setting that allows longer.
+WARMUP_STALLED_REASON_TEMPLATE = (
+    "The '{provider}' speech model showed no download progress for {seconds} seconds."
+)
+WARMUP_STALLED_REMEDY = (
+    "Nothing was recorded. Check your network connection and try again, or "
+    "choose another model in Settings ▸ Speech & TTS. If it was still "
+    "loading, raise dictation.model_prepare_stall_seconds."
 )
 #: Chip text while a model download is visibly running. "◐ " plus this plus
 #: "1.2 GB" stays inside WARMUP_MESSAGE_MAX_CELLS.
@@ -1833,8 +1844,8 @@ class ConsoleVoiceInputController:
         (TASK-33621.21): the transcriber cannot be built, the warm-up raised
         (a download or load error), or the load showed no progress for
         `model_prepare_stall_seconds()`. Each one ends `preparing` with one
-        plain message and a retry (press Dictate again); the raw error is
-        logged, never shown.
+        plain message and a retry (press Dictate or Hands-free again); the
+        raw error is logged, never shown.
 
         Opt out entirely with `dictation.warm_model_before_capture = false`.
 
@@ -1865,7 +1876,7 @@ class ConsoleVoiceInputController:
                 "Console dictation transcription service could not be built"
             )
             self._release(service)
-            self._fail(self._warmup_failure(effective), WARMUP_REMEDY)
+            self._fail(*self._warmup_failure(effective))
             return False
         if transcriber is None:
             return True
@@ -1893,7 +1904,7 @@ class ConsoleVoiceInputController:
                 type(error).__name__,
             )
             self._release(service)
-            self._fail(self._warmup_failure(effective, error), WARMUP_REMEDY)
+            self._fail(*self._warmup_failure(effective, error))
             return False
         _mark_warmed(effective)
         return True
@@ -2024,19 +2035,28 @@ class ConsoleVoiceInputController:
     @staticmethod
     def _warmup_failure(
         effective: EffectiveConfig, error: BaseException | None = None
-    ) -> str:
+    ) -> tuple[str, str]:
         """Phrase a warm-up failure as a model problem, never a microphone one.
 
         The raw error is deliberately not included: it is logged by the
         caller, and what it says is often misleading (parakeet-mlx reports a
         failed fetch as a missing local `config.json`) and carries errno
         values and cache paths (TASK-33621.21).
+
+        Returns:
+            The `(reason, remedy)` pair for `_fail()`.
         """
         if isinstance(error, SpeechModelStalled):
-            return WARMUP_STALLED_REASON_TEMPLATE.format(
-                provider=effective.provider, seconds=f"{error.seconds:g}"
+            return (
+                WARMUP_STALLED_REASON_TEMPLATE.format(
+                    provider=effective.provider, seconds=f"{error.seconds:g}"
+                ),
+                WARMUP_STALLED_REMEDY,
             )
-        return WARMUP_REASON_TEMPLATE.format(provider=effective.provider)
+        return (
+            WARMUP_REASON_TEMPLATE.format(provider=effective.provider),
+            WARMUP_REMEDY,
+        )
 
     def _report_service_error(
         self, error: Any, *, generation: int | None = None
