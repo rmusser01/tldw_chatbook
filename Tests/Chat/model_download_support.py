@@ -1,16 +1,20 @@
 """Shared state for tests that download a model inside a running Textual app.
 
-TASK-33621.21. Two pieces of process-global state decide whether the first
+TASK-33621.21. Three pieces of process-global state decide whether the first
 in-app download dies on ``fds_to_keep``: whether tqdm has built its write lock
-yet, and whether CPython's resource tracker is already running. A test process
-usually has both by the time a test runs, which lets a regression pass, so
-`first_download_in_process` puts both back to a first launch and restores
-them afterwards. `model_host` is a loopback stand-in for the Hugging Face hub.
+yet, whether CPython's resource tracker is already running, and the
+multiprocessing start method. A test process usually has the first two by the
+time a test runs, which lets a regression pass, and Linux's ``fork`` default
+(before Python 3.14) never starts the tracker at all, which let it pass on CI.
+`first_download_in_process` puts all three into macOS's first-launch state and
+restores them afterwards. `model_host` is a loopback stand-in for the Hugging
+Face hub.
 """
 
 from __future__ import annotations
 
 import http.server
+import multiprocessing
 import multiprocessing.resource_tracker as resource_tracker
 import threading
 from pathlib import Path
@@ -96,8 +100,12 @@ def model_host(tmp_path: Path):
 def first_download_in_process():
     """tqdm's lock unbuilt and no resource tracker running, as on a first launch.
 
-    Restores tqdm's class state afterwards, so a wedged lock left by a failing
-    run cannot reach another test.
+    The start method is forced to ``spawn`` (macOS's default) for the test:
+    under ``fork`` a multiprocessing lock never registers with the resource
+    tracker, so on Linux CI an unguarded download would pass and the tests
+    would guard nothing. Restores tqdm's class state and the start method
+    afterwards, so a wedged lock left by a failing run cannot reach another
+    test.
     """
     lock_type = tqdm_std.TqdmDefaultWriteLock
     saved_class_lock = lock_type.th_lock
@@ -108,6 +116,8 @@ def first_download_in_process():
         if "_lock" in klass.__dict__
     }
     fresh_tracker = resource_tracker.ResourceTracker()
+    saved_start_method = multiprocessing.get_start_method(allow_none=True)
+    multiprocessing.set_start_method("spawn", force=True)
     with pytest.MonkeyPatch.context() as patch:
         for name in ("ensure_running", "register", "unregister", "getfd"):
             patch.setattr(resource_tracker, name, getattr(fresh_tracker, name))
@@ -137,6 +147,7 @@ def first_download_in_process():
                     stop()
                 except Exception:  # noqa: BLE001 - best-effort cleanup
                     pass
+            multiprocessing.set_start_method(saved_start_method, force=True)
 
 
 def _tqdm_classes() -> list[type]:
