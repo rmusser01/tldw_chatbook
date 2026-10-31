@@ -6,7 +6,7 @@ import json
 import math
 import re
 from dataclasses import dataclass, field, fields, replace
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, Iterable, Literal, Mapping
 from uuid import uuid4
 
@@ -1084,6 +1084,32 @@ class ConsoleRunState:
             ConsoleRunStatus.STREAMING,
             ConsoleRunStatus.CHECKING_CITATIONS,
         }
+
+
+class ConsoleSubmitBlocker(StrEnum):
+    """Why an accepted Console submit ended BLOCKED (TASK-33621.23).
+
+    Code-owned tokens for the log: ``submit_draft`` writes the value on its
+    attention warning and on the ``controller_submit`` send-stage line, which
+    once read only ``status=blocked`` whatever the cause.
+    """
+
+    #: The request's trace could not be saved; the transcript card offers
+    #: Retry / Send without capture / Cancel.
+    TRACE_PROVENANCE = "trace_provenance"
+    #: Trace capture for the provider call could not start; same card.
+    TRACE_CALL = "trace_call"
+    #: A trace pause's retry could not prove what was delivered.
+    DELIVERY_UNKNOWN = "delivery_unknown"
+    #: Dispatch settlement refused the turn (for example a hook); the turn
+    #: is kept for Retry or Discard.
+    DISPATCH_SETTLEMENT = "dispatch_settlement"
+    #: Settling the accepted turn failed; kept for Retry or Discard.
+    SETTLEMENT_FAILED = "settlement_failed"
+    #: Another owner took over the saved turn; kept for recovery.
+    OWNER_CHANGED = "owner_changed"
+    #: Discard's prerequisite pass stopped before the provider by design.
+    PREREQUISITES_ONLY = "prerequisites_only"
 
 
 @dataclass(frozen=True)
