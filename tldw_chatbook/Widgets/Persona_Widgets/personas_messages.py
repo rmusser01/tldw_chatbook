@@ -29,7 +29,6 @@ PersonaEntityKind = Literal[
 PersonaAction = Literal[
     "new",  # frame slice B2b: open the New chooser (+ New, Ctrl+N)
     "create",  # a blank item of the current kind, at once
-    "create_actor_pack",
     "import",
     "export",
     "duplicate",
@@ -44,10 +43,6 @@ PersonaAction = Literal[
 PersonaBuddyAction = Literal["use", "show", "close", "disable"]
 PersonaBuddySource = Literal["local", "server"]
 ActorPackExportActorKind = Literal["character", "persona"]
-
-
-class ActorPackImportRequested(Message):
-    """Request the dedicated Actor Pack picker without carrying path/content."""
 
 
 @dataclass(frozen=True, slots=True)
