@@ -16,6 +16,9 @@ class ChatAPIError(Exception):
         #: TASK-33621.11: ``message`` itself is the Console gateway's finished,
         #: sanitized sentence (it already names its provider and status).
         self.gateway_sentence = False
+        #: TASK-33621.11: the provider refused the image input; the Console's
+        #: image hint reads this verdict, never the copy's wording.
+        self.image_input_rejected = False
         super().__init__(self.message)
 
 

@@ -743,18 +743,28 @@ def test_tool_rejection_copy_gives_advice_that_fits_the_tool_source(
     assert "model picker" not in copy
 
 
-def test_a_non_tool_bad_request_keeps_the_model_recovery_copy():
+def test_a_non_tool_bad_request_names_the_model_only_when_typed_unavailable():
+    """TASK-33621.11 AC#3: a 400 is no evidence about the model; only an
+    explicit model_not_found (``ChatModelUnavailableError``) names it."""
     from tldw_chatbook.Chat.console_provider_gateway import (
         _provider_error_copy_with_model_recovery,
     )
 
     base = "Provider error from Anthropic: bad request. Status: 400."
+    plain_copy = _provider_error_copy_with_model_recovery(
+        base,
+        model="claude-3-opus",
+        status_code=400,
+        provider_message="Bad request (400). Detail: temperature: range 0..1",
+        tools=_SENT,
+    )
     model_copy = _provider_error_copy_with_model_recovery(
         base,
         model="claude-3-opus",
         status_code=400,
-        provider_message="Bad request (400). Detail: model: claude-3-opus not found",
+        provider_message="Bad request (400). Detail: model_not_found",
         tools=_SENT,
+        model_unavailable=True,
     )
     unnamed_tool_copy = _provider_error_copy_with_model_recovery(
         base,
@@ -764,7 +774,9 @@ def test_a_non_tool_bad_request_keeps_the_model_recovery_copy():
         tools=_SENT,
     )
 
-    assert "Confirm the model is still available" in model_copy
+    assert plain_copy == base
+    assert "could not find this model" in model_copy
+    assert "model picker" in model_copy
     assert "one of the tool definitions sent with this request" in unnamed_tool_copy
     # Unnamed, the blame rests only on a marker in the provider's text, so the
     # copy does not state as fact that no other model could help.

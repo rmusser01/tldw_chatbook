@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 
+import httpx
 import pytest
 import requests
 
@@ -19,6 +20,7 @@ from tldw_chatbook.Agents.hook_permissions import HookPermissions
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAPIError,
     ChatAuthenticationError,
+    ChatBadRequestError,
     ChatProviderError,
 )
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
@@ -246,3 +248,164 @@ async def test_durable_summary_of_a_gateway_failure_is_not_doubled(tmp_path, hoo
     assert summary.count("500") == 1
     assert "provider returned HTTP" not in summary
 
+
+# --- AC#3: hints follow what the provider's answer established -----------
+
+IMAGE_HINT = ConsoleChatController._IMAGE_REJECTION_RECOVERY_HINT
+MODEL_HINTS = ("choose another model", "Confirm the model", "Selected model")
+NOT_FOUND = (
+    f" Selected model: {MODEL}. The provider could not find this model or "
+    "endpoint, or this key cannot use it. Check the model name and the key, or "
+    "choose another model from the model picker (Alt+M: Switch model)."
+)
+
+
+def _rejected(status: int, message: str, *, code: str = "invalid_request_error"):
+    """A 4xx refusal whose body carries ``message`` (Anthropic's envelope)."""
+    return _failing_call(
+        status,
+        {"type": code, "message": message},
+        lambda: ChatBadRequestError("bad", provider="anthropic", status_code=status),
+    )
+
+
+async def _row_for(tmp_path, hooks, call, *, image_turn: bool, agent: bool = True):
+    gateway, store, controller, session = _console(tmp_path, hooks, call, agent=agent)
+    if image_turn:
+        _with_image_turn(store, session)
+    await controller.submit_draft("hello")
+    return gateway, _system_row(store, session)
+
+
+def _anthropic_sentence(status: int, message: str) -> str:
+    return (
+        f"Provider error from Anthropic: bad request. Status: {status}. "
+        f"Anthropic says: “{message}”."
+    )
+
+
+def _raw_http_error(status: int, message: str) -> httpx.HTTPStatusError:
+    """What a direct (llama.cpp-style) adapter raises: httpx, body attached."""
+    request = httpx.Request("POST", "http://127.0.0.1:9099/v1/chat/completions")
+    body = json.dumps({"error": {"message": message}})
+    response = httpx.Response(status, request=request, text=body)
+    return httpx.HTTPStatusError(f"{status} Error", request=request, response=response)
+
+
+@pytest.mark.asyncio
+async def test_escaped_401_with_an_image_in_history_gets_no_image_hint(
+    tmp_path, hooks
+):
+    """Dev appended the image hint to ANY escaped failure with a response
+    status (a 401 included) on the controller's catch-all path."""
+    _gateway, store, controller, session = _console(
+        tmp_path, hooks, _auth_failure(), agent=True, bridge_type=_EscapingBridge
+    )
+    _with_image_turn(store, session)
+    store.bridge.escaping = _raw_http_error(401, "invalid x-api-key")
+    await controller.submit_draft("hello")
+    assert _system_row(store, session) == (
+        "Agent run failed: provider returned HTTP 401 (invalid x-api-key)"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent", [True, False], ids=["agent", "direct"])
+async def test_a_plain_400_names_neither_the_model_nor_the_image(
+    tmp_path, hooks, agent
+):
+    """Dev told every 400 to "Confirm the model is still available, or choose
+    another model" -- here the provider refused a sampling value."""
+    message = "temperature: range: 0..1"
+    _gateway, visible = await _row_for(
+        tmp_path, hooks, _rejected(400, message), image_turn=True, agent=agent
+    )
+    assert visible == _anthropic_sentence(400, message)
+    assert not any(hint in visible for hint in MODEL_HINTS)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [
+        (400, "messages.0.content.1.image.source.base64.data: Image does not "
+              "match the provided media type image/png"),
+        (413, "image exceeds 5 MB maximum: 7340032 bytes > 5242880 bytes"),
+        (415, "Unsupported media type for image input"),
+        (422, "This model does not support vision input"),
+    ],
+)
+@pytest.mark.parametrize("agent", [True, False], ids=["agent", "direct"])
+async def test_an_image_refusal_names_the_image_not_the_model(
+    tmp_path, hooks, agent, status, message
+):
+    """A refusal whose body is about the image gets the image hint, and only
+    the image hint (live on dev: OpenAI's "You uploaded an unsupported image"
+    400 read "Confirm the model is still available" and never named it)."""
+    _gateway, visible = await _row_for(
+        tmp_path, hooks, _rejected(status, message), image_turn=True, agent=agent
+    )
+    assert visible == _anthropic_sentence(status, message) + IMAGE_HINT
+    assert not any(hint in visible for hint in MODEL_HINTS)
+
+
+@pytest.mark.asyncio
+async def test_an_image_refusal_without_an_image_in_the_chat_gets_no_image_hint(
+    tmp_path, hooks
+):
+    """The hint says "This conversation includes an image attachment"; with
+    no image in the conversation that would be false."""
+    message = "Image does not match the provided media type image/png"
+    _gateway, visible = await _row_for(
+        tmp_path, hooks, _rejected(400, message), image_turn=False
+    )
+    assert visible == _anthropic_sentence(400, message)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [500, 429])
+async def test_image_words_on_another_status_get_no_image_hint(
+    tmp_path, hooks, status
+):
+    """Only 400/413/415/422 can be an image refusal; a 500 that mentions the
+    image (llama.cpp's mmproj reply) keeps the body but no hint."""
+    message = "image input is not supported - hint: you may need to provide the mmproj"
+    call = _failing_call(
+        status,
+        {"type": "api_error", "message": message},
+        lambda: ChatProviderError("boom", provider="anthropic", status_code=status),
+    )
+    _gateway, visible = await _row_for(tmp_path, hooks, call, image_turn=True)
+    assert message in visible
+    assert IMAGE_HINT not in visible
+    assert not any(lead in visible for lead in LEAD_INS)
+
+
+@pytest.mark.asyncio
+async def test_the_model_hint_is_only_for_404_and_model_not_found(tmp_path, hooks):
+    """A 404, and an explicit ``model_not_found`` even on a 400, name the
+    model; dev's 400 branch said "Confirm the model is still available"."""
+    from tldw_chatbook.Chat.Chat_Deps import ChatModelUnavailableError
+
+    not_found_404 = _failing_call(
+        404,
+        {"type": "not_found_error", "message": f"model: {MODEL}"},
+        lambda: ChatBadRequestError("gone", provider="anthropic", status_code=404),
+    )
+    _gateway, visible = await _row_for(tmp_path, hooks, not_found_404, image_turn=True)
+    assert visible == (
+        "Provider error from Anthropic: model or endpoint not found. Status: 404. "
+        f"Anthropic says: “model: {MODEL}”.{NOT_FOUND}"
+    )
+
+    unavailable_400 = _failing_call(
+        400,
+        {"type": "invalid_request_error", "message": "model_not_found"},
+        lambda: ChatModelUnavailableError(provider="anthropic", status_code=400),
+    )
+    (tmp_path / "second").mkdir()
+    _gateway, visible = await _row_for(
+        tmp_path / "second", hooks, unavailable_400, image_turn=True
+    )
+    assert visible.endswith(NOT_FOUND), visible
+    assert IMAGE_HINT not in visible
