@@ -33,6 +33,7 @@ from textual.screen import Screen
 from textual.widgets import Button, Input
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
+import tldw_chatbook.UI.Persona_Modules.roleplay_import_sniff as sniff_module
 from Tests.Actor_Packs.test_actor_pack_attribution import services
 from Tests.UI.roleplay_frame_harness import (
     CHOOSER_OPTIONS_ID,
@@ -587,6 +588,89 @@ async def test_a_second_import_while_one_runs_says_so(
         )
         await wait_until(pilot, lambda: _import_idle(screen), what="the import done")
     assert import_env.lore_books() == ["Kepler Atlas"]
+
+
+async def test_ctrl_n_does_nothing_while_an_import_runs(
+    import_env, mock_app_instance, monkeypatch, tmp_path
+):
+    """Deferred minor T4b: Import and New held independent slots, so a Ctrl+N
+    during the sniff opened the New chooser and "Import X as:" then stacked
+    on it (new with B2b; nothing was lost). Now Ctrl+N does nothing while an
+    import runs or its modal is open; a modal on top swallows the key itself,
+    so the window is the sniff, held here."""
+    entered, release = threading.Event(), threading.Event()
+    real_sniff = sniff_module.sniff_import_file
+
+    def slow_sniff(path, *, max_bytes):
+        entered.set()
+        release.wait(30)
+        return real_sniff(path, max_bytes=max_bytes)
+
+    monkeypatch.setattr(sniff_module, "sniff_import_file", slow_sniff)
+    both = tmp_path / "both.md"
+    both.write_text(
+        "---\nname: Both\n---\nBP: blood pressure\n---@@@---\nHR: heart rate\n",
+        "utf-8",
+    )
+    fake_file_picker(monkeypatch, both)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        screen.query_one("#personas-library-rows").focus()
+        try:
+            await _press_import(pilot)
+            await wait_until(pilot, entered.is_set, what="the held sniff")
+            await pilot.press("ctrl+n")
+            for _ in range(4):
+                await pilot.pause()
+            assert not screen._new_chooser_open
+            assert pilot.app.screen is screen
+        finally:
+            release.set()
+        options = await wait_for_chooser(pilot)
+        assert "Import both.md as:" in _chooser_title(pilot)
+        assert pilot.app.focused is options
+        assert (
+            sum(bool(s.query(f"#{CHOOSER_OPTIONS_ID}")) for s in pilot.app.screen_stack)
+            == 1
+        )
+        await pilot.press("escape")
+        await wait_until(pilot, lambda: _import_idle(screen), what="the import done")
+    assert import_env.characters() == import_env.seeded
+
+
+async def test_import_does_nothing_while_the_new_chooser_is_open(
+    import_env, mock_app_instance, monkeypatch
+):
+    """Deferred minor T4b, the other direction: an Import request that arrives
+    while the New chooser is open opens no picker (new with B2b)."""
+    opened = fake_file_picker(monkeypatch, import_env.files["lore_tldw_export.json"])
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        screen.query_one("#personas-library-new", Button).press()
+        await wait_for_chooser(pilot)
+        screen._open_roleplay_import()
+        for _ in range(4):
+            await pilot.pause()
+        assert opened == [] and not screen._roleplay_import_running
+        assert not screen._io_dialog_active
+        await pilot.press("escape")
+        await wait_until(
+            pilot, lambda: not screen._new_chooser_open, what="the chooser closed"
+        )
+    assert import_env.lore_books() == []
+
+
+def _chooser_title(pilot) -> str:
+    """The open choice modal's painted title (the first stacked one from the top)."""
+    for stacked in reversed(pilot.app.screen_stack):
+        titles = stacked.query("#roleplay-items-chooser-title")
+        if titles:
+            return str(titles.first().render())
+    return ""
 
 
 # ---- AC#7: a hostile file name stays literal ----

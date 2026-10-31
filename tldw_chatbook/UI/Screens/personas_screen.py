@@ -8089,12 +8089,19 @@ class PersonasScreen(BaseAppScreen):
         Actor Pack was a second toolbar button. Server Characters keeps dev's
         rule: New is disabled there and Ctrl+N does nothing. The chooser has
         its own reentrancy flag: a durable character import holds the file
-        dialog slot until it ends, and dev's Ctrl+N created during one.
+        dialog slot until it ends, and dev's Ctrl+N created during one. The
+        one Import picker's own run (its picker, the sniff, "Import as:", a
+        lore or dictionary import) refuses it instead, so the chooser never
+        stacks on "Import X as:" (new with B2b, closed in its final fix wave).
         """
         if (
-            self.state.active_mode == "characters"
-            and not self._local_character_actions_allowed()
-        ) or self._new_chooser_open:
+            (
+                self.state.active_mode == "characters"
+                and not self._local_character_actions_allowed()
+            )
+            or self._new_chooser_open
+            or self._roleplay_import_running
+        ):
             return
         self._new_chooser_open = True
         self.run_worker(
@@ -8129,8 +8136,38 @@ class PersonasScreen(BaseAppScreen):
                 )
             )
             choice = next((c for c in choices if c.choice_id == picked), None)
-            if choice is not None and choice.enabled:
+            if choice is None or not choice.enabled:
+                return
+            # The rows were computed before the modal opened: a runtime that
+            # went server meanwhile left "Character · Blank" pickable, and the
+            # create then silently did nothing (new with B2b, closed in its
+            # final fix wave). Re-check the variant now and say why.
+            current = next(
+                c
+                for c in frame_state.new_chooser_options(
+                    self.state.active_mode,
+                    local_characters=self._local_character_actions_allowed(),
+                    local_runtime=self.persona_handler.current_mode() == "local",
+                )
+                if c.choice_id == choice.choice_id
+            )
+            if not current.enabled:
+                self._notify(current.reason or "", "warning")
+                return
+            try:
                 await self._run_new_choice(choice)
+            except Exception as exc:
+                # The worker runs with exit_on_error=False, so a create that
+                # raised showed nothing (new with B2b: on dev the create ran
+                # inline and Textual surfaced the error). The category only:
+                # the message may carry a user's text.
+                logger.warning(
+                    "Starting a new {} failed (category={}).",
+                    choice.choice_id,
+                    type(exc).__name__,
+                )
+                noun = frame_state.ITEM_KINDS[frame_state.KIND_FOR_MODE[choice.mode]][0]
+                self._notify(f"Could not start a new {noun}.", "error")
         finally:
             self._new_chooser_open = False
 
@@ -14461,8 +14498,11 @@ class PersonasScreen(BaseAppScreen):
         if self._import_in_progress():
             self._notify("An import is already in progress.", "information")
             return
-        if self._io_dialog_active:
-            logger.debug("A file dialog is already open; ignoring the import request.")
+        if self._io_dialog_active or self._new_chooser_open:
+            # The New chooser holds its own slot: an import request that
+            # arrives while it is open would stack the picker on it (new
+            # with B2b, closed in its final fix wave).
+            logger.debug("A dialog is already open; ignoring the import request.")
             return
         self._io_dialog_active = True
         self._roleplay_import_running = True
