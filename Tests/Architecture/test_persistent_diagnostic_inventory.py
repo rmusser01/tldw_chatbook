@@ -162,7 +162,9 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         # into one "Console video operation={} failed error_type={}" family
         # whose first argument is shared across ~14 call sites, so they cannot
         # be pinned individually by this registry's unique-label contract; the
-        # inventory manifest owns them.
+        # inventory manifest owns them. The same holds for TASK-33621.45's
+        # "Console video operation={} stopped remote_cancel={}" pair
+        # (generation / regeneration; remote_cancel is a closed literal).
         "stream resolution failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/Screens/library_screen.py": {
@@ -320,7 +322,12 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     },
     "tldw_chatbook/Video_Generation/adapter_registry.py": {},
     "tldw_chatbook/Video_Generation/adapters/minimax_video_adapter.py": {
-        "remote task cancel failed": ("type(exc).__name__",),
+        # TASK-33621.50: the one "cancel failed" line became three outcomes.
+        # Every field is a closed value: an HTTP status int, MiniMax's numeric
+        # error code, and an exception class name or a fixed reason literal.
+        "refused the remote task cancel": ("http_status", "error_code"),
+        "remote task cancel confirmed": (),
+        "remote task cancel unconfirmed": ("reason", "http_status", "error_code"),
     },
     "tldw_chatbook/Video_Generation/config.py": {},
     "tldw_chatbook/Video_Generation/video_store.py": {

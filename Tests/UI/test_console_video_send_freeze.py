@@ -54,7 +54,10 @@ from tldw_chatbook.UI.Console_Modules import image as image_module
 from tldw_chatbook.UI.Console_Modules import video as video_module
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 from tldw_chatbook.Video_Generation import adapter_registry
-from tldw_chatbook.Video_Generation.exceptions import VideoGenerationError
+from tldw_chatbook.Video_Generation.exceptions import (
+    VideoGenerationCancelled,
+    VideoGenerationError,
+)
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Widgets.cancel_confirmation_dialog import CancelConfirmationDialog
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
@@ -90,7 +93,9 @@ class _PaidBackend:
         while not self.release.wait(0.02):
             if cancel is not None and cancel.is_set():
                 self.cancelled.set()
-                raise VideoGenerationError("cancelled by user")
+                raise VideoGenerationCancelled(
+                    "cancelled by user", remote_cancel="cancelled"
+                )
         if self._outcome is None:
             raise VideoGenerationError("released by the test")
         return self._outcome(kwargs)

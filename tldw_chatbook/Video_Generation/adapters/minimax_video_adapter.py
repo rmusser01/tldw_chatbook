@@ -10,10 +10,15 @@ Endpoints (verified against platform.minimax.io docs, 2026-08-07):
   These are EXPIRING CDN URLs: download immediately, never persist.
   v1-style fallback: when only a ``file_id`` is present, resolve it via
   ``GET {base}/v1/files/retrieve?file_id=...`` -> ``file.download_url``.
-- Cancel/delete: ``DELETE {base}/v2/video_generation/{task_id}`` -- a
-  queued task is cancelled (no charge); a running task cannot be
-  cancelled (the API errors, so cancel is best-effort); a terminal task's
-  record is deleted.
+- Cancel/delete: ``DELETE {base}/v2/video_generation/{task_id}``
+  (platform.minimax.io/docs/api-reference/video-generation-v2-delete).
+  Measured live 2026-10-30 (TASK-33621.50): a task that has not started
+  rendering is cancelled -- 200 ``{"action": "cancelled"}``, and it is not
+  billed -- even when a poll already reads ``running`` (accepted 0-1 s after
+  submit); once rendering starts the API refuses -- 400
+  ``bad_request_error`` code 2013 (refused 43 s in) -- and the task runs to
+  completion and is billed. A terminal task's record is deleted (200
+  ``{"action": "deleted"}``). Stop reports which of these happened.
 
 Status vocabulary is parsed case-insensitively because the v1/v2 docs
 disagree on casing (``Success``/``Fail`` vs ``succeeded``/``failed``):
@@ -53,7 +58,9 @@ from tldw_chatbook.Video_Generation.config import (
     get_video_generation_config,
 )
 from tldw_chatbook.Video_Generation.exceptions import (
+    RemoteCancelOutcome,
     VideoBackendUnavailableError,
+    VideoGenerationCancelled,
     VideoGenerationError,
 )
 from tldw_chatbook.Video_Generation.video_formats import normalize_video_mime
@@ -73,6 +80,11 @@ _PENDING_STATUSES = frozenset(
 )
 _SUCCESS_STATUSES = frozenset({"succeeded", "success"})
 _FAILURE_STATUSES = frozenset({"failed", "fail", "cancelled", "canceled"})
+
+# MiniMax's error code for "task in current status can not be cancelled or
+# deleted" -- what a cancel of a task that has started rendering returns.
+_CANCEL_REFUSED_CODE = 2013
+_ERROR_CODE_RE = re.compile(r"\((\d{3,6})\)\s*$")
 
 
 class MiniMaxVideoAdapter:
@@ -106,18 +118,19 @@ class MiniMaxVideoAdapter:
                 width/height map onto the ``768P``/``2K`` resolution tiers.
             cancel_event: Optional cooperative-cancellation event (wired by
                 the Console command, task-3401.5). When set, the poll loop
-                stops, the remote task is cancelled best-effort (so a queued
-                task does not bill to completion), and ``VideoGenerationError``
-                is raised.
+                stops, MiniMax is asked to cancel the remote task, and
+                ``VideoGenerationCancelled`` is raised carrying MiniMax's
+                answer (``remote_cancel``).
 
         Returns:
             The generated video bytes as an mp4 result.
 
         Raises:
+            VideoGenerationCancelled: When ``cancel_event`` stops the run.
             VideoGenerationError: On unsupported format, reference assets
                 (not yet supported), duration outside MiniMax's bounds,
-                task failure, timeout, cancellation, or a missing result
-                URL. Never contains the API key.
+                task failure, timeout, or a missing result URL. Never
+                contains the API key.
             VideoBackendUnavailableError: If the API key or base URL is
                 not configured.
         """
@@ -324,8 +337,10 @@ class MiniMaxVideoAdapter:
 
         while time.monotonic() < deadline:
             if cancel_event is not None and cancel_event.is_set():
-                self._cancel_task(base_url, api_key, task_id)
-                raise VideoGenerationError("MiniMax video generation cancelled by user")
+                raise VideoGenerationCancelled(
+                    "MiniMax video generation cancelled by user",
+                    remote_cancel=self._cancel_task(base_url, api_key, task_id),
+                )
             try:
                 data = fetch_json(
                     method="GET",
@@ -365,30 +380,88 @@ class MiniMaxVideoAdapter:
 
         raise VideoGenerationError("timed out waiting for MiniMax video task result")
 
-    def _cancel_task(self, base_url: str, api_key: str, task_id: str) -> None:
-        """Best-effort remote cancel/delete (DELETE /v2/video_generation/{id}).
+    def _cancel_task(
+        self, base_url: str, api_key: str, task_id: str
+    ) -> RemoteCancelOutcome:
+        """Ask MiniMax to cancel the task; return and log what it answered.
 
-        A queued task is cancelled (no charge); a RUNNING task cannot be
-        cancelled (the API errors) -- the local poll loop stops regardless,
-        so a failure here is logged, never raised.
+        Never raises: the local stop is honored whatever MiniMax says. The
+        log carries the HTTP status and MiniMax's error code, never the key,
+        so a refusal can be told apart from a wrong request.
+
+        Returns:
+            ``"cancelled"`` when MiniMax confirms the cancel (not billed),
+            ``"refused"`` for its "cannot cancel in current status" error
+            (the task has started rendering, keeps running, and may still be
+            billed), else ``"unconfirmed"``.
         """
+        from loguru import logger
+
         cancel_url = f"{base_url}/v2/video_generation/{task_id}"
+        http_status: int | None = None
+        error_code: int | None = None
         try:
-            fetch_json(
+            data = fetch_json(
                 method="DELETE",
                 url=cancel_url,
                 headers=self._headers(api_key),
                 timeout=30.0,
                 trusted_origins=origin_set(cancel_url),
             )
+        except httpx.HTTPStatusError as exc:
+            http_status = exc.response.status_code if exc.response is not None else None
+            error_code = self._cancel_error_code(exc.response)
+            reason = type(exc).__name__
+            if http_status == 400 and error_code == _CANCEL_REFUSED_CODE:
+                logger.warning(
+                    "MiniMax refused the remote task cancel; the task keeps "
+                    "running and may still be billed (http_status={}, error_code={})",
+                    http_status,
+                    error_code,
+                )
+                return "refused"
         except Exception as exc:
-            from loguru import logger
+            reason = type(exc).__name__
+        else:
+            action = data.get("action") if isinstance(data, dict) else None
+            if action == "cancelled":
+                logger.info("MiniMax remote task cancel confirmed")
+                return "cancelled"
+            # "deleted": the task had already finished and MiniMax deleted its
+            # record -- nothing was cancelled, so never report a cancel.
+            reason = "action_deleted" if action == "deleted" else "unexpected_answer"
+        logger.warning(
+            "MiniMax remote task cancel unconfirmed; local stop still honored "
+            "(error_type={}, http_status={}, error_code={})",
+            reason,
+            http_status,
+            error_code,
+        )
+        return "unconfirmed"
 
-            logger.warning(
-                "MiniMax remote task cancel failed; local stop still honored "
-                "(error_type={})",
-                type(exc).__name__,
-            )
+    @staticmethod
+    def _cancel_error_code(response: httpx.Response | None) -> int | None:
+        """MiniMax's numeric error code from a v2 error body, when present.
+
+        The recorded refusal is ``{"type": "error", "error": {"message":
+        "invalid params, task in current status can not be cancelled or
+        deleted (2013)", ...}}`` -- the code only appears in the message.
+        """
+        if response is None:
+            return None
+        try:
+            body = response.json()
+        except Exception:
+            return None
+        if not isinstance(body, dict):
+            return None
+        error = body.get("error")
+        message = error.get("message") if isinstance(error, dict) else None
+        if isinstance(message, str):
+            match = _ERROR_CODE_RE.search(message.strip())
+            if match:
+                return int(match.group(1))
+        return None
 
     # -- response parsing ---------------------------------------------------
 
