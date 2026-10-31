@@ -74,6 +74,8 @@ make intent visible:
 
 ### 2.3 Control sizing
 
+- `$ds-note-folder-picker-max-height: 50vh` — folder choices leave room for the filter, pager, and actions.
+
 - `$ds-control-height: 3` — standard action control (buttons, selects,
   single-line inputs)
 - `$ds-control-height-compact: 1` — tab bars, status lines, chip rows, and

@@ -600,3 +600,29 @@ async def test_note_folder_repeated_input_dismisses_once(kind: str) -> None:
         await pilot.pause()
 
     assert results == [None]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["down", "enter"])
+async def test_unchanged_filter_with_pending_debounce_focuses_first_row(monkeypatch, key):
+    """Typing then erasing must not consume the first navigation key."""
+    monkeypatch.setattr(LibraryNoteFolderTargetDialog, "FILTER_DEBOUNCE_SECONDS", 60)
+    loader = _FolderLoader("/Projects", "/Study")
+    app = ConsolidatedCSSApp()
+    results: list[str | None] = []
+    modal = LibraryNoteFolderTargetDialog(title="Move", loader=loader)
+    async with app.run_test(size=(90, 30)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await _until(pilot, lambda: _total(modal) == "2 folders")
+        await pilot.press("x", "backspace")
+        assert modal._filter_timer is not None
+        assert modal._filter_text() == modal._shown_query == ""
+        assert not modal._loading
+        await pilot.press(key)
+        await pilot.pause()
+        assert str(getattr(modal.focused, "label", "")) == "Projects"
+        assert loader.calls == [("", 0)]
+        assert results == []
+        await pilot.press("enter")
+        await pilot.pause()
+    assert results == ["projects"]

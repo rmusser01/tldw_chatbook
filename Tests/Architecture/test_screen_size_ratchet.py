@@ -1215,8 +1215,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Down's T5-a landing focuses the painted result at once instead of only
     #: through the list-entry arm's after-refresh attempt: 38166 -> 38195
     #: lines, 1373 methods (measured with ``_measure``).
+    #: 2026-10-31, PR #3259: user size waiver; New focus role, exact current measurement.
     #: 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38241, 1374),
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38242, 1374),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

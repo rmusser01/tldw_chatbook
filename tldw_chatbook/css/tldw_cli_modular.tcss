@@ -271,6 +271,8 @@ $ds-profile-link-modal-body-share: 82%;
 $ds-widgets-skeleton-title-share: 60%;
 
 $ds-messages-scroll-cap: 50vh;
+
+$ds-note-folder-picker-max-height: 50vh;
 $ds-messages-text-scroll-cap: 40vh;
 
 $ds-console-frame: #6f7782;

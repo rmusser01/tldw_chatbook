@@ -1527,7 +1527,7 @@ class ChatbookCreator:
 
                 # Write markdown file
                 note_file = notes_dir / f"{sanitize_filename(note['title'])}.md"
-                with open(note_file, "w", encoding="utf-8") as f:
+                with open(note_file, "w", encoding="utf-8", newline="") as f:
                     # Frontmatter through the one YAML renderer (TASK-34000.31):
                     # a title with a colon or a leading ``*``/``#`` is quoted,
                     # tags are a list, and the importer reads it back with the

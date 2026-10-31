@@ -27,6 +27,7 @@ import tldw_chatbook.Notes.note_folder_repository as folder_repository_module
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.library_quit_guard_support import SIZE, _NotesProfile, _open_notes, _until
 from Tests.UI.test_library_shell import (
+    _FakeSkillsScopeService,
     LibraryProductionCSSHarness,
     _active_library_screen,
     _seed_conversations,
@@ -129,6 +130,8 @@ class _Profile:
 def _mounted(tmp_path) -> tuple[LibraryProductionCSSHarness, _Profile]:
     """The real Library hierarchy over the seeded profile, production CSS."""
     app = _build_test_app()
+    # Notes owns this fixture; optional Skills filesystem startup is unrelated.
+    app.skills_scope_service = _FakeSkillsScopeService(available=[])
     _seed_conversations(app, [])
     seeded = _Profile(tmp_path)
     app.chachanotes_db = seeded.profile.db
@@ -601,3 +604,30 @@ async def test_a_genuine_conflict_offers_a_working_refresh(tmp_path, monkeypatch
             True,
             UPDATED,
         ), outcomes
+
+
+async def test_new_note_keeps_focus_after_a_targeted_notes_refresh(tmp_path) -> None:
+    """A completed background refresh preserves the user's real Tab to New."""
+    host, _seeded = _mounted(tmp_path)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = await _notes_ready(host, pilot)
+        assert await pilot.click("#library-notes-filter")
+        await _wait(
+            pilot,
+            lambda: screen.focused is screen.query_one("#library-notes-filter"),
+            "filter focused",
+        )
+        await pilot.press("tab")
+        await _wait(
+            pilot,
+            lambda: screen.focused is screen.query_one("#library-notes-new"),
+            "Tab reaches New",
+        )
+        previous = screen.focused
+        screen._refresh_library_notes_trash()
+        await _wait(
+            pilot,
+            lambda: not previous.is_attached
+            and screen.focused is screen.query_one("#library-notes-new"),
+            lambda: f"New retains focus after its replacement: {screen.focused!r}",
+        )

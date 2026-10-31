@@ -5248,6 +5248,7 @@ class LibraryScreen(BaseAppScreen):
                 return f"file-notes:{widget_id}"
         direct_roles = {
             "library-notes-filter": "filter",
+            "library-notes-new": "new-note",
             "library-notes-select-toggle": "select-toggle",
             "library-note-title": "title",
             "library-note-body": "body",

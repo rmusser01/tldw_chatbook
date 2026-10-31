@@ -635,7 +635,7 @@ def split_frontmatter(text: str) -> tuple[Mapping[Any, Any] | None, str]:
         if not isinstance(metadata, Mapping):
             return None, text
         metadata = _with_raw_scalar_title(metadata, block)
-        return metadata, "\n".join(lines[index + 1 :]).lstrip("\n")
+        return metadata, re.sub(r"^(?:\r?\n)+", "", "\n".join(lines[index + 1 :]))
     return None, text
 
 

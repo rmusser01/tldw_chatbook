@@ -189,7 +189,7 @@ def _import_once(root, files: dict, *, obsidian_mode: bool = False):
     for name, text in files.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        path.write_text(text, encoding="utf-8", newline="")
     bounds = _bounds()
     discovery = discover_import_sources([root], bounds, obsidian_mode=obsidian_mode)
     batch = parse_import_sources(discovery, bounds, obsidian_mode=obsidian_mode)
@@ -603,3 +603,19 @@ def test_legacy_bundle_frontmatter_without_manifest_tags_still_yields_keywords(t
     assert ChatbookImporter._tags_from_metadata({"tags": None}) == []
     assert ChatbookImporter._tags_from_metadata({}) == []
     assert ChatbookImporter._tags_from_metadata(None) == []
+
+
+@pytest.mark.parametrize("separator", ["\n", "\r\n"])
+@pytest.mark.parametrize("body", ["First\r\n  Second\nThird\r", "\rContent\r\nkept"])
+def test_frontmatter_separator_preserves_body_newlines(tmp_path, separator, body):
+    """Strip separator lines without normalizing body bytes or a bare CR."""
+    text = separator.join(["---", "title: notes", "---", "", ""]) + body
+    metadata, imported_body = split_frontmatter(text)
+    assert metadata == {"title": "notes"}
+    assert imported_body == body
+
+    payload = _import_once(tmp_path / "recognized", {"notes.md": text})["notes.md"]
+    assert payload.content == body
+    foreign = separator.join(["---", "foreign: keep", "---", "", ""]) + body
+    payload = _import_once(tmp_path / "foreign", {"notes.md": foreign})["notes.md"]
+    assert payload.content == foreign

@@ -41,6 +41,7 @@ from textual.widgets import Button, Input, TextArea
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.library_quit_guard_support import SIZE, _NotesProfile, _open_notes, _until
 from Tests.UI.test_library_shell import (
+    _FakeSkillsScopeService,
     LibraryProductionCSSHarness,
     _active_library_screen,
     _seed_conversations,
@@ -105,6 +106,8 @@ class _Tree:
 def _mounted(tmp_path) -> tuple[LibraryProductionCSSHarness, _Tree]:
     """The real Library hierarchy over the seeded tree, production CSS."""
     app = _build_test_app()
+    # Notes owns this fixture; optional Skills filesystem startup is unrelated.
+    app.skills_scope_service = _FakeSkillsScopeService(available=[])
     _seed_conversations(app, [])
     tree = _Tree(tmp_path)
     app.chachanotes_db = tree.profile.db

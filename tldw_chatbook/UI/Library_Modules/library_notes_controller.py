@@ -1949,6 +1949,7 @@ class LibraryNotesController:
         role = identity.semantic_role
         selector = {
             "filter": "#library-notes-filter",
+            "new-note": "#library-notes-new",
             "select-toggle": "#library-notes-select-toggle",
             "title": "#library-note-title",
             "body": "#library-note-body",

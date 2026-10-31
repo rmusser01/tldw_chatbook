@@ -119,15 +119,16 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
     BUNDLED_CSS = """
     LibraryNoteFolderTargetDialog { align: center middle; }
     LibraryNoteFolderTargetDialog > Vertical {
-        width: 64; height: auto; max-height: 100%; padding: 1 2;
+        width: $ds-size-64; height: $ds-height-auto; max-height: $ds-height-full;
+        padding: $ds-space-1 $ds-space-2;
         border: tall $accent; background: $surface;
     }
-    #library-note-folder-target-list { height: auto; max-height: 50vh; }
+    #library-note-folder-target-list { height: $ds-height-auto; max-height: $ds-note-folder-picker-max-height; }
     #library-note-folder-target-list > .library-note-folder-target-row {
-        width: 1fr; text-align: left; content-align: left middle;
+        width: $ds-width-fill; text-align: left; content-align: left middle;
     }
     #library-note-folder-target-list > .library-note-folder-target-row.-highlighted {
-        text-style: bold;
+        text-style: $ds-text-strong;
     }
     #library-note-folder-target-pager { height: auto; }
     #library-note-folder-target-actions { height: auto; align-horizontal: right; }
@@ -392,6 +393,8 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
             self._request_page(0)
         if self._loading:
             self._focus_first_row_on_load = True
+        elif self._rows_answer_the_filter():
+            self._focus_row(0)
 
     def _move_into_the_rows(self) -> None:
         """Down or Enter in the filter: the first row of the CURRENT answer."""
