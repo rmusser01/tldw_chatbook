@@ -773,11 +773,11 @@ def _temporary_segment_text(console) -> str:
 async def test_activate_console_session_for_workspace_keeps_temporary_chip_honest():
     """task-7 review: three callers reach ``_activate_console_session_for_
     workspace`` and none of them refresh the temporary chip afterward --
-    they only await ``_sync_native_console_chat_ui()``, which never touches
-    it (same reason it never touches the scope chip). Tests the
-    CONSEQUENCE (chip visibility after the real switch/create branches
-    run), in both directions, so a push that hardcoded either answer would
-    fail this.
+    they only await ``_sync_native_console_chat_ui()``, which did not touch
+    it then. Since TASK-37840 a full sync pass re-pushes the chip too, so
+    this pins the CONSEQUENCE (chip visibility after the real switch/create
+    branches run) whichever push paints it, in both directions, so a push
+    that hardcoded either answer would fail this.
     """
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -886,8 +886,9 @@ async def test_workspace_conversation_row_click_on_open_tab_keeps_temporary_chip
     """task-7 review: clicking an already-open tab's workspace-conversation
     row (the branch that skips ``_resume_console_workspace_conversation``
     because the session is already open) only awaited
-    ``_sync_native_console_chat_ui()`` before this fix. Ephemeral (native,
-    unpersisted) sessions appear in this same row list --
+    ``_sync_native_console_chat_ui()`` before this fix (a full pass also
+    re-pushes the chip since TASK-37840; the consequence is what is pinned).
+    Ephemeral (native, unpersisted) sessions appear in this same row list --
     ``_native_console_browser_rows`` has no ephemeral filter -- so both
     directions are genuinely reachable here: clicking an open ephemeral
     tab's row must show the chip, and clicking a saved/normal tab's row

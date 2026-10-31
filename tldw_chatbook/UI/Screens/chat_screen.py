@@ -10795,12 +10795,12 @@ class ChatScreen(BaseAppScreen):
         call sites: after a scope-picker save, and the first-send
         persist-flush hook).
 
-        Task-7 (temporary chip): this is also the one place ``#console-
-        temporary-chip`` is refreshed for every session-switch trigger this
-        method already covers (resume, tab activation, scope-picker save,
-        first-persist flush) -- see ``ConsoleTemporaryChip``/
-        ``sync_temporary_chip`` for why it is kept off the general
-        control-bar sync tick, same as the scope chip.
+        Task-7 (temporary chip): this also refreshes ``#console-temporary-
+        chip`` for every session-switch trigger this method covers (resume,
+        tab activation, scope-picker save, first-persist flush). Since
+        TASK-37840 each full sync pass re-pushes it as well, because a
+        capture choice changes its text; a poll tick does not (see
+        ``sync_temporary_chip``).
         """
         state = self._retrieval._build_console_retrieval_scope_state()
         try:
