@@ -17,8 +17,6 @@ from pydantic import (
     field_validator,
 )
 
-from tldw_chatbook.Utils.input_validation import CONSOLE_FORK_TITLE_MAX_LENGTH
-
 from tldw_chatbook.Chat.console_endpoint_provenance import (
     ConsoleEndpointProvenance,
 )
@@ -1616,6 +1614,9 @@ _CONSOLE_PENDING_COPY_KIND_SOURCE = (
         for cell in console_pending_round_copy.__closure__ or ()
     ),
 )
+
+
+CONSOLE_FORK_TITLE_MAX_LENGTH = 60
 
 
 def validate_console_fork_title(value: object) -> str:

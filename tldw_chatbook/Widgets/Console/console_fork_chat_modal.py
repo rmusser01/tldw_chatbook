@@ -14,8 +14,10 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleForkTitleInput
-from tldw_chatbook.Utils.input_validation import CONSOLE_FORK_TITLE_MAX_LENGTH
+from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_FORK_TITLE_MAX_LENGTH,
+    ConsoleForkTitleInput,
+)
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Widgets.status_line import set_status_line
 

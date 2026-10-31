@@ -39,7 +39,6 @@ from ..config import (
 )
 from ..provider_registry import RECORDS_BY_KEY
 from ..Utils.input_validation import (
-    PROVIDER_API_KEY_MAX_LENGTH,
     sanitize_string,
     validate_navigation_context_text,
     validate_text_input,
@@ -1186,6 +1185,9 @@ def configured_provider_is_ready(provider: str) -> bool:
             provider, load_cli_config_and_ensure_existence()
         ).ready
     )
+
+
+PROVIDER_API_KEY_MAX_LENGTH = 4096
 
 
 def validate_navigation_provider_key(value: object) -> str:
