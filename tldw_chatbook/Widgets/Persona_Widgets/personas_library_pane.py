@@ -1227,6 +1227,9 @@ class PersonasLibraryPane(Vertical):
         back unfocused, so a second Enter did nothing (new with B2b, closed
         in its final fix wave). The blank remembers that Retry held the
         focus: a failed read gives it back, and rows leave it on the list.
+        It is given back only while the focus is still where the blank left
+        it (the list) or nowhere: a user who moved on during the reload
+        keeps the focus where they put it.
         """
         retry = self.query_one("#personas-library-retry", Button)
         owed = self._retry_owed_focus
@@ -1236,7 +1239,9 @@ class PersonasLibraryPane(Vertical):
             self.item_list.focus()
         retry.display = shown
         if shown and owed:
-            retry.focus()
+            focused = self.app.focused if self.is_attached else None
+            if focused is None or focused is self.item_list:
+                retry.focus()
 
     async def show_loading(self) -> None:
         """A kind's first read started: blank the old kind's rows now, and say
