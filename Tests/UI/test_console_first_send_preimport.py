@@ -103,10 +103,10 @@ LIVE_FIRST_SEND_IMPORTS = (
 #: haiku, 160x45, a note in Library, the conversation's Auto set to Automatic,
 #: RAG profile BM25 Only, first send 60 s after launch with the warm-up done):
 #: the only modules the UI loop loaded between Enter and the provider call
-#: were these two, both inside the send's own run-start callback (5 ms), where
-#: Library preparation begins. Everything else the retrieval path reaches is
-#: resident at UI-ready, and the Library service's runtime build runs on a
-#: worker thread.
+#: were these two, both inside the send's own run-start callback (5-30 ms wall
+#: across five launches), where Library preparation begins. Everything else
+#: the retrieval path reaches is resident at UI-ready, and the Library
+#: service's runtime build runs on a worker thread.
 LIVE_LIBRARY_FIRST_SEND_IMPORTS = (
     "Chat.console_library_preparation",
     "Chat.console_library_search",

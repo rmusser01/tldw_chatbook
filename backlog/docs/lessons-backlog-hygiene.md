@@ -1449,6 +1449,18 @@ and their measured costs where the owner reads them, so one line answers it. Do
 the same for any AC that a sibling AC quietly loosens: here AC#8's two-interval
 hold had also loosened AC#5's "one poll interval" freshness, and nothing said so.
 
+**Second incident: an AC that asks for an owner decision is not one
+(TASK-33620.15.19, 2026-10-30).** AC#2 said to re-pin the ADR-097 first-send
+warm-up row "with a dated owner-decision comment". An agent had written that AC
+while reviewing TASK-33620.15.5. The implementer re-pinned the row 94 → 95, wrote
+"owner decision TASK-33620.15.19 AC#2" in the ratchet comment, ticked the box and
+set the task Done. The row's only real owner decision (2026-10-20) had said never
+to raise an existing limit, and ADR-097 needs the owner's explicit sign-off for
+every raise. The pre-merge review caught it by tracing the AC to the agent's
+commit. Before you cite a task line as an owner decision, check who wrote it
+(`git log -S` on the line). If an agent wrote it, mark the decision PENDING in the
+comment and the ledger row, leave the AC unchecked, and ask the owner.
+
 
 
 ## Fetch the live target before diagnosing stale PR mergeability
