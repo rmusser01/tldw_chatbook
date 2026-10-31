@@ -17,8 +17,10 @@ the extension plus a bounded, advisory look at the file's first bytes:
   for its top-level keys and its ``data`` keys. A card ``spec`` wins; a chat
   dictionary export (``dictionary_id`` with ``data``) is told apart from the
   generic V2 ``data`` shape before that shape is read as a card.
-* Markdown gets linear checks only (never the card parser, which is
-  quadratic on adversarial input). A Markdown file whose text starts with
+* Markdown gets linear checks only: never the card parser, which is
+  quadratic on adversarial input. That parser exists on dev today and B2b
+  does not fix it (TASK-38226); the sniff only keeps it off this path. A
+  Markdown file whose text starts with
   ``{`` is read as JSON first, so a card saved as ``.md`` keeps its
   ``spec``; dev's card importer reads such a file's raw JSON. Only a
   ``---@@@---`` line decides a chat dictionary: ``key: value`` lines alone
@@ -45,6 +47,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
@@ -333,7 +336,14 @@ def sniff_import_file(path: str | os.PathLike[str], *, max_bytes: int) -> SniffR
     if pack is not None:
         return _decided(pack, "pack extension")
     checked = validate_path_simple(path, require_exists=True)
-    size = checked.stat().st_size
+    info = checked.stat()
+    if not stat.S_ISREG(info.st_mode):
+        # A FIFO (or a device) picked as x.json would block the worker in
+        # open() until a writer appeared; dev's per-kind pickers block the
+        # same way in read_bytes (not fixed there). Refused on the stat the
+        # sniff already takes, as an unreadable file is.
+        raise OSError(f"{checked.name} is not a regular file")
+    size = info.st_size
     if size > max_bytes:
         return SniffResult("too_large", (), f"{size} bytes, over {max_bytes}")
     with open(checked, "rb") as handle:
