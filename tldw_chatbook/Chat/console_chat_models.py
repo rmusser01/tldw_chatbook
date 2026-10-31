@@ -10,6 +10,15 @@ from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, Iterable, Literal, Mapping
 from uuid import uuid4
 
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+)
+
+from tldw_chatbook.Utils.input_validation import CONSOLE_FORK_TITLE_MAX_LENGTH
+
 from tldw_chatbook.Chat.console_endpoint_provenance import (
     ConsoleEndpointProvenance,
 )
@@ -1607,3 +1616,40 @@ _CONSOLE_PENDING_COPY_KIND_SOURCE = (
         for cell in console_pending_round_copy.__closure__ or ()
     ),
 )
+
+
+def validate_console_fork_title(value: object) -> str:
+    """Return one normalized, bounded Console fork title.
+
+    Args:
+        value: Raw value received from the Console naming dialog.
+
+    Returns:
+        A nonblank title normalized by the shared Console title helper.
+
+    Raises:
+        ValueError: If ``value`` is not text or normalizes to blank.
+    """
+
+    if type(value) is not str:
+        raise ValueError("Fork title must be text.")
+    normalized = derive_console_session_title(
+        value,
+        max_length=CONSOLE_FORK_TITLE_MAX_LENGTH,
+    )
+    if not normalized:
+        raise ValueError("Fork title cannot be blank.")
+    return normalized
+
+
+class ConsoleForkTitleInput(BaseModel):
+    """Strict shared validation boundary for the Console fork naming dialog."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    title: str = Field(min_length=1, max_length=CONSOLE_FORK_TITLE_MAX_LENGTH)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _normalize_title(cls, value: object) -> str:
+        return validate_console_fork_title(value)

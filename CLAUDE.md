@@ -194,7 +194,7 @@ variable is unset, which means off.
 
 ### Security Requirements
 
-- Validate all inputs via `input_validation.py`
+- Validate all inputs via `input_validation.py`; feature-specific validators live beside the constants they check (agent chat-create in `Agents/agent_models.py`, Console fork title in `Chat/console_chat_models.py`, terminal I/O in `Terminal/contracts.py`, provider keys in `Chat/provider_readiness.py`)
 - Use `path_validation.py` for file paths
 - SQL identifiers through `sql_validation.py`
 - API keys from env/config only, never logged

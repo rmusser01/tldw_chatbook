@@ -65,7 +65,7 @@ from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import video_content_marker
-from tldw_chatbook.Utils import input_validation
+from tldw_chatbook.Chat import console_chat_models
 
 
 class _ForkVersionPersistence:
@@ -697,8 +697,8 @@ def test_fork_title_rejects_blank_normalized_text() -> None:
 
 
 def test_fork_title_uses_the_shared_strict_validation_boundary() -> None:
-    assert hasattr(input_validation, "ConsoleForkTitleInput")
-    model_cls = getattr(input_validation, "ConsoleForkTitleInput")
+    assert hasattr(console_chat_models, "ConsoleForkTitleInput")
+    model_cls = getattr(console_chat_models, "ConsoleForkTitleInput")
 
     assert model_cls.model_validate({"title": "  proposed\n title  "}).title == (
         "proposed title"
@@ -717,7 +717,7 @@ def test_fork_title_reuses_the_console_title_deriver(monkeypatch) -> None:
         return "canonical title"
 
     monkeypatch.setattr(
-        input_validation,
+        console_chat_models,
         "derive_console_session_title",
         fake_derive,
     )

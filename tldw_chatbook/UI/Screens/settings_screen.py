@@ -264,8 +264,8 @@ from ...LLM_Provider_Catalog.model_discovery_merge import (
 )
 from ...LLM_Calls.qwencloud import normalize_qwencloud_api_mode
 from ...TTS.adapter_types import TTSNativeCapabilityObservation
+from ...Chat.provider_readiness import provider_api_key_validation_error
 from ...Utils.input_validation import (
-    provider_api_key_validation_error,
     sanitize_string,
     validate_bounded_integer,
     validate_dreams_profile_text,

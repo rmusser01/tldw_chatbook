@@ -57,10 +57,8 @@ from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSConnectionState,
     SpeechTTSTestOperation,
 )
-from tldw_chatbook.Utils.input_validation import (
-    provider_api_key_validation_error,
-    validate_url,
-)
+from tldw_chatbook.Chat.provider_readiness import provider_api_key_validation_error
+from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 BUILT_IN_TTS_PROVIDER_ORDER = (
