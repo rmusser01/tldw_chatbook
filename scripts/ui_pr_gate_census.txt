@@ -1634,3 +1634,8 @@ Tests/UI/test_console_rail_filter_typing.py::test_a_rebuild_never_writes_state_i
 # cases, about 12 s), appended at the tail; existing slots stay fixed.
 Tests/UI/test_console_library_outcome_line.py
 Tests/UI/test_console_library_outcome_lines.py
+# TASK-33621.50/.45 (2026-10-30): Stop on a MiniMax /generate-video reports
+# what MiniMax did with the cancel (recorded live responses, real adapter and
+# fetch_json under the real Console), never as a failure. Four tests, ~21 s
+# whole locally; appended at the tail, so no existing entry changes shard.
+Tests/UI/test_console_video_stop_outcome.py
