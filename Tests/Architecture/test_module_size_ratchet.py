@@ -562,7 +562,10 @@ _BUDGETS: dict[str, int] = {
     # Console rail filter's count and page match titles, as a literal
     # substring), threaded through the shared filter and the page query.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 25693 -> 25705.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25705,
+    # 2026-10-31, TASK-36949.1: 25705 -> 25715 (+10). The public
+    # `managed_transaction_depth()` replaces ten reads of `_local.transaction_depth`
+    # in five files outside the DB class.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25715,
     "tldw_chatbook/config.py": 12233,
     "tldw_chatbook/Chat/console_agent_bridge.py": 11604,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,

@@ -1483,7 +1483,8 @@ def trace_provenance_admission_transaction(
         raise TypeError("database must provide a transaction context")
     local = getattr(database, "_local", None)
     if local is not None:
-        active = getattr(local, "transaction_depth", 0) > 0
+        depth_of = getattr(database, "managed_transaction_depth", None)
+        active = callable(depth_of) and depth_of() > 0
         connection = getattr(local, "conn", None)
         active = active or bool(
             connection is not None and getattr(connection, "in_transaction", False)

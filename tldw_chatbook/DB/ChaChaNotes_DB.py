@@ -3805,6 +3805,16 @@ DELETE FROM keywords
             raise CharactersRAGDBError(f"Execute Many failed: {e}") from e
 
     # --- Transaction Context ---
+    def managed_transaction_depth(self) -> int:
+        """Return the calling thread's managed-transaction depth.
+
+        Returns:
+            0 outside any managed transaction, 1 inside the outermost one,
+            and 2 or more inside nested ``transaction()`` blocks. The count is
+            per thread: another thread's open transaction is not visible.
+        """
+        return getattr(self._local, "transaction_depth", 0)
+
     def transaction(self, *, immediate: bool = False) -> "TransactionContextManager":
         """
         Returns a context manager for database transactions.
