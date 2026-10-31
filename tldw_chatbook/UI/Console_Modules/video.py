@@ -23,6 +23,8 @@ from ...Chat.console_generate_video import (
     is_paid_backend,
     parse_generate_video_args,
     run_video_generation,
+    video_generating_text,
+    video_stopped_text,
 )
 from ...config import get_cli_setting
 from ...Video_Generation.config import get_video_generation_config
@@ -1138,9 +1140,12 @@ class ConsoleVideoController:
         always cleared in a ``finally`` so a crashed/cancelled run never
         wedges the session. Cancellation is cooperative: the composer's Stop
         button (visible while a video generation is in flight) sets the
-        event the MiniMax adapter polls.
+        event the MiniMax adapter polls; the stop reads as a stop, with what
+        the backend did with the remote task (TASK-33621.45/.50).
         """
         from uuid import uuid4
+
+        from ...Video_Generation.exceptions import VideoGenerationCancelled
 
         args = parse_generate_video_args(parse.args)
         store = self._ensure_console_chat_store()
@@ -1243,7 +1248,7 @@ class ConsoleVideoController:
         )
         try:
             await self._append_native_console_system_message(
-                f"⏳ Generating video on {backend}… (Stop cancels)",
+                video_generating_text(backend),
                 session_id=session.id,
             )
             await ConsoleVideoController._run_console_video_generation_operation(
@@ -1261,6 +1266,17 @@ class ConsoleVideoController:
                 cancel_event=cancel_event,
                 publication_gate=publication_gate,
                 video_store=self._ensure_console_video_store(),
+            )
+        except VideoGenerationCancelled as stop:
+            hint = restore_command_draft(self._console_composer_or_none(), taken)
+            logger.info(
+                "Console video operation={} stopped remote_cancel={}",
+                "generation",
+                stop.remote_cancel,
+            )
+            await self._append_native_console_system_message(
+                with_resend_hint(video_stopped_text(stop, backend=backend), hint),
+                session_id=session.id,
             )
         except Exception as exc:  # noqa: BLE001 - reported to the user, never a bare crash
             hint = restore_command_draft(self._console_composer_or_none(), taken)
@@ -1416,6 +1432,8 @@ class ConsoleVideoController:
         """
         from uuid import uuid4
 
+        from ...Video_Generation.exceptions import VideoGenerationCancelled
+
         store = self._ensure_console_chat_store()
         try:
             message = store.get_message(message_id)
@@ -1465,6 +1483,18 @@ class ConsoleVideoController:
                 cancel_event=cancel_event,
                 publication_gate=publication_gate,
                 video_store=self._ensure_console_video_store(),
+            )
+        except VideoGenerationCancelled as stop:
+            logger.info(
+                "Console video operation={} stopped remote_cancel={}",
+                "regeneration",
+                stop.remote_cancel,
+            )
+            await self._append_native_console_system_message(
+                video_stopped_text(
+                    stop, backend=meta.backend, noun="Video regeneration"
+                ),
+                session_id=session_id,
             )
         except Exception as exc:  # noqa: BLE001 - reported, never a bare crash
             logger.error(
