@@ -120,6 +120,21 @@ for about 1 s before both toasts timed out. A 10 s failure timeout gave about
 the fast error path at the smallest size, not only the slow one. One capture
 cannot tell you how long text is readable: poll `capture-pane` every 0.25 s and
 count the captures that contain the last sentence of the message.
+## A vendor's documented cancel table is not its behaviour: probe early and late with the exact request (TASK-33621.50, 2026-10-30)
+
+**Incident.** MiniMax's cancel docs list `queued` → cancelled (no charge) and `running` →
+"not allowed". The adapter's docstring repeated that, and a live Stop 40 s into a render had
+logged only `error_type=HTTPStatusError`, so it could not tell "running is refused" from
+"this request is wrong". A pure-httpx probe sent the adapter's byte-exact DELETE three times.
+About 1 s after submit, and right after a poll had already read `running`, it was accepted
+(200, `action: cancelled`, usage stayed empty). At 43 s it was refused (400, code 2013), and
+that task finished and was billed. `queued` never appeared on any poll. The documented
+boundary sits at a point the status field cannot show.
+
+**What to do.** Before writing copy about what a remote cancel does, probe it twice with the
+adapter's exact request: once right after submit and once well into the work. Record the
+status code, the body and the task's final usage, then commit the bodies as test fixtures.
+Log the HTTP status and the vendor's error code, not only the exception class.
 
 ## A contrast capture taken under an open modal measures the dimmed backdrop (TASK-33626.1, 2026-10-29)
 
