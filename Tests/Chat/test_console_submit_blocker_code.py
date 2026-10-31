@@ -160,7 +160,108 @@ def _blocked_results_without_a_blocker(path: Path) -> list[int]:
     "module", ["console_chat_controller.py", "console_native_commit.py"]
 )
 def test_every_blocked_submit_result_names_its_blocker(module: str) -> None:
-    """A new BLOCKED exit without a code would log ``blocker=-`` again."""
+    """A new literal BLOCKED exit must name its own code.
+
+    Without one it would log the generic ``turn_refused``, which says less.
+    Sites whose status is read from the run state are covered at runtime by
+    the refusal-inside-the-turn tests above.
+    """
     path = _CHAT / module
     assert "ConsoleRunStatus.BLOCKED" in path.read_text(encoding="utf-8")
     assert _blocked_results_without_a_blocker(path) == []
+
+
+def _refuse_inside_the_stream(controller, monkeypatch, refuse) -> None:
+    """Return a refusal from inside the turn, as ``_run_agent_reply`` does.
+
+    The refusal itself comes from the controller's own helper; only the call
+    that reaches it is replaced.
+    """
+
+    async def stream(**kwargs):
+        return refuse(kwargs["assistant_message_id"])
+
+    monkeypatch.setattr(controller, "_stream_assistant_response", stream)
+
+
+@pytest.mark.asyncio
+async def test_a_project_setup_refusal_in_a_temporary_chat_names_its_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, logs
+) -> None:
+    """The folder picker's Cancel in a temporary (non-durable) chat."""
+    persistent, warnings = logs
+    _db, _store, controller, _gateway = _controller(tmp_path)
+    session = controller.new_session(ephemeral=True)
+    _refuse_inside_the_stream(
+        controller,
+        monkeypatch,
+        lambda assistant_id: controller._refuse_turn_for_project_setup(
+            assistant_id, session.id, "project_binding_required"
+        ),
+    )
+
+    result = await controller.submit_draft(_PRIVATE_DRAFT, session_id=session.id)
+
+    assert result.terminal_status is ConsoleRunStatus.BLOCKED
+    assert "blocker=project_setup" in _attention(warnings)
+    assert "error_category=project_setup" in _submit_end(persistent)
+    assert _PRIVATE_DRAFT not in "\n".join([*persistent, *warnings])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("temporary", [True, False], ids=["temporary", "saved"])
+async def test_any_other_refusal_inside_the_turn_still_names_a_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, logs, temporary: bool
+) -> None:
+    """A BLOCKED result whose site named no code must not log ``blocker=-``.
+
+    Both chat kinds read the status from the run state at a ``replace`` site,
+    which no literal code can reach.
+    """
+    persistent, warnings = logs
+    _db, _store, controller, _gateway = _controller(tmp_path)
+    session_id = (
+        controller.new_session(ephemeral=True).id if temporary else "session-1"
+    )
+    _refuse_inside_the_stream(
+        controller,
+        monkeypatch,
+        lambda _assistant_id: controller._block(
+            session_id, "Private scratch space is unavailable."
+        ),
+    )
+
+    result = await controller.submit_draft(_PRIVATE_DRAFT, session_id=session_id)
+
+    assert result.terminal_status is ConsoleRunStatus.BLOCKED
+    assert "blocker=turn_refused" in _attention(warnings)
+    assert "error_category=turn_refused" in _submit_end(persistent)
+    assert controller.run_state_for(session_id).visible_copy == (
+        "Private scratch space is unavailable."
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_submit_never_logs_a_blocker_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, logs
+) -> None:
+    """A code is about a block; a site whose status settled FAILED logs ``-``."""
+    persistent, warnings = logs
+    _db, _store, controller, _gateway = _controller(tmp_path)
+
+    async def lifecycle(*_args, **_kwargs):
+        return controller_module.ConsoleSubmitResult(
+            True,
+            True,
+            "Accepted turn failed before provider dispatch.",
+            terminal_status=ConsoleRunStatus.FAILED,
+            blocker=controller_module.ConsoleSubmitBlocker.SETTLEMENT_FAILED,
+        )
+
+    monkeypatch.setattr(controller, "_submit_draft_lifecycle", lifecycle)
+
+    await controller.submit_draft(_PRIVATE_DRAFT, session_id="session-1")
+
+    assert "status=failed blocker=-" in _attention(warnings)
+    final = [line for line in persistent if "phase=controller_submit" in line]
+    assert final and "error_category" not in final[-1]

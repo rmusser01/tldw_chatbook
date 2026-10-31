@@ -9277,8 +9277,12 @@ class ConsoleChatController:
                 if result.accepted
                 else "refused"
             )
-            if result.blocker is not None:  # TASK-33621.23: name the cause.
-                diagnostic.outcome_category = result.blocker.value
+            if result.terminal_status is ConsoleRunStatus.BLOCKED:
+                # TASK-33621.23: a blocked send always names its cause; a site
+                # with no code of its own (a refusal inside the turn) logs the
+                # generic one. Other outcomes log none.
+                blocker = result.blocker or ConsoleSubmitBlocker.TURN_REFUSED
+                diagnostic.outcome_category = blocker.value
             if not result.accepted or result.terminal_status in {
                 ConsoleRunStatus.BLOCKED,
                 ConsoleRunStatus.FAILED,
@@ -28048,7 +28052,10 @@ class ConsoleChatController:
             ConsoleRunState.blocked(visible_copy), session_id=session_id
         )
         return ConsoleSubmitResult(
-            accepted=False, should_clear_draft=False, visible_copy=visible_copy
+            accepted=False,
+            should_clear_draft=False,
+            visible_copy=visible_copy,
+            blocker=ConsoleSubmitBlocker.PROJECT_SETUP,  # TASK-33621.23
         )
 
     async def _finalize_agent_success(

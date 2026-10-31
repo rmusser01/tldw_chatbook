@@ -1113,6 +1113,14 @@ class ConsoleSubmitBlocker(StrEnum):
     OWNER_CHANGED = "owner_changed"
     #: Discard's prerequisite pass stopped before the provider by design.
     PREREQUISITES_ONLY = "prerequisites_only"
+    #: Project-instruction setup refused the turn: no project folder could be
+    #: chosen (the picker was cancelled or unavailable) or instructions were
+    #: turned off from the picker.
+    PROJECT_SETUP = "project_setup"
+    #: Any other check that blocked the turn without naming its own code (a
+    #: hook, the private scratch space, the context check); ``submit_draft``
+    #: applies it so a blocked send never logs without one.
+    TURN_REFUSED = "turn_refused"
 
 
 @dataclass(frozen=True)
