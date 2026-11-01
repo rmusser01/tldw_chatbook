@@ -44,11 +44,17 @@ def answer_http(monkeypatch, statuses: list[int], posts: list[str]) -> None:
     provider adapter still builds, sends and classifies the request.
     """
 
+    from urllib3.response import HTTPResponse
+    from urllib3.util.retry import Retry
+
     def send(self, request, **_kwargs):
         posts.append(request.url)
         status = statuses[min(len(posts), len(statuses)) - 1]
         response = requests.Response()
         response.status_code = status
+        # This socket-edge replacement makes exactly one physical request.
+        # Preserve the real response's empty transport-retry evidence.
+        response.raw = HTTPResponse(status=status, retries=Retry(total=0))
         response.reason = "fixture"
         response.headers["Content-Type"] = "application/json"
         body = (
@@ -92,7 +98,14 @@ async def test_exhausted_provider_error_names_status_and_meaning(
             what=f"the run did not fail: {h.controller.run_state}",
         )
         await h.console._sync_native_console_chat_ui()
-        await h.pilot.pause(0.3)
+        # The failed run state is published before the queued transcript
+        # projection replaces its waiting row and paints the System error.
+        await _until(
+            h.pilot,
+            lambda: f"Status: {status}." in visible_text(h),
+            timeout=30.0,
+            what=f"HTTP {status} was not painted in the exhausted error row",
+        )
 
         # AC#3: the agent's in-place retries reached the provider (1 + 2).
         assert len(posts) == 3, posts
@@ -104,7 +117,7 @@ async def test_exhausted_provider_error_names_status_and_meaning(
         assert [row.status for row in assistant] == ["failed"]
         text = visible_text(h)
         assert "OpenAI" in text
-        assert f"Status: {status}." in text
+        assert f"Status: {status}." in text, text
         assert MEANINGS[status] in text
         assert "Trace capture blocked" not in text
         assert "provider was not contacted" not in text

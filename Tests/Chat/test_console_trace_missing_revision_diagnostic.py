@@ -17,10 +17,10 @@ from Tests.Chat.test_console_trace_runtime import (
     _semantic_request,
 )
 from Tests.Chat.test_console_trace_runtime import (
-    make_database as make_database,  # noqa: PLC0414 - pytest fixture re-export
+    make_database as _database_fixture,
 )
 from Tests.Chat.test_console_trace_runtime import (
-    make_gateway as make_gateway,  # noqa: PLC0414 - pytest fixture re-export
+    make_gateway as _gateway_fixture,
 )
 from tldw_chatbook.Chat.console_prepared_request import (
     prepare_provider_request,
@@ -32,6 +32,9 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     SavedRevisionTraceProvenance,
 )
 from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
+
+make_database = _database_fixture
+make_gateway = _gateway_fixture
 
 
 def test_a_missing_revision_row_is_named_in_the_diagnostic(

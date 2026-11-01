@@ -83,13 +83,17 @@ contacted". On this callout:
   database cannot be written at that moment, the callout says the
   cancellation could not be saved and the send stays paused.
 
-When the provider refused every earlier call of the send, none of these opens
-the "Response delivery status is unknown" panel. That panel is for a request
+When Console can prove the provider refused every earlier call of the send,
+none of these opens the "Response delivery status is unknown" panel. That panel is for a request
 that may have reached the provider without a known outcome: if the provider
 already answered an earlier call of the same send (for example a tool step)
 and a later call's trace record then fails, **Retry** or **Send without
 capture** can still lead to it, because replaying the turn could repeat work
 the provider already did.
+
+A timeout or synthetic error status is not proof of rejection. Missing HTTP
+response or retry-history evidence also keeps delivery uncertain, including
+provider adapters that discard that evidence when sanitizing their errors.
 
 If an interrupted tool run leaves a pending response after reopening the
 conversation, **Discard** retains the user message and earlier trace history.

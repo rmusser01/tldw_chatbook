@@ -80,7 +80,7 @@ def _rolled_back_refusal() -> Iterator[None]:
     except (TraceReservationRefused, TraceSurfaceChangeRefused):
         raise
     except ValueError as exc:
-        code = exc.args[0] if len(exc.args) == 1 and type(exc.args[0]) is str else ""
+        code = exc.args[0] if len(exc.args) == 1 and type(exc.args[0]) is str else ""  # noqa: E721 - refuse string subclasses at the diagnostic boundary
         raise TraceReservationRefused(code or "trace_reservation_refused") from exc
 
 

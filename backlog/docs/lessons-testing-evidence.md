@@ -1,5 +1,18 @@
 # Lessons: what counts as evidence a change works
 
+## A suggested HTTP status is not proof that a request was refused (PR3312, 2026-11-01)
+
+The real vLLM adapter turned an HTTP-edge ReadTimeout into a synthetic 503.
+The new trace-recovery proof treated that status as rejection and permitted
+replay after the next reservation failed (`r-499ebb83`). Separately, an empty
+HTTP 200 stream followed by a rejected fallback was counted as one refused call.
+Real adapter regressions exposed both errors. Count consumed admissions and
+qualify response-owned evidence, including earlier transport retry outcomes;
+missing evidence stays unknown. A final rejection cannot erase an earlier
+accepted or uncertain attempt. The final focused checks also found that FAILED
+was published before the transcript replaced its Waiting row: visible-copy
+tests must wait for the actual painted text, not a fixed delay after model state.
+
 
 ## A daemon thread cannot enforce its subprocess timeout after interpreter exit (PR #3155, 2026-10-31)
 

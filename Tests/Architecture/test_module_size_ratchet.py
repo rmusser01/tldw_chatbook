@@ -179,7 +179,8 @@ _BUDGETS: dict[str, int] = {
     # _continuation_binding; rows below re-pinned at their measured sizes.
     # PR3173 integration, 2026-10-31: explicit user size waiver; exact measured tree.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29277,
+    # PR3312 integration: explicit user size waiver; measured 2026-11-01.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29312,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -655,7 +656,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8355,
+    # PR3312 integration: explicit user size waiver; measured 2026-11-01.
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8528,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
@@ -682,7 +684,8 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7195,
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
-    "tldw_chatbook/UI/Console_Modules/session.py": 6982,
+    # PR3312 integration: explicit user size waiver; measured 2026-11-01.
+    "tldw_chatbook/UI/Console_Modules/session.py": 6991,
     # 2026-10-29, TASK-36941.1 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 6987 -> 6993 (+6). transaction() rolls back on BaseException, and its
