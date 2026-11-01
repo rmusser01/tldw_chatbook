@@ -644,3 +644,44 @@ async def test_focused_inspector_scrolls_to_last_description_line(request):
         assert screen.selection.card_id == 1
         await pilot.press("escape", "down")
         assert screen.selection.card_id == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["load", "mutation"])
+@private_profile_test
+async def test_board_error_notification_renders_runtime_text_literally(
+    request, operation: str,
+) -> None:
+    """Exception text cannot crash a toast, swallow brackets or add actions."""
+    from textual.widgets._toast import Toast
+
+    detail = "[PDF] [@click=app.quit]name[/] [/b]"
+    board = _snapshot({"To Do": (_card(1, "first"),)})
+
+    async def loader() -> BoardSnapshot:
+        return board
+
+    async def fail():
+        raise RuntimeError(detail)
+
+    app = _KanbanHarness(loader)
+    async with app.run_test(size=(120, 30), notifications=True) as pilot:
+        await app.workers.wait_for_complete()
+        screen = app.query_one(KanbanBoardScreen)
+        if operation == "load":
+            screen.snapshot_loader = fail
+            worker = screen._load_and_apply()
+            expected = f"Kanban board load failed: {detail}"
+        else:
+            screen._bootstrap_in_flight = True
+            worker = screen._run_mutation_worker(fail(), None)
+            expected = f"Kanban change failed: {detail}"
+        await worker.wait()
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if app.screen.query(Toast):
+                break
+        (toast,) = app.screen.query(Toast)
+        assert expected in str(toast.render())
+        if operation == "mutation":
+            assert not screen._bootstrap_in_flight

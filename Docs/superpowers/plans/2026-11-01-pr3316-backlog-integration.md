@@ -29,3 +29,11 @@ Reason: source already records the CI ordering and bounded cancellation policy.
 ## Integration ledger
 
 Ruling: prepare and test the independent CI delta on frozen PR3315 head 5d7cad1c8598495e398cf25cd976352c8689b23a while its UI run completes. Publication remains ordered after PR3315; rebase onto its confirmed merge and repeat any validation affected by later repairs before final review. This overlaps local preparation only, not merges.
+
+### Baseline preflight repairs (2026-11-01)
+
+The frozen CI run and exact PR3315-base comparison both fail the fixture-derived edit/resend node selector and stale inherited-target list. Replace the two selected edit/resend cases with the entire six-case function (coverage expands), and retain the existing terminal-input target in the preservation assertion. All other application-job bytes remain unchanged apart from preflight needs.
+
+The actual markup guard also found two unchanged Kanban exception notifications without literal rendering. The screen, checker and census are identical to the provisional base. Add a mounted error-path regression with notifications enabled, observe it fail, then pass markup=False at those two existing sinks. Keep the census untouched. ADR required: no new ADR; routine enforcement of existing literal-notification convention under ADR237/ADR150. Run the affected Kanban cases and unchanged markup guard.
+
+The next selector pass exposed the same fixture-ID limitation on compact-now warm-agent. Select the entire three-case function too; coverage expands from one to three, with no checker change.
