@@ -278,7 +278,13 @@ class _Walk:
         # An endpoint provider keeps its key under "Authentication
         # (optional)": Tab to that title, Enter opens it, Tab into the field.
         for _ in range(30):
-            if type(self.app.focused).__name__ == "CollapsibleTitle":
+            # TASK-34100.6: the no-server how-to is a collapsible too, so
+            # look for the Authentication header itself.
+            focused = self.app.focused
+            if (
+                type(focused).__name__ == "CollapsibleTitle"
+                and getattr(focused.parent, "id", None) == "setup-provider-auth-toggle"
+            ):
                 break
             await self.pilot.press("tab")
         await self.pilot.press("enter")

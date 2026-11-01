@@ -19,7 +19,8 @@ from __future__ import annotations
 import asyncio
 import errno
 import json
-from collections.abc import Mapping
+import ssl
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -45,6 +46,16 @@ DISCOVERY_PROBE_TIMEOUT_SECONDS = 2.5
 MODEL_PROBE_RESPONSE_MAX_BYTES = 8 * 1024 * 1024
 DEFAULT_LLAMACPP_DISCOVERY_URL = "http://127.0.0.1:8080"
 DEFAULT_OLLAMA_DISCOVERY_URL = "http://127.0.0.1:11434"
+#: TASK-34100.6 (review provider-13): other engines' default loopback ports,
+#: as (row, URL, engine). LM Studio and Jan serve the OpenAI API, and a
+#: KoboldCpp that answers ``/v1/models`` does too, so each sets up the Custom
+#: OpenAI-compatible row, named by its engine (the KoboldCpp row saves the
+#: native route, which a ``/v1/models`` answer does not prove).
+ENGINE_DISCOVERY_DEFAULTS: tuple[tuple[str, str, str], ...] = (
+    ("custom", "http://127.0.0.1:1234", "LM Studio"),
+    ("custom", "http://127.0.0.1:1337", "Jan"),
+    ("custom", "http://127.0.0.1:5001", "KoboldCpp"),
+)
 #: api_settings sections whose configured endpoints are eligible candidates.
 LOCAL_DISCOVERY_PROVIDER_KEYS = (
     "llama_cpp",
@@ -57,6 +68,8 @@ LOCAL_DISCOVERY_PROVIDER_KEYS = (
     "oobabooga",
     "tabbyapi",
     "aphrodite",
+    "custom",
+    "custom_2",
 )
 _OLLAMA_PROVIDER_KEYS = frozenset({"ollama", "local_ollama"})
 _LOCALHOST_HOSTNAMES = frozenset({"127.0.0.1", "localhost"})
@@ -80,24 +93,158 @@ def normalize_probe_provider_key(provider: object) -> str:
     return normalize_provider_key_for_contract(normalized)
 
 
+def _error_chain(error: BaseException):
+    """Yield an exception, its causes/contexts and exception-group members."""
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    while pending:
+        current: BaseException | None = pending.pop()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            yield current
+            if isinstance(current, BaseExceptionGroup):
+                pending.extend(current.exceptions)
+            current = current.__cause__ or current.__context__
+
+
 def connect_error_is_refused(error: BaseException) -> bool:
     """Return whether an exception chain contains ECONNREFUSED.
 
     A host name with several addresses (``localhost`` is ::1 and 127.0.0.1)
     fails as an exception group of per-address errors; those count too.
     """
-    current: BaseException | None = error
-    seen: set[int] = set()
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        if isinstance(current, OSError) and current.errno == errno.ECONNREFUSED:
-            return True
-        if isinstance(current, BaseExceptionGroup) and any(
-            connect_error_is_refused(inner) for inner in current.exceptions
-        ):
-            return True
-        current = current.__cause__ or current.__context__
-    return False
+    return any(
+        isinstance(current, OSError) and current.errno == errno.ECONNREFUSED
+        for current in _error_chain(error)
+    )
+
+
+def connect_error_is_untrusted_certificate(error: BaseException) -> bool:
+    """Return whether a connection failed certificate verification.
+
+    TASK-34100.6 (review coverage-19): a TLS-inspecting proxy or a
+    self-signed server fails as ``ConnectError <- SSLCertVerificationError``
+    (captured live against a self-signed llama-server). The server answered;
+    its certificate is what is not trusted.
+    """
+    return any(
+        isinstance(current, ssl.SSLCertVerificationError)
+        for current in _error_chain(error)
+    )
+
+
+def connect_error_is_plain_http(error: BaseException) -> bool:
+    """Return whether an https request reached a server that answered in plain HTTP.
+
+    TASK-34100.6 (review provider-15): a plain-HTTP server that answers the
+    TLS hello at once fails as ``SSLError(WRONG_VERSION_NUMBER)``. A timeout
+    is never evidence on its own: anyio awaits every TLS read inside an
+    ``except SSLWantReadError`` block, so EVERY https timeout (a stalled
+    handshake, a slow cloud API) carries ``SSLWantReadError`` in its chain
+    (review round 1, F2). ``classify_transport_failure`` confirms the
+    llama-server case (it waits for a request line) with a plain-HTTP GET.
+    """
+    return any(
+        isinstance(current, ssl.SSLError)
+        and getattr(current, "reason", None) == "WRONG_VERSION_NUMBER"
+        for current in _error_chain(error)
+    )
+
+
+#: Seconds the plain-HTTP confirmation of a stalled loopback handshake waits.
+PLAIN_HTTP_CONFIRM_TIMEOUT_SECONDS = 1.0
+
+
+def _plain_http_confirm_client() -> httpx.AsyncClient:
+    """The client the plain-HTTP confirmation uses (a test seam).
+
+    Loopback only and never proxied: the request goes to the host:port the
+    user typed, with no credential.
+    """
+    return httpx.AsyncClient(
+        timeout=PLAIN_HTTP_CONFIRM_TIMEOUT_SECONDS, trust_env=False, follow_redirects=False
+    )
+
+
+def https_on_loopback(url: str) -> bool:
+    """Whether ``url`` is https on 127.0.0.1/localhost (plain HTTP can be confirmed)."""
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and (parsed.hostname or "").lower() in _LOCALHOST_HOSTNAMES
+
+
+async def loopback_answers_plain_http(url: str) -> bool:
+    """Whether the loopback server behind an https ``url`` answers plain HTTP.
+
+    Args:
+        url: The https URL whose handshake stalled.
+
+    Returns:
+        True only when ``url`` is https on 127.0.0.1/localhost and a plain
+        GET to the same host:port gets any HTTP response.
+    """
+    if not https_on_loopback(url):
+        return False
+    parsed = urlparse(url)
+    try:
+        async with _plain_http_confirm_client() as client:
+            await client.get(f"http://{parsed.netloc}/")
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - no HTTP answer means no evidence.
+        return False
+    return True
+
+
+async def classify_transport_failure(error: BaseException, url: str = "") -> str:
+    """``transport_failure_category``, with a stalled loopback handshake confirmed.
+
+    llama-server reads a request line before it answers, so https against it
+    stalls the TLS handshake (``ConnectTimeout``). Only then, and only on
+    loopback, one plain GET decides between 'speaks plain HTTP' and a real
+    timeout; a read timeout after the handshake stays a timeout.
+
+    Args:
+        error: The transport exception a request raised.
+        url: The URL requested; read from ``error.request`` when omitted.
+
+    Returns:
+        One of ``transport_failure_category``'s categories.
+    """
+    category = transport_failure_category(error)
+    if category != "timeout" or not isinstance(error, httpx.ConnectTimeout):
+        return category
+    if not url:
+        try:
+            url = str(error.request.url)
+        except RuntimeError:
+            return category
+    return "tls_plain_http" if await loopback_answers_plain_http(url) else category
+
+
+def transport_failure_category(error: BaseException) -> str:
+    """Name a failed request's cause, shared by every check and discovery.
+
+    TASK-34100.6 (review coverage-19, provider-15): the Settings check, model
+    discovery, the wizard and the Console all read this (through
+    ``classify_transport_failure``), so a certificate problem is never
+    reported as an outage and a timeout is never reported as plain HTTP.
+
+    Args:
+        error: The transport exception a request raised.
+
+    Returns:
+        ``"tls_untrusted"``, ``"tls_plain_http"``, ``"connection_refused"``,
+        ``"timeout"`` or ``"connection_error"``.
+    """
+    if connect_error_is_untrusted_certificate(error):
+        return "tls_untrusted"
+    if connect_error_is_plain_http(error):
+        return "tls_plain_http"
+    if isinstance(error, httpx.TimeoutException):
+        return "timeout"
+    if connect_error_is_refused(error):
+        return "connection_refused"
+    return "connection_error"
 
 
 class UnsupportedModelResponseEncoding(ValueError):
@@ -144,10 +291,15 @@ async def read_bounded_model_response(
 
 @dataclass(frozen=True)
 class LocalServerCandidate:
-    """One localhost endpoint eligible for a discovery probe."""
+    """One localhost endpoint eligible for a discovery probe.
+
+    ``engine`` names the server for a well-known port whose row is generic
+    (``"LM Studio"`` on :1234 sets up the Custom row); empty otherwise.
+    """
 
     provider_key: str
     base_url: str
+    engine: str = ""
 
 
 @dataclass(frozen=True)
@@ -157,6 +309,7 @@ class DiscoveredLocalServer:
     provider_key: str
     base_url: str
     model_ids: tuple[str, ...] = ()
+    engine: str = ""
 
 
 @dataclass(frozen=True)
@@ -248,16 +401,25 @@ def build_local_server_candidates(
     ordered: list[LocalServerCandidate] = []
     seen_urls: set[str] = set()
 
-    def _add(provider_key: str, raw_url: object) -> None:
+    def _add(provider_key: str, raw_url: object, engine: str = "") -> None:
         normalized = normalize_probe_base_url(raw_url)
         if not normalized or not is_localhost_url(normalized):
             return
-        if normalized in seen_urls:
-            return
-        seen_urls.add(normalized)
-        ordered.append(
-            LocalServerCandidate(provider_key=provider_key, base_url=normalized)
+        parts = urlparse(normalized)
+        alternate_host = "localhost" if parts.hostname == "127.0.0.1" else "127.0.0.1"
+        alternate_netloc = alternate_host + (
+            f":{parts.port}" if parts.port is not None else ""
         )
+        alternate = parts._replace(netloc=alternate_netloc).geturl()
+        for base_url in (normalized, alternate):
+            if base_url in seen_urls:
+                continue
+            seen_urls.add(base_url)
+            ordered.append(
+                LocalServerCandidate(
+                    provider_key=provider_key, base_url=base_url, engine=engine
+                )
+            )
 
     # Two well-known llama.cpp candidates when nothing is configured: the
     # stock `llama-server` default port (8080), then the port Chatbook's docs
@@ -266,6 +428,8 @@ def build_local_server_candidates(
     _add("llama_cpp", DEFAULT_LLAMACPP_DISCOVERY_URL)
     _add("llama_cpp", DEFAULT_LLAMACPP_BASE_URL)
     _add("ollama", DEFAULT_OLLAMA_DISCOVERY_URL)
+    for provider_key, url, engine in ENGINE_DISCOVERY_DEFAULTS:
+        _add(provider_key, url, engine)
 
     api_settings = (
         app_config.get("api_settings", {}) if isinstance(app_config, Mapping) else {}
@@ -611,6 +775,39 @@ async def discover_local_servers(
                 provider_key=candidate.provider_key,
                 base_url=candidate.base_url,
                 model_ids=result.model_ids,
+                engine=candidate.engine,
             )
         )
-    return tuple(discovered)
+    return one_server_per_port(discovered)
+
+
+def one_server_per_port(servers: Sequence[DiscoveredLocalServer]) -> tuple:
+    """Merge the loopback spellings of one server into one result.
+
+    TASK-34100.6 (review provider-22): ``127.0.0.1`` and ``localhost`` are
+    both probed -- a server bound to only one of them answers on only one --
+    but one server is one row. The first that answered, in probe order, is
+    kept.
+
+    Args:
+        servers: Responding servers in probe order.
+
+    Returns:
+        One server per (loopback host, port).
+    """
+    kept: list = []
+    seen: set[tuple[str, int | None]] = set()
+    for server in servers:
+        try:
+            parts = urlparse(str(getattr(server, "base_url", "")))
+            host = (parts.hostname or "").lower()
+            port = parts.port
+        except ValueError:
+            continue
+        if host in _LOCALHOST_HOSTNAMES or host == "::1":
+            host = "127.0.0.1"
+        if (host, port) in seen:
+            continue
+        seen.add((host, port))
+        kept.append(server)
+    return tuple(kept)

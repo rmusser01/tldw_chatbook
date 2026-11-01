@@ -20,7 +20,7 @@ from tldw_chatbook.Chat.local_server_discovery import (
     MODEL_IDS_MAX_COUNT,
     MODEL_PROBE_RESPONSE_MAX_BYTES,
     UnsupportedModelResponseEncoding,
-    connect_error_is_refused,
+    classify_transport_failure,
     read_bounded_model_response,
 )
 from tldw_chatbook.Chat.provider_endpoint_contract import (
@@ -796,12 +796,14 @@ def _discovery_error(
     )
 
 
-def _transport_category(error: httpx.HTTPError) -> str:
-    """Name a failed request's bounded category (TASK-33005.4 AC#4)."""
-    if isinstance(error, httpx.TimeoutException):
-        return "timeout"
-    if isinstance(error, httpx.ConnectError) and connect_error_is_refused(error):
-        return "connection_refused"
+async def _transport_category(error: httpx.HTTPError) -> str:
+    """Name a failed request's bounded category (TASK-33005.4 AC#4).
+
+    TASK-34100.6: certificate and plain-HTTP failures are named too, by the
+    classifier the Settings check shares.
+    """
+    if isinstance(error, (httpx.TimeoutException, httpx.ConnectError)):
+        return await classify_transport_failure(error)
     return "connection_error"
 
 
@@ -935,7 +937,9 @@ async def discover_openai_compatible_models(
                     status="error",
                     error=_discovery_error(
                         "request_failed",
-                        "Model discovery request failed.",
+                        # TASK-34100.6 review round 1 (live F7): the code says
+                        # the server answered, so no 'is it running?' copy.
+                        f"The models endpoint answered HTTP {exc.response.status_code}.",
                         "Check the endpoint URL, server availability, and credentials.",
                         "http_status",
                     ),
@@ -950,7 +954,7 @@ async def discover_openai_compatible_models(
                         "request_failed",
                         "Model discovery request failed.",
                         "Check the endpoint URL, server availability, and credentials.",
-                        _transport_category(exc),
+                        await _transport_category(exc),
                     ),
                 )
             if body is None:
@@ -1067,7 +1071,7 @@ async def discover_openai_compatible_models(
                 "request_failed",
                 "Model discovery request failed.",
                 "Check the endpoint URL, server availability, and credentials.",
-                _transport_category(exc),
+                await _transport_category(exc),
             ),
         )
     if request_error is not None:

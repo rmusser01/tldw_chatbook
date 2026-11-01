@@ -2878,8 +2878,45 @@ class TestSetupAttentionIds:
             {"provider", "model"}
         )
 
+    def test_a_warning_on_provider_flags_provider_only(self):
+        """TASK-34100.6 review v3r1, G6-BV3-03: a 403 to Provider's check is
+        '!' on Provider, never a failure that also flags the model the user
+        chose."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import setup_attention_ids
+
+        wizard_data = {
+            "provider": {"provider_key": "openai"},
+            "model": {"model_id": "gpt-4.1"},
+        }
+        assert setup_attention_ids(wizard_data, provider_warned=True) == frozenset(
+            {"provider"}
+        )
+
     def test_optional_steps_are_never_flagged(self):
         """Skipping voice or protection is legitimate; do not cry wolf."""
         flagged = self._ids({})
         assert "voice" not in flagged
         assert "protect-keys" not in flagged
+
+
+@pytest.mark.parametrize(
+    ("skipped", "expected"),
+    [
+        (True, ["skipped", "skipped", "not_needed", "active"]),
+        (False, ["attention", "complete", "not_needed", "active"]),
+    ],
+)
+def test_combined_tracker_preserves_provider_and_protect_facts(skipped, expected):
+    """Provider skip/warning never turns unencrypted Protect into success."""
+    values = {
+        setup_state.STEP_PROVIDER: {"provider_key": "openai", "skipped": skipped},
+        setup_state.STEP_MODEL: {"model_id": "gpt-test"},
+        setup_state.STEP_PROTECT: {"protect_state": "plaintext"},
+    }
+    items = setup_state.setup_progress_items(
+        (setup_state.STEP_PROVIDER, setup_state.STEP_MODEL,
+         setup_state.STEP_PROTECT, setup_state.STEP_SUMMARY),
+        3, values, provider_warned=True,
+    )
+    assert [item.state for item in items] == expected
+    assert setup_state.progress_glyph(items[2].state, 2) == "\u2013"

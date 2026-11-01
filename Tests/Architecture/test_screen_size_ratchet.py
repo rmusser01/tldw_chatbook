@@ -233,7 +233,15 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Retain the notification hooks and bounded shutdown repair in place;
     #: pin the measured tree exactly, without reflow/extraction to fit.
     #: 2026-10-31, PR #3225 after #3183: user size-limit waiver; exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24489, 741),
+    # owner decision 2026-10-04 (expand limits): TASK-34100.6 +11.
+    #: 2026-10-20, TASK-34100.6 review v3r1 (R1-01); re-measured 2026-10-29
+    #: after rebasing onto dev (24329/737): this task adds 11 -- the Get
+    #: started card's 'Look again' action and the local_server_found flag
+    #: behind 'No model connected' (AC#9), and the exported-key provider
+    #: 'Set up provider' opens (AC#11). Methods unchanged. 24340/737, the
+    #: exact measurement, never above it.
+    #: 2026-10-31, PR #3294 on dev21fe53a3: explicit user size waiver; exact24500/741.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24500, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

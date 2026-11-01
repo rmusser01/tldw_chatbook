@@ -51,6 +51,7 @@ from ...Chat.custom_endpoint_registry import (
 from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import (
     KEYLESS_PROVIDER_KEYS,
+    PROVIDERS_REQUIRING_API_KEY_KEYS,
     default_api_key_env_var,
     get_provider_readiness,
     provider_config_key,
@@ -721,6 +722,28 @@ def refresh_openai_reconnect_pending(screen: SettingsScreen) -> None:
     )
 
 
+def key_url_line(provider: str) -> str:
+    """Where to get the provider's key, from the shared catalog record.
+
+    TASK-34100.6 AC#27 (review provider-25; review v3r1 R1-03): the wizard
+    and Settings read the same ``provider_setup_facts`` key URL, or its
+    dashboard fallback for a page not yet sourced. TASK-33007.2 keeps
+    Connect's rows one line each, so this sits in the Inspector's Key block.
+
+    Args:
+        provider: The provider the form holds.
+
+    Returns:
+        'New keys: <url>.' or the dashboard line; "" when no key is needed.
+    """
+    from ...Chat.provider_setup_facts import key_help_text, provider_setup_facts
+
+    key = provider_config_key(provider)
+    if key not in PROVIDERS_REQUIRING_API_KEY_KEYS:
+        return ""
+    return key_help_text(provider_setup_facts(key), provider_display_name(key))
+
+
 def env_var_help(provider: str) -> str:
     """Return the Env var row's help for the provider the form holds."""
     if provider_config_key(provider) in KEYLESS_PROVIDER_KEYS:
@@ -952,6 +975,10 @@ def refresh_key_rows(screen: SettingsScreen, provider: str) -> None:
     key_word, key_help = api_key_row_copy(screen, provider)
     screen._set_static_text("#settings-provider-key-status", key_word)
     screen._set_static_text("#settings-provider-api-key-help", key_help)
+    key_url = key_url_line(provider)  # TASK-34100.6 AC#27
+    screen._set_static_text("#settings-provider-key-url", key_url)
+    for line in screen.query("#settings-provider-key-url"):
+        line.display = bool(key_url)
     word = key_check_verdict(screen)  # one verdict for both rows (TASK-33005.7)
     screen._set_static_text("#settings-provider-readiness", word)
     screen._set_static_text(
@@ -1451,6 +1478,12 @@ def compose_providers_models_inspector(screen: SettingsScreen) -> ComposeResult:
     # check's labelled rows; the card's Key check row says only the verdict,
     # so a result never moves the card's rows.
     yield Static("Key", classes="destination-section")
+    key_url = key_url_line(provider)  # TASK-34100.6 AC#27: the wizard's source
+    url_line = Static(
+        key_url, id="settings-provider-key-url", classes="settings-detail-row", markup=False
+    )
+    url_line.display = bool(key_url)
+    yield url_line
     yield Static(
         screen._provider_readiness_label(),
         id="settings-provider-inspector-readiness",

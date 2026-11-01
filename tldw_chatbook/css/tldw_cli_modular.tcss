@@ -15401,13 +15401,6 @@ SplashScreen.hidden {
     color: $primary;
 }
 
-.current-item {
-    text-align: center;
-    color: $text-muted;
-    margin-bottom: $ds-space-2;
-    text-style: italic;
-}
-
 .progress-stats {
     layout: horizontal;
     align: center middle;
@@ -15511,10 +15504,6 @@ ExportOptionsStep .option-group {
 ExportOptionsStep .option-title {
     text-style: bold;
     margin-bottom: $ds-space-1;
-}
-
-ExportOptionsStep .radio-option {
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-1;
 }
 
 ExportOptionsStep .checkbox-option {
@@ -15802,10 +15791,6 @@ ConflictResolutionStep .strategy-title {
     color: $primary;
 }
 
-ConflictResolutionStep .radio-option {
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-1;
-}
-
 ConflictResolutionStep .strategy-description {
     margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-3;
     color: $text-muted;
@@ -16054,9 +16039,10 @@ SmartContentTree Tree > .selected-node {
 .setup-subtitle { color: $text-muted; margin-bottom: $ds-space-1; }
 .setup-provider .setup-title,
 .setup-provider .setup-subtitle { margin-bottom: $ds-space-0; }
+
 .setup-step-error {
-    color: $error;
-    background: $error 15%;
+    color: $text;
+    background: $error 25%;
     text-style: bold;
     margin-top: $ds-space-1;
 
@@ -16066,9 +16052,9 @@ SmartContentTree Tree > .selected-node {
 .setup-step-note { color: $text-muted; margin-top: $ds-space-1; }
 .setup-field-label { margin-top: $ds-space-1; }
 .setup-probe-status { color: $text-muted; margin-top: $ds-space-1; }
-.setup-summary-row { height: $ds-size-1; }
-.setup-summary-ok { color: $success; }
-.setup-summary-missing { color: $error; }
+.setup-probe-status.-ok { color: $text-success; }
+.setup-probe-status.-error { color: $text-error; }
+.setup-probe-status.-warn { color: $text-warning; }
 
 
 .setup-step {
@@ -16207,6 +16193,11 @@ SmartContentTree Tree > .selected-node {
     color: $ds-focus-fg;
 }
 
+#setup-provider-choice { max-height: 40vh; }
+.setup-provider-filter { width: $ds-width-fill; }
+.setup-provider-count { width: auto; margin-left: $ds-space-2; }
+.setup-no-server { height: auto; }
+
 
 .setup-summary-actions {
     dock: bottom;
@@ -16270,11 +16261,6 @@ SmartContentTree Tree > .selected-node {
 }
 
 
-.setup-choice-header {
-    color: $text-muted;
-    text-style: bold;
-    padding: $ds-space-0 $ds-space-1;
-}
 .setup-detected-banner {
     margin-bottom: $ds-space-1;
 }
@@ -16297,8 +16283,7 @@ SmartContentTree Tree > .selected-node {
 }
 
 .setup-provider-connection-actions {
-    height: $ds-size-3;
-    min-height: $ds-size-3;
+    height: auto;
     margin-top: $ds-space-1;
 }
 
@@ -16394,27 +16379,34 @@ FirstRunSetupWizard SetupWizardContainer .wizard-progress {
     text-style: bold;
 }
 
-.setup-progress-item.-upcoming .step-number {
+
+.setup-progress-item.-upcoming .step-number,
+.setup-progress-item.-skipped .step-number {
     background: $panel;
     color: $text-muted;
     border: solid $primary;
 }
 
-.setup-progress-item.-upcoming .step-title {
+.setup-progress-item.-upcoming .step-title,
+.setup-progress-item.-skipped .step-title {
     color: $text-muted;
 }
 
 
 .setup-key-row {
-    height: $ds-size-3;
+    height: auto;
 }
-.setup-key-row Input {
+.setup-key-row #setup-provider-api-key {
     width: $ds-width-fill;
 }
 .setup-key-row Button {
     margin-left: $ds-space-1;
     min-width: $ds-size-8;
 }
+.setup-key-hint, #setup-provider-key-source { height: auto; }
+
+#setup-provider-key-source SetupRadioButton { text-wrap: wrap; }
+.setup-key-hint Static { width: $ds-width-fill; }
 
 
 FirstRunSetupWizard SetupWizardContainer {

@@ -1507,10 +1507,10 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             shown = self.steps[self.current_step]
         except IndexError:
             shown = None
-        if isinstance(shown, ProviderStep):
-            copy = wizard_state.PROBE_FAILURE_COPY.get(self.provider_probe_failure())
-            if copy:
-                shown.show_step_error(copy.provider_notice)
+        if isinstance(shown, ProviderStep) and (
+            notice := shown.return_notice(self.provider_probe_failure())
+        ):
+            shown.show_step_error(notice)
         self._sync_exit_controls()
         try:
             current_step = self.steps[self.current_step]
@@ -1577,6 +1577,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
                 self._active_position(self.current_step or 0),
                 self.wizard_data,
                 probe_failed=bool(self.provider_probe_failure()),
+                provider_warned=model_discovery.provider_check_forbidden(self),
             )
             self.query_one(".wizard-progress", SetupWizardProgress).set_items(items)
         except Exception:
@@ -3078,8 +3079,8 @@ _MOVED_PUBLIC_NAMES: dict[str, str] = {
     "VoiceSetupStep": "first_run_voice_step",
     "EXIT_ROUTE_LIBRARY_NOTES": "first_run_summary_step",
     "ProviderChoiceList": "first_run_provider_step",
-    "ProviderEndpointCandidateList": "first_run_provider_step",
-    "ProviderEndpointCandidateOption": "first_run_provider_step",
+    "ProviderEndpointCandidateList": "first_run_provider_detection",
+    "ProviderEndpointCandidateOption": "first_run_provider_detection",
     "GENERIC_DISCOVERY_FAILURE_CATEGORY": "first_run_model_discovery",
 }
 

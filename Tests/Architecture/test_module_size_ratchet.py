@@ -428,7 +428,12 @@ _BUDGETS: dict[str, int] = {
     # Integrated capture fix 2 (2026-10-13): re-measured after the pick: 2,468.
     # TASK-35011: the Saved model list block and its title summaries move to
     # saved_model_list.py (-100): 2,365.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2365,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.6 +33.
+    # 2026-10-20, TASK-34100.6 review v3r1 (R1-03), re-measured on dev
+    # 2026-10-27: 2,365 -> 2,398. The Inspector's Key block says where to get
+    # a key from the shared catalog (key_url_line, its compose and its
+    # refresh), as first-run setup does.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2398,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     # The capture fix wave (2026-10-12): Temperature's placeholder and
@@ -527,7 +532,8 @@ _BUDGETS: dict[str, int] = {
     # the finish-later flow into helpers (3,123); its review round 1 moved
     # Skip setup's save into first_run_finish_later.skip_setup (3,119); its
     # review v5r1 dropped the resume's stale Protect status line (3,106).
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3106,
+    # 2026-10-31 user size waiver: preserve provider warning via shared tracker.
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3107,
     # TASK-34100.1: the step modules the split left at 1,000 lines or more
     # are pinned at their exact size, so the split cannot regrow a god module
     # a step at a time: Provider, Speech, Voice (moved out by TASK-33921) and
@@ -542,8 +548,19 @@ _BUDGETS: dict[str, int] = {
     # the Test-evidence line moved there too -> 2,456. Review round 2: the
     # failed-listing line and the key line went there as well -> 2,453.
     # Round 3: the key mark came back to the listing's call site, where a
-    # reader sees it (that line stays pure) -> 2,454.
-    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2454,
+    # reader sees it (that line stays pure) -> 2,454. TASK-34100.6: the
+    # localhost detection, skip, key entry, provider list, connection test,
+    # key check and status copy moved to first_run_provider_{detection,skip,
+    # key_entry,list,check}.py (TASK-33008's listing and Test lines with
+    # them); merged onto dev -> 1,665.
+    # owner decision 2026-10-04 (expand limits): TASK-34100.6 +13.
+    # 2026-10-20, TASK-34100.6 review v3r1: 1,665 -> 1,678. Skip always skips
+    # and never outlives its press (R1-02, R1-07: commit's skip branch, the
+    # advance fence, cleared on a provider change or key edit), and 'test
+    # again' waits for Test to be enabled (G6-BV3-05). In place, in the
+    # methods that own them.
+    # 2026-10-31 PR3294 review repair: exact 1690 lines under user size waiver.
+    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 1690,
     # owner decision 2026-10-04 (expand limits): TASK-34100.14 +60 -- the
     # download's cancel switch, its live status line and the cancelled
     # outcome are wired on the step (its @on handlers must stay on the
@@ -569,7 +586,14 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 892,
     # TASK-33008 (Phase 8): 1,012 -> 994; its review's fixes -> 997.
     # TASK-35578: 990; the subtitle moved to first_run_model_discovery.
-    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 990,
+    # TASK-34100.6: Model's failed-discovery copy moved to
+    # first_run_model_discovery.connection_failed_text and the evidence
+    # category mapping there too; rebased onto dev -> 973.
+    # owner decision 2026-10-04 (expand limits): TASK-34100.6 +2.
+    # 2026-10-27, review v3r1 G6-BV3-03: Model keeps the rendered failure
+    # category beside its rendered probe failure, so a 403 still marks
+    # Provider '!' after Model hides -> 975.
+    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 975,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5143,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4930,
     # TASK-36942.1 (architecture review 2026-10-25, F16): every module of

@@ -269,7 +269,22 @@ def _assert_locked_precondition(precondition) -> None:
     assert precondition(get_atomic_config_snapshot())
 
 
-@pytest.mark.usefixtures("temp_config")
+@pytest.fixture
+def atomic_handoff_config(tmp_path, monkeypatch):
+    """Select a real private source before constructing the commit owner."""
+    from Tests.Backup_Recovery.config_test_support import select_config_source
+    from tldw_chatbook.Chat import provider_setup_persistence
+
+    path = tmp_path / "handoff-profile" / "config.toml"
+    path.parent.mkdir(mode=0o700)
+    module = select_config_source(
+        monkeypatch, path, globals(), vars(provider_setup_persistence)
+    )
+    module.load_cli_config_and_ensure_existence(force_reload=True)
+    return path
+
+
+@pytest.mark.usefixtures("atomic_handoff_config")
 class TestWizardAtomicProviderHandoff:
     @pytest.mark.asyncio
     async def test_concurrent_identical_model_commits_share_one_writer(

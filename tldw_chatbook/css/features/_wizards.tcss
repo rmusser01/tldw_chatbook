@@ -397,13 +397,6 @@
     color: $primary;
 }
 
-.current-item {
-    text-align: center;
-    color: $text-muted;
-    margin-bottom: $ds-space-2;
-    text-style: italic;
-}
-
 .progress-stats {
     layout: horizontal;
     align: center middle;
@@ -507,10 +500,6 @@ ExportOptionsStep .option-group {
 ExportOptionsStep .option-title {
     text-style: bold;
     margin-bottom: $ds-space-1;
-}
-
-ExportOptionsStep .radio-option {
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-1;
 }
 
 ExportOptionsStep .checkbox-option {
@@ -802,10 +791,6 @@ ConflictResolutionStep .strategy-title {
     color: $primary;
 }
 
-ConflictResolutionStep .radio-option {
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-1;
-}
-
 ConflictResolutionStep .strategy-description {
     margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-3;
     color: $text-muted;
@@ -1062,13 +1047,14 @@ SmartContentTree Tree > .selected-node {
 .setup-subtitle { color: $text-muted; margin-bottom: $ds-space-1; }
 .setup-provider .setup-title,
 .setup-provider .setup-subtitle { margin-bottom: $ds-space-0; }
+/* TASK-34100.6: >= 4.5:1 (test_theme_contrast.py) */
 .setup-step-error {
-    color: $error;
-    background: $error 15%;
+    color: $text;
+    background: $error 25%;
     text-style: bold;
     margin-top: $ds-space-1;
     /* TASK-33008 (capture 06b): keep the text off the wizard's frame, inset
-       like the busy line above the nav bar. */
+       like the busy line above the nav bar (TASK-34100.6: the content column). */
     padding: $ds-space-0 $ds-space-2;
 }
 /* TASK-21140 (UAT G-3): calm informational lines that previously borrowed
@@ -1076,9 +1062,9 @@ SmartContentTree Tree > .selected-node {
 .setup-step-note { color: $text-muted; margin-top: $ds-space-1; }
 .setup-field-label { margin-top: $ds-space-1; }
 .setup-probe-status { color: $text-muted; margin-top: $ds-space-1; }
-.setup-summary-row { height: $ds-size-1; }
-.setup-summary-ok { color: $success; }
-.setup-summary-missing { color: $error; }
+.setup-probe-status.-ok { color: $text-success; }
+.setup-probe-status.-error { color: $text-error; }
+.setup-probe-status.-warn { color: $text-warning; }
 
 /* TASK-1495: the step region clips without scrolling; primary inputs/CTAs
  * can render below a hard fold with no scrollbar (Provider's API-key field
@@ -1255,6 +1241,11 @@ SmartContentTree Tree > .selected-node {
     color: $ds-focus-fg;
 }
 
+#setup-provider-choice { max-height: 40vh; }
+.setup-provider-filter { width: $ds-width-fill; }
+.setup-provider-count { width: auto; margin-left: $ds-space-2; }
+.setup-no-server { height: auto; }
+
 /* TASK-1495 AC #3: the Summary's exit actions are docked to the step
  * viewport's bottom edge (the row is a direct child of the .setup-step
  * scroll container -- see SummaryStep.compose). Docked widgets reserve
@@ -1329,11 +1320,6 @@ SmartContentTree Tree > .selected-node {
 
 /* TASK-1498: section headers inside the provider list, and the pinned
  * found-a-server banner above it. */
-.setup-choice-header {
-    color: $text-muted;
-    text-style: bold;
-    padding: $ds-space-0 $ds-space-1;
-}
 .setup-detected-banner {
     margin-bottom: $ds-space-1;
 }
@@ -1356,8 +1342,7 @@ SmartContentTree Tree > .selected-node {
 }
 
 .setup-provider-connection-actions {
-    height: $ds-size-3;
-    min-height: $ds-size-3;
+    height: auto;
     margin-top: $ds-space-1;
 }
 
@@ -1458,27 +1443,35 @@ FirstRunSetupWizard SetupWizardContainer .wizard-progress {
     text-style: bold;
 }
 
-.setup-progress-item.-upcoming .step-number {
+/* TASK-34100.6: a skipped step looks upcoming, marked "–" (never "!") */
+.setup-progress-item.-upcoming .step-number,
+.setup-progress-item.-skipped .step-number {
     background: $panel;
     color: $text-muted;
     border: solid $primary;
 }
 
-.setup-progress-item.-upcoming .step-title {
+.setup-progress-item.-upcoming .step-title,
+.setup-progress-item.-skipped .step-title {
     color: $text-muted;
 }
 
-/* TASK-1506: key input and its Test button share one row. */
+/* TASK-1506 / TASK-34100.6: the key input and its buttons share one row. */
 .setup-key-row {
-    height: $ds-size-3;
+    height: auto;
 }
-.setup-key-row Input {
+.setup-key-row #setup-provider-api-key {
     width: $ds-width-fill;
 }
 .setup-key-row Button {
     margin-left: $ds-space-1;
     min-width: $ds-size-8;
 }
+.setup-key-hint, #setup-provider-key-source { height: auto; }
+/* TASK-34100.6 pass 2: at 80x24 the env option wraps (KeySourceRadioButton
+ * measures it), never cutting '(found; not stored)' short. */
+#setup-provider-key-source SetupRadioButton { text-wrap: wrap; }
+.setup-key-hint Static { width: $ds-width-fill; }
 
 /* TASK-1505: with the key-hints line docked at the screen's bottom, the
  * wizard container must yield that row — height:100% (the shared framework

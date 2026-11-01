@@ -33,18 +33,16 @@ async def test_blocked_provider_discovery_failure_never_says_continue_anyway():
             "discovery-failure copy promises continuing while commit() is"
             f" hard-blocked on the missing key: {copy!r}"
         )
-        # The blocked-state copy must name the provider's OWN unblock, and it
-        # must be the SAME string commit()'s refusal footer shows -- so the
-        # two surfaces never disagree (Qodo PR #2445: a hardcoded "add an API
-        # key" is wrong for auth modes that need a login instead).
-        recovery = (step._current_provider_readiness().recovery or "").strip()
-        assert recovery and recovery in copy, (
-            "blocked-state copy should embed the provider's readiness recovery"
-            f" guidance ({recovery!r}), got: {copy!r}"
-        )
-        assert "go Back" in copy, (
-            f"blocked-state copy should still offer the Back escape: {copy!r}"
-        )
+        # TASK-34100.6 (review cross-cutting-07, AC#8) supersedes the rest of
+        # this pin: nothing is an error before the user acts, so the status
+        # line stays empty and the key field's own help line names the
+        # on-screen fix (Back leads to Welcome, never to the fix).
+        assert copy == ""
+        from textual.widgets import Static
+
+        help_line = str(step.query_one("#setup-provider-key-status", Static).render())
+        assert "paste it above" in help_line, help_line
+        assert "go Back" not in help_line
 
 
 @pytest.mark.asyncio

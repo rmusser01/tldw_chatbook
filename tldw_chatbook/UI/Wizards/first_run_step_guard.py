@@ -65,6 +65,8 @@ _REPORTED_ATTR = "_first_run_contained_error_sites"
 #: Container attribute holding the error line a contained error put up, so a
 #: later success clears that line and never a different step message.
 _SHOWN_ATTR = "_first_run_contained_error_copy"
+#: The provider whose switch raised, so its no-op re-pick keeps the line.
+_FAILED_PICK_ATTR = "_first_run_failed_provider_pick"
 #: Marks an action method ``WizardErrorGuard`` already wrapped.
 _CONTAINED_ACTION_ATTR = "_first_run_contained_action"
 #: A key-bound action whose failure is reported as a Next that stayed put:
@@ -128,6 +130,30 @@ def switch_error_copy(target: str, kept: str, *, back: bool) -> str:
         f"Couldn't switch to {target}{stays}. Choose another provider or try "
         f"again; {keys}. The error was logged."
     )
+
+
+#: The refusal suffix, with one space, added only where a retry can succeed
+#: (TASK-34100.6: review provider-21 (d), cross-cutting-07 rule 3).
+RETRY_SUFFIX = " Retry with Next, or go Back."
+
+
+def refusal_suffix(step: Any, error: str) -> str:
+    """The action suffix a refused Next appends, or "" when it would mislead.
+
+    Provider and Model set ``REFUSAL_NAMES_ITS_FIX``: their refusals already
+    name the on-screen fix, and on base "Retry with Next" was printed under
+    refusals no retry could clear (review provider-01, cross-cutting-07).
+
+    Args:
+        step: The step whose commit refused.
+        error: The refusal text.
+
+    Returns:
+        The suffix with its leading space, or "".
+    """
+    if getattr(step, "REFUSAL_NAMES_ITS_FIX", False) or "Next" in error:
+        return ""
+    return RETRY_SUFFIX
 
 
 def first_run_provider_catalog() -> tuple[Any, ...]:
@@ -379,9 +405,10 @@ def clear_contained_error(node: Any) -> None:
     if not shown:
         return
     setattr(container, _SHOWN_ATTR, "")
+    setattr(container, _FAILED_PICK_ATTR, "")
     try:
         strip = container.screen.query_one("#setup-step-error-pinned")
-        if getattr(strip, "content", None) == shown:
+        if getattr(strip, "content", None) in {shown, f"✗ {shown}"}:
             container._clear_pinned_step_error()
     except Exception:  # noqa: BLE001 - no strip: nothing to clear.
         return
@@ -427,6 +454,15 @@ def provider_switch(step: Any, provider_key: str) -> Iterator[None]:
                 back=_back_available(container),
             )
         report_contained_error(step, "handler", error, copy=copy)
+        if container is not None:
+            setattr(container, _FAILED_PICK_ATTR, provider_key)
+        return
+    container, _raising, _current = _wizard_steps(step)
+    failed = getattr(container, _FAILED_PICK_ATTR, "") if container is not None else ""
+    if provider_key == kept and provider_key == failed:
+        # TASK-34100.6 AC#28 (provider-26): the list dispatches one arrow
+        # press twice; the second pass re-picks the provider whose switch
+        # just failed, a no-op that must not take its own error line down.
         return
     clear_contained_error(step)
 

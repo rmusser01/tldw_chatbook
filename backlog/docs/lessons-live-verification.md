@@ -4672,6 +4672,74 @@ exception at `issue_code` in the real app before you guess. Probes outside the
 app hit different fences. Never print the recorded text raw if credentials
 could be in it.
 
+## The provider recovery guard refuses work on the UI loop that runs fine on a thread
+
+**TASK-34100.6, 2026-10-04.** Console's 'Get started' card had a designed local-server
+offer, and live it never offered anything: with a real llama-server on :9099 the card
+said "no key". Its discovery ran on the UI loop, and `recovery_review.unqualified` (which
+wraps `discover_local_servers`) raised `ProviderReconnectRequired`; the card swallowed it
+at debug level, so the app log at INFO showed nothing. The first-run wizard scanned the
+same profile *off the loop* (`first_run_step_guard.off_loop`) and found the server. The
+cause only surfaced with a temporary warning-level log line in the `except`. In-process
+tests passed both ways (the test profile has no recovery history), so the regression
+test models the measured failure: a stand-in scan that raises on the main thread and
+answers on a worker thread. Run provider-guarded work off the loop
+(`local_server_discovery.discover_local_servers_off_loop`), and when a background call
+"never fires", log the swallowed exception before theorising.
+
+## A live driver that types while Console is ready sends real chat messages
+
+**TASK-34100.6, 2026-10-04.** A scripted run with `OPENAI_API_KEY` exported meant
+Console was ready, and its composer had focus. The script pressed Ctrl+P to open the
+palette, but the composer took it, then typed "setup", "openai", "openrouter", "groq",
+each followed by Enter. Four real chat messages went to OpenAI on the owner's key before
+the run was stopped. Before typing text in a live run, check that the screen you expect
+is on screen (grep the capture for its title, abort if absent). With a ready Console,
+move focus off the composer (Escape, F6) and confirm the palette prompt is visible
+before typing into it.
+
+**Addendum (review round 2, 2026-10-06): a guard only helps if the caller stops on it.**
+A helper script checked that the palette had opened, printed "PALETTE NOT OPEN -
+abort" and exited, but the shell line that called it went on with `;`. The next
+commands clicked, typed a placeholder key string and pressed Ctrl+N. The palette opened
+a moment later, so the typed string landed in its search box (harmless this time,
+`g6-r2env2`). The same session's `wait` helper printed TIMEOUT but exited 0, so an `&&`
+chain carried on after a step that never came. Four captures named "keyboard skip" then
+showed a different flow and had to be deleted and recaptured. Every guard and wait in a
+live driver must exit nonzero on failure, and the caller must chain with `&&` (or `set
+-e`) across every keystroke that follows it. Never type a real key after a step you
+have not seen land.
+
+## An honest-looking "can't be checked" can hide a request that was never sent (TASK-34100.6 review round 1, 2026-10-05)
+
+A reviewer reported Cloudflare Workers AI's key check reading "can't be checked without
+a paid request" and Model saying "Couldn't reach the server (request failed). Check it's
+running". The obvious fix (classify Cloudflare's HTTP 405 as 'listing unavailable') was
+written and unit-tested -- and the live Model step still said "Couldn't reach the
+server". Instrumenting the live app at the discovery boundary showed no request had
+left the process: for all 33 engine-driven presets the wizard staged the resolved chat
+URL as `api_base_url`, and the catalog service's hosted resolver refused it ("must not
+include a terminal /chat/completions endpoint path") as `invalid_provider_settings`. A
+real MiniMax key got the same "can't be checked" line. The verdict copy was plausible
+for every one of them, so nothing looked wrong. When a check's verdict is a negative
+("can't", "unavailable", "couldn't reach"), log the outcome kind at the boundary once
+live (`status`, `error.kind`, `error.category`) before trusting the copy; and verify a
+check reaches the network with a deliberately wrong key against a real API (Together
+now answers 401 -> "rejected this key"). Evidence:
+`.worktrees/setup-wizard-ux-qa/evidence/g6-r1fix/19a`, `20`.
+
+## Reach the wizard with exported keys through Resume, never through a ready Console (TASK-34100.6 pass 2, 2026-10-06)
+
+With any provider key exported, a fresh profile never offers the wizard: it opens a
+ready Console with the composer focused, the state in which a palette script sent four
+real chat messages in pass 1 (see "A live driver that types while Console is ready").
+Pass 2 needed the Provider step with two exported keys at 120x40 and 80x24. What
+worked without touching Console: launch the profile with the keys stripped, go Welcome
+-> Provider, `kill -9` the app, then relaunch the same HOME with the keys exported.
+`setup_recovery_action` returns "prompt", the app lands on Home with "Continue setup?",
+and Enter on Resume opens the wizard at Provider with the exported keys live (evidence
+`setup-wizard-ux-qa/evidence/g6b-env/01`, `g6b-env80/01`). Stop the run (kill the tmux
+server) before Summary finishes setup; that is where a ready Console would appear.
 
 ## A live test that flips a repo-wide switch must restore it in the same command (TASK-34668, 2026-10-10)
 

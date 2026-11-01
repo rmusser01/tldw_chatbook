@@ -201,6 +201,21 @@ def _matches_query(option: ProviderPickerOption, query: str) -> bool:
     return not query or query in option.search_text.casefold()
 
 
+def provider_matches_query(label: object, provider_id: object, query: object) -> bool:
+    """Settings' provider-search rule, shared with first-run setup (TASK-34100.6).
+
+    Args:
+        label: The provider's display name.
+        provider_id: Its readiness key.
+        query: The typed filter text.
+
+    Returns:
+        True when the trimmed, case-folded query occurs in "label id".
+    """
+    normalized = str(query or "").strip().casefold()
+    return not normalized or normalized in f"{label} {provider_id}".casefold()
+
+
 def build_provider_picker_groups(
     catalog: Sequence[ProviderCatalogEntry],
     saved_provider: object,
