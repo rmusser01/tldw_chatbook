@@ -39,6 +39,7 @@ def task_host(tmp_path, monkeypatch):
         readonly=False,
         configure=None,
         sibling=False,
+        plan_edit=None,
     ):
         from tldw_chatbook.Agents.workflow_task_scope import _prepare_workflow_task
 
@@ -57,6 +58,8 @@ def task_host(tmp_path, monkeypatch):
         data["phases"][0]["tasks"][0].update(
             allowed_tools=list(tools), execution_mode=mode
         )
+        if plan_edit is not None:
+            plan_edit(data, root)
         if sibling:
             second = dict(data["phases"][0]["tasks"][0])
             second.update(

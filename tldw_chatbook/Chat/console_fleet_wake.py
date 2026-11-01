@@ -301,6 +301,7 @@ class ConsoleFleetWakeCoordinator:
         self._disposed = False
         self._conversation_fences: dict[str, int] = {}
         self._runtime_submitter = None
+        self._recovery_projection = None
 
     def on_review_boundary(self, receipt) -> None:
         """Stage a live host receipt for the existing finite wake owner."""
@@ -1450,6 +1451,10 @@ class ConsoleFleetWakeCoordinator:
                 return
             ledger = database.automatic_work
             await run_owned_db_call(ledger._db, ledger.recover, current_owner_id=self._owner_id)
+            if self._disposed:
+                return
+            if self._recovery_projection is not None:
+                await self._recovery_projection(ledger.recovery_result)
             if self._disposed:
                 return
             await run_owned_db_call(ledger._db, self.seed_from_marks, database=ledger._db)

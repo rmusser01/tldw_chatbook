@@ -12,11 +12,12 @@ from pydantic import (
     Field,
     StringConstraints,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
 from .automatic_work_budget import AutomaticWorkLimits, AutomaticWorkSnapshot
-from .goal_models import GoalBindingRef, GoalProviderRef
+from .goal_models import GoalBindingRef, GoalProviderRef, VerificationSpec
 
 RECORD_BYTES = 128 * 1024
 WORKFLOW_BYTES = 4 * 1024 * 1024
@@ -130,13 +131,15 @@ class WorkflowCheck(WorkflowModel):
     arguments: tuple[str, ...] = Field(default=(), max_length=64)
     input_manifest: str | None = None
     output_manifest: str | None = None
-    exit_code: Annotated[int, Field(ge=0, le=255)] | None = None
+    exit_code: Annotated[int, Field(ge=-255, le=255)] | None = None
     reason: Identity
 
     @model_validator(mode="after")
     def explicit_evidence(self) -> Self:
         if self.status == "passed" and (
-            self.exit_code != 0 or not self.input_manifest or not self.output_manifest
+            self.exit_code is None
+            or not self.input_manifest
+            or not self.output_manifest
         ):
             raise ValueError("passed check requires process and manifest evidence")
         return self
@@ -154,6 +157,14 @@ class WorkflowTaskSpec(WorkflowModel):
     execution_mode: Literal["scoped", "exclusive"] = "scoped"
     target: GoalProviderRef
     expected_checks: tuple[Identity, ...] = Field(default=(), max_length=32)
+    verifiers: tuple[VerificationSpec, ...] = Field(default=(), max_length=32)
+
+    @model_serializer(mode="wrap")
+    def historical_serialization(self, handler):
+        data = handler(self)
+        if not self.verifiers:
+            data.pop("verifiers", None)
+        return data
 
     @model_validator(mode="after")
     def unique_members(self) -> Self:
@@ -167,6 +178,21 @@ class WorkflowTaskSpec(WorkflowModel):
         ):
             if len(set(values)) != len(values):
                 raise ValueError("duplicate task member")
+        if len({v.id for v in self.verifiers}) != len(self.verifiers):
+            raise ValueError("duplicate verifier identity")
+        if len({v.invocation_key for v in self.verifiers}) != len(self.verifiers):
+            raise ValueError("ambiguous verifier invocation")
+        if any(
+            v.id not in self.expected_checks
+            or v.executor_tool_id != "shell_exec"
+            or v.skill_trust_ref is not None
+            for v in self.verifiers
+        ):
+            raise ValueError("workflow verifier must name an expected shell check")
+        if self.verifiers and (
+            self.execution_mode != "exclusive" or "shell_exec" not in self.allowed_tools
+        ):
+            raise ValueError("workflow verifier requires exclusive native shell tool")
         return self
 
 
@@ -239,6 +265,26 @@ class WorkflowPlan(WorkflowModel):
                         for scope in task.footprint
                     ):
                         raise ValueError("output outside declared write footprint")
+                for verifier in task.verifiers:
+                    try:
+                        source = str(
+                            PurePosixPath(verifier.verifier_path).relative_to(
+                                self.request.binding.locator
+                            )
+                        )
+                    except ValueError:
+                        raise ValueError("verifier outside captured binding") from None
+                    for path in (source, *verifier.input_paths):
+                        _relative_path(path)
+                        if not any(
+                            path == scope.path
+                            or scope.subtree
+                            and PurePosixPath(path).is_relative_to(scope.path)
+                            for scope in task.footprint
+                        ):
+                            raise ValueError(
+                                "verifier input outside declared footprint"
+                            )
                 seen[task.id] = task
         return self
 
@@ -252,6 +298,64 @@ class WorkflowDecision(WorkflowModel):
     action: Literal["approve", "revise", "pause", "stop", "complete", "resume"]
     reason: Identity
     result_refs: tuple[Identity, ...] = Field(default=(), max_length=12)
+    evidence: WorkflowQualityReview | WorkflowExecutionRecovery | None = None
+
+    @model_serializer(mode="wrap")
+    def historical_serialization(self, handler):
+        data = handler(self)
+        if self.evidence is None:
+            data.pop("evidence", None)
+        return data
+
+    @property
+    def revision_id(self) -> int:
+        return self.plan_revision
+
+
+class WorkflowQualityReview(WorkflowModel):
+    kind: Literal["quality"] = "quality"
+    predecessor_digest: str
+    input_manifest: str
+    ready: bool
+    reason: Identity
+
+
+class WorkflowExecutionRecovery(WorkflowModel):
+    kind: Literal["recovery"] = "recovery"
+    reason: Identity
+
+
+class WorkflowVerifierEvidence(WorkflowModel):
+    """Private native observations; parsed history grants no execution authority."""
+
+    verifier_id: Identity
+    invocation_id: Identity
+    verifier_sha256: str
+    arguments_digest: str
+    shell_path: str
+    shell_manifest: str | None
+    input_manifest: str | None
+    output_manifest: str | None
+    exit_code: int | None
+    complete: bool
+    cleanup_proven: bool
+    fresh: bool
+    stdout: str
+    stderr: str
+    output_digest: str
+
+
+class WorkflowCheckpoint(WorkflowModel):
+    workflow_id: Identity
+    attempt_id: Identity
+    run_id: Identity
+    result_digest: str
+    submitted_digest: str
+    input_manifest: str | None
+    output_manifest: str | None
+    verifiers: tuple[WorkflowVerifierEvidence, ...] = Field(default=(), max_length=32)
+    change_window_refs: tuple[Positive, ...] = Field(default=(), max_length=64)
+    change_review_disclosure: str = "Existing consented windows only; exclusions, capture failures and concurrent attribution remain governed by Change Review. No per-task diff or rollback guarantee."
 
 
 class WorkflowTaskAttempt(WorkflowModel):

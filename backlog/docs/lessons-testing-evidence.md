@@ -24970,3 +24970,15 @@ the next refusal is a regression or that the whole slice passes. Retain original
 qualified and precisely attributed baseline evidence separately. This incident
 qualified196 other fleet cases and left four isolation bodies unqualified; it
 did not authorize widening storage scope.
+
+### Required CLI evidence needs its own EOF proof (TASK-38530, 2026-11-01)
+
+Workflow verification initially inspected the existing raw CLI event/result
+surface. Source inspection showed stream events are preview-capped, and the
+`truncated` flag also reflects optional log limits. More subtly, native consume
+can report exit 0 with positive process cleanup after a post-exit drain timeout
+without both stream-end messages. Neither successful exit nor that combined flag
+proves complete required output. The fix taps bounded sanitized output before
+preview/log truncation and seals it only on both native EOFs and normal consume
+plus cleanup. Real-process tests preserve 40 KB with a zero/tiny diagnostic cap
+and refuse completeness when a stderr EOF is withheld despite exit 0 and cleanup.

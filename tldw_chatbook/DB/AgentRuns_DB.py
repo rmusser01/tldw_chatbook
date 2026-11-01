@@ -334,7 +334,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     # to v21 and chains after v20. The guarded ALTERs below are idempotent
     # either way, and the from-now-on contract only requires the constant to
     # equal the HIGHEST recorded version.
-    _CURRENT_SCHEMA_VERSION = 26
+    _CURRENT_SCHEMA_VERSION = 27
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: BaseDB-provenance (ADR-353): connections open through BaseDB's
@@ -905,6 +905,24 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 finally:
                     conn.execute(f"PRAGMA synchronous={previous_sync}")
 
+            if not conn.execute(
+                "SELECT 1 FROM schema_version WHERE version=27"
+            ).fetchone():
+                from .recovery_workflow_schema import WORKFLOW_CHECKPOINT_MIGRATION
+
+                previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
+                conn.execute("PRAGMA synchronous=FULL")
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    for statement in WORKFLOW_CHECKPOINT_MIGRATION:
+                        conn.execute(statement)
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise
+                finally:
+                    conn.execute(f"PRAGMA synchronous={previous_sync}")
+
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
             # convention above (UPDATE would collide on the UNIQUE column
@@ -1326,7 +1344,10 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         """
         with self.transaction() as conn:
             cur = conn.execute(
-                "DELETE FROM change_snapshots WHERE created_at < ?",
+                "DELETE FROM change_snapshots WHERE created_at < ? "
+                "AND NOT EXISTS (SELECT 1 FROM workflow_task_attempts t "
+                "WHERE t.run_id=change_snapshots.run_id AND (t.retirement!='drained' "
+                "OR EXISTS (SELECT 1 FROM workflow_checkpoints c WHERE c.attempt_id=t.id)))",
                 (cutoff_iso,),
             )
             return int(cur.rowcount or 0)

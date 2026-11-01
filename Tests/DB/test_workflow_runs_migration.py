@@ -45,7 +45,7 @@ def test_v24_upgrade_reopen_and_repeat_preserves_history(tmp_path, standalone):
             ("legacy", "preserved result")
         ]
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            26,
+            27,
         )
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         actual = tuple(
@@ -55,7 +55,7 @@ def test_v24_upgrade_reopen_and_repeat_preserves_history(tmp_path, standalone):
             )
         )
         assert actual in [
-            schema for version, schema in _AGENT_RUNS_SCHEMA if version == 26
+            schema for version, schema in _AGENT_RUNS_SCHEMA if version == 27
         ]
 
 
@@ -73,6 +73,11 @@ def test_standalone_and_constructor_workflow_catalogs_match_exactly(tmp_path):
         )
     with closing(sqlite3.connect(paths[1])) as conn:
         conn.executescript(Path("tldw_chatbook/DB/migrations/agent_runs_v25_to_v26_workflow_admission.sql").read_text())
+        conn.executescript(
+            Path(
+                "tldw_chatbook/DB/migrations/agent_runs_v26_to_v27_workflow_checkpoints.sql"
+            ).read_text()
+        )
     AgentRunsDB(paths[0]).close()
     catalogs = []
     for path in paths:

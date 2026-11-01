@@ -108,6 +108,43 @@ def validate_workflow_rows(connection: sqlite3.Connection) -> tuple[str, ...]:
 
     from .workflow_runs import WorkflowRunsStore
 
+    if (
+        connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        >= 27
+    ):
+        from tldw_chatbook.Agents.workflow_models import WorkflowCheckpoint
+
+        for attempt_id, workflow_id, payload_hash, payload in connection.execute(
+            "SELECT * FROM workflow_checkpoints"
+        ):
+            try:
+                checkpoint = WorkflowCheckpoint.model_validate_json(payload)
+                row = connection.execute(
+                    "SELECT r.payload_hash,r.payload_json,p.bytes FROM workflow_results r JOIN workflow_payload_reservations p ON p.attempt_id=r.attempt_id WHERE r.attempt_id=? AND r.workflow_id=?",
+                    (attempt_id, workflow_id),
+                ).fetchone()
+                if (
+                    row is None
+                    or checkpoint.attempt_id != attempt_id
+                    or checkpoint.workflow_id != workflow_id
+                    or hashlib.sha256(payload.encode()).hexdigest() != payload_hash
+                    or checkpoint.result_digest != row[0]
+                    or checkpoint.run_id
+                    != WorkflowTaskResult.model_validate_json(row[1]).run_id
+                    or any(
+                        connection.execute(
+                            "SELECT 1 FROM change_snapshots WHERE id=? AND run_id=?",
+                            (ref, checkpoint.run_id),
+                        ).fetchone()
+                        is None
+                        for ref in checkpoint.change_window_refs
+                    )
+                    or len(payload.encode()) + len(row[1].encode()) > row[2]
+                ):
+                    return ("invalid_workflow_checkpoint",)
+            except (ValueError, TypeError):
+                return ("invalid_workflow_checkpoint",)
+
     if connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] < 25:
         return ()
     previous = connection.row_factory
@@ -325,6 +362,32 @@ def workflow_admission_catalog(catalog):
             if not sql.startswith("CREATE TABLE sqlite_sequence"):
                 conn.execute(sql)
         for sql in WORKFLOW_ADMISSION_MIGRATION:
+            conn.execute(sql)
+        return tuple(
+            row[0]
+            for row in conn.execute(
+                "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name"
+            )
+        )
+
+
+WORKFLOW_CHECKPOINT_OBJECTS = (
+    "CREATE TABLE workflow_checkpoints (attempt_id TEXT PRIMARY KEY REFERENCES workflow_results(attempt_id), workflow_id TEXT NOT NULL REFERENCES workflow_runs(id), payload_hash TEXT NOT NULL, payload_json TEXT NOT NULL CHECK(length(CAST(payload_json AS BLOB)) <= 131072))",
+    "CREATE TRIGGER workflow_checkpoint_immutable BEFORE UPDATE ON workflow_checkpoints BEGIN SELECT RAISE(ABORT, 'workflow checkpoint is immutable'); END",
+    "CREATE TABLE workflow_resume_commands (id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL REFERENCES workflow_runs(id), control_revision INTEGER NOT NULL CHECK(control_revision>0), resulting_revision INTEGER NOT NULL CHECK(resulting_revision>control_revision))",
+)
+WORKFLOW_CHECKPOINT_MIGRATION = (
+    *WORKFLOW_CHECKPOINT_OBJECTS,
+    "INSERT INTO schema_version(version) VALUES (27)",
+)
+
+
+def workflow_checkpoint_catalog(catalog):
+    with sqlite3.connect(":memory:") as conn:
+        for sql in sorted(catalog, key=lambda sql: not sql.startswith("CREATE TABLE")):
+            if not sql.startswith("CREATE TABLE sqlite_sequence"):
+                conn.execute(sql)
+        for sql in WORKFLOW_CHECKPOINT_MIGRATION:
             conn.execute(sql)
         return tuple(
             row[0]

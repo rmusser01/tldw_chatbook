@@ -385,19 +385,24 @@ class WorkflowRunsStore:
         if type(drained) is not bool:
             raise ValueError("invalid_retirement_observation")
         with self.db.automatic_work.transaction() as conn:
-            row = conn.execute(
-                "SELECT * FROM workflow_task_attempts WHERE id=? AND workflow_id=? AND run_id=?",
-                (attempt_id, workflow_id, run_id),
-            ).fetchone()
-            if not row:
-                raise ValueError("invalid_workflow_retirement_ownership")
-            self._ownership(conn, WorkflowTaskAttempt(**dict(row)))
-            if row["retirement"] == "drained" and not drained:
-                raise ValueError("retirement_conflict")
-            conn.execute(
-                "UPDATE workflow_task_attempts SET retirement=? WHERE id=?",
-                ("drained" if drained else "unknown", attempt_id),
+            self._record_retirement(
+                conn, workflow_id, attempt_id, run_id=run_id, drained=drained
             )
+
+    def _record_retirement(self, conn, workflow_id, attempt_id, *, run_id, drained):
+        row = conn.execute(
+            "SELECT * FROM workflow_task_attempts WHERE id=? AND workflow_id=? AND run_id=?",
+            (attempt_id, workflow_id, run_id),
+        ).fetchone()
+        if not row:
+            raise ValueError("invalid_workflow_retirement_ownership")
+        self._ownership(conn, WorkflowTaskAttempt(**dict(row)))
+        if row["retirement"] == "drained" and not drained:
+            raise ValueError("retirement_conflict")
+        conn.execute(
+            "UPDATE workflow_task_attempts SET retirement=? WHERE id=?",
+            ("drained" if drained else "unknown", attempt_id),
+        )
 
     def reserve_result(
         self, workflow_id: str, attempt_id: str, *, bytes: int = RECORD_BYTES
@@ -439,49 +444,52 @@ class WorkflowRunsStore:
 
     def publish_result(self, result: WorkflowTaskResult) -> WorkflowSnapshot:
         """Publish an exact-owned mandatory result without truncation or control approval."""
+        with self.db.automatic_work.transaction() as conn:
+            return self._publish_result(conn, result)
+
+    def _publish_result(self, conn, result):
         result = WorkflowTaskResult.model_validate_json(result.canonical_json())
         payload = result.canonical_json()
-        with self.db.automatic_work.transaction() as conn:
-            row = conn.execute(
-                "SELECT * FROM workflow_task_attempts WHERE id=? AND workflow_id=?",
-                (result.attempt_id, result.workflow_id),
-            ).fetchone()
-            if not row or row["run_id"] != result.run_id:
-                raise ValueError("invalid_workflow_result_ownership")
-            self._ownership(conn, WorkflowTaskAttempt(**dict(row)))
-            res = conn.execute(
-                "SELECT * FROM workflow_payload_reservations WHERE attempt_id=? AND workflow_id=?",
-                (result.attempt_id, result.workflow_id),
-            ).fetchone()
-            if not res or res["state"] == "removed":
-                raise ValueError("workflow_result_unreserved")
-            if len(payload.encode()) > res["bytes"]:
-                raise ValueError("workflow_result_record_capacity")
-            prior = conn.execute(
-                "SELECT payload_json FROM workflow_results WHERE attempt_id=?",
-                (result.attempt_id,),
-            ).fetchone()
-            if prior:
-                if prior[0] != payload:
-                    raise ValueError("result_identity_conflict")
-                return self._snapshot(conn, self._row(conn, result.workflow_id))
-            conn.execute(
-                "INSERT INTO workflow_results VALUES (?,?,?,?)",
-                (result.attempt_id, result.workflow_id, _hash(payload), payload),
-            )
-            conn.execute(
-                "UPDATE workflow_payload_reservations SET state='published' WHERE attempt_id=?",
-                (result.attempt_id,),
-            )
-            conn.execute(
-                "UPDATE workflow_task_attempts SET status=? WHERE id=?",
-                (result.status, result.attempt_id),
-            )
-            conn.execute(
-                "UPDATE workflow_runs SET progress_cursor=progress_cursor+1,updated_at=? WHERE id=?",
-                (time.time(), result.workflow_id),
-            )
+        row = conn.execute(
+            "SELECT * FROM workflow_task_attempts WHERE id=? AND workflow_id=?",
+            (result.attempt_id, result.workflow_id),
+        ).fetchone()
+        if not row or row["run_id"] != result.run_id:
+            raise ValueError("invalid_workflow_result_ownership")
+        self._ownership(conn, WorkflowTaskAttempt(**dict(row)))
+        res = conn.execute(
+            "SELECT * FROM workflow_payload_reservations WHERE attempt_id=? AND workflow_id=?",
+            (result.attempt_id, result.workflow_id),
+        ).fetchone()
+        if not res or res["state"] == "removed":
+            raise ValueError("workflow_result_unreserved")
+        if len(payload.encode()) > res["bytes"]:
+            raise ValueError("workflow_result_record_capacity")
+        prior = conn.execute(
+            "SELECT payload_json FROM workflow_results WHERE attempt_id=?",
+            (result.attempt_id,),
+        ).fetchone()
+        if prior:
+            if prior[0] != payload:
+                raise ValueError("result_identity_conflict")
             return self._snapshot(conn, self._row(conn, result.workflow_id))
+        conn.execute(
+            "INSERT INTO workflow_results VALUES (?,?,?,?)",
+            (result.attempt_id, result.workflow_id, _hash(payload), payload),
+        )
+        conn.execute(
+            "UPDATE workflow_payload_reservations SET state='published' WHERE attempt_id=?",
+            (result.attempt_id,),
+        )
+        conn.execute(
+            "UPDATE workflow_task_attempts SET status=? WHERE id=?",
+            (result.status, result.attempt_id),
+        )
+        conn.execute(
+            "UPDATE workflow_runs SET progress_cursor=progress_cursor+1,updated_at=? WHERE id=?",
+            (time.time(), result.workflow_id),
+        )
+        return self._snapshot(conn, self._row(conn, result.workflow_id))
 
     def _read_result(self, conn, workflow_id, attempt_id):
         row = conn.execute(
@@ -585,6 +593,9 @@ class WorkflowRunsStore:
             if self.db.automatic_work._snapshot(conn, row["chain_id"]).uncertain:
                 raise ValueError("workflow_has_active_evidence")
             self._cas(conn, workflow_id, expected_control_revision, "removed")
+            conn.execute(
+                "DELETE FROM workflow_checkpoints WHERE workflow_id=?", (workflow_id,)
+            )
             conn.execute(
                 "DELETE FROM workflow_results WHERE workflow_id=?", (workflow_id,)
             )

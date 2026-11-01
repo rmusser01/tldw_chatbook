@@ -775,6 +775,32 @@ class _Restrictions:
             ):
                 return sqlite3.SQLITE_OK
             if self.migration_owner == "db.agent_runs":
+                if (
+                    database == "main"
+                    and source is None
+                    and (
+                        action == sqlite3.SQLITE_CREATE_TABLE
+                        and first
+                        in {"workflow_checkpoints", "workflow_resume_commands"}
+                        or action
+                        in {sqlite3.SQLITE_CREATE_INDEX, sqlite3.SQLITE_REINDEX}
+                        and (first, second)
+                        in {
+                            (
+                                "sqlite_autoindex_workflow_checkpoints_1",
+                                "workflow_checkpoints",
+                            ),
+                            (
+                                "sqlite_autoindex_workflow_resume_commands_1",
+                                "workflow_resume_commands",
+                            ),
+                        }
+                        or action == sqlite3.SQLITE_CREATE_TRIGGER
+                        and (first, second)
+                        == ("workflow_checkpoint_immutable", "workflow_checkpoints")
+                    )
+                ):
+                    return sqlite3.SQLITE_OK
                 allowed_workflow_admission = source is None and (
                     database == "main"
                     and (

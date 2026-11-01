@@ -13,6 +13,7 @@ class RuntimeRecoveryResult:
     owner_id: str
     recovered_chains: tuple[str, ...]
     goals: tuple[tuple[str, int, str], ...]
+    workflows: tuple[tuple[str, int, str], ...] = ()
 
 
 class AutomaticWorkRefused(RuntimeError):

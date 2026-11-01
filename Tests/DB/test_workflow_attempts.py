@@ -11,15 +11,13 @@ pytestmark = pytest.mark.bootstrap_profile
 
 @pytest.fixture(name="workflow")
 def workflow_fixture(tmp_path, monkeypatch):
-    from tldw_chatbook.Agents import run_log
+    from tldw_chatbook.Agents import automatic_work_runtime, run_log
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.DB.automatic_work import AutomaticWorkLedger
 
-    monkeypatch.setattr(
-        run_log,
-        "_setting",
-        lambda key, default: True if key == "workflow_runs_enabled" else default,
-    )
+    setting = lambda key, default: True if key == "workflow_runs_enabled" else default
+    monkeypatch.setattr(run_log, "_setting", setting)
+    monkeypatch.setattr(automatic_work_runtime, "_setting", setting)
     with closing(AgentRunsDB(tmp_path / "attempts.db")) as db:
         clock = [1000.0, 0.0]
         db.automatic_work = AutomaticWorkLedger(
@@ -97,13 +95,25 @@ def test_control_revocation_wins_before_dispatch(workflow):
         )
 
 
-def test_foreign_recovery_retains_prepared_charge_and_never_replays(workflow):
+def test_foreign_recovery_releases_only_unused_prepared_work_and_never_replays(
+    workflow,
+):
     db, snap, _ = workflow
     first = prepare(db, snap)
     db.automatic_work.recover(current_owner_id="replacement")
     with pytest.raises(RuntimeError):
         db.automatic_work.accept_workflow_phase(first.id, owner_id="owner")
-    assert db.automatic_work.snapshot(snap.chain_id).reserved["generation"] == 1
+    accounting = db.automatic_work.snapshot(snap.chain_id)
+    assert accounting.reserved["generation"] == 0
+    assert accounting.used["generation"] == 0 and not accounting.uncertain
+    assert db.workflow_runs.get(snap.id).status == "awaiting_resume"
+    with db.connection() as conn:
+        assert (
+            conn.execute(
+                "SELECT state FROM automatic_wake_attempts WHERE id=?", (first.id,)
+            ).fetchone()[0]
+            == "aborted"
+        )
 
 
 def test_planning_is_a_real_attempt_without_a_fake_plan(workflow, tmp_path):

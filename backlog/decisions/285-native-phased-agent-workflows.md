@@ -138,3 +138,46 @@ failed-command → correction → passing-command journey. Runtime qualification
 by this accepted decision. Link this
 ADR from the implementation plan and task notes; select the
 next actual schema version only when implementing.
+
+## Task 7 producer and storage contracts
+
+Task 7 uses additive AgentRuns schema v27 for immutable required checkpoint
+sidecars and inert Resume command identities. Empty verifier definitions and
+absent decision evidence are omitted narrowly, preserving shipped v25/v26 JSON
+bytes and hashes, including records at the 128 KiB bound. Native observations,
+required handoff and result share the existing per-attempt reservation; optional
+run logs cannot substitute for them. Checkpoint, result, task retirement and
+active accounting commit in one existing FULL transaction before releasing the
+original physical claim.
+
+Approved `VerificationSpec` entries name a selected-root executable wrapper,
+exact arguments, source SHA and input paths. The host derives its shell command
+with `shlex.join`; only the actual selected native raw-shell provider may supply
+proof. Existing raw-shell arming, permissions and exclusive task scope still
+apply. Required sanitized output is captured before preview/optional-log bounds;
+normal native stdout and stderr EOF, native cleanup and the exact typed outcome
+are independent requirements. Overflow or missing tail cannot certify a check.
+The existing 1 MiB wrapper digest limit remains; exact resolved shell provenance
+uses the existing bounded 16 MiB manifest reader and is checked against the
+actual native result. Skill scripts remain unsupported.
+
+The original native child tail supplies typed failure receipts for known
+no-worker setup/thread-start failures, including durable rows created before
+scope binding. Receipts retain the actual original owner and activity claim;
+unknown row/cleanup state retains protection. Saved IDs and a caller's drained
+boolean cannot manufacture physical retirement. File inputs supply approved
+path/manifest references, not eager bodies; actual reads use current `fs_read`
+permissions. Complete persisted predecessor handoffs are injected task-only.
+Same-phase output references bind the approved producer definition at approval
+and require fresh completed native producer checkpoints before consumer launch.
+
+Upcoming phase approval, completed-phase quality review and execution recovery
+have separate meanings. Passive service Resume validates clean saved state and
+returns awaiting approval; it grants no execution. The later public coordinator
+must freshly prepare real provider/tool/permission custody before acceptance.
+The one startup owner may close prepared unused or positively quiescent old
+custody, retaining spent counters and completed results. Positive quiescence is
+persisted only after actual coordinator drain and is reset on interval reopen.
+Unmarked accepted, open intervals, corrupt/missing native lineage and unknown
+effects remain recovery-required. A fresh later phase attempt may continue
+remaining tasks; no old capability is adopted or accepted generation refunded.

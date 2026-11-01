@@ -748,6 +748,19 @@ class WorkflowChildReceipt:
     handle_id: str
     owner: ExecutionOwner = dataclasses.field(repr=False)
     activity_claim: WorktreeActivityClaim = dataclasses.field(repr=False)
+    failure: Literal["thread_start", "setup", "no_run", "unknown"] | None = None
+
+
+class _WorkflowChildLaunchFailed(PermissionError):
+    """Terminal native launch failure retaining its original physical receipt."""
+
+    def __init__(
+        self,
+        receipt: WorkflowChildReceipt,
+        message: str = "workflow child launch already claimed",
+    ) -> None:
+        super().__init__(message)
+        self.receipt = receipt
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -4622,6 +4635,10 @@ class AgentService:
         messages_json = json.dumps(
             first_request_plan.messages, ensure_ascii=False, allow_nan=False
         )
+        for tracker in authorization._required_evidence:
+            tracker.service.validate_task_inputs(
+                authorization, first_request_plan.messages
+            )
         parent_run_id = None
         if parent_owner is not None:
             if (
@@ -4750,9 +4767,15 @@ class AgentService:
             if authorization._native_launch:
                 result = authorization._native_launch[0]
                 if isinstance(result, WorkflowChildReceipt):
+                    if result.failure is not None:
+                        raise _WorkflowChildLaunchFailed(result)
                     return result
                 raise PermissionError("workflow child launch already claimed")
             prepared = prepared[0]
+            for tracker in authorization._required_evidence:
+                tracker.service.validate_task_inputs(
+                    authorization, json.loads(prepared.messages_json)
+                )
             authorization._native_launch.append(None)
         from tldw_chatbook.Backup_Recovery.participants import _core_operation
 
@@ -4831,7 +4854,11 @@ class AgentService:
                 raise
 
         with execution(self):
-            result = launch()
+            try:
+                result = launch()
+            except _WorkflowChildLaunchFailed:
+                self._finalize_workflow_child_log(authorization, status=RUN_ERROR)
+                raise
             if isinstance(result, SpawnAdmissionRefusal):
                 # File authority is separate from the DB-only launch operation.
                 self._finalize_workflow_child_log(authorization, status=RUN_ERROR)
@@ -5185,7 +5212,59 @@ class AgentService:
     ):
         """The native fleet launch/settlement tail, with captured parent inputs."""
         launched = False
+        native_thread_started = False
+        handle = None
+        child_run_id = None
         preserve_workflow_reservation = False
+
+        def failed_workflow_launch(handle, child_run_id, reason, message):
+            nonlocal preserve_workflow_reservation
+            authorization = child_kwargs.get("workflow_task_authorization")
+            if authorization is None:
+                return
+            claim = child_kwargs["workflow_activity_claim"]
+            if reason == "unknown":
+                child_owner.mark_cleanup_unproven()
+                preserve_workflow_reservation = True
+            try:
+                row = self.db.get_run(child_run_id)
+                if row is None:
+                    if reason == "unknown":
+                        raise RuntimeError("native_creation_unproven")
+                    reason = "no_run"
+                    with self.db.automatic_work.transaction() as conn:
+                        conn.execute(
+                            "UPDATE workflow_task_attempts SET status='closed',retirement='drained' WHERE id=? AND run_id IS NULL",
+                            (authorization.claim.id,),
+                        )
+                else:
+                    self.db.automatic_work.bind_workflow_task_run(
+                        authorization.claim.phase_attempt_id,
+                        task_id=authorization.claim.task_id,
+                        run_id=child_run_id,
+                        owner_id=authorization.claim.owner_id,
+                    )
+                    child_owner.bind_run(child_run_id)
+                    if reason != "unknown":
+                        self._set_terminal_status(child_run_id, RUN_ERROR)
+            except Exception:  # noqa: BLE001 - unknown creation cannot release custody
+                reason = "unknown"
+                child_owner.mark_cleanup_unproven()
+                preserve_workflow_reservation = True
+            receipt = WorkflowChildReceipt(
+                authorization.claim.id,
+                child_run_id,
+                handle.handle_id,
+                child_owner,
+                claim,
+                reason,
+            )
+            with authorization._lock:
+                authorization._native_launch[0] = receipt
+            if reason == "no_run":
+                claim.settle(durable=True)
+            raise _WorkflowChildLaunchFailed(receipt, message)
+
         try:
             # -- FLEET path: register, launch, return a handle.
             handle = fleet.reserve(
@@ -5263,6 +5342,12 @@ class AgentService:
                     "could not precreate sub-agent run error_type={}",
                     _safe_exception_type(exc),
                 )
+                failed_workflow_launch(
+                    handle,
+                    child_run_id,
+                    "setup",
+                    "could not create durable sub-agent run",
+                )
                 return None, SpawnAdmissionRefusal(
                     ok=False, error="could not create durable sub-agent run"
                 )
@@ -5284,6 +5369,15 @@ class AgentService:
                         child_run_id, RUN_ERROR, result=exc.reason
                     )
                     return None, SpawnAdmissionRefusal(ok=False, error=exc.reason)
+            workflow = child_kwargs.get("workflow_task_authorization")
+            if workflow is not None:
+                self.db.automatic_work.bind_workflow_task_run(
+                    workflow.claim.phase_attempt_id,
+                    task_id=workflow.claim.task_id,
+                    run_id=child_run_id,
+                    owner_id=workflow.claim.owner_id,
+                )
+                child_owner.bind_run(child_run_id)
             owner_seq, lifecycle_event_id = self._append_run_lifecycle(
                 child_run_id,
                 STEP_AGENT_RUN_RESERVED,
@@ -5631,6 +5725,7 @@ class AgentService:
                     daemon=True,
                 )
                 thread.start()
+                native_thread_started = True
             except Exception as exc:  # noqa: BLE001 — thread exhaustion
                 if (
                     child_kwargs.get("review_launch") is not None
@@ -5683,6 +5778,12 @@ class AgentService:
                                 child_kwargs["review_launch"], child_run_id
                             )
                     logger.warning("could not start sub-agent thread")
+                    failed_workflow_launch(
+                        handle,
+                        child_run_id,
+                        "thread_start",
+                        f"could not start sub-agent: {exc}",
+                    )
                     return None, SpawnAdmissionRefusal(
                         ok=False,
                         error=f"could not start sub-agent: {exc}",
@@ -5697,6 +5798,27 @@ class AgentService:
             fleet_threads[handle.handle_id] = thread
             return handle, None
 
+        except Exception as exc:
+            authorization = child_kwargs.get("workflow_task_authorization")
+            if (
+                authorization is not None
+                and not isinstance(exc, _WorkflowChildLaunchFailed)
+                and handle is not None
+                and child_run_id is not None
+            ):
+                if not native_thread_started:
+                    fleet.finish(
+                        handle.handle_id,
+                        RUN_ERROR,
+                        error="workflow native setup failed",
+                    )
+                failed_workflow_launch(
+                    handle,
+                    child_run_id,
+                    "unknown" if native_thread_started else "setup",
+                    "workflow native setup failed",
+                )
+            raise
         finally:
             if not launched:
                 try:

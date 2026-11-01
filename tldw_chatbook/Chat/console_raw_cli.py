@@ -28,6 +28,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         RawCliRequest,
         RawCliResult,
         RawCliStreamEvent,
+        RequiredCliOutput,
     )
 
 
@@ -661,8 +662,13 @@ class RawCliRuntime:
         on_registered: RawCliRegisteredSink | None = None,
         on_started: RawCliStartedSink | None = None,
         admission_scope: Callable[[], ContextManager[None]] | None = None,
+        required_output: RequiredCliOutput | None = None,
     ) -> RawCliResult:
-        """Synchronously execute one request through the guarded admission seam."""
+        """Execute through native admission, optionally retaining bounded required output.
+
+        Required output is accepted only by the actual native executor. It remains
+        sanitized and obtains completeness only from native stream/cleanup proof.
+        """
         request = _raw_cli_executor().validate_raw_cli_request(request)
         if not callable(on_event):
             raise TypeError("on_event must be callable")
@@ -727,12 +733,24 @@ class RawCliRuntime:
         try:
             if on_registered is not None:
                 on_registered()
-            return self._executor_or_default().execute(
+            executor = self._executor_or_default()
+            extra = {}
+            if required_output is not None:
+                native = _raw_cli_executor()
+                if (
+                    type(executor) is not native.RawShellExecutor
+                    or type(required_output) is not native.RequiredCliOutput
+                ):
+                    raise ValueError("native_required_output_owner")
+                extra["required_output"] = required_output
+            result = executor.execute(
                 request,
                 cancel_event=active.cancel_event,
                 on_event=on_event,
                 admit_worker=admit_worker,
+                **extra,
             )
+            return result
         finally:
             with self._lock:
                 if self._active_invocations.get(request.invocation_id) is active:

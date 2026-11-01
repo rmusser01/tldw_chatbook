@@ -5278,6 +5278,7 @@ class ConsoleRuntime:
             app=self._app,
             startup_ready=lambda: bool(getattr(self._app, "_ui_ready", True)),
         )
+        wake._recovery_projection = self._project_workflow_recovery
         wake.start_recovery()
         return self._chat_controller
 
@@ -5546,6 +5547,30 @@ class ConsoleRuntime:
                 launch_guard=owner.launch_guard,
             )
             return self._run_hooks_engine
+
+    def ensure_workflow_service(self):
+        """Create passive workflow storage; the existing wake owner supplies its audit."""
+        from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
+
+        controller = self._chat_controller
+        if controller is None or self._disposed:
+            raise RuntimeError("Console runtime is unavailable")
+        service = getattr(self, "_workflow_service", None)
+        if service is None:
+            bridge = controller._agent_bridge
+            persistence = controller.store.persistence
+            if bridge is None or persistence is None:
+                raise RuntimeError("Native workflow stores are unavailable")
+            service = WorkflowRunService(bridge.runs_db, persistence)
+            self._workflow_service = service
+        return service
+
+    async def _project_workflow_recovery(self, audit):
+        controller = self._chat_controller
+        if self._disposed or controller is None or not audit.workflows:
+            return
+        service = self.ensure_workflow_service()
+        await service.call(service.project_recovery, audit)
 
     def ensure_goal_coordinator(self):
         """Attach goal execution to the existing startup audit and runtime owner."""

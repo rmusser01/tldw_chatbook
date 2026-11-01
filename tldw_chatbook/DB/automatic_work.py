@@ -1614,6 +1614,104 @@ class AutomaticWorkLedger:
         self._transition_review_boundary(attempt_id, owner_id, "completed")
         return True
 
+    def _recover_clean_workflow_boundaries(self, conn, current_owner_id):
+        """Close proven no-effect/quiescent old custody, retaining all consumed work."""
+        candidates = conn.execute(
+            "SELECT a.*,p.id AS phase_row,p.workflow_id,p.retirement FROM automatic_wake_attempts a JOIN workflow_phase_attempts p ON p.native_attempt_id=a.id WHERE a.owner_id!=? AND a.attempt_kind='workflow_phase' AND a.state IN ('prepared','accepted')",
+            (current_owner_id,),
+        ).fetchall()
+        for phase in candidates:
+            if phase["state"] == "accepted" and phase["retirement"] != "drained":
+                continue
+            if conn.execute(
+                "SELECT 1 FROM workflow_active_intervals WHERE workflow_id=? AND ended_at IS NULL",
+                (phase["workflow_id"],),
+            ).fetchone():
+                continue
+            tasks = conn.execute(
+                "SELECT t.*,r.attempt_id AS result_id,c.attempt_id AS checkpoint_id FROM workflow_task_attempts t JOIN workflow_task_claims claim ON claim.task_attempt_id=t.id LEFT JOIN workflow_results r ON r.attempt_id=t.id LEFT JOIN workflow_checkpoints c ON c.attempt_id=t.id WHERE claim.phase_attempt_id=?",
+                (phase["phase_row"],),
+            ).fetchall()
+            if any(
+                task["run_id"] is not None
+                and (
+                    phase["state"] == "prepared"
+                    or task["retirement"] != "drained"
+                    or task["status"] not in {"completed", "failed"}
+                    or task["result_id"] is None
+                    or task["checkpoint_id"] is None
+                )
+                for task in tasks
+            ):
+                continue
+            if conn.execute(
+                "SELECT 1 FROM automatic_work_reservations r JOIN automatic_work_chains c ON c.id=r.chain_id WHERE (c.id=? OR c.allowance_root_chain_id=?) AND (r.state='uncertain' OR (r.kind='tokens' AND r.state='committed') OR (r.state='reserved' AND r.kind NOT IN ('generation','child_launch'))) LIMIT 1",
+                (phase["chain_id"], phase["chain_id"]),
+            ).fetchone():
+                continue
+            if (
+                phase["state"] == "prepared"
+                and conn.execute(
+                    "SELECT 1 FROM automatic_work_reservations WHERE chain_id=? AND created_at>=? AND kind IN ('model_call','tokens') AND state NOT IN ('released','reserved') LIMIT 1",
+                    (phase["chain_id"], phase["created_at"]),
+                ).fetchone()
+            ):
+                continue
+            # Validate this phase's exact records, not a second global history sweep.
+            from tldw_chatbook.Agents.goal_iteration import digest
+            from tldw_chatbook.Agents.workflow_models import WorkflowCheckpoint
+
+            from .workflow_runs import WorkflowRunsStore
+
+            try:
+                for task in tasks:
+                    if task["run_id"] is None:
+                        continue
+                    result = WorkflowRunsStore(self._db)._read_result(
+                        conn, phase["workflow_id"], task["id"]
+                    )
+                    saved = conn.execute(
+                        "SELECT payload_hash,payload_json FROM workflow_checkpoints WHERE attempt_id=? AND workflow_id=?",
+                        (task["id"], phase["workflow_id"]),
+                    ).fetchone()
+                    checkpoint = WorkflowCheckpoint.model_validate_json(saved[1])
+                    if (
+                        digest(saved[1]) != saved[0]
+                        or checkpoint.run_id != result.run_id
+                        or checkpoint.result_digest != digest(result.canonical_json())
+                    ):
+                        raise ValueError("checkpoint_mismatch")
+            except (ValueError, TypeError):
+                continue
+            conn.execute(
+                "UPDATE automatic_wake_attempts SET state=?,completed_at=? WHERE id=?",
+                (
+                    "aborted" if phase["state"] == "prepared" else "completed",
+                    self._wall_clock(),
+                    phase["id"],
+                ),
+            )
+            conn.execute(
+                "UPDATE workflow_phase_attempts SET status='closed',retirement='drained',result_bytes=0 WHERE id=?",
+                (phase["phase_row"],),
+            )
+            conn.execute(
+                "UPDATE automatic_work_reservations SET state='released',updated_at=? WHERE state='reserved' AND (id=? OR id IN (SELECT c.child_reservation_id FROM workflow_task_claims c JOIN workflow_task_attempts t ON t.id=c.task_attempt_id WHERE c.phase_attempt_id=? AND t.run_id IS NULL))",
+                (
+                    self._wall_clock(),
+                    phase["generation_reservation_id"],
+                    phase["phase_row"],
+                ),
+            )
+            conn.execute(
+                "UPDATE workflow_task_attempts SET status='closed',retirement='drained' WHERE run_id IS NULL AND id IN (SELECT task_attempt_id FROM workflow_task_claims WHERE phase_attempt_id=?)",
+                (phase["phase_row"],),
+            )
+            conn.execute(
+                "UPDATE workflow_runs SET status='awaiting_resume',control_revision=control_revision+1 WHERE id=? AND status NOT IN ('removed','closed','completed','stopped')",
+                (phase["workflow_id"],),
+            )
+
     def recover(self, *, current_owner_id: str) -> int:
         """Explicit startup recovery; handle/view reopen must never call this.
 
@@ -1631,6 +1729,7 @@ class AutomaticWorkLedger:
                 "ON CONFLICT(singleton) DO UPDATE SET owner_id=excluded.owner_id",
                 (current_owner_id,),
             )
+            self._recover_clean_workflow_boundaries(conn, current_owner_id)
             chains = {
                 row[0]
                 for row in conn.execute(
@@ -1707,7 +1806,21 @@ class AutomaticWorkLedger:
                     "AND EXISTS (SELECT 1 FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id WHERE i.goal_id=g.id AND a.state!='aborted')"
                 )
             )
-            audit = RuntimeRecoveryResult(current_owner_id, tuple(sorted(chains)), goals)
+            workflows = tuple(
+                (
+                    row["id"],
+                    row["control_revision"],
+                    "recovery_required"
+                    if row["chain_id"] in chains or row["status"] == "recovery_required"
+                    else "awaiting_resume",
+                )
+                for row in conn.execute(
+                    "SELECT id,control_revision,chain_id,status FROM workflow_runs WHERE status NOT IN ('removed','closed','completed','stopped')"
+                )
+            )
+            audit = RuntimeRecoveryResult(
+                current_owner_id, tuple(sorted(chains)), goals, workflows
+            )
             # Snapshot only the entries covered while this transaction owns
             # recovery. Later recoveries/setters may run before our return.
             with _UNCONFIRMED_STARTS_LOCK:
@@ -2406,6 +2519,10 @@ class AutomaticWorkLedger:
         if native is None:
             raise AutomaticWorkRefused("acceptance_required")
         self._workflow_current(conn, native["id"], owner_id, accepted=True)
+        conn.execute(
+            "UPDATE workflow_phase_attempts SET retirement='pending' WHERE native_attempt_id=?",
+            (native["id"],),
+        )
         already_open = conn.execute(
             "SELECT 1 FROM workflow_active_intervals WHERE workflow_id=? AND ended_at IS NULL",
             (workflow["id"],),
@@ -2499,6 +2616,10 @@ class AutomaticWorkLedger:
             ).fetchone()
             if self._workflow_unsettled(conn, phase, attempt.chain_id, quiescing=True):
                 raise AutomaticWorkRefused("workflow_not_settled")
+            conn.execute(
+                "UPDATE workflow_phase_attempts SET retirement='drained' WHERE id=?",
+                (phase["id"],),
+            )
             return self._close_workflow_interval(conn, attempt.workflow_id)
 
     def settle_workflow_phase(

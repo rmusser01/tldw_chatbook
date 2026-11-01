@@ -94,6 +94,7 @@ class WorkflowTaskAuthorization:
     _native_preparation: list = field(repr=False)
     _native_launch: list = field(repr=False)
     _native_dispatch: list = field(repr=False)
+    _required_evidence: list = field(repr=False)
     _lock: Lock = field(repr=False)
     _owners: tuple = field(repr=False)
 
@@ -110,6 +111,7 @@ class WorkflowTaskAuthorization:
         object.__setattr__(self, "_native_preparation", [])
         object.__setattr__(self, "_native_launch", [])
         object.__setattr__(self, "_native_dispatch", [])
+        object.__setattr__(self, "_required_evidence", [])
         object.__setattr__(self, "_lock", Lock())
         object.__setattr__(
             self,
@@ -355,8 +357,12 @@ def _prepare_task(
             tuple(reads), tuple(writes), task.execution_mode == "exclusive"
         )
         for path in task.inputs:
+            # Structured predecessor references name the approved output path.
             target = resolve_workspace_path(
-                path, root, intent="read", context=_path_context(binding)
+                path.split(":", 1)[-1],
+                root,
+                intent="read",
+                context=_path_context(binding),
             )
             if not _covered(target, False, footprint.reads + footprint.writes):
                 _refuse("input_outside_scope")

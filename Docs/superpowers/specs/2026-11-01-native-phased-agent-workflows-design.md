@@ -284,6 +284,25 @@ rollback guarantee. Stop leaves current files in place. Existing guarded,
 confirmed Undo remains a separate operation and must refuse conflicting live
 workflow writers as it does other active work.
 
+Task 7 concretizes required verifier provenance with bounded existing
+`VerificationSpec` definitions: an approved executable wrapper within the
+selected root, exact arguments, SHA-256 and input paths. The host derives
+`shlex.join((verifier_path, *arguments))`; the actual native raw-shell provider,
+resolved bash identity, typed result, physical cleanup and both stream EOFs
+supply evidence. Required sanitized output is collected before preview/log
+truncation, bounded to 96 KiB total per task and still subject to the combined
+128 KiB result/checkpoint reservation. Overflow or missing EOF is incomplete.
+Wrapper hashing retains the existing 1 MiB limit; shell provenance uses the
+existing bounded 16 MiB manifest primitive. No scripts/new command language.
+
+Task inputs contain approved source path/manifest references and complete saved
+predecessor handoffs. Literal file bodies are fetched through current `fs_read`
+permissions after native binding. Same-phase references bind exact producer
+definitions at phase approval; fresh completed native producer checkpoints are
+mandatory before dependent task preparation and launch. Upcoming phase approval
+never accepts that phase's eventual result; completed-phase quality review is
+an explicit separate operation with a tagged current evidence record.
+
 ## 8. Persistence and restart recovery
 
 Use new versioned AgentRunsDB tables for immutable plan revisions, workflow
@@ -308,6 +327,22 @@ cannot satisfy new dependent work when their evidence is stale. Partial success
 is retained; failed tasks and their dependents wait for a proposed repair.
 Unknown effects are never replayed automatically, and closing uncertainty is
 not permission to rerun it or proof that a remote side effect stopped.
+
+Task 7 uses schema v27 additive checkpoint/resume-command tables and preserves
+absent-new-field v25/v26 canonical payload bytes. A positive quiescent boundary
+is durable only after existing unsettled checks and actual coordinator drain;
+every reopened native interval resets it. Startup closes only prepared unused
+or explicitly quiescent old custody with exact launched result/checkpoint
+lineage and no unresolved effect. It preserves spent generations/calls/tokens,
+closes unused no-run task attempts and releases only unconsumed reservations.
+Unmarked accepted/open/unknown boundaries remain recovery-required.
+
+The storage service's `resume` is an inert transition to awaiting approval.
+The public coordinator must perform genuine fresh asynchronous native
+provider/tool/permission preparation before accepting any new phase attempt.
+Same-owner capacity continuation keeps its original acceptance; post-restart
+remaining work needs a new phase attempt and generation without adopting old
+capabilities or discarding fresh successful-result references.
 
 Update installed recovery schema catalogs, participant coverage, backup
 inventory/restore activation and targeted migration/retention tests with the new

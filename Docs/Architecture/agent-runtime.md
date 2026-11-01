@@ -402,3 +402,43 @@ and `closed` to cancellation. This path preserves charges, releases the unused
 planning-result capacity, and changes neither current plan nor workflow control
 revision. Unknown usage keeps the attempt open. Successful planning still requires
 atomic plan publication with the original control-revision CAS.
+
+## Native phased workflow evidence
+
+`Agents/workflow_run_service.py` is the passive history/checkpoint service for
+ADR-285. Its finite `call` owns the complete callback through the existing
+`run_owned_db_call` and Goal storage lifetime helpers, including bounded source
+preflight. `prepare_task_inputs` supplies source references and complete saved
+handoffs; it does not authorize file-body reads. Native preparation and launch
+revalidate the exact seed, current binding and dependency evidence.
+
+Only the original `WorkflowChildReceipt` retained on the private task
+authorization can bind settlement. The service observes its actual owner's drain
+callback and publishes required result, native checkpoint, retirement and active
+accounting in one FULL transaction before releasing that receipt's original
+activity claim. Known no-worker native failures retain original typed receipts;
+ambiguous creation/cleanup retains custody. A model's check labels or a terminal
+row alone cannot certify completion.
+
+Approved `VerificationSpec` wrappers are observed through the existing raw-shell
+provider/runtime/executor. The bounded sanitized capture precedes diagnostic
+preview/log truncation, and completeness requires both actual EOFs and cleanup.
+Wrapper source/arguments, selected cwd, resolved shell and input/output manifests
+are rechecked. Other shell commands do not satisfy expected checks. Skill
+scripts remain unsupported, and ordinary raw-shell behavior is unchanged.
+
+Schema v27 adds immutable `workflow_checkpoints` and inert
+`workflow_resume_commands`. Historical absent-field JSON remains byte-stable.
+Required Change Review references protect their native snapshots from pruning;
+settled explicit private-payload removal retains accounting tombstones.
+`prepare_decision` reviews upcoming execution; `prepare_quality_review` and
+`review_quality` handle completed results. Recovery carries a different tag.
+The existing fleet startup owner passes its single audit to workflow projection.
+Only prepared unused or explicit closed/drained quiescence is clean; accepted
+unmarked/open/unknown intervals stay recovery-required.
+
+`resume` validates saved clean state and returns awaiting approval without an
+execution capability. The later coordinator/bridge integration must freshly
+resolve actual provider/tools/permissions, then accept a new phase generation
+for remaining tasks. No scheduler, public workflow UI or restored-owner adoption
+is provided by this service slice.

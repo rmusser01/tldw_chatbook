@@ -591,13 +591,28 @@ class RawShellToolProvider:
                 check_task_provider(self, tool_id, dict(args))
             except Exception:  # noqa: BLE001 - authority failures must refuse
                 return ToolResult.blocked("workflow task scope refused")
+            from .workflow_task_scope import current_task_authorization
+
+            authorization = current_task_authorization()
+            observation = None
+            if authorization is not None and authorization._required_evidence:
+                observation = authorization._required_evidence[0].begin_shell(
+                    self, request
+                )
             result = self._runtime.execute(
                 request,
                 lambda event: self._emit_progress(run_id, call_id, event),
                 **callbacks,
+                **(
+                    {"required_output": observation.output}
+                    if observation is not None
+                    else {}
+                ),
             )
             if check_execution is not None:
                 check_execution.settled(result)
+            if observation is not None:
+                authorization._required_evidence[0].finish_shell(observation, result)
             self._emit_progress(run_id, call_id, result)
         except Exception as exc:
             detail = (str(exc) or type(exc).__name__)[:300]
