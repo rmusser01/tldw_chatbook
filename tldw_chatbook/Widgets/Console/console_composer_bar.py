@@ -53,6 +53,8 @@ from tldw_chatbook.Utils.input_validation import escape_markup as escape
 
 from ...Chat.console_display_state import (
     ConsoleAttachmentBlock,
+    QUEUE_REASON_PREPARING,
+    QUEUE_REASON_RECEIVED_PREPARING,
     build_console_disabled_reason,
 )
 from ...Chat.console_glyphs import GLYPH_VOICE_RECORDING, GLYPH_VOICE_WORKING
@@ -2455,7 +2457,9 @@ class ConsoleComposerBar(Horizontal):
         return (
             self._sending_draft_revision == revision
             and self._send_blocked
-            and bool(self._queue_blocked_reason)
+            and self._queue_blocked_reason in (
+                QUEUE_REASON_PREPARING, QUEUE_REASON_RECEIVED_PREPARING
+            )
             and bool(self.draft_text())
         )
 

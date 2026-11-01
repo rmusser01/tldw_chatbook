@@ -458,6 +458,7 @@ SEND_LABEL_QUEUE = "Queue"
 #: "Preparing...") with no chain, so that hold names the run it waits on
 #: rather than promising a queue that never opens.
 QUEUE_REASON_PREPARING = "Queue opens once this turn is accepted"
+QUEUE_REASON_RECEIVED_PREPARING = "Preparing this turn; draft kept until acceptance."
 QUEUE_REASON_FULL = "Queue full — manage it to make room"
 QUEUE_REASON_RUN_HOLD = "Wait for the current run to finish"
 

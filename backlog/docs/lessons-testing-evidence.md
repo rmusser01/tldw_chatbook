@@ -23645,3 +23645,8 @@ rc=2: `'filterwarnings' not found in markers`. The repo runs with
 the noise out of the captured log with `grep -v`, never by disabling a plugin.
 A per-file `rc=2` or `N error in <1s` is a collection failure, not a result:
 re-run that file before comparing it.
+
+
+## Current acknowledgement ownership qualifies the historical send split (PR3310, 2026-11-01)
+
+The older TASK-33620.15.26 measurements above used a stock route that bypassed acknowledgement. Current dev acknowledges stock sends before received-intent custody. During PR3310 integration, unconditional scheduling marked a refused edited draft while another turn still prepared; six scheduling controls reproduced that incorrect owner. Marking only the capture whose `ack.begin` succeeds fixes the owner without clearing an earlier capture's mark. Two mounted composer controls also reproduced truncation under Queue full and chainless run hold: only the canonical Preparing reason may retain an acknowledged capture's height. The historical route split is not a current routing contract.

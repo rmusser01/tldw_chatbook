@@ -35,6 +35,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_display_state import (
     QUEUE_REASON_FULL,
     QUEUE_REASON_PREPARING,
+    QUEUE_REASON_RECEIVED_PREPARING,
     QUEUE_REASON_RUN_HOLD,
     SEND_LABEL_SENDING,
 )
@@ -866,7 +867,7 @@ class ConsolePromptQueueUIController:
                 presentation,
                 send_label="Preparing...",
                 send_enabled=False,
-                send_tooltip="Preparing this turn; draft kept until acceptance.",
+                send_tooltip=QUEUE_REASON_RECEIVED_PREPARING,
             )
         if controller._chat_start.is_prepared(session_id):
             return replace(

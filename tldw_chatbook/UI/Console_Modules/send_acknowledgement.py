@@ -464,6 +464,10 @@ def schedule_acknowledged_send(screen: Any, pending_send: Any) -> None:
     ack = acknowledgement_for(screen)
     text = _acknowledged_text(screen, pending_send.stash, session_id)
     token = ack.begin(session_id, text) if text is not None else None
+    # Only this acknowledged capture owns the height hold. A refused press
+    # must not mark a newer draft while another turn is still preparing.
+    if token is not None and (composer := screen._console_composer_or_none()) is not None:
+        composer.note_draft_sending(pending_send.stash)
 
     async def observed_send() -> bool:
         try:
@@ -610,11 +614,6 @@ def _schedule(screen: Any, flight: _SendFlight, request: _Request) -> None:
             markup=False,
         )
         return
-    # TASK-33620.15.26: record the captured draft before acknowledgement
-    # and received-intent admission can synchronize the composer to Preparing.
-    composer = screen._console_composer_or_none()
-    if composer is not None:
-        composer.note_draft_sending(request.stash)
     flight.running = request.stash
     flight.running_image = (
         screen._console_pending_image_attachment() if request.stash is None else None

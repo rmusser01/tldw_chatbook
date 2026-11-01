@@ -3,7 +3,7 @@
 TASK-33620.15.26 and TASK-33620.15.20 (owner decision 2026-10-29: keep the
 transcript unbounded, cut its whole-transcript reflows per send instead).
 
-Measured headless on origin/dev 38c9d2edcf (160x45, a chat longer than the
+Historical measurement on origin/dev 38c9d2edcf (160x45, a chat longer than the
 screen, a 65-character prompt, Enter in the composer), every reflow from Enter
 to the provider call recorded with the regions it changed:
 
@@ -26,6 +26,11 @@ Live, each such reflow and its paint is the window's longest UI-loop callback
 send took (the strip still shows beside it), and on the acknowledged path the
 "Sending…" row stands in for the echo until the echo's turn writes its next
 row, so the echo and its placeholder land in one layout pass.
+
+Current integration (2026-11-01): stock sends also enter acknowledgement
+custody before received-intent admission. Both mounted routes therefore check
+that the echo and its reply placeholder first appear in the same reflow. The
+historical route split above describes the measured source base only.
 """
 
 from __future__ import annotations
@@ -214,7 +219,15 @@ async def _drive(host, pilot, console, composer, store, window, finished) -> Non
             window.recording = True
         calls = window.stream_calls
         _key(host, "enter", "\r")
-        await _until(pilot, lambda: window.stream_calls > calls, "no provider call")
+        # The first two turns establish an overflowing chat; cold native
+        # acceptance on Windows exceeded the old 15s setup wait. Preserve
+        # the measured third send's deadline and all layout assertions.
+        await _until(
+            pilot,
+            lambda: window.stream_calls > calls,
+            "no provider call",
+            timeout=60.0 if index < 2 else 15.0,
+        )
         await _until(
             pilot,
             lambda: (
@@ -405,9 +418,9 @@ def _composer_findings(window: _Window, console, composer) -> list[str]:
     # Positive controls: the strip was laid out beside the text being sent
     # (the condition that grew the composer on origin/dev), and the prompt
     # fits one row at the idle width but wraps at the width the strip leaves.
-    assert [r for r in reflows if r.strip_shown and not r.draft_empty], (
-        "the reason strip never sat beside the sent text"
-    )
+    assert [
+        r for r in reflows if r.strip_shown and not r.draft_empty
+    ], "the reason strip never sat beside the sent text"
     idle_width = window.draft_width_at_enter - 2
     assert composer._visible_draft_row_count(PROMPT, idle_width) == 1
     beside_width = window.draft_width_beside_strip - 2
@@ -503,7 +516,7 @@ async def test_a_stock_later_send_keeps_the_composer_one_row_tall(
         assert window.post, "no reflow was recorded between Enter and the provider call"
         await _measure_draft_beside_strip(window.pilot, console, composer, window)
         findings = _composer_findings(window, console, composer)
-        findings += _transcript_findings(window, store, same_reflow=False)
+        findings += _transcript_findings(window, store, same_reflow=True)
         assert findings == [], "\n".join(findings)
 
 
@@ -531,8 +544,10 @@ async def test_an_acknowledged_later_send_lands_its_echo_with_the_placeholder(
         assert findings == [], "\n".join(findings)
 
 
+@pytest.mark.parametrize("preparing", ["acknowledged", "received"])
 async def test_the_composer_keeps_its_rows_while_a_send_takes_its_text(
     monkeypatch,
+    preparing,
 ) -> None:
     """The rule on the composer alone (TASK-33620.15.26).
 
@@ -564,7 +579,7 @@ async def test_the_composer_keeps_its_rows_while_a_send_takes_its_text(
         assert rows(50) == 2
         assert rows(80) == 1
         composer.note_draft_sending(composer.capture_draft_for_send())
-        _show_preparing(composer)
+        _show_preparing(composer, preparing=preparing)
         assert rows(50) == 1, "the text being sent grew the composer"
         composer.insert_text(" Now.")
         assert rows(50) == 2, "an edited draft is the user's again"
@@ -581,10 +596,11 @@ async def test_the_composer_keeps_its_rows_while_a_send_takes_its_text(
         assert rows(50) == 1 and composer.draft_text() == ""
 
 
-def _show_preparing(composer) -> None:
+def _show_preparing(composer, *, preparing="acknowledged") -> None:
     """Sync the composer as a send in flight leaves it: Send refuses, Preparing."""
     from tldw_chatbook.Chat.console_display_state import (
         QUEUE_REASON_PREPARING,
+        QUEUE_REASON_RECEIVED_PREPARING,
         SEND_LABEL_PREPARING,
     )
 
@@ -593,12 +609,19 @@ def _show_preparing(composer) -> None:
         run_active=False,
         can_save_chatbook=False,
         send_blocked=True,
-        queue_blocked_reason=QUEUE_REASON_PREPARING,
+        queue_blocked_reason=(
+            QUEUE_REASON_RECEIVED_PREPARING
+            if preparing == "received"
+            else QUEUE_REASON_PREPARING
+        ),
         send_label=SEND_LABEL_PREPARING,
     )
 
 
-async def test_a_refused_send_gives_its_draft_its_rows_back(monkeypatch) -> None:
+@pytest.mark.parametrize("refusal", ["idle", "queue-full", "run-hold"])
+async def test_a_refused_send_gives_its_draft_its_rows_back(
+    monkeypatch, refusal
+) -> None:
     """The kept rows last only while a send of the shown text is in flight.
 
     Review of TASK-33620.15.26 (2026-10-29): the mark ``_schedule`` sets was
@@ -638,8 +661,22 @@ async def test_a_refused_send_gives_its_draft_its_rows_back(monkeypatch) -> None
         composer.note_draft_sending(composer.capture_draft_for_send())
         _show_preparing(composer)
         assert rows(50) == 1, "positive control: the send in flight keeps its rows"
+        from tldw_chatbook.Chat.console_display_state import (
+            QUEUE_REASON_FULL,
+            QUEUE_REASON_RUN_HOLD,
+        )
+
+        reason = {
+            "idle": "",
+            "queue-full": QUEUE_REASON_FULL,
+            "run-hold": QUEUE_REASON_RUN_HOLD,
+        }[refusal]
         composer.sync_action_state(
-            has_draft=True, run_active=False, can_save_chatbook=False
+            has_draft=True,
+            run_active=bool(reason),
+            can_save_chatbook=False,
+            send_blocked=bool(reason),
+            queue_blocked_reason=reason,
         )
         assert rows(50) == 2, "a refused send's draft stayed cut to one row"
         # A refusal that clears the mark while "Preparing..." still shows
@@ -651,9 +688,9 @@ async def test_a_refused_send_gives_its_draft_its_rows_back(monkeypatch) -> None
         assert rows(50) == 1
         composer.note_draft_sending(None)
         await pilot.pause()
-        assert composer._draft_geometry_signature[0] == 2, (
-            "clearing the mark left the draft cut to one row"
-        )
+        assert (
+            composer._draft_geometry_signature[0] == 2
+        ), "clearing the mark left the draft cut to one row"
 
 
 @private_profile_test
