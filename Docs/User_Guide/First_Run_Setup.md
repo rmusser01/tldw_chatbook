@@ -128,7 +128,8 @@ URL line under the field shows the result); each shows an example. Setup saves e
 preset's key, model and documented base URL in its own
 `[api_settings.<provider>]` table. **Custom Hosted** is not listed: it is the
 internal engine route for custom endpoints, which you set up as **Custom
-OpenAI-compatible**.
+OpenAI-compatible**. Entering an account URL keeps the selected environment
+or saved key; an unfinished URL does not clear the credential.
 
 ## Local servers
 
@@ -142,7 +143,10 @@ list, already highlighted — "llama.cpp on this computer · 127.0.0.1:9099 ·
 another row. LM Studio, Jan and KoboldCpp are set up
 through the **Custom OpenAI-compatible** row. Picking another provider never
 forgets the server, and picking that engine's own row later fills in the
-port that was found.
+port that was found. The **KoboldCpp** row itself uses the native address
+ending in `/api/v1/generate`, as prefilled. For a server origin or `/v1`
+OpenAI-compatible address, choose **Custom OpenAI-compatible** instead; the
+KoboldCpp row explains this and refuses to save an incompatible route.
 
 When nothing answers, the step says which addresses it checked, offers
 **Check again**, and has a collapsed **Don't have a local server yet?** with

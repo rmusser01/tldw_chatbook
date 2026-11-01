@@ -11,6 +11,8 @@ after picking a local provider went to the provider list).
 
 from __future__ import annotations
 
+import errno
+
 import pytest
 from textual import events
 from textual.widgets import Button, Input, Label
@@ -462,7 +464,7 @@ async def test_koboldcpp_discovery_asks_its_openai_listing_so_a_failure_is_named
     def refused(request: httpx.Request) -> httpx.Response:
         asked.append(str(request.url))
         raise httpx.ConnectError("refused", request=request) from ConnectionRefusedError(
-            61, "Connection refused"
+            errno.ECONNREFUSED, "Connection refused"
         )
 
     result = await discover_openai_compatible_models(

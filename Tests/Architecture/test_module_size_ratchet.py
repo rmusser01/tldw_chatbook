@@ -558,7 +558,8 @@ _BUDGETS: dict[str, int] = {
     # advance fence, cleared on a provider change or key edit), and 'test
     # again' waits for Test to be enabled (G6-BV3-05). In place, in the
     # methods that own them.
-    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 1678,
+    # 2026-10-31 PR3294 review repair: exact 1690 lines under user size waiver.
+    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 1690,
     # owner decision 2026-10-04 (expand limits): TASK-34100.14 +60 -- the
     # download's cancel switch, its live status line and the cancelled
     # outcome are wired on the step (its @on handlers must stay on the

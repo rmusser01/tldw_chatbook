@@ -405,14 +405,21 @@ def build_local_server_candidates(
         normalized = normalize_probe_base_url(raw_url)
         if not normalized or not is_localhost_url(normalized):
             return
-        if normalized in seen_urls:
-            return
-        seen_urls.add(normalized)
-        ordered.append(
-            LocalServerCandidate(
-                provider_key=provider_key, base_url=normalized, engine=engine
-            )
+        parts = urlparse(normalized)
+        alternate_host = "localhost" if parts.hostname == "127.0.0.1" else "127.0.0.1"
+        alternate_netloc = alternate_host + (
+            f":{parts.port}" if parts.port is not None else ""
         )
+        alternate = parts._replace(netloc=alternate_netloc).geturl()
+        for base_url in (normalized, alternate):
+            if base_url in seen_urls:
+                continue
+            seen_urls.add(base_url)
+            ordered.append(
+                LocalServerCandidate(
+                    provider_key=provider_key, base_url=base_url, engine=engine
+                )
+            )
 
     # Two well-known llama.cpp candidates when nothing is configured: the
     # stock `llama-server` default port (8080), then the port Chatbook's docs

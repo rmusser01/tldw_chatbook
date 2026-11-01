@@ -24,6 +24,7 @@ from textual.widgets import Button, Collapsible, Input, Label, OptionList, Stati
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.UI.Wizards.first_run_provider_skip import missing_url_reason
+from tldw_chatbook.UI.Wizards.first_run_setup_state import first_run_endpoint_refusal
 from tldw_chatbook.UI.Wizards.first_run_setup_widgets import SetupStep
 from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker
 
@@ -381,9 +382,14 @@ class ProviderDetectionStep(SetupStep):
         if resolution is None:
             resolution = resolve_provider_endpoint(provider_key, endpoint)
         parts: list[str] = []
-        invalid = bool(endpoint.strip()) and resolution.chat_url is None
+        native_refusal = first_run_endpoint_refusal(provider_key, resolution.chat_url)
+        invalid = bool(endpoint.strip()) and (
+            resolution.chat_url is None or bool(native_refusal)
+        )
         if invalid:
-            parts.append("✗ " + (resolution.errors[0] if resolution.errors else "Invalid endpoint."))
+            parts.append("✗ " + (
+                native_refusal or (resolution.errors[0] if resolution.errors else "Invalid endpoint.")
+            ))
             if test.display:
                 parts.append("Fix it to enable Test connection.")
         elif endpoint.strip():
@@ -411,7 +417,12 @@ class ProviderDetectionStep(SetupStep):
         except NoMatches:
             return "The provider settings are invalid. Pick another provider."
         key = getattr(self, "selected_provider_key", "")
-        if connection.display and resolve_provider_endpoint(key, endpoint).errors:
+        resolution = resolve_provider_endpoint(key, endpoint)
+        if connection.display and (
+            refusal := first_run_endpoint_refusal(key, resolution.chat_url)
+        ):
+            return refusal
+        if connection.display and resolution.errors:
             return (
                 "The endpoint isn't a valid address — fix it above or pick another "
                 "provider."

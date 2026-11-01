@@ -343,23 +343,21 @@ def ready_badges(
     Returns:
         provider key -> badge such as 'key in OPENAI_API_KEY'.
     """
-    from tldw_chatbook.config import is_valid_provider_api_key
+    from tldw_chatbook.Chat.provider_readiness import provider_credential_source
 
     environ = os.environ if environ is None else environ
-    api_settings = app_config.get("api_settings") if isinstance(app_config, Mapping) else {}
-    api_settings = api_settings if isinstance(api_settings, Mapping) else {}
     badges: dict[str, str] = {}
     for entry in entries:
         facts = getattr(entry, "setup_facts", None)
         if not entry.requires_api_key or facts is None or facts.legacy:
             continue
-        table = api_settings.get(entry.readiness_key)
-        if isinstance(table, Mapping) and is_valid_provider_api_key(table.get("api_key")):
+        source = provider_credential_source(
+            entry.readiness_key, app_config, environ=environ
+        )
+        if source and source.startswith("config:"):
             badges[entry.readiness_key] = "key saved"
-            continue
-        env_var = facts.env_var
-        if env_var and is_valid_provider_api_key(environ.get(env_var)):
-            badges[entry.readiness_key] = f"key in {env_var}"
+        elif source and source.startswith("env:"):
+            badges[entry.readiness_key] = f"key in {source.removeprefix('env:')}"
     return badges
 
 

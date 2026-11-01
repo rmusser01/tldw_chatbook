@@ -16,6 +16,7 @@ from collections import OrderedDict
 from dataclasses import (
     dataclass,
     field,
+    replace,
 )
 from functools import partial
 from typing import (
@@ -596,7 +597,10 @@ class ProviderStep(provider_check.ProviderCheckStep):
         they never enter a first-run credential draft or saved config.
         """
 
-        from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+        from tldw_chatbook.Chat.provider_readiness import (
+            get_provider_readiness,
+            resolve_provider_credential,
+        )
         from tldw_chatbook.config import is_valid_provider_api_key
 
         provider_key = self.selected_provider_key
@@ -618,15 +622,19 @@ class ProviderStep(provider_check.ProviderCheckStep):
             if is_valid_provider_api_key(typed):
                 return "draft", typed, base_readiness
             return "none", None, base_readiness
-        if self._clear_requested:
+        if self._clear_requested or base_readiness.subscription_status is not None:
             return "none", None, base_readiness
-        if base_readiness.ready and base_readiness.api_key is not None:
-            source = (
-                "environment"
-                if str(base_readiness.api_key_source).startswith("env:")
-                else "stored"
+        # A missing account URL blocks sending, not the existing key choice.
+        value, key_source, env_var = resolve_provider_credential(
+            provider_key,
+            self._provider_settings(provider_key),
+            environ=self._environment(),
+        )
+        if value is not None:
+            source = "environment" if str(key_source).startswith("env:") else "stored"
+            return source, value, replace(
+                base_readiness, env_var=env_var
             )
-            return source, base_readiness.api_key, base_readiness
         return "none", None, base_readiness
 
     def _sync_live_credential_revision(self) -> bool:
@@ -711,8 +719,11 @@ class ProviderStep(provider_check.ProviderCheckStep):
         typed_value = self.query_one("#setup-provider-api-key", Input).value.strip()
         if self._clear_requested or (typed_value and source == "none"):
             settings.pop("api_key_env_var", None)
+        settings["credential_source"] = "stored" if source == "draft" else source
         if source == "draft" and value is not None:
             settings["api_key"] = value
+        elif source == "environment" and base.env_var:
+            settings["api_key_env_var"] = base.env_var
         staged_api_settings[provider_key] = settings
         staged_config = dict(app_config)
         staged_config["api_settings"] = staged_api_settings
@@ -743,7 +754,8 @@ class ProviderStep(provider_check.ProviderCheckStep):
         )
 
         resolution = resolve_provider_endpoint(provider_key, candidate)
-        if resolution.errors or resolution.models_url is None:
+        if (resolution.errors or resolution.models_url is None
+                or wizard_state.first_run_endpoint_refusal(provider_key, resolution.chat_url)):
             return ""
         return candidate
 

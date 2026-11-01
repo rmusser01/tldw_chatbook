@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -353,6 +354,17 @@ def resolve_first_run_provider_draft(
     )
 
 
+def first_run_endpoint_refusal(provider_key: str, chat_url: str | None) -> str:
+    """Refuse a wizard endpoint incompatible with its native Kobold sender."""
+    if (provider_key == "koboldcpp" and chat_url
+            and not chat_url.endswith("/api/v1/generate")):
+        return (
+            "KoboldCpp needs its native /api/v1/generate address. "
+            "For an OpenAI-compatible server, choose Custom instead."
+        )
+    return ""
+
+
 def _resolve_first_run_provider_endpoints(
     provider: str,
     editable_endpoint: str,
@@ -375,6 +387,8 @@ def _resolve_first_run_provider_endpoints(
         resolution = resolve_provider_endpoint(owner_key, endpoint)
         if resolution.errors or resolution.persisted_endpoint is None:
             raise ValueError("Provider endpoint is invalid.")
+        if refusal := first_run_endpoint_refusal(owner_key, resolution.chat_url):
+            raise ValueError(refusal)
         endpoint = resolution.persisted_endpoint
     if owner_key in _ENDPOINT_REQUIRED_PROVIDER_KEYS:
         if not endpoint:
@@ -480,6 +494,7 @@ def build_first_run_provider_commit(
 
     credential = provider_draft.credential
     credential_value = _credential_value_for_boundary(credential)
+    resolved_env_var = None
 
     def shared_draft(source: str) -> ProviderSetupDraft:
         return ProviderSetupDraft(
@@ -495,19 +510,31 @@ def build_first_run_provider_commit(
                 else None
             ),
             credential_env_var=(
-                credential_value if credential.source == "environment" else None
+                credential_value
+                if credential.source == "environment"
+                else resolved_env_var
             ),
         )
 
     if credential.source == "none":
-        from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+        from tldw_chatbook.Chat.provider_readiness import (
+            get_provider_readiness,
+            resolve_provider_credential,
+        )
 
         readiness = get_provider_readiness(
             effective_draft.provider, config, background_credentials=True
         )
-        if str(readiness.api_key_source or "").startswith("config:"):
+        key_source = readiness.api_key_source
+        if readiness.subscription_status is None:
+            _, key_source, resolved_env_var = resolve_provider_credential(
+                _first_run_provider_owner_key(effective_draft.provider),
+                _first_run_provider_settings(config, effective_draft.provider),
+                environ=os.environ,
+            )
+        if str(key_source or "").startswith("config:"):
             source = "stored"
-        elif str(readiness.api_key_source or "").startswith("env:"):
+        elif str(key_source or "").startswith("env:"):
             source = "environment"
         else:
             source = "none"
