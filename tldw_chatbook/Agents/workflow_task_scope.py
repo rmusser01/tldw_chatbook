@@ -381,7 +381,9 @@ def _prepare_task(
             )
             if not _covered(target, False, footprint.reads + footprint.writes):
                 _refuse("input_outside_scope")
-        physical_footprint = _physical_footprint(footprint, binding, chain)
+        physical_footprint = _physical_footprint(
+            footprint, binding, chain, mkdir_enabled="fs_mkdir" in task.allowed_tools
+        )
         claim = phase._ledger.claim_workflow_task(
             phase.attempt.id, task_id=task_id, owner_id=phase.attempt.owner_id
         )
@@ -405,7 +407,9 @@ def _prepare_task(
     )
 
 
-def _physical_footprint(footprint, binding, chain) -> WorktreeFootprint:
+def _physical_footprint(
+    footprint, binding, chain, *, mkdir_enabled: bool
+) -> WorktreeFootprint:
     """Protect native root-to-target guidance without granting model file access.
 
     Both override and standard candidates matter even when absent: creation can
@@ -427,6 +431,15 @@ def _physical_footprint(footprint, binding, chain) -> WorktreeFootprint:
                 break
             directory = directory.parent
     reads = list(footprint.reads)
+    if mkdir_enabled:
+        for scope in footprint.writes:
+            if not scope.subtree and not path_is_excluded(scope.path, excluded):
+                # Native fs_mkdir maps its exact destination as a directory, so
+                # guidance can read below it after creation or on a later visit.
+                # Keep this host-only claim conservative even when the target is
+                # currently a file: constructing file/AGENTS.md would fail with
+                # ENOTDIR, and the same task may replace the file with a directory.
+                reads.append(WorktreeScope(scope.path, True, chain))
     for directory in sorted(directories):
         for filename in ("AGENTS.override.md", "AGENTS.md"):
             candidate = directory / filename

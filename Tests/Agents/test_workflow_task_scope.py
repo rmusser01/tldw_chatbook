@@ -1079,3 +1079,58 @@ def test_native_guidance_excludes_hidden_candidate(task_host):
     reads = {s.path for s in host.authorization.physical_footprint.reads}
     assert host.root / "AGENTS.override.md" not in reads
     assert host.root / "AGENTS.md" in reads
+
+
+@pytest.mark.parametrize("initially_absent", [False, True])
+@pytest.mark.parametrize("filename", ["AGENTS.md", "AGENTS.override.md"])
+def test_native_mkdir_guidance_is_protected_on_directory_revisit(
+    task_host, initially_absent, filename
+):
+    from Tests.Agents.test_project_instruction_runtime import _payload, _snapshot
+    from tldw_chatbook.Agents.project_instruction_runtime import (
+        InstructionActivationLedger,
+    )
+    from tldw_chatbook.Workspaces.worktree_activity import (
+        WorktreeFootprint,
+        WorktreeScope,
+    )
+
+    def directory_task(data, root):
+        task = data["phases"][0]["tasks"][0]
+        task["footprint"] = [{"path": "nested", "access": "write", "subtree": False}]
+        task["outputs"] = ["nested"]
+        if not initially_absent:
+            (root / "nested").mkdir()
+
+    host = task_host(tools=("fs_mkdir", "fs_read"), plan_edit=directory_task)
+    host.bind()
+    nested = host.root / "nested"
+    ledger = InstructionActivationLedger(_snapshot(host.root), nested_max_bytes=100)
+    payload, _ = _payload()
+    calls = [ToolCall("fs_mkdir", {"path": "nested"}, "mkdir")]
+    # Real native provider directory mapping and guidance preparation precede
+    # actual mkdir, including when the destination has never existed.
+    ledger.prepare(calls, "primary", host.registry, payload)
+    result = invoke(host, "fs_mkdir", {"path": "nested"})
+    assert result.ok, result
+    assert nested.is_dir()
+    # Simulate an external edit; runtime admission is not an OS sandbox. The
+    # same dispatch must protect discovery when this directory is revisited.
+    candidate = nested / filename
+    candidate.write_text("nested instruction")
+    delivery = ledger.prepare(calls, "primary", host.registry, payload)
+    assert any("nested instruction" in row["content"] for row in delivery.rows)
+    assert invoke(host, "fs_mkdir", {"path": "nested"}).ok
+    assert not invoke(host, "fs_read", {"path": f"nested/{filename}"}).ok
+    chain = host.authorization.footprint.writes[0].root
+    with host.activity.prelaunch(
+        footprint=WorktreeFootprint(writes=(WorktreeScope(candidate, False, chain),))
+    ) as contender:
+        assert contender is None
+
+
+def test_mkdir_capable_exact_file_scope_preserves_native_file_access(task_host):
+    host = task_host(tools=("fs_read", "fs_mkdir"))
+    host.bind()
+    assert invoke(host, "fs_read", {"path": "source.py"}).ok
+    assert not invoke(host, "fs_read", {"path": "AGENTS.md"}).ok
