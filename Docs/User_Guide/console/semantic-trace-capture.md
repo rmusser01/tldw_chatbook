@@ -25,15 +25,41 @@ is shown as such; Console does not invent missing history.
 
 ## Capture On, Capture Off, and temporary chats
 
-Capture is on by default. Change the global default in **F4 > Console
-Behavior**, or press **c** in a live Trace to choose **Next send**, **This
-conversation**, or **Global default**. Capture Off affects future calls and does
-not delete existing trace history.
+Capture is on by default for saved chats. Change the global default in **F4 >
+Console Behavior**, or press **c** in a live Trace to choose **Next send**,
+**This conversation**, or **Global default**. Capture Off affects future calls
+and does not delete existing trace history.
 
-A Capture On call needs a durable owner before it can contact the provider. If
-the chat is temporary, Console offers **Save & Send**. That action saves the
-current lineage and its trace ownership, then sends. You can instead make an
-explicit one-shot send with Capture Off. Temporary trace and fork state can stay
+A temporary chat records no traces. Its sends go to the provider with Capture
+Off and never stop to ask, and the status strip shows **Temporary · not saved ·
+traces off** (its tab's tooltip ends with the same words). To save the chat,
+activate that segment or choose **Save chat** in the composer **Menu**. From
+its next send the saved chat follows its own Capture
+choice (**This conversation** in Trace Privacy), or the global default when it
+has none; the sends it made while temporary keep no trace. The Menu row says
+which: it reads **Save chat (enables capture)**, with the hint "records no
+traces until saved", only when saving will turn capture on. With the global
+default Off, or Capture Off chosen for this conversation, it reads **Save chat**
+and its hint says saving keeps traces off; a saved chat with no Capture choice
+of its own still follows the global default if you change it later. A
+one-time **Next send** choice is kept when you save and decides that one send,
+so when it differs the hint says so instead: "once saved, only your next send
+is traced", or "once saved, traces start after your next send".
+
+If you turn Capture On for a chat that is still temporary, a send pauses
+before the provider, because a Capture On call needs a durable owner: every
+send while **This conversation** is On, or only the next one when you chose
+**Next send**. While a send would pause, the status strip (and the tab's
+tooltip) reads **Temporary · not saved · capture on**; it goes back to
+**traces off** when you set Capture back, or once a **Next send** choice is
+spent (**Send without capture** spends it; **Cancel send** keeps it). The
+transcript shows
+**Save chat to capture this send** with **Save & Send**, **Send without
+capture** and **Cancel send**. **Save & Send** saves the current lineage and
+its trace ownership, then sends that message; **Send without capture** sends
+that one message with Capture Off; **Cancel send** puts the message back in the
+composer with any attachments it carried. While the card is on screen, the
+queue shelf does not list the send as unsent. Temporary trace and fork state can stay
 coherent while the app is running and while you switch chats, but it is not
 restart-durable until saved.
 

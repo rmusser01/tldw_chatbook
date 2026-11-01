@@ -320,6 +320,79 @@ def resolve_scoped_boolean(
     return global_default
 
 
+def temporary_chat_capture(
+    conversation: bool | None, *, ephemeral: bool
+) -> bool | None:
+    """Return a chat's conversation-scope Capture, Off for a Temporary chat.
+
+    TASK-33621.17 (owner decision 2026-10-27): a Temporary chat records no
+    traces unless someone turned Capture on for it, so its sends never pause
+    for Save & Send. The default lives here, at resolution, rather than as a
+    stored Off: saving the chat must hand Capture back to its own choice,
+    else the global setting, and a stored Off would be saved with the chat.
+
+    Args:
+        conversation: The chat's sparse Capture override, or None to inherit.
+        ephemeral: Whether the chat is still temporary.
+
+    Returns:
+        False for a temporary chat with no override; the override otherwise.
+    """
+
+    if ephemeral and conversation is None:
+        return False
+    return conversation
+
+
+def temporary_chat_captures_next_send(
+    conversation: bool | None, next_send: bool | None
+) -> bool:
+    """Return whether a Temporary chat's next manual send resolves Capture On.
+
+    TASK-37840: the Temporary status segment reads 'capture on' exactly when
+    this is True, because that send then pauses on Save chat to capture this
+    send. It is the controller's own resolution (``capture_policy_snapshot``,
+    the stream signals) for a chat that is still temporary, where
+    ``temporary_chat_capture`` leaves the global default nothing to decide.
+
+    Args:
+        conversation: The chat's Capture choice for This conversation, or None.
+        next_send: The one-time Next send Capture choice, or None.
+
+    Returns:
+        The Next send choice when set, else the conversation's, else False.
+    """
+
+    return resolve_scoped_boolean(
+        global_default=False,
+        conversation=temporary_chat_capture(conversation, ephemeral=True),
+        next_send=next_send,
+    )
+
+
+def saved_chat_capture(conversation: bool | None, *, global_enabled: bool) -> bool:
+    """Return the Capture a Temporary chat follows once it is saved.
+
+    TASK-37811 (owner decision 2026-10-29): the Save chat row may say it
+    enables capture only when this is True. A saved chat is no longer
+    temporary, so ``temporary_chat_capture`` lets its stored choice through
+    and the controller resolves that over the global setting. A one-shot
+    next-send choice is not the chat's setting and is left out here; the
+    Save chat hint names it separately when it differs.
+
+    Args:
+        conversation: The chat's stored Capture choice, or None to inherit.
+        global_enabled: The global capture setting.
+
+    Returns:
+        Whether the saved chat's sends will be captured.
+    """
+
+    return resolve_scoped_boolean(
+        global_default=global_enabled, conversation=conversation
+    )
+
+
 @dataclass(frozen=True)
 class ExchangeCapture:
     """One provider call's captured request/response pair."""

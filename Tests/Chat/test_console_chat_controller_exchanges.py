@@ -508,7 +508,101 @@ def test_frozen_turn_without_override_does_not_consume_later_privacy_choice(
     assert after.next_pii_redaction_enabled is True
 
 
+def _choose_capture_on(store, session_id: str) -> None:
+    """Turn Capture On for a still-temporary chat, as the Trace Privacy dialog does.
+
+    TASK-33621.17 (owner decision 2026-10-27): a Temporary chat resolves
+    Capture Off by default, so the Save & Send pause is opt-in. The tests
+    that pin that pause make the opt-in explicit.
+    """
+    store.replace_session_trace_privacy_override(
+        session_id,
+        capture_enabled=True,
+        pii_redaction_enabled=None,
+        expected_policy_revision=store.capture_policy_state(session_id).policy_revision,
+    )
+
+
 @pytest.mark.asyncio
+async def test_temporary_chat_resolves_capture_off_until_chosen_or_saved(
+    monkeypatch,
+) -> None:
+    """TASK-33621.17: the default is resolved, not stored, so saving drops it."""
+    store = ConsoleChatStore()
+    temporary = store.create_session(ephemeral=True)
+    saved = store.create_session()
+    gateway = StreamingGateway()
+    gateway.supports_durable_capture = True
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=7),
+    )
+
+    default = controller.capture_policy_snapshot(temporary.id)
+    assert default.effective_capture_enabled is False
+    assert default.conversation_capture_enabled is None
+    assert controller.capture_policy_snapshot(saved.id).effective_capture_enabled
+
+    _choose_capture_on(store, temporary.id)
+    assert controller.capture_policy_snapshot(temporary.id).effective_capture_enabled
+
+    store.replace_session_trace_privacy_override(
+        temporary.id,
+        capture_enabled=None,
+        pii_redaction_enabled=None,
+        expected_policy_revision=store.capture_policy_state(
+            temporary.id
+        ).policy_revision,
+    )
+    temporary.ephemeral = False  # what promotion publishes
+    assert controller.capture_policy_snapshot(temporary.id).effective_capture_enabled
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # sends through the hooks/config admission
+async def test_temporary_chat_default_send_skips_the_capture_pause(
+    monkeypatch,
+) -> None:
+    """TASK-33621.17 AC#1: with no choice made, a Temporary send goes out."""
+
+    class CountingGateway(StreamingGateway):
+        supports_durable_capture = True
+
+        def __init__(self) -> None:
+            self.entries = 0
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.entries += 1
+            yield "sent"
+
+    gateway = CountingGateway()
+    store = ConsoleChatStore()
+    session = store.create_session(
+        ephemeral=True,
+        settings=controller_module.ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="test-model",
+        ),
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=7),
+    )
+
+    result = await controller.submit_draft("just send", session_id=session.id)
+
+    assert result.accepted is True, result.visible_copy
+    assert gateway.entries == 1
+    preparation = store.preparation_for_session(session.id)
+    assert preparation is None or preparation.pause_kind is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # real hooks/config admission retains its selected source
 async def test_temporary_capture_on_pauses_real_submit_before_gateway(
     monkeypatch,
 ) -> None:
@@ -561,6 +655,7 @@ async def test_temporary_capture_on_pauses_real_submit_before_gateway(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # sends through the hooks/config admission
 async def test_temporary_capture_on_attachment_only_pauses_before_gateway(
     monkeypatch,
 ) -> None:
@@ -612,6 +707,7 @@ async def test_temporary_capture_on_attachment_only_pauses_before_gateway(
         lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=7),
     )
 
+    _choose_capture_on(store, session.id)
     result = await controller.submit_draft("", session_id=session.id)
     preparation = store.preparation_for_session(session.id)
 
@@ -625,6 +721,7 @@ async def test_temporary_capture_on_attachment_only_pauses_before_gateway(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # sends through the hooks/config admission
 async def test_queued_temporary_capture_on_refuses_without_throwing_or_dispatch(
     monkeypatch,
 ) -> None:
@@ -659,6 +756,7 @@ async def test_queued_temporary_capture_on_refuses_without_throwing_or_dispatch(
         lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=7),
     )
 
+    _choose_capture_on(store, session.id)
     result = await controller.submit_draft(
         "queued capture",
         session_id=session.id,
@@ -677,6 +775,7 @@ async def test_queued_temporary_capture_on_refuses_without_throwing_or_dispatch(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # sends through the hooks/config admission
 async def test_temporary_capture_cancel_removes_unsent_echo_and_preparation(
     monkeypatch,
 ) -> None:
@@ -696,6 +795,7 @@ async def test_temporary_capture_cancel_removes_unsent_echo_and_preparation(
         "runtime_capture_policy",
         lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=7),
     )
+    _choose_capture_on(store, session.id)
     paused = await controller.submit_draft("cancel me", session_id=session.id)
     assert paused.preparation_id is not None
 
@@ -707,6 +807,7 @@ async def test_temporary_capture_cancel_removes_unsent_echo_and_preparation(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # sends through the hooks/config admission
 async def test_save_and_send_refreshes_durable_authority_before_trace_admission(
     monkeypatch,
     tmp_path,
@@ -775,6 +876,7 @@ async def test_save_and_send_refreshes_durable_authority_before_trace_admission(
             ),
         )
 
+        _choose_capture_on(store, session.id)
         paused_result = await controller.submit_draft(
             "capture this",
             session_id=session.id,
@@ -792,10 +894,13 @@ async def test_save_and_send_refreshes_durable_authority_before_trace_admission(
         assert promoted is not None
         assert promoted.attempt_id != original_attempt_id
         assert promoted.execution_context.library_authority.policy.source == "durable"
-        assert promoted.state is ConsoleTurnPreparationState.ACCEPTED
+        # TASK-33621.17: with the durable identity the commit now lands, and
+        # the failing reservation pauses the saved send on its card (documented
+        # in semantic-trace-capture.md) instead of being refused at the commit.
+        assert promoted.state is ConsoleTurnPreparationState.PAUSED
+        assert promoted.pause_kind is ConsolePreparationPauseKind.TRACE_CALL
         assert result.accepted is True
-        assert result.provider_started is False
-        assert result.visible_copy == "Accepted turn is retained for recovery."
+        assert "Trace capture could not start" in result.visible_copy
         assert adapter_entries == 0
         rows = chat_db.get_messages_for_conversation(
             session.persisted_conversation_id,
@@ -1702,16 +1807,17 @@ def test_legacy_writer_requires_both_capture_and_legacy_rollout_gate(
     assert signals.exchange_capture_enabled is expected
 
 
+@pytest.mark.bootstrap_profile  # read the real collection-bound default config
 def test_shipped_config_default_resolves_exchange_capture_true():
     """Make the shipped [console] default itself load-bearing: read the
     REAL resolved settings layer with no controller-side default masking
     whether the TOML key is actually present (``default=None``, not
     ``True``) -- mirrors Tests/test_config_console_defaults.py's own
     default-pin style (e.g. ``test_console_sidechat_model_default_is_
-    empty_string``), which calls ``get_cli_setting`` directly with no
-    extra setup beyond the autouse ``isolate_test_environment`` fixture
-    (Tests/conftest.py) that already redirects XDG_CONFIG_HOME/
-    TLDW_CONFIG_PATH to a per-test temp directory -- this never touches
+    empty_string``), which calls ``get_cli_setting`` directly. The
+    bootstrap_profile marker retains the private profile selected before config
+    import through the real config-participant admission;
+    the autouse fixture restores its bytes between tests. This never touches
     the user's real config (a documented incident in this repo)."""
     from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
 

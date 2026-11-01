@@ -773,11 +773,11 @@ def _temporary_segment_text(console) -> str:
 async def test_activate_console_session_for_workspace_keeps_temporary_chip_honest():
     """task-7 review: three callers reach ``_activate_console_session_for_
     workspace`` and none of them refresh the temporary chip afterward --
-    they only await ``_sync_native_console_chat_ui()``, which never touches
-    it (same reason it never touches the scope chip). Tests the
-    CONSEQUENCE (chip visibility after the real switch/create branches
-    run), in both directions, so a push that hardcoded either answer would
-    fail this.
+    they only await ``_sync_native_console_chat_ui()``, which did not touch
+    it then. Since TASK-37840 a full sync pass re-pushes the chip too, so
+    this pins the CONSEQUENCE (chip visibility after the real switch/create
+    branches run) whichever push paints it, in both directions, so a push
+    that hardcoded either answer would fail this.
     """
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -886,8 +886,9 @@ async def test_workspace_conversation_row_click_on_open_tab_keeps_temporary_chip
     """task-7 review: clicking an already-open tab's workspace-conversation
     row (the branch that skips ``_resume_console_workspace_conversation``
     because the session is already open) only awaited
-    ``_sync_native_console_chat_ui()`` before this fix. Ephemeral (native,
-    unpersisted) sessions appear in this same row list --
+    ``_sync_native_console_chat_ui()`` before this fix (a full pass also
+    re-pushes the chip since TASK-37840; the consequence is what is pinned).
+    Ephemeral (native, unpersisted) sessions appear in this same row list --
     ``_native_console_browser_rows`` has no ephemeral filter -- so both
     directions are genuinely reachable here: clicking an open ephemeral
     tab's row must show the chip, and clicking a saved/normal tab's row
@@ -1061,6 +1062,91 @@ def test_save_this_chat_appears_only_in_a_temporary_chat():
     entry = temporary[0]
     assert entry.enabled is True
     assert "not saved" in entry.description.lower()
+
+
+@pytest.mark.unit
+def test_save_chat_row_promises_capture_only_when_saving_turns_it_on():
+    """TASK-37811 (owner decision 2026-10-29): say what saving will do.
+
+    Saving a Temporary chat hands Capture back to the chat's own choice,
+    else the global setting. The row read 'Save chat (enables capture)' in
+    every case, so with a stored conversation Capture Off or the global
+    Capture Off it promised traces that never came.
+    """
+    from tldw_chatbook.Chat.console_ephemeral import ACTION_SAVE_CHAT
+    from tldw_chatbook.Chat.console_exchange_capture import saved_chat_capture
+
+    # (stored conversation Capture, global capture) -> Capture once saved.
+    assert saved_chat_capture(None, global_enabled=True) is True
+    assert saved_chat_capture(False, global_enabled=True) is False
+    assert saved_chat_capture(None, global_enabled=False) is False
+    assert saved_chat_capture(True, global_enabled=False) is True
+
+    def save_row(**kwargs):
+        entry = build_composer_menu_entries(ephemeral=True, **kwargs)[0]
+        assert entry.action_id == ACTION_SAVE_CHAT
+        return entry.label, entry.description
+
+    enables = (
+        "Save chat (enables capture)",
+        "Not saved locally; records no traces until saved",
+    )
+    stays_off = ("Save chat", "Not saved locally; saving keeps traces off")
+    assert save_row(save_enables_capture=True) == enables
+    assert save_row(save_enables_capture=False) == stays_off
+    # A one-time Next send choice that agrees changes nothing ...
+    assert save_row(save_enables_capture=True, next_send_capture=True) == enables
+    assert (
+        save_row(save_enables_capture=False, next_send_capture=False) == stays_off
+    )
+    # ... and one that differs is named, because promotion keeps it and it
+    # outranks the chat's setting for that one send (review of TASK-37811).
+    assert save_row(save_enables_capture=False, next_send_capture=True) == (
+        "Save chat",
+        "Not saved locally; once saved, only your next send is traced",
+    )
+    assert save_row(save_enables_capture=True, next_send_capture=False) == (
+        "Save chat (enables capture)",
+        "Not saved locally; once saved, traces start after your next send",
+    )
+    # A caller that does not know makes no claim either way.
+    assert save_row() == ("Save chat", "Not saved locally")
+    assert save_row(next_send_capture=True) == save_row()
+
+
+@pytest.mark.unit
+def test_menu_state_opens_without_a_capture_claim_when_policy_is_unreadable():
+    """Review of TASK-37811: only KeyError was caught, so any other failure
+    reading the capture policy stopped the Menu (and palette composer
+    actions) opening in a Temporary chat. Unknown now makes no claim."""
+    from tldw_chatbook.UI.Console_Modules.composer_run_controls import (
+        composer_menu_state,
+    )
+
+    def unreadable(_session_id):
+        raise RuntimeError("capture policy hydration failed")
+
+    controller = SimpleNamespace(
+        store=SimpleNamespace(active_session_id="s1"),
+        capture_policy_snapshot=unreadable,
+    )
+    screen = SimpleNamespace(
+        _console_composer_or_none=lambda: None,
+        _console_active_session_is_ephemeral=lambda: True,
+        _console_pending_attachment_kind=lambda: "none",
+        _console_chatbook_action_available=lambda: False,
+        _ensure_console_chat_controller=lambda: controller,
+    )
+
+    state = composer_menu_state(screen)
+
+    assert (state["save_enables_capture"], state["next_send_capture"]) == (None, None)
+    entry = build_composer_menu_entries(**state)[0]
+    assert (entry.action_id, entry.label, entry.description) == (
+        ACTION_SAVE_CHAT,
+        "Save chat",
+        "Not saved locally",
+    )
 
 
 def _bare_promote_screen(store):

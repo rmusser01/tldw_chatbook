@@ -20,7 +20,12 @@ it if the send pauses again (the card covers every re-pause), drops it once
 the send is accepted or Cancel has put it back in the composer with its
 attachments, and offers it again otherwise.
 
-Imported lazily: it runs only when a paused turn is released or acted on.
+Card-owned pauses (TASK-33621.18): a capture pause has no shelf entry of its
+own to offer -- only its card ends it. Its unsent turn is recorded already
+held, and the card settles it the same way.
+
+Imported lazily: when a custodied send is refused, and when a paused turn is
+released or acted on -- never at boot.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from __future__ import annotations
 from typing import Any
 
 from tldw_chatbook.Chat.console_turn_preparation import (
+    CARD_OWNED_PAUSES,
     SHELF_RELEASABLE_PAUSES,
     ConsolePreparationPauseKind,
     ConsoleTurnPreparationState,
@@ -79,6 +85,78 @@ def trace_card_returns_draft(preparation: Any, preparation_id: str) -> bool:
         and getattr(preparation, "state", None) is ConsoleTurnPreparationState.PAUSED
         and getattr(preparation, "pause_kind", None) in TRACE_CARD_PAUSES
     )
+
+
+def card_owned_pause(preparation: Any, preparation_id: str | None) -> bool:
+    """Whether ``preparation`` is exactly this send, paused where only its card acts.
+
+    Args:
+        preparation: The preparation to test, if any.
+        preparation_id: The paused send's preparation id.
+
+    Returns:
+        True only for that preparation, PAUSED in a ``CARD_OWNED_PAUSES`` pause.
+    """
+    return (
+        preparation_id is not None
+        and getattr(preparation, "preparation_id", None) == preparation_id
+        and getattr(preparation, "state", None) is ConsoleTurnPreparationState.PAUSED
+        and getattr(preparation, "pause_kind", None) in CARD_OWNED_PAUSES
+    )
+
+
+def card_holds_refusal(controller: Any, preparation_id: str | None) -> bool:
+    """Whether a refused send's unsent turn is kept off the shelf for its card.
+
+    TASK-33621.18: a shelf entry beside a capture card survived the card's
+    Send without capture or Save & Send, then offered Restore for an
+    answered prompt. Review: the turn must still be recorded -- it alone
+    holds the send's attachments, which the card's Cancel gives back -- so
+    the runtime keeps it, held, until the card settles it.
+
+    Args:
+        controller: The Console chat controller that refused the send.
+        preparation_id: The refused send's preparation id, if it made one.
+
+    Returns:
+        True when that preparation is PAUSED in a card-owned pause.
+    """
+    lookup = getattr(getattr(controller, "store", None), "preparation_by_id", None)
+    if preparation_id is None or not callable(lookup):
+        return False
+    return card_owned_pause(lookup(preparation_id), preparation_id)
+
+
+def clear_answered_draft(store: Any, session_id: str, sent: str, *, inputs: Any) -> bool:
+    """Clear only the original prepared draft after its card accepted the turn.
+
+    ``inputs`` is captured before the card acts, and only when its revision
+    matches the preparation's original input revision. Save & Send can change
+    the conversation binding; cleanup still requires the same session object,
+    incarnation, draft revision and text. It grants no dispatch authority.
+    The existing UI reconciliation projects the resulting revision.
+    """
+    if inputs is None or not sent.strip() or inputs.draft.strip() != sent.strip():
+        return False
+    from .console_received_intent import _replace_session_draft_locked
+
+    with store._preparation_lock:
+        try:
+            current = store.session_input_snapshot(session_id)
+        except KeyError:
+            return False
+        if (
+            inputs._store_ref() is not store
+            or inputs._session_ref() is not current._session_ref()
+            or inputs.incarnation_id != current.incarnation_id
+            or inputs.draft_revision != current.draft_revision
+            or inputs.draft != current.draft
+        ):
+            return False
+        session = current._session_ref()
+        _replace_session_draft_locked(session, "")
+    store._publish_session_draft_handoff(session, "")
+    return True
 
 
 def release_unsent_turn_preparation(
@@ -154,6 +232,7 @@ def card_action_finished(
     accepted: bool,
     return_to_composer: bool,
     interrupted: bool = False,
+    cancelled_draft_revision: int | None = None,
 ) -> Any:
     """Settle the shelf after a card action on a paused send.
 
@@ -178,12 +257,17 @@ def card_action_finished(
     if accepted:
         runtime.forget_turn_recoveries_for_preparation(preparation_id)
         return None
-    store = controller.store
-    if not interrupted and shelf_releasable(
-        store.preparation_by_id(preparation_id), preparation_id
+    current = controller.store.preparation_by_id(preparation_id)
+    # Paused again: the card covers it, the shelf stays clear. A card-owned
+    # pause stays held even when the action was interrupted: its card is
+    # drawn from that pause and is the only thing that can end it.
+    if card_owned_pause(current, preparation_id) or (
+        not interrupted and shelf_releasable(current, preparation_id)
     ):
-        return None  # paused again: the card covers it, the shelf stays clear
+        return None
     if return_to_composer:
-        return runtime.return_turn_recovery_to_draft(preparation_id)
+        return runtime.return_turn_recovery_to_draft(
+            preparation_id, expected_draft_revision=cancelled_draft_revision
+        )
     runtime.unhold_turn_recoveries_for_preparation(preparation_id)
     return None

@@ -699,7 +699,30 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # while no PR lane ran them, so no existing entry changes shard.
 # The floor now equals the entry count, which also absorbs any lag in
 # dev's floor (tail entries a merge added without raising it).
-MINIMUM_FILES = 1276
+# TASK-33621.17/.18 (2026-10-29) appends 1 whole-file entry at the tail: a
+# Temporary chat's sends on the stock received path (five cases, about 25 s
+# locally), so no existing entry changes shard: dev's 1144 + 1 = 1145. Dev
+# carried a dead 1145 assignment above its effective 1144; one line now.
+# Rebased 2026-10-30 onto dev's 1149 (TASK-33626.1/.2 landed): 1149 + 1 = 1150.
+# PR3318 integration: preserve all 1276 dev entries and append the source entry.
+# TASK-37811 (2026-10-29) appends 1 whole-file entry at the tail: the Menu's
+# Save chat copy against what saving does to capture (one mounted case, about
+# 7 s locally), so no existing entry changes shard: 1145 + 1 = 1146.
+# Rebased 2026-10-30 onto dev's 1149 (TASK-33626.1/.2 landed): 1150 + 1 = 1151.
+# TASK-37840 (2026-10-30) appends 1 whole-file entry at the tail: the
+# Temporary status segment's copy (three cases, about 8 s locally), so no
+# existing entry changes shard: 1163 + 1 = 1164.
+# TASK-33621.17/.18 (2026-10-29) append 4 node ids at the tail: a Temporary
+# chat's sends on the stock received path, one entry per test (the whole file
+# measured 36 s at load 23; each test 5-10 s). TASK-37811 (2026-10-29)
+# appends 1 whole file: the Menu's Save chat copy against what saving does to
+# capture (one mounted case, about 7 s locally). TASK-37840 (2026-10-30)
+# appends 1 whole file: the Temporary status segment's copy (three cases,
+# about 8 s locally). No existing entry changes shard. Rebased 2026-10-30
+# onto dev 7536ac3b87's 1163 entries: 1163 + 6 = 1169.
+# PR3318 integration: all1276 dev entries plus the6 source selections.
+# PR3318 integration appends three ownership/interruption entries.
+MINIMUM_FILES = 1285
 
 
 def read_census(path: Path) -> list[str]:

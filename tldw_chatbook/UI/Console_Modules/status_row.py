@@ -8,6 +8,8 @@ the collapsible itself, TASK-35160 follow-up 2026-10-16.) ChatScreen composes fr
 resolvers and re-applies the position on screen resume, because the
 screen instance is cached across navigation and a Settings change must
 take effect without a recompose.
+
+It also resolves what the strip's Temporary segment says (TASK-37840).
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Mapping
 
 from loguru import logger
+from textual.css.query import QueryError
 
 if TYPE_CHECKING:
     from textual.widget import Widget
@@ -116,4 +119,60 @@ def apply_status_chips_position(screen: Any) -> bool:
     return True
 
 
+
+
+
+def temporary_segment_state(screen: Any) -> tuple[bool, bool]:
+    """Return ``(ephemeral, capture_on)`` for the active Console chat.
+
+    TASK-37840 (owner decision 2026-10-30): the Temporary segment reads
+    'capture on' while a still-temporary chat's next send is captured (and
+    so pauses on Save chat to capture this send). Read off the same session
+    fields the tab strip's ◌ decode reads, so the two cannot disagree.
+
+    Args:
+        screen: The Console screen.
+
+    Returns:
+        Whether the active chat is temporary, and whether its next send is
+        captured (False for a saved chat).
+    """
+    from tldw_chatbook.Chat.console_exchange_capture import (
+        temporary_chat_captures_next_send,
+    )
+
+    if not screen._console_active_session_is_ephemeral():
+        return False, False
+    store = getattr(screen, "_console_chat_store", None)
+    active_id = getattr(store, "active_session_id", None)
+    session = next(
+        (item for item in (store.sessions() if store else ()) if item.id == active_id),
+        None,
+    )
+    if session is None:
+        return True, False
+    return True, temporary_chat_captures_next_send(
+        session.capture_enabled_override, session.next_capture_enabled
+    )
+
+
+def sync_temporary_segment(screen: Any, status_chips: Any = None) -> bool:
+    """Push the active chat's Temporary state to the status strip.
+
+    Args:
+        screen: The Console screen.
+        status_chips: The mounted ``ConsoleStatusChips`` when the caller
+            already holds it; otherwise it is looked up.
+
+    Returns:
+        True when the segment changed; False when it did not or no strip
+        is mounted.
+    """
+    if status_chips is None:
+        try:
+            status_chips = screen.query_one("#console-status-chips")
+        except QueryError:
+            return False
+    ephemeral, capture_on = temporary_segment_state(screen)
+    return status_chips.sync_temporary_chip(ephemeral, capture_on=capture_on)
 

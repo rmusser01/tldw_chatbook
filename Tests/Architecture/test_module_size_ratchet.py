@@ -177,10 +177,18 @@ _BUDGETS: dict[str, int] = {
     # TASK-35582 review fixes: review delivery, project-dispatch callbacks and
     # continuation binding moved to console_review_delivery/_project_dispatch/
     # _continuation_binding; rows below re-pinned at their measured sizes.
+    # 2026-10-29 (TASK-33621.17, owner decision 2026-10-04: raise the row
+    # rather than squeeze unrelated code): +5, Save & Send's promoted Library
+    # identity in _capture_turn_library_authority; +6, a Temporary chat's
+    # Capture Off default at both capture resolutions (owner decision
+    # 2026-10-27).
+    # 2026-10-27). Rebased 2026-10-30 onto dev 7536ac3b87 (29,038): 29,049.
+    # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 29036 -> 29047.
+    # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 29016 -> 29027.
     # PR3173 integration, 2026-10-31: explicit user size waiver; exact measured tree.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29312,
+    "tldw_chatbook/Chat/console_chat_controller.py": 29323,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -688,15 +696,30 @@ _BUDGETS: dict[str, int] = {
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
-    "tldw_chatbook/UI/Console_Modules/session.py": 6991,
     # 2026-10-29, TASK-36941.1 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 6987 -> 6993 (+6). transaction() rolls back on BaseException, and its
     # docstring says so.
+    # 2026-10-29, TASK-33621.18 (owner decision 2026-10-04: raise the row
+    # rather than squeeze unrelated code): 6990 -> 6994. A card action that
+    # sends a paused turn clears the answered prompt from the composer.
+    # TASK-33621.18: the card-owned refusal check moved to console_unsent_turn.
+    # 2026-10-29, TASK-33621.18 pre-merge review (same owner decision):
+    # 6994 -> 7001. The card's lifecycle for a capture pause's kept unsent
+    # turn: accepted drops it, Cancel gives back the text and attachments.
+    # 2026-10-29, TASK-33621.18 pre-merge review (owner decision 2026-10-04:
+    # raise the row rather than squeeze unrelated code): 6686 -> 6701. A
+    # capture pause's unsent turn is recorded held off the shelf (the refusal
+    # carries card_held) instead of dropped, so Cancel loses no attachment.
+    # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6990 -> 7001.
+    # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
+    "tldw_chatbook/UI/Console_Modules/session.py": 7005,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6993,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
+    # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
+    # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6751 -> 6766.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Chat/console_runtime.py": 7076,
+    "tldw_chatbook/Chat/console_runtime.py": 7091,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-097 amendment 2026-10-27). The proof itself lives in

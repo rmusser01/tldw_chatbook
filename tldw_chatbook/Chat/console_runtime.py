@@ -416,13 +416,21 @@ class _ConsoleTurnRefusedError(RuntimeError):
     """
 
     def __init__(
-        self, message: str, *, reason: str = "", preparation_id: str | None = None
+        self,
+        message: str,
+        *,
+        reason: str = "",
+        preparation_id: str | None = None,
+        card_held: bool = False,
     ) -> None:
         super().__init__(message)
         #: The code-owned copy the unsent-turn shelf states; may be empty.
         self.reason = reason
         #: TASK-33621.20: the paused preparation the refusal left, if any.
         self.preparation_id = preparation_id
+        #: TASK-33621.18: only that pause's card ends it, so its unsent turn
+        #: (and the attachments Cancel gives back) is kept off the shelf.
+        self.card_held = card_held
 
 
 @dataclass(frozen=True, slots=True)
@@ -3163,10 +3171,13 @@ class ConsoleRuntime:
                 is not None
             )
         ):
+            from .console_unsent_turn import card_holds_refusal
+
             raise _ConsoleTurnRefusedError(
                 "Console turn was refused before durable acceptance.",
                 reason=str(getattr(result, "visible_copy", "") or ""),
                 preparation_id=held_preparation_id,
+                card_held=card_holds_refusal(controller, held_preparation_id),
             )
         run_state_for = getattr(controller, "run_state_for", None)
         run_state = (
@@ -3423,15 +3434,15 @@ class ConsoleRuntime:
         return len(turn_ids)
 
     def return_turn_recovery_to_draft(
-        self, preparation_id: str
+        self, preparation_id: str, *, expected_draft_revision: int | None = None
     ) -> ConsoleTurnRecoveryEntry | None:
         """Put a cancelled send's unsent turn back as the draft, attachments too.
 
         TASK-33621.20 review: the card's Cancel used to refill the composer's
         text only; the attachments the send had taken stayed with the dropped
-        shelf entry. The caller has checked that the composer (or, after a tab
-        switch, this session's stored draft) is empty or holds only the sent
-        text the cancel put back, so the draft is replaced rather than merged.
+        shelf entry. The store's synchronous cancellation receipt must still
+        own the exact session draft before either text or attachments moves.
+        A newer draft keeps this turn available for explicit shelf recovery.
 
         Returns:
             The returned unsent turn, or None when the send had none.
@@ -3447,11 +3458,30 @@ class ConsoleRuntime:
         store = self._chat_store
         if entry is None or store is None:
             return None
-        store.restore_transferred_pending_attachments(
-            entry.session_id, entry.attachments
-        )
-        store.set_session_draft(entry.session_id, entry.draft)
-        self.forget_turn_recoveries_for_preparation(preparation_id)
+        from .console_received_intent import _replace_session_draft_locked
+        from .console_received_turn import ConsoleReceivedTurnClaim
+
+        with store._preparation_lock:
+            session = store._sessions.get(entry.session_id)
+            claim = entry.source_claim
+            if (
+                not isinstance(expected_draft_revision, int)
+                or isinstance(expected_draft_revision, bool)
+                or type(claim) is not ConsoleReceivedTurnClaim
+                or claim._store_ref() is not store
+                or session is None
+                or claim._session_ref() is not session
+                or claim._session_incarnation != session.incarnation_id
+                or session.draft_revision != expected_draft_revision
+            ):
+                self.unhold_turn_recoveries_for_preparation(preparation_id)
+                return None
+            store.restore_transferred_pending_attachments(
+                entry.session_id, entry.attachments
+            )
+            _replace_session_draft_locked(session, entry.draft)
+            self.forget_turn_recoveries_for_preparation(preparation_id)
+        store._publish_session_draft_handoff(session, entry.draft)
         return entry
 
     def _record_turn_recovery(
@@ -3460,6 +3490,7 @@ class ConsoleRuntime:
         *,
         reason: str = "",
         preparation_id: str | None = None,
+        card_held: bool = False,
     ) -> None:
         request = record.request
         if (
@@ -3484,6 +3515,8 @@ class ConsoleRuntime:
         self._recovery_turns_by_session.setdefault(entry.session_id, []).append(
             entry.turn_id
         )
+        if card_held and preparation_id is not None:
+            self._card_held_preparations.add(preparation_id)
 
     def _finish_custodied_turn(
         self,
@@ -3523,6 +3556,7 @@ class ConsoleRuntime:
                     record,
                     reason=exc.reason if refused else "",
                     preparation_id=exc.preparation_id if refused else None,
+                    card_held=refused and exc.card_held,
                 )
             logger.warning(
                 "Console runtime turn ended with exception_type={}",

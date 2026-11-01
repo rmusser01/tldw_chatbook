@@ -5622,6 +5622,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         preparation_id: str,
         *,
         expected_state: ConsoleTurnPreparationState,
+        restore_draft: bool = True,
     ) -> ConsoleTurnPreparation | None:
         """Cancel one precommit owner only after transient cleanup succeeds."""
 
@@ -5649,11 +5650,15 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 self.delete_message(transient_id)
             session = self._sessions.get(session_id)
             if session is not None:
-                if current.origin == "manual" and (
+                if restore_draft and current.origin == "manual" and (
                     current.input_draft_revision is None
                     or session.draft_revision == current.input_draft_revision
                 ):
                     _replace_session_draft_locked(session, current.executed_draft)
+                    if current.input_draft_revision is not None:
+                        updated = replace(
+                            updated, cancelled_draft_revision=session.draft_revision
+                        )
                 if (
                     current.pre_send_conversation_id is None
                     or session.persisted_conversation_id

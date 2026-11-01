@@ -259,6 +259,8 @@ async def dispatch_trace_call_recovery_action(
     *,
     on_started: Callable[[], object] | None = None,
     on_finished: Callable[[], object | Awaitable[object]] | None = None,
+    restore_draft: bool = True,
+    on_result: Callable[[object], None] | None = None,
 ) -> object:
     """Route a visible trace-recovery action to the controller.
 
@@ -268,6 +270,8 @@ async def dispatch_trace_call_recovery_action(
         preparation_id: Exact paused preparation identity.
         on_started: Optional callback invoked before controller entry.
         on_finished: Optional callback invoked after controller completion.
+        restore_draft: Whether Cancel may restore an owned draft automatically.
+        on_result: Synchronously retain the controller outcome before UI cleanup.
 
     Returns:
         The awaited controller result, or False for an unknown action or missing
@@ -289,8 +293,15 @@ async def dispatch_trace_call_recovery_action(
     if on_started is not None:
         on_started()
     try:
-        result = handler(preparation_id)
-        return await result if inspect.isawaitable(result) else result
+        result = (
+            handler(preparation_id, restore_draft=False)
+            if action == "cancel" and not restore_draft
+            else handler(preparation_id)
+        )
+        result = await result if inspect.isawaitable(result) else result
+        if on_result is not None:
+            on_result(result)
+        return result
     finally:
         if on_finished is not None:
             finished = on_finished()

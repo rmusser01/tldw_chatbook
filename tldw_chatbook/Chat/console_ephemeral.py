@@ -55,16 +55,45 @@ See ``Docs/superpowers/specs/2026-07-31-temporary-conversations-design.md``
 
 from __future__ import annotations
 
-#: Composer-menu action id for promoting a temporary chat ("Save this chat").
+#: Composer-menu action id for promoting a temporary chat.
 ACTION_SAVE_CHAT = "save-chat"
 
+#: The promote action's labels (composer menu). TASK-33621.17 (owner decision
+#: 2026-10-27): a temporary chat records no traces; once saved it follows its
+#: own Capture choice, else the global setting. TASK-37811 (owner decision
+#: 2026-10-29): the row says "(enables capture)" only when that turns capture
+#: on (``console_exchange_capture.saved_chat_capture``), else just "Save chat".
+SAVE_CHAT_LABEL = "Save chat"
+SAVE_CHAT_ENABLES_CAPTURE_LABEL = "Save chat (enables capture)"
+
 #: Chip label shown in the Console status strip while a chat is temporary.
-TEMPORARY_LABEL = "Temporary — not saved"
+#: TASK-33621.17: "traces off" because a temporary chat resolves Capture Off
+#: (``console_exchange_capture.temporary_chat_capture``); no trace is written
+#: while it stays temporary, even after someone turns Capture on for it.
+#: TASK-37840 (owner decision 2026-10-30): the always-visible segment says
+#: both that the chat is not saved and what its next send does to capture;
+#: "capture on" once Capture On is chosen for it (This conversation or Next
+#: send), because that send pauses on Save chat to capture this send.
+TEMPORARY_LABEL = "Temporary · not saved · traces off"
+TEMPORARY_CAPTURE_ON_LABEL = "Temporary · not saved · capture on"
+
+
+def temporary_label(*, capture_on: bool) -> str:
+    """Return the Temporary segment label (also the tab's ◌ decode).
+
+    Args:
+        capture_on: Whether the temporary chat's next send is captured
+            (``console_exchange_capture.temporary_chat_captures_next_send``).
+
+    Returns:
+        ``TEMPORARY_CAPTURE_ON_LABEL`` or ``TEMPORARY_LABEL``.
+    """
+    return TEMPORARY_CAPTURE_ON_LABEL if capture_on else TEMPORARY_LABEL
 
 #: Chip tooltip. Says what survives and what does not, without implying more.
 TEMPORARY_TOOLTIP = (
-    "This chat is not saved locally. It is lost when the tab closes or the "
-    "app restarts. Activate to save it."
+    "This chat is not saved locally and records no traces. It is lost when "
+    "the tab closes or the app restarts. Activate to save it."
 )
 
 #: Action id -> why it is unavailable while the chat is temporary. Keyed by

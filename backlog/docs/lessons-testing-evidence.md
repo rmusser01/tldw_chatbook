@@ -32,6 +32,49 @@ that the timer survives teardown nor that the child is reaped. Record the exit
 wait tradeoff; forced termination and uninterruptible process creation remain
 outside this guarantee.
 
+## Code after on_screen_resume's attach check does not run when a Console dialog closes (TASK-37840, 2026-10-30)
+
+## A refresh in on_screen_resume's tail repeats the attach reconcile's sync when a Console dialog closes (TASK-37840, 2026-10-30)
+
+**Incident.** The Temporary status segment had to repaint after a Trace Privacy
+choice made in a dialog over the Console. The first fix added a refresh call to
+`ChatScreen.on_screen_resume` after `apply_status_chips_position`, plus a call
+in the full sync pass. The mounted test went green, and stayed green with the
+resume call mutated out. The first write-up said the resume call never ran.
+The pre-merge review disproved that with a one-line spy after
+`apply_status_chips_position`: it fired once per dialog close, three times in
+the test, each with `_console_attach_resume_in_progress` set. Pushing a screen
+over the Console runs `on_screen_suspend`, which clears
+`_console_attach_reconciled`, so the first resume schedules
+`_reconcile_console_after_attach` and returns early. The reconcile runs the
+full sync pass and then calls `on_screen_resume()` again with
+`_console_attach_resume_in_progress` set, and that second call reaches the
+tail. The resume call did run, but after the full sync pass had already
+repainted. It was redundant, not unreachable, and was removed.
+
+**What to do.** For anything that must refresh when a dialog over the Console
+closes, rely on the full sync pass (`_sync_native_console_chat_ui`) that the
+attach reconcile runs. A refresh in the resume tail only repeats it. Mutate
+each new hook out on its own before claiming it is the one doing the work.
+When a mutant stays green, put a spy on the hook and read whether it runs
+before writing down why it did not matter.
+
+## Opening the Conversation Inspector fails `_received_console_case`'s teardown (TASK-37840, 2026-10-30)
+
+**Incident.** A mounted test drove Trace Privacy through the real Inspector
+(`action_view_chat_context`, then `c`). Every assertion passed, and teardown
+failed at `assert await _until(probe.retired, 5)`. The Inspector's Next Send
+estimate reaches `resolve_turn_tool_policy_profile_id` and reads the workspace
+on the UI thread. The harness's configuration-read probe records the first
+such read, and its teardown waits for that connection to close. The main
+thread's connection never closes during the test.
+
+**What to do.** In `_received_console_case`, push `ConsoleTracePrivacyDialog`
+with `build_inspector_capture_policy_wiring(controller).bindings`, which are the
+bindings the Inspector passes. Closing the dialog resumes the Console the same
+way. Wait for the dialog's Apply button to take focus before choosing radios:
+`on_mount` re-syncs them to the stored choice and overwrites an earlier pick.
+
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
 **Incident.** To stop the Console rail's filter input being replaced under
@@ -412,6 +455,33 @@ created. Expect `load_settings()` to merge the shipped value back in anyway
 **Incident.** The triage said an emergency-stop send "is refused" because `send_refusal_copy` checks the stop. Live on origin/dev 38c9d2edcf the send reached the provider and got a reply: Enter takes the received-intent fast path (PR #3023), which never calls `send_refusal_copy`. The first regression test, built on `_console_app` (`_configure_native_ready_console`), passed on dev: its injected config makes `capture_console_received_configuration_preparation` return `None`, so every Enter falls back to the dispatch path, where the gate works. Only `_received_console_case(..., durable=True)` (Tests/UI/test_console_received_intent_feedback.py) reproduced the live bypass; its non-durable mode failed earlier, on the conversation database.
 
 **What to do.** For anything that must gate or observe a Console send, check which path the harness's Enter takes (trace `receive_console_visible_intent`'s return) and test the received-intent path with the durable received case. Count provider calls, not refusal copy: a refusal can appear on one path while the other path sends.
+
+## A controller test that builds no turn configuration cannot see the frozen ceiling (TASK-33621.17, 2026-10-29)
+
+## A test red on dev in no CI lane is not evidence -- and check why it missed before saying so (TASK-33621.17, 2026-10-29)
+
+**Incident.** Live, Save & Send saved a Temporary chat and then refused the send:
+`Durable Console Library policy no longer matches acceptance`. The send's Library
+ceiling (`configuration.library_policy_maximum`) had been frozen from the temporary
+holder, so the durable commit carried `source=temporary, revision=None` into a chat
+promotion had just given a durable row. The controller test written for exactly
+this path (`test_save_and_send_refreshes_durable_authority_before_trace_admission`)
+does freeze that ceiling -- `submit_draft` resolves a turn configuration whose
+`library_policy_maximum` is the temporary holder's snapshot -- and it was red on dev
+at its own `source == "durable"` assertion. Nobody saw it: no CI lane runs
+`Tests/Chat/test_console_chat_controller_exchanges.py`, and a plain local run of it
+fails earlier with `RecoveryRequired` / `Hooks unavailable` (the unselected profile),
+which reads as environment noise. The first write-up of the fix said that test
+"builds no turn configuration" and "stayed green"; the pre-merge review disproved
+both by running dev's unchanged test with the `bootstrap_profile` marker.
+
+**What to do.** Before writing down why an existing test missed a bug, run it on
+dev with the `bootstrap_profile` marker added (a scratch `-p` plugin, as in the
+`RecoveryRequired` entries) and read where it fails. Check that a Tests/Chat file is
+in some CI lane before treating dev's green -- or its silence -- as evidence. For new
+coverage of anything read from the turn configuration (Library ceiling, scope,
+provider selection), drive the stock received path (`_received_console_case` with
+`durable=True`) in a file the UI PR gate runs.
 
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 

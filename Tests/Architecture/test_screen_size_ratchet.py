@@ -234,6 +234,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: Retain the notification hooks and bounded shutdown repair in place;
     #: pin the measured tree exactly, without reflow/extraction to fit.
+    #: Raised 24331 -> 24332 (methods unchanged) 2026-10-30 by TASK-37840,
+    #: owner decision 2026-10-04 (raise the row rather than squeeze unrelated
+    #: code): dev 7536ac3b87 measures 24331/737; the Temporary segment's capture
+    #: state at compose and on every full sync pass adds 1, 24332/737.
+    #: 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24335/737 -> 24336/737.
+    #: 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24377/739 -> 24378/739.
     #: 2026-10-31, PR #3225 after #3183: user size-limit waiver; exact measurement.
     # owner decision 2026-10-04 (expand limits): TASK-34100.6 +11.
     #: 2026-10-20, TASK-34100.6 review v3r1 (R1-01); re-measured 2026-10-29
@@ -304,7 +310,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
     # Final PR3301 on dev59b8fe0249: explicit owner size waiver, exact measurement.
     # PR3311, 2026-11-01: user size waiver; exact integrated measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24604, 741),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24605, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
