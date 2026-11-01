@@ -23,10 +23,10 @@
     itemTitle: $("item-title"), itemMeta: $("item-meta"), itemTranscripts: $("item-transcripts"),
   };
   const state = {
-    selectedTarget: null, drafts: new Map(), outstandingCommands: new Map(), hostSelectionCommand: null, connectionState: "connecting",
+    selectedTarget: null, drafts: new Map(), outstandingCommands: new Map(), hostSelectionCommand: null, hostActionGeneration: 0, connectionState: "connecting",
     lastConfirmedUpdate: null, chats: [], chat: null, snapshot: null, ws: null, wsAttempt: 0,
     activeTab: "chats", view: "chats", available: false, hostAvailable: false, ownerAvailable: false, refreshing: false, refreshAgain: false,
-    selectionRevision: 0, confirmationRevision: 0, targetConfirmed: false, targetMissing: false, historyLoading: false, renderedDecisions: [], hostBusy: false, history: null, readWorker: null, workerHistory: [], workerCursor: null, workerConversation: null, workerReading: false, workerResultOffset: null, workerResultRevision: null,
+    selectionRevision: 0, confirmationRevision: 0, targetConfirmed: false, targetMissing: false, historyLoading: false, renderedDecisions: [], answerabilitySent: null, hostBusy: false, history: null, readWorker: null, workerHistory: [], workerCursor: null, workerConversation: null, workerReading: false, workerResultOffset: null, workerResultRevision: null,
     savedPage: 0, savedHasMore: false, savedLoading: false,
     librarySection: "notes", notesPage: 0, notesHasMore: false, mediaPage: 0, mediaHasMore: false,
   };
@@ -208,13 +208,14 @@
       // Retained IDs reconcile even when changing transcript pages never reach EOF.
       await queryOutstanding();
       if (selection !== state.selectionRevision || confirmation !== state.confirmationRevision || socket !== state.ws) return;
+      const hostActionGeneration = state.hostActionGeneration;
       const list = await snapshot(null);
       if (selection !== state.selectionRevision) return;
       state.ownerAvailable = true; state.hostAvailable = list.execution_admitted === true; state.available = true;
       state.chats = list.chats;
       if (state.ownerAvailable) { state.savedPage = 0; state.savedHasMore = false; }
       for (const receipt of list.command_receipts) applyReceipt(receipt);
-      if (completeHostSelection(list)) return;
+      if (completeHostSelection(list, hostActionGeneration)) return;
       if (state.selectedTarget && state.view === "chat") {
         const current = list.chats.find(row => row.live && draftKey(targetOf(row)) === draftKey({...state.selectedTarget, handle_id: null}));
         if (current) {
@@ -317,11 +318,16 @@
       throw "history_limit";
     } catch (error) { showError(error); }
   }
-  function completeHostSelection(list) {
+  function completeHostSelection(list, hostActionGeneration) {
     const id = state.hostSelectionCommand, command = state.outstandingCommands.get(id);
     const intent = command?.hostSelection;
     if (!intent) return false;
-    if (intent.revision !== state.selectionRevision || list.server_epoch !== intent.server_epoch || list.console_id !== intent.console_id) {
+    if (intent.revision !== state.selectionRevision) {
+      state.hostSelectionCommand = null; return false;
+    }
+    // Only lists begun after this exact host-bound command was retained may settle it.
+    if (hostActionGeneration !== intent.generation) return false;
+    if (list.server_epoch !== intent.server_epoch || list.console_id !== intent.console_id) {
       state.hostSelectionCommand = null; return false;
     }
     const receipt = command.receipt;
@@ -483,7 +489,10 @@
     const ticket = await api("POST", API_BASE + "/commands/tickets", {protocol_version: 1, action, target, payload});
     // Retain ID before the effect request. A lost ACK can only query this ID.
     state.outstandingCommands.set(ticket.command_id, {submission, unknown: false, hostSelection});
-    if (hostSelection && hostSelection.revision === state.selectionRevision) state.hostSelectionCommand = ticket.command_id;
+    if (hostSelection && hostSelection.revision === state.selectionRevision) {
+      hostSelection.generation = ++state.hostActionGeneration;
+      state.hostSelectionCommand = ticket.command_id;
+    }
     updateControls();
     try {
       const receipt = await api("POST", API_BASE + "/commands", {protocol_version: 1, ticket: ticket.ticket, payload});
@@ -520,6 +529,10 @@
   function publishAnswerability() {
     if (state.ws?.readyState !== WebSocket.OPEN) return;
     const answerable = !state.readWorker && state.view === "chat" && state.targetConfirmed && state.available && state.connectionState === "connected" && ![...state.outstandingCommands.values()].some(row => row.unknown || row.receipt?.state === "outcome_unknown");
+    const signature = JSON.stringify([state.renderedDecisions, answerable]);
+    // A stale-round reset must not provoke another identical rejected withdrawal.
+    if (state.answerabilitySent?.socket === state.ws && state.answerabilitySent.signature === signature) return;
+    state.answerabilitySent = {socket: state.ws, signature};
     for (const target of state.renderedDecisions) state.ws.send(JSON.stringify({type: "answerable", protocol_version: 1, target, answerable}));
   }
   function renderDecisions() {
@@ -528,6 +541,7 @@
     if (state.decisionSignature === signature) { publishAnswerability(); return; }
     state.decisionSignature = signature;
     // Withdraw old claims before replacing controls or changing the target.
+    state.answerabilitySent = null;
     if (state.ws?.readyState === WebSocket.OPEN) for (const target of state.renderedDecisions) state.ws.send(JSON.stringify({type: "answerable", protocol_version: 1, target, answerable: false}));
     state.renderedDecisions = [];
     els.decisions.replaceChildren(); els.approvalsList.replaceChildren();

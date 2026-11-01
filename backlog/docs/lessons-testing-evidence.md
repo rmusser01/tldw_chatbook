@@ -20480,3 +20480,22 @@ production failures; a successful gateway double alone does not qualify native
 persistence, project review, approval/question, worker execution or physical drain.
 Evidence: Task9 cold-red, agent10 and native-controls packets in the shared
 Console implementation SDD directory.
+
+
+## Native lifetime witnesses must preserve callable identity
+
+**TASK-36769 FIX1, 2026-11-01.** The shared Console fleet qualification initially
+accepted Stop receipts and then closed the whole app with controlled workers
+still unwinding. Positive logs included scratch/run-log failures and a closed
+hook-engine denial, but no timeline established their order. Wrapping native
+log/scratch callbacks to observe them failed frozen callable-provenance admission;
+a broad profiler captured shared context-manager code and distorted timing.
+Those epochs were retained as invalid instrumentation, not production failures.
+Finite Python3.12 local monitoring of exact original code bodies, with primitive
+records and verified removal of its own tool ID, preserved callback identity.
+It showed disposal preceding the failures in the new reproduction; it did not
+retroactively establish the old trace's chronology. The strengthened ordinary
+journey instead witnessed exact corrections consumed, unrelated work remaining
+live, actual worker Threads retired, durable worker results and successful native
+log/hook outcomes before app disposal. A receipt or whole-stack exit is not a
+worker-retirement witness. Generator yield/await events are not final returns.

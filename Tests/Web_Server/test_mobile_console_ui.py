@@ -1397,6 +1397,8 @@ async def test_fix1_saved_history_refuses_invalid_or_stale_filtered_continuation
     [
         "delayed",
         "lost-response",
+        "older-owner",
+        "bootstrap-owner",
         "navigation",
         "replacement-owner",
         "replacement-console",
@@ -1480,6 +1482,12 @@ async def test_host_selection_waits_for_exact_original_receipt_and_current_row(
         asyncio.Event(),
     )
     gated = False
+    host_started, release_host = asyncio.Event(), asyncio.Event()
+
+    async def delay_host(route):
+        host_started.set()
+        await release_host.wait()
+        await route.continue_()
 
     async def delay_old_list(route):
         nonlocal gated
@@ -1505,15 +1513,25 @@ async def test_host_selection_waits_for_exact_original_receipt_and_current_row(
 
     await case.page.route("**/api/v1/mobile/console/snapshot?*", delay_old_list)
     await case.page.route("**/api/v1/mobile/commands", observe_effect)
+    if outcome == "bootstrap-owner":
+        await case.page.route("**/api/v1/mobile/console/host", delay_host)
     case.service.receipt_state = "applied"
     case.service.release.set()
     try:
+        if outcome == "bootstrap-owner":
+            await case.page.locator("#new-chat-button").click()
+            await asyncio.wait_for(host_started.wait(), 5)
         # Foreground refresh retains the connected state while its list is in flight.
         await case.page.evaluate(
             "document.dispatchEvent(new Event('visibilitychange'))"
         )
         await asyncio.wait_for(old_ready.wait(), 5)
-        await case.page.locator("#new-chat-button").click()
+        if outcome in {"older-owner", "bootstrap-owner"}:
+            case.service.epoch = "new-explicit-owner"
+        if outcome == "bootstrap-owner":
+            release_host.set()
+        else:
+            await case.page.locator("#new-chat-button").click()
         await asyncio.wait_for(effect_response.wait(), 5)
         if outcome == "lost-response":
             await expect(case.page.locator("#status-line")).to_contain_text(
@@ -1538,7 +1556,13 @@ async def test_host_selection_waits_for_exact_original_receipt_and_current_row(
         replacement = outcome in {"replacement-owner", "replacement-console"}
         visible = True
         release_old.set()
-        if outcome in {"delayed", "lost-response", "newer-action"}:
+        if outcome in {
+            "delayed",
+            "lost-response",
+            "newer-action",
+            "older-owner",
+            "bootstrap-owner",
+        }:
             await expect(case.page.locator("#chat-title")).to_have_text(
                 "Newer explicit chat" if outcome == "newer-action" else "Planning"
             )
@@ -1579,4 +1603,105 @@ async def test_host_selection_waits_for_exact_original_receipt_and_current_row(
             assert ("query", "command-0") in case.service.calls
     finally:
         release_old.set()
+        release_host.set()
         case.page.remove_listener("response", observe_snapshot)
+
+
+async def test_retired_answerability_reset_does_not_starve_current_metadata(
+    mobile_browser_case,
+):
+    case = mobile_browser_case
+    service, page = case.service, case.page
+    service.body = "Current transcript"
+
+    def approval(session_id, round_id):
+        return dict(
+            service.row(session_id),
+            kind="approval",
+            round_id=round_id,
+            supported=True,
+            calls=[
+                {
+                    "call_id": round_id,
+                    "llm_name": "fs_read",
+                    "options": ["approve_once", "deny"],
+                    "arguments_summary": "/owned/readme",
+                }
+            ],
+        )
+
+    service.decisions = [approval("chat-a", "retired-round")]
+    retired = False
+    rejected = []
+    original_answerable = service.set_answerable
+    original_query = service.query_command
+
+    async def answerable(*args):
+        await original_answerable(*args)
+        if retired and args[1].round_id == "retired-round":
+            rejected.append(args[-1])
+            raise ValueError("Decision is no longer remotely answerable.")
+
+    async def delayed_query(command_id):
+        # Keep the original receipt request in flight while native stale-round
+        # rejection delivers reset; no mutation or alternate command is issued.
+        await asyncio.sleep(0.05)
+        return await original_query(command_id)
+
+    service.set_answerable = answerable
+    service.query_command = delayed_query
+    await case.open_chat("chat-a")
+    decision = page.get_by_role("button", name="Submit decision", exact=True)
+    await expect(decision).to_be_enabled()
+    service.release.set()
+    await page.locator("#chat-draft").fill("One original accepted prompt")
+    await page.get_by_role("button", name="Send", exact=True).click()
+    await expect(page.locator("#command-status")).to_contain_text("accepted")
+    assert len(service.commands) == 1
+    retired = True
+    service.decisions = []
+    await service.events_queue.put(
+        MobileEvent("reset", "", {"reset_required": True}, 2)
+    )
+    await expect(decision).to_have_count(0)
+    await expect(page.locator("#connection-state")).to_contain_text("Connected")
+    assert rejected and all(value is False for value in rejected), rejected
+    assert len(rejected) <= 2, rejected
+    assert len(service.commands) == 1 and len(service.tickets) == 1
+
+    # Only current native metadata can restore a true claim.
+    service.decisions = [approval("chat-a", "current-round")]
+    await service.events_queue.put(MobileEvent("console.changed", "", {}, 3))
+    await expect(decision).to_be_enabled()
+
+    def true_claims(round_id):
+        return [
+            args
+            for name, args in service.calls
+            if name == "answerable"
+            and args[1].round_id == round_id
+            and args[-1] is True
+        ]
+
+    async with asyncio.timeout(5):
+        while not true_claims("current-round"):
+            await asyncio.sleep(0.01)
+    first_client = true_claims("current-round")[-1][0]
+    await service.events_queue.put(None)  # End only this genuine socket stream.
+    async with asyncio.timeout(5):
+        while not any(args[0] != first_client for args in true_claims("current-round")):
+            await asyncio.sleep(0.01)
+    await expect(decision).to_be_enabled()
+
+    # A new rendered target is advertised on that current socket as well.
+    service.decisions = [approval("chat-b", "new-target-round")]
+    await page.locator("#back-button").click()
+    await case.open_chat("chat-b")
+    await expect(decision).to_be_enabled()
+    async with asyncio.timeout(5):
+        while not true_claims("new-target-round"):
+            await asyncio.sleep(0.01)
+    assert all(
+        args[1].session_id == "chat-b" for args in true_claims("new-target-round")
+    )
+    assert len(service.commands) == 1

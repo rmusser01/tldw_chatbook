@@ -57,7 +57,10 @@ unchanged captured-SQLite source/schema controls. All 12 source hashes match
 before/after that epoch. Structural negative controls separately passed 10 tests.
 These counts describe distinct epochs, not one aggregate pass count.
 
-The inventory has a source-unchanged Dreams capture census mismatch. Three
+The original inventory epoch had a source-unchanged Dreams capture census mismatch.
+FIX1/R165 adds the exact already documented B40 Dreams call to the test census;
+the focused inventory file then passed all76 tests, including its negative controls.
+Production roles and checker policy were unchanged. Three
 model-limit tests expect 4096 while unchanged production code explicitly defaults
 to 32000; the test, token counter and model-capability sources match the original
 feature base. These are source classifications, not claims that the original
@@ -151,9 +154,10 @@ Navigation, a newer action or owner replacement cancels it. Normal target
 confirmation still gates the composer; no mutation is replayed.
 
 The portable client file then passed **60 tests in 61.82 s**. Its unrelated late
-receipt branch was not delivered in that epoch. A corrected response-body witness
-proved actual browser delivery in a separate **12 passed in 8.78 s** both-engine
-run on final test bytes. The affected real-browser run recorded **4 passed,
+receipt branch was not delivered in that epoch. A separate **12 passed in8.78s**
+both-engine run attempted a response-body witness, but independent review found
+that its delivery event was never awaited. That run does not prove the unrelated
+receipt arrived; this remains deferred Minor T11-R05. The affected real-browser run recorded **4 passed,
 1 failed in 318.07 s**: direct/proxy cold Create→Send, two chats/two workers with
 rendered exact guidance, and enabled security/canonical Library/inert text passed.
 Its transport case failed before a third Create; without a witnessed click/request,
@@ -201,3 +205,75 @@ hashes, raw failures, private fixture paths and process exits. These local evide
 artifacts are not packaged runtime data. Independent Task11 and whole-feature
 review remain pending. Physical phone/VPN qualification remains **UNVERIFIED**;
 the full repository test suite was not run.
+
+
+## FIX1 qualification and native warning diagnosis
+
+The original positive retention log (`task11-served-7c34hc1e`) includes an Evals
+configuration `storage_scope_not_enrolled` error. The original positive fleet log
+(`task11-served-atr_cfcv`) includes that error, two native run-log disable warnings
+with `ConsoleScratchSpaceUnavailable`, and a workerB PreToolUse engine error
+that the native policy converts to a fail-closed denial. Successful
+`character_search` does not establish private scratch/log authority, and the
+older unadvertised `fs_list` refusal proves no successful filesystem execution.
+Evals falls back to defaults and records its persistence error; exact feature-BASE
+failure origin was not executed or established. T11-R06 remains deferred, and
+no fixture directory was seeded to hide it.
+
+The same original fleet sequence was observed with finite Python3.12 local code
+monitoring in `r03-local-websocket-witness` (1 passed in72.39s;37 unchanged source
+bindings; fixture `task11-served-nqbnd_60`, physical child exit0). Native methods,
+callbacks, admission and deadlines were unchanged; own monitoring cleanup was
+verified. Twenty-three native log append calls returned successful record numbers
+before disposal. The runtime then closed hooks and tombstoned scratch while
+work was still unwinding; subsequent unrelated-chat/workerB log writes became
+inactive and workerB PreToolUse was denied by the closed hook engine. The saved
+439-event timeline identifies runtime disposal as the ordering boundary in this
+current reproduction. It does not manufacture a missing timeline for the earlier
+positive epoch or prove an independently executed baseline origin.
+
+That original sequence's accepted Stop/correction receipts were insufficient
+proof of exact effects or worker retirement. FIX1 extends the same journey to
+observe those boundaries before whole-app shutdown. The final affected actual
+browser epoch passed **4 tests in 248.70 s**, with all 37 source bindings unchanged:
+exact fleet effects, cold Create→immediate Send directly and through the trusted
+TLS proxy, and all three original-ID transport-loss boundaries. Each owned child
+physically exited0. The fleet fixture `task11-served-pk18t9je` (child95004) records
+27 successful native log writes, 10 open/nonblocked hook outcomes, and all four
+original run returns before app disposal. WorkerB Stop retires its actual Thread
+while workerA and chatA remain live; both exact main corrections reach the next
+provider phase before main Stop. WorkerA then finishes with its canonical durable
+result and dead original Thread; chatA produces exactly its original prompt/reply
+once. No scratch/run-log disable or closed-hook warning occurs in this epoch.
+The Evals startup error remains disclosed above. Wrapper/global-profile diagnostic attempts are
+retained as instrumentation-invalid or timing-perturbed, not production RED or
+passing qualification. Physical phone/VPN qualification remains UNVERIFIED.
+
+
+R01 now distinguishes list requests begun before registration of the exact
+owner-bound host intent, including a list started during host bootstrap. Such a
+list cannot cancel the newer intent; a genuinely later owner replacement still
+cancels it. R166 prevents identical answerability advertisements on the same
+WebSocket from creating a stale-round rejection/reset loop. The first false
+advertisement still revokes controls immediately; current metadata, a new socket
+or different targets advertise afresh. Native rejection and confirmation remain
+unchanged. The full existing portable browser file passed **66 tests in70.67s**
+on final client/test bytes, across Chromium and WebKit, with37 unchanged bindings.
+The earlier connected **26-test** epoch includes the existing withheld-metadata
+reset controls. The exact documented B40 Dreams census correction passed all
+**76 inventory tests in47.14s**, including strict negative controls, on final
+formatted bytes with38 unchanged bindings. The enclosing Counter block has a
+recorded native Python3.12 AST-equivalence proof; unrelated formatting stays
+untouched. Its earlier76-test result within a90-test epoch remains historical. These distinct epochs are not summed.
+
+Three actual-cover attempts remain recorded: the first incorrectly expected a
+completed worker in a live-only list; the second used a pre-Send conversation ID
+of None for the durable worker endpoint; the third passed with the actual
+persisted conversation identity. Neither failure is classified as a production
+regression. The older missing-third-Create transport failure remains unclassified;
+the current transport case witnesses each Create ticket/request/applied receipt
+and current native row before the corresponding Send. T11-R05's unawaited
+unrelated-receipt observer and T11-R06's Evals persistence error remain deferred
+minor findings. FIX1 evidence is appended to the local implementation report and
+recorded in `task-11-fix1-final-manifest.json`; scoped rereview and whole-feature
+review remain pending. Physical phone/VPN remains **UNVERIFIED**.

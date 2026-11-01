@@ -515,9 +515,208 @@ class _ScriptedFleetConsoleGateway(_ScriptedConsoleGateway):
         if phase < len(script):
             yield "```tool_call\n" + json.dumps(script[phase]) + "\n```"
             return
-        while not (self.root / "fleet-release-parent").exists():
+        while not (
+            (self.root / f"fleet-release-parent-{phase}").exists()
+            or (self.root / "fleet-release-parent").exists()
+        ):
             await asyncio.sleep(0.02)
         yield "EXACT_FLEET_PARENT_REPLY"
+
+
+_FLEET_THREAD_REFS = {}
+
+
+def _fleet_thread_states():
+    return {
+        run_id: dict(
+            identity,
+            alive=bool((thread := reference()) is not None and thread.is_alive()),
+        )
+        for run_id, (reference, identity) in tuple(_FLEET_THREAD_REFS.items())
+    }
+
+
+def _observe_fleet_lifetimes():
+    """Observe finite native call/return sites without replacing guarded methods."""
+    import sys
+    import threading
+    import time
+    import traceback
+    import weakref
+
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
+    from tldw_chatbook.Agents.run_context import current_run_id
+    from tldw_chatbook.Agents.run_hooks import RunHooksEngine
+    from tldw_chatbook.Agents.run_log import RunLogWriter
+    from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+
+    path = (
+        Path(os.environ["TLDW_CANVAS_TEST_DATA_ROOT"]).parent / "fleet-lifecycle.jsonl"
+    )
+    lock = threading.Lock()
+    sequence = 0
+    sites = {}
+    for cls, names in (
+        (
+            ConsoleScratchSpaceManager,
+            ("snapshot", "lease", "close", "dispose", "tombstone_all"),
+        ),
+        (RunHooksEngine, ("fire", "close")),
+        (RunLogWriter, ("bind", "append", "close")),
+        (AgentService, ("_run_one", "cancel_subagent")),
+        (FleetCoordinator, ("finish",)),
+        (_ScriptedFleetConsoleGateway, ("stream_chat",)),
+    ):
+        for name in names:
+            function = getattr(cls, name)
+            while hasattr(function, "__wrapped__"):
+                function = function.__wrapped__
+            sites[function.__code__] = cls.__name__ + "." + name
+
+    def observe(frame, event, returned):
+        nonlocal sequence
+        label = sites.get(frame.f_code)
+        if label is None:
+            return
+        values = frame.f_locals
+        owner = values.get("self")
+        if (
+            label == "AgentService._run_one"
+            and event == "call"
+            and values.get("agent_kind") == "subagent"
+        ):
+            thread = threading.current_thread()
+            _FLEET_THREAD_REFS[values["precreated_run_id"]] = (
+                weakref.ref(thread),
+                {"object_id": id(thread), "ident": thread.ident, "name": thread.name},
+            )
+        state = {"owner_id": id(owner)}
+        if isinstance(owner, RunHooksEngine):
+            state["closed"] = owner._closed.is_set()
+        if isinstance(owner, RunLogWriter):
+            state.update(
+                active=owner._active, counter=owner._counter, log_dir=str(owner.log_dir)
+            )
+        if isinstance(owner, ConsoleScratchSpaceManager):
+            with owner._condition:
+                state.update(
+                    disposed=owner._disposed,
+                    records=[
+                        {
+                            "session_id": row.session_id,
+                            "root": str(row.snapshot.root),
+                            "leases": row.leases,
+                            "tombstoned": row.tombstoned,
+                        }
+                        for row in owner._records.values()
+                    ],
+                )
+        identity = {
+            key: values[key]
+            for key in (
+                "session_id",
+                "run_id",
+                "parent_run_id",
+                "requested_run_id",
+                "precreated_run_id",
+                "agent_kind",
+                "task",
+                "handle_id",
+                "status",
+                "kind",
+                "type",
+                "event",
+            )
+            if key in values
+        }
+        snapshot = values.get("snapshot")
+        if snapshot is not None:
+            identity["scratch_root"] = str(snapshot.root)
+        row = {
+            "time_ns": time.monotonic_ns(),
+            "pid": os.getpid(),
+            "thread": threading.get_ident(),
+            "run_id": current_run_id(),
+            "event": label + "." + event,
+            "identity": identity,
+            "state": state,
+            "result": {
+                key: getattr(returned, key)
+                for key in ("run_id", "status", "blocked", "reason")
+                if hasattr(returned, key)
+            },
+            "returned": returned if isinstance(returned, (int, bool)) else None,
+        }
+        if (
+            frame.f_code.co_name in ("close", "dispose", "tombstone_all")
+            and event == "call"
+        ):
+            row["stack"] = traceback.format_stack(frame, limit=8)
+        if frame.f_code.co_name == "stream_chat":
+            row["prompts"] = [
+                m.get("content") for m in values["messages"] if m.get("role") == "user"
+            ]
+        with lock:
+            sequence += 1
+            if sequence > 8192:
+                return
+            row["sequence"] = sequence
+            with path.open("a") as output:
+                output.write(json.dumps(row, default=str) + "\n")
+
+    # Local Python 3.12 monitoring touches only these exact original code bodies.
+    # PY_RETURN is final completion; PY_YIELD is separately labelled and never
+    # counted as coroutine/generator retirement. No native frame is retained.
+    monitoring = sys.monitoring
+    tool_id = next(
+        index for index in range(5, -1, -1) if monitoring.get_tool(index) is None
+    )
+    monitoring.use_tool_id(tool_id, "task11-fleet-lifetimes")
+
+    def started(code, offset):
+        observe(sys._getframe(1), "call", None)
+
+    def finished(code, offset, value):
+        observe(sys._getframe(1), "return", value)
+
+    def yielded(code, offset, value):
+        observe(sys._getframe(1), "yield", value)
+
+    def cleanup():
+        for code in sites:
+            monitoring.set_local_events(tool_id, code, monitoring.events.NO_EVENTS)
+        for event in (
+            monitoring.events.PY_START,
+            monitoring.events.PY_RETURN,
+            monitoring.events.PY_YIELD,
+        ):
+            monitoring.register_callback(tool_id, event, None)
+        monitoring.free_tool_id(tool_id)
+        (path.parent / "fleet-monitor-cleanup.json").write_text(
+            json.dumps(
+                {
+                    "records": sequence,
+                    "tool_released": monitoring.get_tool(tool_id) is None,
+                }
+            )
+        )
+
+    try:
+        monitoring.register_callback(tool_id, monitoring.events.PY_START, started)
+        monitoring.register_callback(tool_id, monitoring.events.PY_RETURN, finished)
+        monitoring.register_callback(tool_id, monitoring.events.PY_YIELD, yielded)
+        for code, label in sites.items():
+            events = monitoring.events.PY_START | monitoring.events.PY_RETURN
+            if label == "ConsoleScratchSpaceManager.lease":
+                events |= monitoring.events.PY_YIELD
+            monitoring.set_local_events(tool_id, code, events)
+
+    except BaseException:
+        cleanup()
+        raise
+
+    return cleanup
 
 
 def main() -> None:
@@ -610,6 +809,7 @@ def main() -> None:
         profiles.load_profile_snapshot = lambda: snapshot
     app = None
     database = None
+    stop_fleet_observation = None
     try:
         canonical_mode = os.environ.get("TLDW_MOBILE_CANONICAL_FIXTURE") == "1"
         if canonical_mode:
@@ -797,6 +997,7 @@ def main() -> None:
                     "input_thread": input_thread.ident,
                     "input_thread_object": id(input_thread),
                     "input_thread_objects_observed": len(observed_input_threads),
+                    "fleet_threads": _fleet_thread_states(),
                     "input_threads": sum(
                         t.name == "textual-input" for t in threading.enumerate()
                     ),
@@ -824,7 +1025,10 @@ def main() -> None:
             original_setup = app._post_mount_setup
 
             async def observed_setup():
+                nonlocal stop_fleet_observation
                 result = await original_setup()
+                if os.environ.get("TLDW_FLEET_FIXTURE") == "1":
+                    stop_fleet_observation = _observe_fleet_lifetimes()
                 _publish_owner_receipt(
                     data_root / "console-app-ready.json",
                     {"pid": os.getpid(), "ui_ready": app._ui_ready},
@@ -882,6 +1086,8 @@ def main() -> None:
         app._bindings.bind("f11", "canvas_fixture_focus_ack", priority=True)
         app.run()
     finally:
+        if stop_fleet_observation is not None:
+            stop_fleet_observation()
         if database is not None:
             database.close()
         drain_active_service_patches()

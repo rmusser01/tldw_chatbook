@@ -1628,19 +1628,70 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
             ): 1,
         }
     )
-    expected_calls.update({
-        ("tldw_chatbook/DB/recovery_dreams_guardian", "_GuardianAdapter.capture", "copy_private_sqlite"): 1,
-        ('tldw_chatbook/Scheduling/recovery', '_ScheduledTasksAdapter.capture', "copy_private_sqlite"): 1,
-        ('tldw_chatbook/Sync_Interop/recovery', '_SyncAdapter.capture', "copy_private_sqlite"): 1,
-        ('tldw_chatbook/Notes/recovery', '_FileNotesAdapter.capture', "copy_private_sqlite"): 1,
-        ('tldw_chatbook/Backup_Recovery/rag_indexing', '_Indexing.capture', "copy_private_sqlite"): 1,
-        ('tldw_chatbook/Kanban_Interop/recovery', '_KanbanAdapter.capture', "copy_private_sqlite"): 1,
-        ('tldw_chatbook/DB/recovery_operations', '_WorkspacesAdapter.capture', "copy_private_sqlite"): 1,
-        ('tldw_chatbook/DB/recovery_operations', '_AgentRunsAdapter.capture', "copy_private_sqlite"): 1,
-        ('tldw_chatbook/DB/recovery_operations', '_SubscriptionsAdapter.capture', "copy_private_sqlite"): 1,
-        ('tldw_chatbook/Notifications/recovery', '_NotificationsAdapter.capture', "copy_private_sqlite"): 1,
-        ('tldw_chatbook/Notifications/recovery', '_EventsAdapter.capture', "copy_private_sqlite"): 1,
-    })
+    expected_calls.update(
+        {
+            (
+                "tldw_chatbook/DB/recovery_dreams_guardian",
+                "_GuardianAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/DB/recovery_dreams_guardian",
+                "_DreamsAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Scheduling/recovery",
+                "_ScheduledTasksAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Sync_Interop/recovery",
+                "_SyncAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Notes/recovery",
+                "_FileNotesAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Backup_Recovery/rag_indexing",
+                "_Indexing.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Kanban_Interop/recovery",
+                "_KanbanAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/DB/recovery_operations",
+                "_WorkspacesAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/DB/recovery_operations",
+                "_AgentRunsAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/DB/recovery_operations",
+                "_SubscriptionsAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Notifications/recovery",
+                "_NotificationsAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Notifications/recovery",
+                "_EventsAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+        }
+    )
     actual_calls: Counter[tuple[str, str, str]] = Counter()
     for source_path in PRODUCTION_ROOT.rglob("*.py"):
         module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()

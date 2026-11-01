@@ -770,6 +770,25 @@ async def _run_fleet(root):
     case = LiveMobileConsole(root)
     case.stack = stack
     result = {}
+    http_tasks = set()
+    http_rows = []
+
+    async def record_http(response):
+        if "/api/v1/mobile/" in response.url and len(http_rows) < 256:
+            row = {
+                "url": response.url,
+                "status": response.status,
+                "body": await response.text(),
+            }
+            http_rows.append(row)
+            with (root / "fleet-http.jsonl").open("a") as output:
+                output.write(json.dumps(row) + "\n")
+
+    def observe_http(response):
+        task = asyncio.create_task(record_http(response))
+        http_tasks.add(task)
+        task.add_done_callback(http_tasks.discard)
+
     data = case.data
     from tldw_chatbook.Web_Server import mobile_api
 
@@ -804,6 +823,27 @@ async def _run_fleet(root):
                 element.dispatchEvent(new ClipboardEvent('paste', {clipboardData:clipboard,bubbles:true}));
             }""")
             phone = case.phone = await phone_context.new_page()
+            phone.on("response", observe_http)
+            frame_count = 0
+
+            def observe_socket(socket):
+                def record_frame(direction, payload):
+                    nonlocal frame_count
+                    if frame_count >= 2048:
+                        return
+                    frame_count += 1
+                    with (root / "fleet-websocket.jsonl").open("a") as output:
+                        output.write(
+                            json.dumps({"direction": direction, "payload": payload})
+                            + "\n"
+                        )
+
+                socket.on("framesent", lambda payload: record_frame("sent", payload))
+                socket.on(
+                    "framereceived", lambda payload: record_frame("received", payload)
+                )
+
+            phone.on("websocket", observe_socket)
             login = await phone.request.post(
                 stack.origin + "/auth/login",
                 form={"access_token": token},
@@ -815,6 +855,47 @@ async def _run_fleet(root):
             await phone.get_by_role("button", name="New chat", exact=True).click()
             await expect(phone.locator("#chat-draft")).to_be_enabled(timeout=30000)
             before = await case.snapshot()
+            original_a = next(
+                row
+                for row in before["chats"]
+                if row["session_id"] == terminal_a["session_id"]
+            )
+            assert (
+                original_a["run_id"]
+                and original_a["turn_id"]
+                and original_a["status"] == "streaming"
+            )
+            result["unrelated_before"] = original_a
+
+            async def unchanged_a(label):
+                snapshot = await case.snapshot()
+                current = next(
+                    row
+                    for row in snapshot["chats"]
+                    if row["session_id"] == original_a["session_id"]
+                )
+                keys = (
+                    "server_epoch",
+                    "console_id",
+                    "session_id",
+                    "incarnation_id",
+                    "run_id",
+                    "turn_id",
+                    "status",
+                )
+                assert {key: current[key] for key in keys} == {
+                    key: original_a[key] for key in keys
+                }, current
+                result.setdefault("unrelated_witnesses", []).append(
+                    {"boundary": label, "chat": current}
+                )
+
+            async def thread_state():
+                path = data / "canvas-live-terminal-state"
+                path.unlink(missing_ok=True)
+                await keyboard.press("F11")
+                return json.loads(await _wait_file(path))
+
             chat_b = next(
                 row
                 for row in before["chats"]
@@ -924,6 +1005,10 @@ async def _run_fleet(root):
             snapshot = await targeted()
             assert len(snapshot["fleet"]) == 2, snapshot
             result["workers_before"] = snapshot["fleet"]
+            result["worker_threads_before"] = (await thread_state())["fleet_threads"]
+            assert len(result["worker_threads_before"]) == 2
+            assert all(row["alive"] for row in result["worker_threads_before"].values())
+            await unchanged_a("both-workers-started")
             workers = sorted(
                 snapshot["fleet"],
                 key=lambda row: row.get("task", row.get("handle_id", "")),
@@ -961,6 +1046,13 @@ async def _run_fleet(root):
             ).click()
             await expect(phone.locator("#chat-draft")).to_have_value("")
             await phone.locator("#chat-draft").fill("EXACT_WORKER_GUIDANCE")
+            result["guidance_dom"] = await phone.evaluate("""() => ({
+                connection:document.querySelector('#connection-state')?.textContent,
+                target:document.querySelector('#target-label')?.textContent,
+                targetState:document.querySelector('#target-state')?.textContent,
+                draft:document.querySelector('#chat-draft')?.value,
+                sendDisabled:document.querySelector('#send-command')?.disabled
+            })""")
             await phone.get_by_role("button", name="Send guidance", exact=True).click()
             await expect(phone.locator("#command-status")).to_contain_text(
                 "consumption not confirmed", timeout=15000
@@ -987,6 +1079,45 @@ async def _run_fleet(root):
             ), consumed
             result["guidance_consumed"] = consumed
             await command("subagent_stop", {key: worker_b[key] for key in keys}, {})
+            requested = await targeted()
+            assert next(
+                row
+                for row in requested["fleet"]
+                if row["handle_id"] == worker_a["handle_id"]
+            )["live"]
+            result["worker_stop_requested"] = requested["fleet"]
+            await unchanged_a("worker-b-stop-requested")
+            (data / "fleet-release-EXACT_WORKER_B-0").touch()
+            async with asyncio.timeout(30):
+                while True:
+                    retired = await targeted()
+                    stopped_b = next(
+                        row
+                        for row in retired["fleet"]
+                        if row["handle_id"] == worker_b["handle_id"]
+                    )
+                    live_a = next(
+                        row
+                        for row in retired["fleet"]
+                        if row["handle_id"] == worker_a["handle_id"]
+                    )
+                    assert live_a["live"] and live_a["run_id"] == worker_a["run_id"], (
+                        live_a
+                    )
+                    threads = (await thread_state())["fleet_threads"]
+                    assert threads[worker_a["run_id"]]["alive"]
+                    if (
+                        not stopped_b["live"]
+                        and not threads[worker_b["run_id"]]["alive"]
+                    ):
+                        assert stopped_b["status"] == "cancelled", stopped_b
+                        result["worker_b_retired"] = {
+                            "fleet": retired["fleet"],
+                            "threads": threads,
+                        }
+                        break
+                    await asyncio.sleep(0.05)
+            await unchanged_a("worker-b-physically-retired")
             # Another phone may render the same supported decision and disappear.
             second_context = await browser.new_context(
                 ignore_https_errors=True, viewport={"width": 390, "height": 844}
@@ -1036,6 +1167,20 @@ async def _run_fleet(root):
             run_target = dict(target_b, run_id=main["run_id"], turn_id=main["turn_id"])
             await command("steer", run_target, {"text": "EXACT_PARENT_STEER"})
             await command("redirect", run_target, {"text": "EXACT_PARENT_REDIRECT"})
+            await unchanged_a("main-corrections-queued")
+            (data / "fleet-release-parent-6").touch()
+            corrections = json.loads(
+                await _wait_file(data / "fleet-entry-EXACT_FLEET_PARENT-7.json")
+            )
+            assert (
+                sum("EXACT_PARENT_STEER" in text for text in corrections["received"])
+                == 1
+            ), corrections
+            assert corrections["received"].count("EXACT_PARENT_REDIRECT") == 1, (
+                corrections
+            )
+            result["main_corrections_consumed"] = corrections
+            await unchanged_a("main-corrections-consumed")
             current = await targeted()
             stopped = next(
                 row
@@ -1048,10 +1193,31 @@ async def _run_fleet(root):
                 dict(target_b, run_id=stopped["run_id"], turn_id=stopped["turn_id"]),
                 {},
             )
-            state = data / "canvas-live-terminal-state"
-            state.unlink(missing_ok=True)
-            await keyboard.press("F11")
-            terminal_after = json.loads(await _wait_file(state))
+            result["main_stop_requested"] = stopped
+            (data / "fleet-release-parent-7").touch()
+            async with asyncio.timeout(30):
+                while True:
+                    retired = await targeted()
+                    main_after = next(
+                        row
+                        for row in retired["chats"]
+                        if row["session_id"] == target_b["session_id"]
+                    )
+                    live_a = next(
+                        row
+                        for row in retired["fleet"]
+                        if row["handle_id"] == worker_a["handle_id"]
+                    )
+                    assert live_a["live"] and live_a["run_id"] == worker_a["run_id"], (
+                        live_a
+                    )
+                    if not main_after["run_id"] and not main_after["turn_id"]:
+                        result["main_retired"] = main_after
+                        break
+                    await asyncio.sleep(0.05)
+            await unchanged_a("main-stopped-worker-a-still-live")
+            terminal_after = await thread_state()
+            assert terminal_after["fleet_threads"][worker_a["run_id"]]["alive"]
             assert terminal_after["session_id"] == terminal_a["session_id"]
             assert terminal_after["draft"] == "EXACT_DESKTOP_DRAFT"
             assert (
@@ -1061,10 +1227,134 @@ async def _run_fleet(root):
             assert stack.services[0]._process.pid == entry_a["pid"]
             result["desktop_before"] = terminal_a
             result["desktop_after"] = terminal_after
-            case.prompts.append("EXACT_UNRELATED_CHAT_A")
-            await case.release_agent()
+            # A completed survivor leaves the live-only projection after its main
+            # turn retires; require its durable result and actual thread exit.
             (data / "fleet-release-EXACT_WORKER_A-1").touch()
-            (data / "fleet-release-parent").touch()
+            async with asyncio.timeout(30):
+                while True:
+                    retired = await targeted()
+                    finished_a = next(
+                        (
+                            row
+                            for row in retired["fleet"]
+                            if row["handle_id"] == worker_a["handle_id"]
+                        ),
+                        None,
+                    )
+                    threads = (await thread_state())["fleet_threads"]
+                    if not threads[worker_a["run_id"]]["alive"]:
+                        assert finished_a is None or not finished_a["live"], finished_a
+                        response = await phone.request.get(
+                            stack.origin
+                            + "/api/v1/mobile/conversations/"
+                            + main["conversation_id"]
+                            + "/workers/"
+                            + worker_a["run_id"]
+                        )
+                        assert response.status == 200, await response.text()
+                        durable = await response.json()
+                        assert (
+                            durable["run_id"] == worker_a["run_id"]
+                            and durable["status"] == "done"
+                        ), durable
+                        assert (
+                            durable["available"]
+                            and durable["text"] == "EXACT_WORKER_REPLY:EXACT_WORKER_A"
+                        ), durable
+                        result["worker_a_retired"] = {
+                            "live_row": finished_a,
+                            "durable_result": durable,
+                            "threads": threads,
+                        }
+                        break
+                    await asyncio.sleep(0.05)
+            await unchanged_a("both-workers-physically-retired")
+            await case.release_agent()
+            target_a = {
+                key: original_a[key]
+                for key in (
+                    "server_epoch",
+                    "console_id",
+                    "session_id",
+                    "incarnation_id",
+                )
+            }
+            async with asyncio.timeout(30):
+                while True:
+                    response = await phone.request.get(
+                        stack.origin + "/api/v1/mobile/console/snapshot",
+                        params={
+                            "protocol_version": "1",
+                            "target": json.dumps(target_a),
+                        },
+                    )
+                    assert response.status == 200
+                    final_a = await response.json()
+                    row = final_a["chats"][0]
+                    if not row["run_id"] and not row["turn_id"]:
+                        actual = [
+                            (message["role"], message["content"])
+                            for message in final_a["messages"]
+                            if message["role"] in {"user", "assistant"}
+                        ]
+                        assert actual == [
+                            ("user", "EXACT_UNRELATED_CHAT_A"),
+                            ("assistant", "EXACT_REPLY:EXACT_UNRELATED_CHAT_A"),
+                        ], actual
+                        result["unrelated_completed"] = final_a
+                        break
+                    await asyncio.sleep(0.05)
+            events = [
+                json.loads(line)
+                for line in (root / "fleet-lifecycle.jsonl").read_text().splitlines()
+            ]
+            unrelated_calls = [
+                row
+                for row in events
+                if row["event"] == "_ScriptedFleetConsoleGateway.stream_chat.call"
+                and row.get("prompts") == ["EXACT_UNRELATED_CHAT_A"]
+            ]
+            assert len(unrelated_calls) == 1, unrelated_calls
+            expected_runs = {
+                original_a["run_id"],
+                run_target["run_id"],
+                worker_a["run_id"],
+                worker_b["run_id"],
+            }
+            returns = {
+                row["identity"]["run_id"]
+                for row in events
+                if row["event"] == "AgentService._run_one.return"
+            }
+            assert returns == expected_runs, (returns, expected_runs)
+            writes = [
+                row for row in events if row["event"] == "RunLogWriter.append.return"
+            ]
+            assert writes and all(
+                row["state"]["active"] and isinstance(row["returned"], int)
+                for row in writes
+            ), writes
+            hooks = [
+                row for row in events if row["event"] == "RunHooksEngine.fire.return"
+            ]
+            assert hooks and all(
+                not row["state"]["closed"] and not row["result"]["blocked"]
+                for row in hooks
+            ), hooks
+            assert not any(
+                row["event"]
+                in {
+                    "RunHooksEngine.close.call",
+                    "ConsoleScratchSpaceManager.tombstone_all.call",
+                }
+                for row in events
+            )
+            result["live_lifetime_qualified"] = {
+                "native_returns": sorted(returns),
+                "successful_log_writes": len(writes),
+                "open_hook_outcomes": len(hooks),
+                "events_before_shutdown": len(events),
+            }
             await browser.close()
     except BaseException:
         import traceback
@@ -1072,6 +1362,8 @@ async def _run_fleet(root):
         (root / "fleet-error.txt").write_text(traceback.format_exc())
         raise
     finally:
+        if http_tasks:
+            await asyncio.gather(*http_tasks, return_exceptions=True)
         for name in ("EXACT_WORKER_A", "EXACT_WORKER_B"):
             for phase in (0, 1):
                 (data / f"fleet-release-{name}-{phase}").touch()
@@ -1093,6 +1385,37 @@ async def _run_fleet(root):
             if service._process is not None
         ]
         (root / "fleet.json").write_text(json.dumps(result, indent=2))
+    cleanup = json.loads((root / "fleet-monitor-cleanup.json").read_text())
+    assert cleanup["tool_released"] and cleanup["records"] < 8192, cleanup
+    events = [
+        json.loads(line)
+        for line in (root / "fleet-lifecycle.jsonl").read_text().splitlines()
+    ]
+    assert all(
+        row["state"]["active"]
+        for row in events
+        if row["event"] in {"RunLogWriter.append.return", "RunLogWriter.close.return"}
+    )
+    assert all(
+        not row["result"]["blocked"]
+        for row in events
+        if row["event"] == "RunHooksEngine.fire.return"
+    )
+    import sqlite3
+
+    database = Path(terminal_a["core_path"])
+    with sqlite3.connect(
+        database.as_uri() + "?mode=ro&immutable=1", uri=True
+    ) as connection:
+        persisted = connection.execute(
+            "SELECT role,content FROM messages WHERE conversation_id=? AND role IN ('user','assistant') ORDER BY rowid",
+            (original_a["conversation_id"],),
+        ).fetchall()
+    assert persisted == [
+        ("user", "EXACT_UNRELATED_CHAT_A"),
+        ("assistant", "EXACT_REPLY:EXACT_UNRELATED_CHAT_A"),
+    ], persisted
+    (root / "fleet-unrelated-persisted.json").write_text(json.dumps(persisted))
     assert not blocked_attempts(), blocked_attempts()
     assert not take_violations()
 
@@ -1184,6 +1507,37 @@ async def _run_transport(root):
                 }, true);""")
             phone = case.phone = await context.new_page()
             phone.on("response", observe_http)
+            create_requests = []
+
+            def record_create(request):
+                if request.method != "POST":
+                    return
+                if request.url.endswith("/commands/tickets"):
+                    body = request.post_data_json
+                    if body["action"] == "create":
+                        create_requests.append(
+                            {
+                                "kind": "ticket",
+                                "target": body["target"],
+                                "payload": body["payload"],
+                            }
+                        )
+                elif request.url.endswith("/commands"):
+                    body = request.post_data_json
+                    ticket = json.loads(
+                        base64.urlsafe_b64decode(body["ticket"].split(".")[0])
+                    )
+                    if ticket["action"] == "create":
+                        create_requests.append(
+                            {
+                                "kind": "effect",
+                                "command_id": ticket["command_id"],
+                                "target": ticket["target"],
+                                "payload": body["payload"],
+                            }
+                        )
+
+            phone.on("request", record_create)
             login = await phone.request.post(
                 stack.origin + "/auth/login",
                 form={"access_token": token},
@@ -1194,8 +1548,39 @@ async def _run_transport(root):
             await phone.goto(stack.origin + "/m")
             for fault in ("before-admission", "after-acceptance", "after-effect"):
                 await phone.locator("#tab-chats").click()
+                create_start = len(create_requests)
                 await phone.get_by_role("button", name="New chat", exact=True).click()
                 await expect(phone.locator("#chat-draft")).to_be_enabled(timeout=30000)
+                issued_create = create_requests[create_start:]
+                assert [item["kind"] for item in issued_create] == [
+                    "ticket",
+                    "effect",
+                ], issued_create
+                create_id = issued_create[1]["command_id"]
+                create_response = await phone.request.get(
+                    stack.origin + "/api/v1/mobile/commands/" + create_id
+                )
+                assert create_response.status == 200
+                create_receipt = await create_response.json()
+                assert (
+                    create_receipt["command_id"] == create_id
+                    and create_receipt["state"] == "applied"
+                ), create_receipt
+                current_list = await case.snapshot()
+                created_row = next(
+                    row
+                    for row in current_list["chats"]
+                    if row["session_id"] == create_receipt["native_id"]
+                )
+                assert (
+                    created_row["live"]
+                    and created_row["server_epoch"] == create_receipt["server_epoch"]
+                )
+                create_witness = {
+                    "requests": issued_create,
+                    "receipt": create_receipt,
+                    "current_row": created_row,
+                }
                 assert len(stack.services) == 1
                 pid = stack.services[0]._process.pid
                 assert result.setdefault("pid", pid) == pid
@@ -1264,6 +1649,11 @@ async def _run_transport(root):
                 assert not route_errors, route_errors
                 assert len(attempts) == 1
                 row = attempts[0]
+                assert row["target"]["session_id"] == create_receipt["native_id"], (
+                    row,
+                    create_receipt,
+                )
+                row["create_witness"] = create_witness
                 response = await phone.request.get(
                     stack.origin + "/api/v1/mobile/commands/" + row["command_id"]
                 )

@@ -2743,3 +2743,43 @@ inputs, with no waiver or unrelated repair. Scoped static checks have no new
 findings; incumbent findings and AST-equivalent formatting are recorded exactly.
 Independent Task11/whole-feature review and physical phone/VPN qualification are
 not claimed complete. Task36769 completion metadata remains with the coordinator.
+
+### Passing exact inventory census (R165, 2026-11-01, before test correction)
+
+Task11 AC6 requires the selected source-inventory checks to pass. Its only
+remaining census mismatch is the existing `_DreamsAdapter.capture` call to
+`copy_private_sqlite`, documented as B40 and already governed by the installed
+`recovery.operations.dreams` role. Reconcile that one exact expected-call Counter
+entry. This supersedes the earlier decision to defer this inherited test mismatch;
+source equality alone is not a passing acceptance result. Keep the actual checked
+capture, registered role, literal-module checker and all negative controls
+unchanged. No production, authority, schema, capture permission or broad census
+exclusion is introduced.
+
+### Exact-socket answerability invalidation (R166, 2026-11-01, before client fix)
+
+The same actual fleet journey captured1,341 WebSocket frames, including661 false
+answerability advertisements and634 reset responses, mostly for the retired
+question round. The client republishes its unchanged rendered false claim when
+each reset marks the connection uncertain; native stale-round rejection correctly
+produces another reset. Changing confirmation revisions can starve the fresh
+snapshot after original command queries. This is a client feedback defect, not
+a reason to relax the native decision/target floor or replay mutations.
+
+Deduplicate only identical advertisements for the same actual socket, exact
+rendered targets and Boolean, using one page-memory signature/socket cache. The
+first invalidation must still immediately send false and disable controls.
+Explicit target withdrawal before DOM replacement invalidates that cache; a new
+socket and fresh confirmed current metadata must advertise their current claim
+afresh. Keep native stale-round rejection, confirmation revisions, authentication,
+owner/round targeting, no-replay and no-persistence policy unchanged. Qualify
+stale rejection/reset plus original-ID query and withheld-metadata recovery in
+both engines, then the same actual fleet/cold/transport paths. No server protocol,
+permission, storage authority, native lifecycle, offline queue or general refresh
+redesign is introduced.
+
+The accompanying finite native-code-only diagnostic separately witnesses healthy
+log writes/open hooks before disposal and later denial after explicit runtime
+disposal/tombstoning. It does not retrospectively establish the original positive
+warning cause or close R02/R03 without the strengthened live/retirement assertions.
+No native lifecycle repair is authorized by this client correction.
