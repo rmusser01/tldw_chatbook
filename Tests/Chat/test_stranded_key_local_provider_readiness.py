@@ -224,10 +224,10 @@ async def test_the_send_uses_the_entry_key_beside_a_stranded_family_key():
         ConsoleProviderSelection,
     )
 
-    seen_auth = []
+    seen_requests = []
 
     async def handler(request):
-        seen_auth.append(request.headers.get("Authorization"))
+        seen_requests.append(request)
         if request.url.path == "/props":
             return httpx.Response(
                 200, json={"default_generation_settings": {"n_ctx": 8192}}
@@ -246,4 +246,9 @@ async def test_the_send_uses_the_entry_key_beside_a_stranded_family_key():
         )
 
     assert resolution.ready, resolution.visible_copy
-    assert all(auth in (None, "Bearer entry-plain-key") for auth in seen_auth)
+    assert resolution.api_key == "entry-plain-key"
+    assert resolution.api_key_source == "config:custom_endpoints.home.api_key"
+    health = [request for request in seen_requests if request.url.path == "/health"]
+    assert len(health) == 1
+    assert str(health[0].url) == "http://127.0.0.1:8181/health"
+    assert health[0].headers.get("Authorization") == "Bearer entry-plain-key"

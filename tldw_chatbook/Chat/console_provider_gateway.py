@@ -4584,8 +4584,8 @@ class ConsoleProviderGateway:
             # keyed entry sends unauthenticated (server 401) while the Task 3
             # UI gate says Ready. The missing-key gate reuses Task 3's
             # session-settings semantics so the UI and the gateway block
-            # identically; keyless entries (nothing declared) ride the plain
-            # family readiness unchanged.
+            # identically. Entry presence owns the credential decision, including
+            # None: a keyless entry never borrows the ordinary family's key.
             missing_entry_key = _custom_endpoint_missing_key_readiness(
                 custom_entry, identity.readiness_key, self._environ
             )
@@ -4639,12 +4639,12 @@ class ConsoleProviderGateway:
                     configured_model=selection.configured_model,
                     api_key=(
                         entry_api_key
-                        if entry_api_key is not None
+                        if custom_entry is not None
                         else readiness.api_key
                     ),
                     api_key_source=(
                         entry_api_key_source
-                        if entry_api_key is not None
+                        if custom_entry is not None
                         else readiness.api_key_source
                     ),
                     temperature=selection.temperature,
@@ -4858,7 +4858,9 @@ class ConsoleProviderGateway:
             )
 
         readiness_call = functools.partial(
-            get_provider_readiness,
+            custom_endpoint_family_readiness
+            if custom_entry is not None
+            else get_provider_readiness,
             identity.readiness_key,
             app_config,
             environ=self._environ,
@@ -4955,11 +4957,11 @@ class ConsoleProviderGateway:
                 else ""
             ),
             api_key=(
-                entry_api_key if entry_api_key is not None else readiness.api_key
+                entry_api_key if custom_entry is not None else readiness.api_key
             ),
             api_key_source=(
                 entry_api_key_source
-                if entry_api_key is not None
+                if custom_entry is not None
                 else readiness.api_key_source
             ),
             prompt_caching=prompt_caching,

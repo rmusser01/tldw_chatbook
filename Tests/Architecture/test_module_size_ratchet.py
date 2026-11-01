@@ -607,8 +607,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8747 -> 8763.
     # 2026-10-31, PR #3173: user size-limit waiver; exact current-base measurement.
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8938,
-    # 2026-10-31, PR #3293: explicit user size-limit waiver; exact integrated measurement.
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8181,
+    # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
+    # credential/readiness repair, exact integrated measurement (8181 -> 8183).
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8183,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
