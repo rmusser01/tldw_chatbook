@@ -10112,6 +10112,11 @@ ChatScreen.-focus #console-workbench-header {
     color: $ds-text-primary;
 }
 
+#console-attachment-block Button:hover {
+    background: $ds-hover-bg;
+    color: $ds-hover-fg;
+}
+
 #console-attachment-block Button:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;

@@ -15,9 +15,13 @@ not list, so the real classifier refuses the image: nothing is stubbed.
 
 from __future__ import annotations
 
-import pytest
-from textual.widgets import Button, Static
+from dataclasses import replace
+import time
 
+import pytest
+from textual.widgets import Button, Input, Static
+
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
@@ -52,6 +56,14 @@ async def _stage_image(console, pilot, draft: str = ""):
     console._sync_console_control_bar()
     await pilot.pause()
     return composer, store, session_id
+
+
+async def _wait_for_render(pilot, predicate):
+    """Observe the real coalesced refresh; a single pause does not await it."""
+    deadline = time.monotonic() + 5
+    while not predicate() and time.monotonic() < deadline:
+        await pilot.pause(0.05)
+    assert predicate(), "Console control-bar replay did not publish the expected state"
 
 
 def _row_text(app, widget) -> str:
@@ -96,7 +108,7 @@ async def test_a_vision_block_names_the_model_and_never_links_to_setup():
         copy = block.query_one("#console-attachment-block-copy", Static)
         assert copy.content.plain == NOTICE
         labels = [str(b.label) for b in block.query(Button)]
-        assert labels == ["Remove image", "Switch model"]
+        assert labels == ["Remove images", "Switch model"]
         # No control in the row is the wizard either. (A click is no check
         # here: the harness app has no `run_setup_wizard` action, so the
         # pre-fix link was inert under test; its markup above is the check --
@@ -139,10 +151,23 @@ async def test_remove_image_clears_the_image_and_the_block_and_keeps_the_draft()
             console, pilot, draft="never mind the picture"
         )
 
+        assert store.add_pending_attachment(
+            session_id,
+            replace(_image(), file_path="/tmp/second.png", display_name="second.png"),
+        )
+        console._sync_console_control_bar()
+        await pilot.pause()
+        assert len(store.pending_attachments(session_id)) == 2
+        remove = console.query_one("#console-attachment-block-remove", Button)
+        assert str(remove.label) == "Remove images"
+        assert "Remove images" in _row_text(host, remove)
         await pilot.click("#console-attachment-block-remove")
         await pilot.pause()
 
         assert store.pending_attachments(session_id) == []
+        await _wait_for_render(
+            pilot, lambda: not console.query_one("#console-attachment-block").display
+        )
         assert not console.query_one("#console-attachment-block").display
         assert composer.draft_text() == "never mind the picture"
         assert not composer.query_one("#console-send-message", Button).disabled
@@ -163,7 +188,7 @@ async def test_the_chip_the_block_copy_and_both_actions_are_painted_whole(size):
         copy = block.query_one("#console-attachment-block-copy", Static)
         assert _row_text(host, copy).strip() == NOTICE
         for button_id, label in (
-            ("#console-attachment-block-remove", "Remove image"),
+            ("#console-attachment-block-remove", "Remove images"),
             ("#console-attachment-block-switch-model", "Switch model"),
         ):
             assert label in _row_text(host, block.query_one(button_id, Button))
@@ -301,6 +326,11 @@ async def test_with_no_model_chosen_setup_owns_the_strip_and_the_row_stays_hidde
 
         assert console._console_setup_blocked_reason()
         strip = composer.query_one("#console-send-disabled-reason", Static)
+        await _wait_for_render(
+            pilot,
+            lambda: strip.content.plain
+            == "Send blocked — choose a model to continue ›",
+        )
         assert strip.content.plain == "Send blocked — choose a model to continue ›"
         assert composer.query_one("#console-send-message", Button).disabled
         block = console.query_one("#console-attachment-block")
@@ -310,7 +340,7 @@ async def test_with_no_model_chosen_setup_owns_the_strip_and_the_row_stays_hidde
 
         model_chosen["on"] = True
         console._sync_console_control_bar()
-        await pilot.pause()
+        await _wait_for_render(pilot, lambda: block.display)
 
         assert block.display
         copy = block.query_one("#console-attachment-block-copy", Static)
@@ -351,7 +381,46 @@ async def test_a_long_model_id_is_ellipsized_and_both_actions_stay_whole_at_80x2
             f"Console send blocked: {long_model} can't accept images."
         )
         for button_id, label in (
-            ("#console-attachment-block-remove", "Remove image"),
+            ("#console-attachment-block-remove", "Remove images"),
             ("#console-attachment-block-switch-model", "Switch model"),
         ):
             assert label in _row_text(host, block.query_one(button_id, Button))
+
+
+@pytest.mark.asyncio
+async def test_attachment_action_hover_uses_shared_colors_and_keeps_focus_visible():
+    from tldw_chatbook.UI.Console_Modules.composer_run_controls import (
+        attachment_block_strip,
+    )
+
+    class ActionHarness(ConsolidatedCSSApp):
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+        def compose(self):
+            row = attachment_block_strip()
+            row.add_class("-visible")
+            row.disabled = False
+            yield row
+            yield Button("Reference", id="shared-button")
+            yield Input(id="focus-owner")
+
+    host = ActionHarness()
+    async with host.run_test(size=(80, 24)) as pilot:
+        host.query_one("#focus-owner", Input).focus()
+        reference = host.query_one("#shared-button", Button)
+        action = host.query_one("#console-attachment-block-remove", Button)
+        await pilot.pause()
+        resting = (action.styles.background, action.styles.color)
+        assert await pilot.hover("#shared-button")
+        await pilot.pause()
+        expected = (reference.styles.background, reference.styles.color)
+        assert await pilot.hover("#console-attachment-block-remove")
+        await pilot.pause()
+        hovered = (action.styles.background, action.styles.color)
+        assert hovered == expected
+        assert hovered != resting
+        action.focus()
+        await pilot.pause()
+        assert action.has_focus
+        assert action.styles.text_style.bold and action.styles.text_style.underline
+        assert (action.styles.background, action.styles.color) != hovered

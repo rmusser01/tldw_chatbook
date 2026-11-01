@@ -91,7 +91,7 @@ If an image is staged but the current model can't accept images, Send is
 disabled and a row above the status line names the model and the cause —
 `<model> can't accept images` — with two buttons:
 
-- **Remove image** clears what's staged (the same as **✕**); your draft
+- **Remove images** clears what's staged (the same as **✕**); your draft
   stays.
 - **Switch model** opens Switch model (**Alt+M**); your draft and the image
   stay staged, and Send is ready again once you pick a model that reads

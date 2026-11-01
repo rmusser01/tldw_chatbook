@@ -15,7 +15,7 @@ share one cause, so their fix shares this module:
 * TASK-33620.2: a staged image the selected model can't take rode the setup
   slot, so the strip read "choose a model" and linked to the first-run
   wizard. It is now its own blocker: `sync_attachment_block` names the model
-  in a row with Remove image and Switch model, and hands the composer a
+  in a row with Remove images and Switch model, and hands the composer a
   typed `ConsoleAttachmentBlock`.
 
 TASK-33620.15.17 adds the arrival case of the same key routing: keys typed
@@ -72,7 +72,7 @@ _CONTROL_PASSTHROUGH_KEYS = frozenset(
     {"pageup", "pagedown", "ctrl+z", "ctrl+shift+z", "ctrl+shift+Z", "ctrl+y"}
 )
 
-#: TASK-33620.2: the vision-block row. Remove image shares the composer's
+#: TASK-33620.2: the vision-block row. Remove images shares the composer's
 #: clear-attachment handler (`ChatScreen.handle_console_clear_attachment`);
 #: Switch model runs the Alt+M action, the Console model picker.
 ATTACHMENT_BLOCK_ID = "console-attachment-block"
@@ -556,11 +556,11 @@ def attachment_block_strip() -> Horizontal:
     """Build the hidden vision-block row the Console composes above its status line.
 
     Returns:
-        The row: the model-and-cause copy, then Remove image and Switch model.
+        The row: the model-and-cause copy, then Remove images and Switch model.
     """
     return Horizontal(
         Static("", id=ATTACHMENT_BLOCK_COPY_ID, markup=False),
-        Button("Remove image", id=ATTACHMENT_BLOCK_REMOVE_ID, compact=True),
+        Button("Remove images", id=ATTACHMENT_BLOCK_REMOVE_ID, compact=True),
         Button(
             "Switch model",
             id=ATTACHMENT_BLOCK_SWITCH_ID,
@@ -614,7 +614,7 @@ def sync_attachment_block(screen: Any) -> ConsoleAttachmentBlock | None:
     # the hidden button (live 2026-10-29).
     row.disabled = not show
     if not show and focused is not None and row in focused.ancestors_with_self:
-        # A keyboard Remove image (or a Switch model that fixed it) hides the
+        # A keyboard Remove images (or a Switch model that fixed it) hides the
         # focused button: hand the keyboard back to the draft, not to nowhere.
         composer = _composer(screen)
         if composer is not None:
