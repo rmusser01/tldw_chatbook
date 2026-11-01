@@ -831,3 +831,72 @@ The owner approved a prospective versioned response-profile repair after native 
 The exact terminal block retains its concrete source_format and provider/model/protocol/status/text. Version2 validates the exact shape and integer versions, unchanged terminal-round/type/single-block evidence and process-keyed raw equality proof. Credential/PII projection and completed-tool revision/range/lineage/policy checks are unchanged. A scalar version1 profile remains strict; hosted proprietary profiles and legacy visible-only responses retain their meanings. Old headers, links, artifacts, revisions and reconstructions remain immutable; no relinking, migration or retrospective source inference is permitted. Fresh captures establish the new contract.
 
 The contract uses the existing immutable request-header defaults JSON; no schema/storage expansion or new retained raw bodies. Rejected alternatives are widening v1, rewriting old artifact links, relabeling actual parser provenance, weakening equality/completed-tool checks, or disabling capture/thinking. Design: Docs/superpowers/specs/2026-10-18-versioned-thinking-response-profile-design.md; recovery task TASK-33164 and its existing correction plan link this amendment.
+
+### Amendment recorded 2026-10-27: rewritten surface tail after Compact now or Edit & resend
+
+TASK-33621.29 and TASK-33621.7 (Console UX review, 2026-09-29) reproduced two
+ordinary actions that blocked capture for the rest of a chat. Compact now commits a
+conversation memory. The next request drops the compacted turns from
+`messages_payload` and carries the memory as a system message outside the history
+rows. Edit &
+resend dispatches its own call with Capture Off, because it has no turn
+preparation, so the edited sibling branch never reaches the surface. In both cases
+the next captured FRESH or AGENT_FIRST send carried a replacement of the recorded
+surface's tail plus the new turn. The planner admits only an append or a one-item
+replacement, so it refused the send with `count_or_span`, and every later send
+stopped at "Trace capture blocked". Measured live on dev `f9baac8706`: after Compact
+now, prefix 0, 13 recorded entries changed, 3 incoming; after Edit & resend, prefix
+2, 1 recorded entry changed, 3 incoming.
+
+Permit one more typed replacement-plus-append, the rewritten tail, for FRESH and
+AGENT_FIRST sends only, when no completed tool-turn transition applies. That
+transition's applicability requires matching descriptors and the permitted start
+sequence relative to its origin call, not merely an equal descriptor count. A
+selected completed transition still undergoes every durable ownership and range
+check; validation errors are not caught to retry with another proof. The replaced
+range is the recorded surface's whole tail after the matched prefix (no retained
+suffix), messages only, within the 256-node range limit. The limit is measured in
+stored sequences, the way the replacement is persisted and read back: sequences an
+earlier replacement left dead inside the range count, so the planner bounds the
+range's span, not its live row count. Every replacement row
+except the current user must be an exact saved revision; a saved response may carry
+its typed thinking replay. The current user may carry its admitted current-turn
+transform. Each row's live message must be an undeleted message of the attached
+conversation and the direct parent of the next row's message, and the last row must
+be the call's own turn. The oldest row's parent must be one proven anchor:
+
+- the message of the last retained saved row (an edited or switched branch);
+- the boundary of an active conversation memory (compaction). The memory reaches the
+  provider as a system message outside the history rows, so the active memory's
+  boundary is the durable proof of the dropped rows. Retained saved rows may precede
+  the gap, the shape a manual range memory sends; no link from them to the memory's
+  range is proven yet, and the anchor is any active memory of the conversation rather
+  than the one in effect on the branch (tightening both is TASK-37601); or
+- no parent, when no saved row is retained (a branch from the conversation root).
+
+Recheck the chain, the anchor and the memory's active state in the dispatch-binding
+transaction; any change fails capture closed. Removed rows contribute no disclosure
+policy or structural metadata to the composed request.
+
+This is not a general history-replacement permission. Retained suffixes, tool or
+project artifacts in the replacement, provider continuations, unsaved or foreign
+rows, gaps, deleted rows, inactive memories and unmatched anchors stay refused.
+Historical calls and heads stay immutable. No schema, retention change or durable
+registry is added; the proof is a bounded transient witness, like the completed
+tool-turn witness. Edit & resend and Regenerate themselves remain uncaptured: the
+edited branch enters the trace at the next captured send, not at the edit.
+
+Known limit (review, 2026-10-29). A rewritten tail wider than 256 stored sequences
+stays refused, so Compact now in a chat of more than about 128 recorded exchanges, or
+Edit & resend on an early message of one, still blocks every later captured send.
+Admitting it would reach the over-span fallback, which records an
+`unsupported_replacement_span` omission in place of the first new row and keeps
+every replaced row in the surface, so the trace would stop matching the request.
+Recording a wider replacement changes the durable format (`SurfaceReplacement`
+rejects a wider span when it is read back), so it needs its own owner decision
+(TASK-38298).
+
+The owner ruled on 2026-10-27 that TASK-33621.7 fixes the edited-branch trace
+defect only, with no remembered per-chat capture bypass. This amendment records
+the mechanism that fix and TASK-33621.29 share. It is recorded with the
+implementing change and is subject to the owner's review of that change.

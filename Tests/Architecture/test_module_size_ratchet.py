@@ -661,7 +661,18 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     "tldw_chatbook/Chat/console_runtime.py": 7076,
-    "tldw_chatbook/Chat/console_trace_service.py": 6679,
+    # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
+    # "expand limits, never contort code"): +56 for the rewritten-tail
+    # transition (ADR-097 amendment 2026-10-27). The proof itself lives in
+    # console_trace_rewritten_tail.py; these lines thread its witness through
+    # the planner, dispatch binding and child capability, as the tool-turn
+    # witness already is.
+    # 2026-10-29 (same owner decision; TASK-33621.29 review fix): +4 so the
+    # planner bounds a rewritten tail by its stored sequence span, not by its
+    # live row count (dead sequences inside the range count too).
+    # 2026-10-31, PR3298 user size waiver: +31 to select the completed proof
+    # by exact descriptors and its permitted start before full validation.
+    "tldw_chatbook/Chat/console_trace_service.py": 6765,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6054,

@@ -36,6 +36,8 @@ from tldw_chatbook.Chat.console_trace_final_values import (
     _SURFACE_VERIFICATION_ISSUER,
     CompletedToolTurnWitness,
     FinalValueBinding,
+    RewrittenTailWitness,
+    replacement_descriptor_count,
     ProviderCredentialSource,
     ProviderOverlayProvenance,
     ProviderRequestShadowBundle,
@@ -1473,6 +1475,7 @@ class _ChildState:
     )
     live_native_ordinal: int | None = None
     live_native_surface: Mapping[str, object] | None = field(default=None, repr=False)
+    rewritten_tail: RewrittenTailWitness | None = None
 
 
 class _ParentSurfaceCapability:
@@ -2143,6 +2146,17 @@ class ConsoleTraceService:
                 reserved_call=reserved_call,
                 known_credentials=known_credentials,
             )
+        if surface_delta.rewritten_tail is not None:
+            if reserved_call is None or replacement is None:
+                raise ValueError("rewritten_tail_unavailable")
+            _rewritten_tails().validate_rewritten_tail(
+                cursor,
+                self.repository,
+                owner_id=owner_id,
+                witness=surface_delta.rewritten_tail,
+                descriptors=descriptors,
+                current_turn_id=reserved_call.turn_id,
+            )
         saved_delta_pairs = tuple(
             (reference_key, value)
             for descriptor, value in zip(descriptors, values, strict=True)
@@ -2334,6 +2348,7 @@ class ConsoleTraceService:
             replacement is None
             or surface_delta.completed_tool_turn is not None
             or surface_delta.live_native is not None
+            or surface_delta.rewritten_tail is not None
         ):
             offset = 1 if replacement is not None else 0
             for descriptor, value in zip(
@@ -2908,6 +2923,7 @@ class ConsoleTraceService:
 
         replacement_range: VerifiedSurfaceReplacementRange | None = None
         compound = False
+        rewritten: RewrittenTailWitness | None = None
         admitted_from = prefix
         admitted_to = len(descriptors)
         if prefix < len(active):
@@ -2974,6 +2990,9 @@ class ConsoleTraceService:
                 completed_tool_turn is not None
                 and active_changed > 0
                 and incoming_changed == completed_tool_turn.descriptor_count
+                and completed_tool_turn.matches_descriptors(
+                    descriptors[prefix : prefix + incoming_changed]
+                )
                 and route_identity in {"agent_first", "fresh"}
                 and domains[prefix : prefix + incoming_changed]
                 == (
@@ -2986,6 +3005,60 @@ class ConsoleTraceService:
                     )
                 )
             )
+            if compound:
+                # Count equality is not evidence for this branch or range.
+                # Select an applicable proof, then keep its full validation below.
+                assert completed_tool_turn is not None
+                origin = self.repository.get_call(
+                    cursor, completed_tool_turn.origin_call_id
+                )
+                origin_head = None
+                if origin is not None:
+                    origin_head = (
+                        self._call_message_tail(cursor, origin)
+                        if completed_tool_turn.source_revision_id is not None
+                        else self.repository.get_surface_node(
+                            cursor, origin.surface_node_id
+                        )
+                        if origin.surface_node_id is not None
+                        else None
+                    )
+                compound = (
+                    origin_head is not None
+                    and completed_tool_turn.matches_start_sequence(
+                        min(
+                            sequence
+                            for _, sequence, _ in active[prefix : len(active) - suffix]
+                        ),
+                        origin_head.sequence,
+                    )
+                )
+            rewritten = (
+                _rewritten_tails().build_rewritten_tail_witness(
+                    cursor,
+                    self.repository,
+                    owner_id=owner_id,
+                    retained=descriptors[:prefix],
+                    incoming=descriptors[prefix:],
+                    current_turn_id=current_turn_id,
+                )
+                if not compound
+                and route_identity in {"agent_first", "fresh"}
+                and suffix == 0
+                and incoming_changed >= 2
+                # Bound the stored range: an earlier replacement leaves dead
+                # sequences inside it, so live rows undercount its span.
+                and max(sequence for _, sequence, _ in active[prefix:])
+                - min(sequence for _, sequence, _ in active[prefix:])
+                < MAX_SURFACE_REPLACEMENT_SPAN
+                and current_policy_id is not None
+                and domains[prefix:] == ("messages_payload",) * incoming_changed
+                and all(
+                    _surface_reference_domain(key) == "messages_payload"
+                    for _, _, key in active[prefix:]
+                )
+                else None
+            )
             if (
                 incoming_changed >= 1
                 and active_changed == 0
@@ -2997,7 +3070,7 @@ class ConsoleTraceService:
                 # reconstruct provider order without rewriting the suffix.
                 admitted_to = prefix + incoming_changed
             elif (
-                incoming_changed != 1 and not compound
+                incoming_changed != 1 and not compound and rewritten is None
             ) or not 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN:
                 record_refusal("count_or_span")
                 raise ValueError("unsupported_surface_change")
@@ -3040,7 +3113,9 @@ class ConsoleTraceService:
                         domain == domains[prefix] for domain in domains[:prefix]
                     ),
                 )
-                admitted_to = prefix + (incoming_changed if compound else 1)
+                admitted_to = prefix + (
+                    incoming_changed if compound or rewritten else 1
+                )
 
         if compound:
             assert replacement_range is not None and completed_tool_turn is not None
@@ -3078,15 +3153,18 @@ class ConsoleTraceService:
                     raise ValueError("trace_policy_mismatch")
                 checkpoint = None
         bootstrap = checkpoint is None and predecessor is not None
-        if compound and (
-            bootstrap or completed_tool_turn.project_context_count is not None
-        ):
+        if (
+            compound
+            and (bootstrap or completed_tool_turn.project_context_count is not None)
+        ) or (rewritten is not None and bootstrap):
+            # A cold parent is built entirely from committed references.
             assert tail is not None and current_policy_id is not None
-            assert completed_tool_turn is not None
-            terminal = self.repository.get_call(
-                cursor, completed_tool_turn.terminal_call_id
-            )
-            assert terminal is not None
+            if compound:
+                assert completed_tool_turn is not None
+                terminal = self.repository.get_call(
+                    cursor, completed_tool_turn.terminal_call_id
+                )
+                assert terminal is not None
             checkpoint = self._completed_tool_turn_parent(
                 cursor,
                 owner_id=owner_id,
@@ -3124,6 +3202,7 @@ class ConsoleTraceService:
             completed_tool_turn=completed_tool_turn if compound else None,
             live_native_custody=live_native_custody,
             live_native_ordinal=live_native_ordinal,
+            rewritten_tail=rewritten,
         )
         if replacement_range is not None and bootstrap:
             raise ValueError("surface_replacement_checkpoint_unavailable")
@@ -4101,12 +4180,8 @@ class ConsoleTraceService:
                 ),
             )
         else:
-            if len(admitted) != (
-                admission.live_native.descriptor_count
-                if admission.live_native is not None
-                else admission.completed_tool_turn.descriptor_count
-                if admission.completed_tool_turn is not None
-                else 1
+            if len(admitted) != replacement_descriptor_count(
+                admission.completed_tool_turn, admission.rewritten_tail, admission.live_native
             ):
                 raise ValueError("surface_delta_shape")
             descriptor_root = _DescriptorRoot(
@@ -4415,6 +4490,8 @@ class ConsoleTraceService:
             elif (
                 cast(SurfaceDeltaAdmission, prepared.admission).completed_tool_turn
                 is not None
+                or cast(SurfaceDeltaAdmission, prepared.admission).rewritten_tail
+                is not None
             ):
                 # Removed tool artifacts no longer contribute disclosure policy
                 # or structural metadata to the composed request.
@@ -4535,6 +4612,7 @@ class ConsoleTraceService:
                 if admission.live_native_custody is not None
                 else None
             ),
+            rewritten_tail=admission.rewritten_tail,
         )
         self._child_capabilities[id(binding)] = state
         self._prepared_capabilities.pop(id(provenance), None)
@@ -4579,6 +4657,7 @@ class ConsoleTraceService:
             or child.live_native_custody is not delta.live_native_custody
             or child.live_native_ordinal != delta.live_native_ordinal
             or child.completed_tool_turn != delta.completed_tool_turn
+            or child.rewritten_tail != delta.rewritten_tail
         ):
             raise ValueError("surface_child_binding")
         return child
@@ -6443,6 +6522,13 @@ def _saved_revision_component_kind(descriptor: DerivedTraceProvenance) -> str:
     if descriptor.transform is TraceTransformKind.CONTINUATION_ATTACHMENT:
         return "continuation"
     return "message"
+
+
+def _rewritten_tails():
+    """Load the rewritten-tail proof only when a send needs it."""
+    from tldw_chatbook.Chat import console_trace_rewritten_tail
+
+    return console_trace_rewritten_tail
 
 
 def _saved_descriptors(

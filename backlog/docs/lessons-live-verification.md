@@ -57,6 +57,11 @@ low ratio across unrelated widgets points at a backdrop, not at your change.
 **Incident.** PR3286 Windows GGUF CI timed out in Console reconciliation. A bounded native trace showed142s closing with136s on the owning thread; the earlier suspicion of timer cancellation starvation did not explain that first boundary. `LifecycleMixin._shutdown` set Textual's exit fence before draining owners. Textual stopped layout timer callbacks, but post-refresh callbacks still ran and retried geometry that could no longer settle. Wrapped/native tests queued work while attached, then held the real owner drain: both entered geometry after exit. Guarding the shared queued consumer with public `is_attached` stopped that execution while existing layout controls passed.
 
 **What to do.** During shutdown, mounted/current widgets are not proof that layout can progress. Check the consumer's live attachment state, including callbacks queued before exit; preserve owner drain ordering. Separate native elapsed/CPU evidence from a portable reproduction of the causal callback boundary.
+## A live Compact now on a short chat fails before it tests anything (TASK-33621.29, 2026-10-29)
+
+**Incident.** Three live rounds checked captured sends after Compact now. The second used five "Reply with exactly: N" exchanges and the default Summary response max (1024). Compact now answered "Compaction failed and nothing changed: no summary of the older turns would both fit under the chat's target size and make it smaller", so the round never reached the send it existed to check; pressing the button again gave the same message. The third round got the same message after lowering Summary response max to 120. It succeeded only after two ~150-word exchanges raised the tab's "Next request" to 473 tokens: "Conversation memory updated", 473 → 338 tokens.
+
+**What to do.** Before a live compaction check, give the chat more older-turn text than a summary can be. Set Chat settings ▸ Context and memory ▸ Summary response max to about 120 and send a couple of long replies first; a few hundred "Next request" tokens was enough. That failure message means the fixture is too small. It says nothing about the code under test.
 
 ## A native terminal launched by automation can inherit TERM=dumb (TASK-37173, 2026-10-28)
 

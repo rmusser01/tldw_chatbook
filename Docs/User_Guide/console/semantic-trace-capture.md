@@ -170,10 +170,22 @@ transcript:
 
 - Editing or deleting a referenced message preserves the needed old revision
   once before changing the live message.
-- Edit & resend, regeneration, retries, failures, stops, and tool-loop calls are
-  separate call boundaries. Abandoned variants remain identifiable.
-- Context compaction and message edits append bounded replacement records; they
-  do not rewrite old trace events.
+- Retries, failures, stops, and tool-loop calls are separate call boundaries.
+  Abandoned variants remain identifiable.
+- Edit & resend and Regenerate send their reply with capture off, so that reply
+  has no trace call of its own. Your next send in the chat is captured as usual.
+  It records the edited branch as one bounded replacement of the earlier trace
+  history, and it does not ask you to choose an action.
+- After Compact now, the next captured send on the Console's default agent path
+  records the compacted history the same way: the conversation memory replaces
+  the older turns it summarized. On the plain provider path (character chats,
+  or `[console] agent_runtime = false`), a captured send still carries every
+  older turn and no memory, so there is nothing to replace (TASK-37417).
+  Old trace events are never rewritten.
+- One replacement covers at most 256 recorded trace rows. If the history being
+  replaced is longer, for example Compact now in a chat of more than about 128
+  exchanges, or Edit & resend on an early message of such a chat, later
+  captured sends still stop at **Trace capture blocked** (TASK-38298).
 - A fork shares the immutable trace prefix visible at its boundary and adds only
   its own suffix. The complete inherited history remains coherent in the fork
   without copying the prefix.

@@ -280,6 +280,11 @@ recorder, while later background lookups use the original method. The five-test
 file then passed; removing, inlining or duplicating the projection callback each
 still failed its own assertion. These are local stacks and mutation controls;
 the hosted runner's extra invocation was not stack-traced.
+## A target added to a Console P0 gate step must also go into the critical-gate pin (TASK-33621.7/.29, 2026-10-29)
+
+**Incident.** The first lane edit for the rewritten-tail tests added two whole files to `console-p0-gate`'s two pytest steps in `.github/workflows/derived-artifacts.yml`. Every lane test the work had run passed, including `Tests/CI/test_console_p0_regression_gate.py` (172 passed). `Tests/CI/test_response_rules_critical_gate.py::test_rule_critical_targets_execute_without_altering_inherited_processes` failed: its `INHERITED` table pins each of those steps token by token ("At index 3 diff: 'Tests/Chat/test_console_trace_rewritten_tail.py' != 'Tests/Architecture/test_wizard_lifecycle_guards.py'"). That file runs in the PR Fast Lane's `Tests/CI`, so the PR would have gone red on a pin, not on the code. One of the two files also took 40-115 s locally, against the job's documented ~4 min of headroom.
+
+**What to do.** When you add a target to either `console-p0-gate` step, add the same token at the same position to that step's `INHERITED` list (precedent: 2f999bd989), then run all of `Tests/CI/test_response_rules_critical_gate.py` and `Tests/CI/test_console_p0_regression_gate.py`. Follow the job's own rule: gate a fast file whole and a slow file by the node ids that pin the fix.
 
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
