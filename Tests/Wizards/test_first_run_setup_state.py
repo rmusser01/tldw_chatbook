@@ -2897,3 +2897,26 @@ class TestSetupAttentionIds:
         flagged = self._ids({})
         assert "voice" not in flagged
         assert "protect-keys" not in flagged
+
+
+@pytest.mark.parametrize(
+    ("skipped", "expected"),
+    [
+        (True, ["skipped", "skipped", "not_needed", "active"]),
+        (False, ["attention", "complete", "not_needed", "active"]),
+    ],
+)
+def test_combined_tracker_preserves_provider_and_protect_facts(skipped, expected):
+    """Provider skip/warning never turns unencrypted Protect into success."""
+    values = {
+        setup_state.STEP_PROVIDER: {"provider_key": "openai", "skipped": skipped},
+        setup_state.STEP_MODEL: {"model_id": "gpt-test"},
+        setup_state.STEP_PROTECT: {"protect_state": "plaintext"},
+    }
+    items = setup_state.setup_progress_items(
+        (setup_state.STEP_PROVIDER, setup_state.STEP_MODEL,
+         setup_state.STEP_PROTECT, setup_state.STEP_SUMMARY),
+        3, values, provider_warned=True,
+    )
+    assert [item.state for item in items] == expected
+    assert setup_state.progress_glyph(items[2].state, 2) == "\u2013"

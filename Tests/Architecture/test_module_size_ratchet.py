@@ -532,7 +532,8 @@ _BUDGETS: dict[str, int] = {
     # the finish-later flow into helpers (3,123); its review round 1 moved
     # Skip setup's save into first_run_finish_later.skip_setup (3,119); its
     # review v5r1 dropped the resume's stale Protect status line (3,106).
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3106,
+    # 2026-10-31 user size waiver: preserve provider warning via shared tracker.
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3107,
     # TASK-34100.1: the step modules the split left at 1,000 lines or more
     # are pinned at their exact size, so the split cannot regrow a god module
     # a step at a time: Provider, Speech, Voice (moved out by TASK-33921) and

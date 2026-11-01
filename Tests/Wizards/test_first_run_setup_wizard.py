@@ -6780,14 +6780,38 @@ async def test_mounted_executor_entry_rejects_stale_provider_identity(
             return_value=_typed_model_discovery_result(provider_key, "writer-model")
         )
     )
+    if identity_change == "moonshot_region":
+        changed_values = {
+            "api_region": "international",
+            "api_base_url": "https://api.moonshot.ai/v1",
+        }
+    elif identity_change == "huggingface_router":
+        changed_values = {
+            "use_router_url_format": "false",
+            "api_base_url": "https://api-inference.huggingface.co/v1",
+        }
+    elif identity_change == "custom_endpoint":
+        changed_values = {"api_url": "https://writer-b.example/v1/chat/completions"}
+    else:
+        changed_values = {"api_key": "writer-entry-replacement-canary"}
+
     real_persist = persistence_module.persist_provider_setup
+    persistence_results = []
     writer_entered = threading.Event()
     release_writer = threading.Event()
 
     def paused_persist(mutation):
         writer_entered.set()
         assert release_writer.wait(timeout=3)
-        return real_persist(mutation)
+        # Keep the real mutation after executor entry but outside the hold's
+        # deadline: native disk admission is not part of this barrier.
+        shared_write = config_module.apply_settings_mutation_to_cli_config(
+            {f"api_settings.{provider_key}": changed_values}
+        )
+        assert shared_write.fully_applied
+        result = real_persist(mutation)
+        persistence_results.append(result)
+        return result
 
     monkeypatch.setattr(
         persistence_module,
@@ -6826,29 +6850,12 @@ async def test_mounted_executor_entry_rejects_stale_provider_identity(
 
         save = asyncio.create_task(container._advance())
         assert await asyncio.to_thread(writer_entered.wait, 2)
-        if identity_change == "moonshot_region":
-            changed_values = {
-                "api_region": "international",
-                "api_base_url": "https://api.moonshot.ai/v1",
-            }
-        elif identity_change == "huggingface_router":
-            changed_values = {
-                "use_router_url_format": "false",
-                "api_base_url": "https://api-inference.huggingface.co/v1",
-            }
-        elif identity_change == "custom_endpoint":
-            changed_values = {"api_url": "https://writer-b.example/v1/chat/completions"}
-        else:
-            changed_values = {"api_key": "writer-entry-replacement-canary"}
         provider_settings.update(changed_values)
-        shared_write = await asyncio.to_thread(
-            config_module.apply_settings_mutation_to_cli_config,
-            {f"api_settings.{provider_key}": changed_values},
-        )
-        assert shared_write.fully_applied
         release_writer.set()
         await asyncio.wait_for(save, timeout=3)
 
+        assert len(persistence_results) == 1
+        assert persistence_results[0].conflict_reason == "identity_changed"
         authoritative = config_module.get_atomic_config_snapshot().values
         current_settings = authoritative["api_settings"][provider_key]
         assert all(
@@ -6933,6 +6940,11 @@ async def test_mounted_executor_entry_unchanged_identity_writes_once(monkeypatch
         rows[0].value = True
         await pilot.pause()
 
+        # This case qualifies the real provider write, not a second, unrelated
+        # checkpoint write after Model.commit has already succeeded.
+        monkeypatch.setattr(
+            container, "persist_setup_checkpoint", AsyncMock(return_value=True)
+        )
         save = asyncio.create_task(container._advance())
         assert await asyncio.to_thread(writer_entered.wait, 2)
         real_apply = persistence_module.apply_settings_mutation_to_cli_config
