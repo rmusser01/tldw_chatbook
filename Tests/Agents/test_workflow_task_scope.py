@@ -479,7 +479,7 @@ def test_effectful_hook_activation_revokes_dispatch_without_running_hook(task_ho
     assert not invoke(host, "fs_read", {"path": "source.py"}).ok
 
 
-def test_activity_claim_query_rejects_wrong_owner_and_footprint(task_host):
+def test_activity_claim_query_rejects_wrong_footprint_and_drained_owner(task_host):
     from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
     host = task_host()
@@ -763,7 +763,7 @@ def test_native_viewless_runtime_identity_survives_detach_but_not_replacement(
     assert not invoke(host, "fs_read", {"path": "source.py"}).ok
 
 
-def test_native_binding_cannot_repeat_or_use_wrong_row(task_host):
+def test_native_binding_cannot_repeat_or_create_second_row(task_host):
     from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
 
     host = task_host()
@@ -771,6 +771,151 @@ def test_native_binding_cannot_repeat_or_use_wrong_row(task_host):
     with pytest.raises(AutomaticWorkRefused, match="already_bound"):
         host.authorization.bind_native(owner=host.owner, activity_claim=host.claim)
     assert len(host.db.list_runs(host.authorization.claim.conversation_id)) == 1
+
+
+def _prepare_native_binding(host, *, row="matching"):
+    claim = host.authorization.claim
+    if row != "missing":
+        host.db.create_run(
+            conversation_id=(
+                "other-conversation" if row == "conversation" else claim.conversation_id
+            ),
+            agent_kind="subagent",
+            run_id=claim.launch_run_id,
+            work_chain_id=None if row in {"chain", "conversation"} else claim.chain_id,
+        )
+    host.db.automatic_work.commit(claim.reservation_id, owner_id=claim.owner_id)
+    host.owner.bind_run(claim.launch_run_id)
+    host.authorization.check_preparation()
+    host.activity.validate_claim(
+        host.claim, owner=host.owner, footprint=host.authorization.footprint
+    )
+
+
+def _assert_unbound_and_no_dispatch(host, monkeypatch):
+    assert host.authorization._binding_state == []
+    with host.db.connection() as conn:
+        row = conn.execute(
+            "SELECT run_id FROM workflow_task_attempts WHERE id=?",
+            (host.authorization.claim.id,),
+        ).fetchone()
+    assert row[0] is None
+    effects = []
+    with monkeypatch.context() as patch:
+        patch.setattr(host.provider, "invoke", lambda *a, **kw: effects.append(a))
+        result = invoke(host, "fs_write", {"path": "source.py", "content": "bad"})
+    assert not result.ok
+    assert result.dispatch_state == "not_started"
+    assert effects == []
+    assert (host.root / "source.py").read_text() == "source\n"
+
+
+@pytest.mark.parametrize("row", ["missing", "conversation", "chain"])
+def test_native_binding_reaches_durable_lineage_fence_under_claimed_run_id(
+    task_host, monkeypatch, row
+):
+    host = task_host()
+    _prepare_native_binding(host, row=row)
+    ledger = host.phase._ledger
+    original = ledger.bind_workflow_task_run
+    reached = []
+
+    def observed(*args, **kwargs):
+        reached.append(kwargs["run_id"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ledger, "bind_workflow_task_run", observed)
+    with pytest.raises(ValueError, match="^invalid_workflow_run_ownership$"):
+        host.authorization.bind_native(owner=host.owner, activity_claim=host.claim)
+    assert reached == [host.authorization.claim.launch_run_id]
+    _assert_unbound_and_no_dispatch(host, monkeypatch)
+
+
+def test_native_binding_rejects_another_live_member_of_same_claim(
+    task_host, monkeypatch
+):
+    host = task_host()
+    _prepare_native_binding(host)
+    other = host.owner.capacity.begin_execution(
+        origin=WorkOrigin.AUTOMATIC,
+        conversation_id=host.owner.conversation_id,
+        child=True,
+    )
+    try:
+        other.bind_run(host.owner.run_id)
+        member = host.claim.attach_child(other)
+        assert member.id != host.claim.id
+        assert other.is_admitted and host.owner.is_admitted
+        with pytest.raises(
+            ValueError, match="^live original activity claim custody required$"
+        ):
+            host.authorization.bind_native(owner=other, activity_claim=host.claim)
+        _assert_unbound_and_no_dispatch(host, monkeypatch)
+        host.authorization.bind_native(owner=host.owner, activity_claim=host.claim)
+        assert invoke(host, "fs_read", {"path": "source.py"}).ok
+    finally:
+        other.finish_root()
+
+
+@pytest.mark.parametrize("foreign", ["claim", "capacity"])
+def test_native_binding_rejects_other_runtime_valid_custody(
+    task_host, monkeypatch, foreign
+):
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    host = task_host()
+    _prepare_native_binding(host)
+    runtime = ConsoleRuntime(None)
+    other = runtime.execution_capacity.begin_execution(
+        origin=WorkOrigin.AUTOMATIC,
+        conversation_id=host.owner.conversation_id,
+        child=True,
+    )
+    try:
+        other.bind_run(host.owner.run_id)
+        claim = runtime.worktree_activity.try_acquire(
+            owner=other, footprint=host.authorization.footprint
+        )
+        assert claim is not None
+        runtime.worktree_activity.validate_claim(
+            claim, owner=other, footprint=host.authorization.footprint
+        )
+        assert other.is_admitted and other.capacity is not host.owner.capacity
+        reached = []
+        original = host.activity.validate_claim
+
+        def observed(*args, **kwargs):
+            reached.append(args[0])
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(host.activity, "validate_claim", observed)
+        if foreign == "claim":
+            with pytest.raises(
+                ValueError, match="^live original activity claim custody required$"
+            ):
+                host.authorization.bind_native(owner=host.owner, activity_claim=claim)
+            assert reached == [claim]
+        else:
+            with pytest.raises(
+                AutomaticWorkRefused, match="^workflow_task_native_owner_required$"
+            ):
+                host.authorization.bind_native(owner=other, activity_claim=claim)
+            assert reached == []
+        _assert_unbound_and_no_dispatch(host, monkeypatch)
+        host.authorization.bind_native(owner=host.owner, activity_claim=host.claim)
+        assert invoke(host, "fs_read", {"path": "source.py"}).ok
+    finally:
+        other.finish_root()
+
+
+def test_native_binding_matching_durable_lineage_allows_real_dispatch(task_host):
+    host = task_host()
+    _prepare_native_binding(host)
+    host.authorization.bind_native(owner=host.owner, activity_claim=host.claim)
+    result = invoke(host, "fs_read", {"path": "source.py"})
+    assert result.ok
+    assert "source" in result.content
 
 
 def test_mcp_main_loop_wait_rechecks_task_before_remote_execution(task_host):
