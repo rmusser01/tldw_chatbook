@@ -3446,42 +3446,12 @@ class ConsoleRuntime:
         Returns:
             The returned unsent turn, or None when the send had none.
         """
-        entry = next(
-            (
-                entry
-                for entry in self._turn_recoveries.values()
-                if entry.preparation_id == preparation_id
-            ),
-            None,
-        )
-        store = self._chat_store
-        if entry is None or store is None:
-            return None
-        from .console_received_intent import _replace_session_draft_locked
-        from .console_received_turn import ConsoleReceivedTurnClaim
 
-        with store._preparation_lock:
-            session = store._sessions.get(entry.session_id)
-            claim = entry.source_claim
-            if (
-                not isinstance(expected_draft_revision, int)
-                or isinstance(expected_draft_revision, bool)
-                or type(claim) is not ConsoleReceivedTurnClaim
-                or claim._store_ref() is not store
-                or session is None
-                or claim._session_ref() is not session
-                or claim._session_incarnation != session.incarnation_id
-                or session.draft_revision != expected_draft_revision
-            ):
-                self.unhold_turn_recoveries_for_preparation(preparation_id)
-                return None
-            store.restore_transferred_pending_attachments(
-                entry.session_id, entry.attachments
-            )
-            _replace_session_draft_locked(session, entry.draft)
-            self.forget_turn_recoveries_for_preparation(preparation_id)
-        store._publish_session_draft_handoff(session, entry.draft)
-        return entry
+        from .console_unsent_turn import return_turn_recovery_to_draft
+
+        return return_turn_recovery_to_draft(
+            self, preparation_id, expected_draft_revision=expected_draft_revision
+        )
 
     def _record_turn_recovery(
         self,

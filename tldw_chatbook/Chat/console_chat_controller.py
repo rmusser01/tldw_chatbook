@@ -8048,34 +8048,14 @@ class ConsoleChatController:
     def _cancel_temporary_capture_preparation(
         self,
         preparation: ConsoleTurnPreparation,
-        *, restore_draft: bool = True,
+        *,
+        restore_draft: bool = True,
     ) -> ConsoleSubmitResult:
         """Discard one unsent temporary Capture-On preparation and its echo."""
 
-        cancelled = self.store.cancel_preparation(
-            preparation.session_id,
-            preparation.preparation_id,
-            expected_state=ConsoleTurnPreparationState.PAUSED,
-            restore_draft=restore_draft,
-        )
-        if cancelled is None:
-            return self._prepared_action_refusal(
-                self._preparation_by_id(preparation.preparation_id)
-            )
-        self._drop_preparation(
-            preparation.preparation_id,
-            expected_states=frozenset({ConsoleTurnPreparationState.CANCELLED}),
-        )
-        visible_copy = "Temporary trace-captured send canceled."
-        self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
-            session_id=preparation.session_id,
-        )
-        return replace(
-            self._prepared_action_refusal(cancelled, visible_copy),
-            preparation_id=cancelled.preparation_id,
-            cancelled_draft_revision=cancelled.cancelled_draft_revision,
-        )
+        from .console_unsent_turn import cancel_temporary_capture
+
+        return cancel_temporary_capture(self, preparation, restore_draft=restore_draft)
 
     def _cancel_context_compaction_hold(
         self,

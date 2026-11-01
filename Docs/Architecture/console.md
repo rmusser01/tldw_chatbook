@@ -285,6 +285,8 @@ Explicit Resume projects only assistant text, exact native calls and existing re
 
 The recovery subtree in `UI/Console_Modules/provider_continuation_recovery.py` defers `ProviderContinuationTranscriptRegion.sync_recovery()` until mounted. Its `on_mount` queues a fresh builder read after Textual sets `is_mounted`, so a partial-mount poll cannot query pending action buttons or leave an old recovery state behind.
 
+The same recovery module owns trace-card dispatch through `dispatch_session_recovery`; the session method remains an awaited delegate with live callbacks. `Chat/console_unsent_turn.py` owns temporary-capture cancellation and receipt-owned draft/attachment return behind the controller/runtime entry points. The original preparation lock, source/session/incarnation/revision checks, interrupted-action cleanup and physical work owners remain in force.
+
 ## Config keys (`[console]`, parsed in `config.py`)
 
 Notable keys: `workspace_root` (compatibility-only for Console file authority — see [console-file-authority.md](./console-file-authority.md)), `compaction_mode`, `compaction_trigger_ratio`, `compaction_target_ratio`, `compaction_summary_max_tokens`, `compaction_auxiliary_timeout_seconds`, `micro_compaction_every_turns`, `compaction_failure_behavior`, `agent_max_model_turns` (2000), `agent_max_steps` (25000), `agent_max_wall_seconds` (86400), `agent_max_tool_call_seconds`, `raw_cli_permitted`, `status_chips_position`, `conversation_budget_mode`, paste-collapse keys.

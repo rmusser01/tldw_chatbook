@@ -271,3 +271,85 @@ def card_action_finished(
         )
     runtime.unhold_turn_recoveries_for_preparation(preparation_id)
     return None
+
+
+def cancel_temporary_capture(
+    self: Any, preparation: Any, *, restore_draft: bool = True
+) -> Any:
+    """Discard one unsent temporary Capture-On preparation and its echo."""
+    from . import console_chat_controller as _source
+
+    cancelled = self.store.cancel_preparation(
+        preparation.session_id,
+        preparation.preparation_id,
+        expected_state=_source.ConsoleTurnPreparationState.PAUSED,
+        restore_draft=restore_draft,
+    )
+    if cancelled is None:
+        return self._prepared_action_refusal(
+            self._preparation_by_id(preparation.preparation_id)
+        )
+    self._drop_preparation(
+        preparation.preparation_id,
+        expected_states=frozenset({_source.ConsoleTurnPreparationState.CANCELLED}),
+    )
+    visible_copy = "Temporary trace-captured send canceled."
+    self._set_run_state(
+        _source.ConsoleRunState(_source.ConsoleRunStatus.STOPPED, visible_copy),
+        session_id=preparation.session_id,
+    )
+    return _source.replace(
+        self._prepared_action_refusal(cancelled, visible_copy),
+        preparation_id=cancelled.preparation_id,
+        cancelled_draft_revision=cancelled.cancelled_draft_revision,
+    )
+
+
+def return_turn_recovery_to_draft(
+    self: Any, preparation_id: str, *, expected_draft_revision: int | None = None
+) -> Any:
+    """Put a cancelled send's unsent turn back as the draft, attachments too.
+    TASK-33621.20 review: the card's Cancel used to refill the composer's
+    text only; the attachments the send had taken stayed with the dropped
+    shelf entry. The store's synchronous cancellation receipt must still
+    own the exact session draft before either text or attachments moves.
+    A newer draft keeps this turn available for explicit shelf recovery.
+    Returns:
+        The returned unsent turn, or None when the send had none.
+    """
+    entry = next(
+        (
+            entry
+            for entry in self._turn_recoveries.values()
+            if entry.preparation_id == preparation_id
+        ),
+        None,
+    )
+    store = self._chat_store
+    if entry is None or store is None:
+        return None
+    from .console_received_intent import _replace_session_draft_locked
+    from .console_received_turn import ConsoleReceivedTurnClaim
+
+    with store._preparation_lock:
+        session = store._sessions.get(entry.session_id)
+        claim = entry.source_claim
+        if (
+            not isinstance(expected_draft_revision, int)
+            or isinstance(expected_draft_revision, bool)
+            or type(claim) is not ConsoleReceivedTurnClaim
+            or claim._store_ref() is not store
+            or session is None
+            or claim._session_ref() is not session
+            or claim._session_incarnation != session.incarnation_id
+            or session.draft_revision != expected_draft_revision
+        ):
+            self.unhold_turn_recoveries_for_preparation(preparation_id)
+            return None
+        store.restore_transferred_pending_attachments(
+            entry.session_id, entry.attachments
+        )
+        _replace_session_draft_locked(session, entry.draft)
+        self.forget_turn_recoveries_for_preparation(preparation_id)
+    store._publish_session_draft_handoff(session, entry.draft)
+    return entry
