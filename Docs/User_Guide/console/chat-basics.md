@@ -413,8 +413,10 @@ space), then type or paste the command body and send. Pasting the prefix cannot
 select raw mode; this prevents a pasted prompt from silently turning into host
 execution. A physically typed prefix may be followed by pasted command text.
 Text you paste or a file you insert after the prefix is never collapsed into
-a token, however long it is, so the whole command is on screen before Enter
-or **Run** starts it. Start with `\! ` to send an ordinary chat message beginning with literal `! `;
+a token, so the whole command is on screen before Enter or **Run** starts it.
+The command body has a 16 KiB UTF-8 limit. An insertion that exceeds it is
+refused with a notice; your existing draft is kept and nothing is truncated.
+Start with `\! ` to send an ordinary chat message beginning with literal `! `;
 it is sent without the backslash and leaves the composer like any message.
 When raw mode is recognized, the composer turns red and its status names the
 raw CLI state before you send:
@@ -431,6 +433,10 @@ raw CLI state before you send:
 Enter, **Run** and the Workbench's send all take an armed command out of the
 composer. If Console refuses it (raw CLI locked, for example), the exact draft
 comes back once, however many times you press Enter.
+If you have entered more text while a refusal is pending, both drafts are kept
+together as ordinary chat text. The restored command does not grant raw CLI
+authority to that newer input. To run a reviewed command, start an empty draft,
+physically type `! `, then reinsert the reviewed command body.
 
 Console raw commands use automatic shell selection. The shared executor
 supports **Bash**, **PowerShell**, and **CMD**, invokes them with fixed

@@ -504,6 +504,10 @@ async def test_an_enter_deferred_behind_a_send_sends_its_own_capture_only():
             await _settled(console, pilot)
             session_id = console._console_chat_store.active_session_id
             await until(lambda: len(_sent_or_queued(console, session_id)) >= 2)
+            # The in-memory user row precedes durable acceptance. Only that
+            # acceptance owns removing the captured prefix from the composer.
+            await until(lambda: composer.draft_text() == "z")
+            await until(lambda: _first_turn_done(host, console))
             assert _sent_or_queued(console, session_id) == [DRAFT, "y"]
             assert composer.draft_text() == "z"
 

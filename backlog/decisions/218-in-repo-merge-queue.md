@@ -21,7 +21,7 @@ GitHub's native merge queue needs an organization-owned repository, and this one
 
 ## Consequences
 
-### Amendment 2026-10-29: cancel only obsolete PR-head CI (TASK-37800)
+### Amendment 2026-10-29: cancel only obsolete PR-head CI (TASK-38413)
 
 The owner approved a separate synchronize-triggered cleanup job in the existing
 queue workflow. It is independent of queue mode and outside Derived Artifacts'

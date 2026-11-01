@@ -1876,3 +1876,6 @@ Tests/UI/test_console_composer_token_enter.py::test_one_enter_sends_a_paste_whos
 Tests/UI/test_console_raw_cli_arm_in_place.py
 Tests/UI/test_console_composer_token_enter.py::test_one_enter_sends_wherever_the_caret_is[question_in_front_of_paste]
 Tests/UI/test_console_composer_token_expand_key.py::test_the_expand_key_expands_each_kind_of_token_from_either_side[leading_break_paste-before]
+
+# PR3319 review repairs: restoration authority, insertion bounds, Arm admission.
+Tests/UI/test_console_raw_cli_admission_repairs.py

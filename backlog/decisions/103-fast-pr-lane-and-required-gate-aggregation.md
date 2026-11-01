@@ -25,7 +25,7 @@ qualification. Reassess against hosted observations when coverage grows.
 Spec: `Docs/superpowers/specs/2026-10-29-ci-cost-reporting.md`.
 Plan: `Docs/superpowers/plans/2026-10-29-ci-cost-reporting.md`.
 
-### Amendment 2026-10-29: preflight before test fan-out (TASK-37800)
+### Amendment 2026-10-29: preflight before test fan-out (TASK-38413)
 
 The owner approved early rejection after the backlog audit measured a median
 209-minute gate and 397 runner-minutes per successful first attempt. Move all

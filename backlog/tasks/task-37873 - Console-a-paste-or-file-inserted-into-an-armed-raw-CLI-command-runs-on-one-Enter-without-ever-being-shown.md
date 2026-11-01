@@ -1,18 +1,17 @@
 ---
 id: TASK-37873
-title: >-
-  Console: a paste or file inserted into an armed raw-CLI command runs on one
-  Enter without ever being shown
+title: 'Console: a paste or file inserted into an armed raw-CLI command runs on one
+  Enter without ever being shown'
 status: Done
 assignee:
-  - '@claude'
-created_date: '2026-10-30 04:51'
-updated_date: '2026-10-30 05:15'
+- '@claude'
+created_date: 2026-10-30 04:51
+updated_date: 2026-11-01 14:56
 labels:
-  - console
-  - composer
-  - raw-cli
-  - ux-review-2026-09-29
+- console
+- composer
+- raw-cli
+- ux-review-2026-09-29
 dependencies: []
 priority: high
 ---
@@ -29,17 +28,19 @@ Review of the TASK-37800 change (owner ruling 2026-10-29: paste then Enter sends
 - [x] #2 Outside a raw-CLI command, large pastes and inserted files still collapse as before, and the TASK-37800 one-Enter tests stay green
 - [x] #3 A Pilot test on the real ChatScreen and composer, with the real RawCliRuntime armed, pastes and inserts a file after '! ' and asserts the full command shows before one Enter runs exactly that command; it fails on the pre-change code
 - [x] #4 Docs/User_Guide/console/chat-basics.md says nothing collapses inside a raw CLI command
+- [x] #5 A delayed or banked raw refusal preserves all later input without granting the restored command shell authority over independently authored text or collapsed tokens.
+- [x] #6 A paste or file insertion exceeding the existing16KiB UTF-8 raw-command limit is rejected before literal rendering or draft mutation, with visible feedback and no truncation; boundary-sized commands remain accepted.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
 1. Test first on the real ChatScreen: armed runtime, typed '! ', paste / file insert over the threshold, assert the full display, then one Enter runs it. 2. Composer: an insert that keeps the trusted '! ' prefix is inserted literal (one predicate shared with the trust rule). 3. User Guide raw CLI and Large pastes. 4. Ratchet row under the owner rule.
+2026-11-01 PR3319 integration: follow Docs/superpowers/plans/2026-11-01-pr3319-backlog-integration.md. Reproduce delayed/banked raw restoration and oversized paste/file rendering before repair; preserve original received-input/acknowledgement/native ownership. ADR required: no new ADR; existing ADR093/031/230 apply. Targeted tests and independent requesting-code-review required; hosted CI and size limits waived.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 **Fix.** The composer's trust rule for a typed '! ' prefix (an edit that starts at index 2 or later and replaces no selection keeps it trusted) is now one shared predicate, `ConsoleComposerBar._keeps_raw_cli_prefix`. `insert_pasted_text` and `insert_file_segment` ask it first: inside a raw command the paste or file goes in literal, so its full text is on screen before Enter or Run; everywhere else collapse is unchanged. Trust exists only after '!' and space are typed into an empty composer, and undo, snapshot replacement and /prompt clear it, so these two inserts are the only way a collapsed segment could enter a raw command.
 
 **Tests.** `test_text_inserted_into_an_armed_raw_command_shows_in_full_before_it_runs` (Tests/UI/test_console_raw_cli_arm_in_place.py; real ChatScreen, composer, controller and an armed RawCliRuntime; real keys for '! ', a real Paste event, then `insert_file_segment`): the full command shows, the status reads RAW CLI · HOST ACCESS with Run, and one Enter starts exactly that command and empties the composer. Red on the pre-change code ('! Pasted text | 125 characters | Expand') and on origin/dev; with only the file guard removed it fails at the file ('📄 run.sh · 1 KB | Expand'). One app run covers both inserts, so the gated file stays near the lane's 30 s budget (5 cases, about 27 s at load 25).
@@ -47,4 +48,5 @@ Review of the TASK-37800 change (owner ruling 2026-10-29: paste then Enter sends
 **Live** (real app, isolated profile, null keyring, raw CLI unlocked, 160x45). Typed '! pwd', Enter opened the arm confirmation, Arm host access armed it; replaced 'pwd' with a bracketed paste of a long echo command. The composer showed the whole command over two rows with RAW CLI · HOST ACCESS; one Enter ran it (Tool row 'Exited 0', stdout the same text) and emptied the composer. A chat paste after a question still collapsed ('Pasted text | 102 characters | Expand') and sent on one Enter; claude-haiku-4-5 replied 'Worker crashed and recovered.'
 
 **Docs and ratchet.** User Guide console/chat-basics.md: 'Large pastes' and 'Raw CLI user commands' say nothing collapses inside a raw command. console_composer_bar.py size row 7142 -> 7155 with a dated owner-rule comment. No new modules or CSS.
-<!-- SECTION:NOTES:END -->
+PR3319 integration preserves later input without granting a refused raw command authority over it. Raw paste/file insertion enforces the existing 16 KiB UTF-8 limit before rendering or draft mutation, rejects visibly without truncation, and accepts exact-boundary multibyte input. Original full-display behavior remains verified. Existing ADR093/031/230 apply; User Guide updated. Causal regressions, scoped static checks and independent review: Docs/superpowers/qa/2026-11-01-pr3319-backlog-integration.md. Hosted CI and size limits waived; no full-suite or external-terminal delivery claim.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

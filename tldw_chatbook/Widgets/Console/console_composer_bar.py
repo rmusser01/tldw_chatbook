@@ -49,7 +49,11 @@ from textual.message_pump import NoActiveAppError
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
-from tldw_chatbook.Utils.input_validation import escape_markup as escape
+from tldw_chatbook.Utils.input_validation import (
+    RAW_CLI_COMMAND_MAX_BYTES,
+    escape_markup as escape,
+    validate_raw_cli_command,
+)
 
 from ...Chat.console_display_state import (
     ConsoleAttachmentBlock,
@@ -4616,6 +4620,14 @@ class ConsoleComposerBar(Horizontal):
         """
         if stash is None or not stash.segments:
             return
+        # A refused command cannot acquire authority over a separately authored
+        # draft while the worker was pending. Keep its text, but require a new
+        # physically typed prefix before the combined draft can be shell input.
+        restore_raw_trust = (
+            stash.raw_cli_prefix_typed
+            and not self.draft_text()
+            and all(segment.collapse_state == "literal" for segment in stash.segments)
+        )
         self._clear_raw_cli_provenance()
         self._advance_draft_generation()
         self._clear_draft_selection()
@@ -4628,7 +4640,7 @@ class ConsoleComposerBar(Horizontal):
         ] + self._segments
         self._cursor_index = len(self._canonical_draft_text())
         self._raw_cli_prefix_typed = (
-            stash.raw_cli_prefix_typed and self._canonical_draft_text().startswith("! ")
+            restore_raw_trust and self._canonical_draft_text().startswith("! ")
         )
         # TASK-1281 review F3: this replaces the draft wholesale without
         # recording (a rejected send putting the user's own text back is
@@ -5263,12 +5275,36 @@ class ConsoleComposerBar(Horizontal):
         )
         self.insert_text(quoted)
 
+    def _refuse_raw_cli_insertion(self, text: str) -> bool:
+        """Reject invalid raw input before draft, undo or literal-render changes."""
+        if not text or not self._keeps_raw_cli_prefix(
+            self._raw_cli_prefix_typed,
+            self._cursor_index,
+            self._draft_selection_all or self._draft_selection_range is not None,
+        ):
+            return False
+        current = self.draft_text()
+        if not current.startswith("! "):
+            return False
+        try:
+            # Reject huge inputs before allocating/encoding a combined command.
+            if len(text) + len(current) - 2 > RAW_CLI_COMMAND_MAX_BYTES:
+                raise ValueError("raw CLI command exceeds the 16 KiB UTF-8 limit")
+            offset = max(2, min(self._cursor_index, len(current)))
+            validate_raw_cli_command(current[2:offset] + text + current[offset:])
+        except ValueError as exc:
+            self.notify(f"Cannot insert: {exc}. Existing draft kept.", severity="warning", markup=False)
+            return True
+        return False
+
     def insert_pasted_text(self, text: str) -> None:
         """Insert pasted text at the caret, collapsing only large chunks for display.
 
         Args:
             text: Raw text inserted through a paste event.
         """
+        if self._refuse_raw_cli_insertion(text):
+            return
         preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
         replaces_selection = (
             self._draft_selection_all or self._draft_selection_range is not None
@@ -5356,6 +5392,8 @@ class ConsoleComposerBar(Horizontal):
             label: Display-only token shown in place of the text (e.g.
                 ``"📄 notes.md · 4 KB"``).
         """
+        if self._refuse_raw_cli_insertion(text):
+            return
         preserve_raw_cli_prefix = self._begin_raw_cli_mutation()
         replaces_selection = (
             self._draft_selection_all or self._draft_selection_range is not None

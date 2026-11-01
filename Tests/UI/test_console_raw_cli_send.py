@@ -526,7 +526,12 @@ def _bind_visible_send_contract(screen, stash=None):
     screen._start_console_transcript_sync_timer = lambda: None
     screen._test_send_token = object() if stash is not None else None
     screen._console_pending_send = (
-        SimpleNamespace(token=screen._test_send_token, session_id="session-1", stash=stash)
+        SimpleNamespace(
+            token=screen._test_send_token,
+            session_id="session-1",
+            stash=stash,
+            received_inputs=None,
+        )
         if stash is not None else None
     )
 
@@ -712,12 +717,12 @@ def test_hidden_session_refusal_banks_exact_stash_until_reconciled(
 
     assert restored is not None
     assert restored.text == "! pwdnewer a"
-    assert restored.raw_cli_prefix_typed is True
+    assert restored.raw_cli_prefix_typed is False
     assert restored.has_paste is True
     assert restored.segments[: len(stash.segments)] == stash.segments
     classified = classify_console_raw_draft(restored)
-    assert classified.kind == "raw"
-    assert classified.text == "pwdnewer a"
+    assert classified.kind == "chat"
+    assert classified.text == "! pwdnewer a"
     assert errors[0][0] == "session-a"
 
 

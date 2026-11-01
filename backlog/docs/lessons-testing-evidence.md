@@ -1,5 +1,16 @@
 # Lessons: what counts as evidence a change works
 
+## Visible send completion precedes durable acceptance (PR3319, 2026-11-01)
+
+The deferred-Enter preservation check observed the second in-memory user row,
+waited for the visible send task plus one second, then asserted that its prefix
+had left the composer. It failed with `yz` instead of `z`; the receipt showed
+that the second durable commit began only during teardown. Current ownership
+removes the prefix at durable acceptance. Waiting for that exact outcome and
+turn retirement kept both payload/draft assertions intact and passed. A visible
+handoff or provisional row is not a completion barrier for accepted custody.
+
+
 ## A suggested HTTP status is not proof that a request was refused (PR3312, 2026-11-01)
 
 The real vLLM adapter turned an HTTP-edge ReadTimeout into a synthetic 503.
@@ -23811,7 +23822,7 @@ The older TASK-33620.15.26 measurements above used a stock route that bypassed a
 
 The persisted emergency-stop test saw the correct Held header and chip but immediately read the old Ready empty-body text. `ConsoleTranscript.sync_empty_state` schedules `refresh_messages` with `call_later`; header readiness did not certify the row's reconciliation. Waiting for the actual empty-body projection made the unchanged content assertions pass. Separately, the post-Clear send took 8.844 seconds to complete in its successful focused run; its former short projection poll expired during native preparation. The completion test retains exactly-one-provider-call and expected-reply assertions with a bounded completion wait. This proves functional completion, not a latency target, and does not explain an earlier durable-commit RuntimeError.
 
-## Obsolete CI can still own the queue's replacement approval (TASK-37800, 2026-10-29)
+## Obsolete CI can still own the queue's replacement approval (TASK-38413, 2026-10-29)
 
 Independent review of superseded-run cleanup found that an old Derived Artifacts
 run can still execute `queue-tick`, rebasing a PR and approving its replacement

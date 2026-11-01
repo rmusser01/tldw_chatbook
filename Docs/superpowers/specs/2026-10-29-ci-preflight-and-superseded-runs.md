@@ -42,4 +42,4 @@ including races and failures, and verify the real workflow dependency graph.
 Hosted performance and cancellation effects must be reported separately from
 these deterministic local checks. No broad suite sweep is authorized.
 
-Governance: amendments to ADR-103 and ADR-218; TASK-37800.
+Governance: amendments to ADR-103 and ADR-218; TASK-38413.

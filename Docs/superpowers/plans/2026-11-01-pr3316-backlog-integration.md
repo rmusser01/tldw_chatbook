@@ -3,7 +3,7 @@
 > For agentic workers: use superpowers:executing-plans inline and superpowers:requesting-code-review for independent final review.
 
 Goal: integrate the existing preflight and superseded-run cleanup implementation while preserving every current-dev lane, guard and verdict.
-Architecture: retain the checkout-free cleanup job and preflight graph from TASK-37800; reconcile them onto dev after the older PR3315 merges.
+Architecture: retain the checkout-free cleanup job and preflight graph from TASK-38413; reconcile them onto dev after the older PR3315 merges.
 Tech Stack: GitHub Actions, Python/pytest/PyYAML, Node inline-script tests.
 Spec: Docs/superpowers/specs/2026-10-29-ci-preflight-and-superseded-runs.md.
 

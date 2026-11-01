@@ -10,6 +10,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Checkbox, Static
 
+from Tests.app_module_patches import set_app_global
 from Tests.UI.test_destination_shells import (
     _active_destination_screen,
     _visible_text,
@@ -29,6 +30,10 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSSettingsPanel,
 )
+
+
+# Mounted Settings readers retain the profile admitted at collection time.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 RAW_CLI_DISCLOSURE = (
@@ -82,7 +87,14 @@ async def _open_privacy(pilot):
 
 
 async def _wait_for_save(pilot) -> None:
-    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+    workers = [
+        worker
+        for worker in pilot.app.workers
+        if worker.group == "settings-save-raw-cli"
+    ]
+    if workers:
+        await pilot.app.workers.wait_for_complete(workers)
     await pilot.pause()
 
 
@@ -260,8 +272,14 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
         size_before = arm_button.region.size
         arm_button.focus()
         await _wait_until(pilot, lambda: host.focused is arm_button)
+        arm_button.scroll_visible(animate=False)
+        await pilot.pause()
         assert arm_button.region.size == size_before
-        assert await pilot.hover(arm_button)
+        assert await pilot.hover(arm_button), (
+            arm_button.region,
+            arm_button.visible_region,
+            host.screen.region,
+        )
         await pilot.pause()
         assert arm_button.region.size == size_before
 
@@ -700,6 +718,9 @@ async def test_pending_raw_cli_save_vetoes_real_navigation_until_arrival(monkeyp
         configured_default="settings",
         config_overrides={"console": {"raw_cli_permitted": False}},
     )
+    # Keep the factory's no-profile-DB seam alive through mount: this test
+    # exercises real navigation and Settings save ownership, not FTS startup.
+    set_app_global(monkeypatch, "get_chachanotes_db_lazy", lambda: None)
     loaded_config = dict(app.app_config)
     loaded_config["console"] = dict(app.app_config["console"])
     loaded_config["console"]["raw_cli_permitted"] = True
@@ -710,7 +731,9 @@ async def test_pending_raw_cli_save_vetoes_real_navigation_until_arrival(monkeyp
     def blocked_save(value: bool) -> tuple[bool, RuntimeConfigSnapshot | None]:
         save_calls.append(value)
         save_started.set()
-        assert release_save.wait(timeout=3)
+        # The test owns this hold; its finally releases it even on failure.
+        # A wall-clock expiry would change the save state under navigation.
+        release_save.wait()
         return True, _published_snapshot(loaded_config)
 
     monkeypatch.setattr(
@@ -747,10 +770,9 @@ async def test_pending_raw_cli_save_vetoes_real_navigation_until_arrival(monkeyp
             return outcome
 
         monkeypatch.setattr(screen, "flush_pending_work", tracked_flush)
-        assert screen._start_raw_cli_save(True) is True
-        await _wait_until(pilot, save_started.is_set)
-
         try:
+            assert screen._start_raw_cli_save(True) is True
+            await _wait_until(pilot, save_started.is_set)
             staged = screen.stage_audio_cpp_model_library_request(snapshot)
             request_pending = app.pending_handoffs.has_pending(
                 HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST
@@ -786,11 +808,9 @@ async def test_pending_raw_cli_save_vetoes_real_navigation_until_arrival(monkeyp
             assert save_calls == [True]
         finally:
             release_save.set()
-            await _wait_until(
-                pilot,
-                lambda: not screen._raw_cli_save_pending,
-                timeout=3,
-            )
+            await _wait_for_save(pilot)
+
+        assert screen._raw_cli_save_pending is False
 
         panel.confirm_leave = AsyncMock(return_value=False)
 

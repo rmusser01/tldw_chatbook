@@ -273,7 +273,11 @@ class ConsoleRawCliController:
         Returns:
             True when a confirmation flow was started.
         """
-        if self._arm_in_flight or self._confirm_arm is None:
+        if self._arm_in_flight:
+            self._notify("Raw CLI arm confirmation is already open.", "information")
+            return False
+        if self._confirm_arm is None:
+            self._notify(_ARM_FAILED_NOTICE, "error")
             return False
         self._arm_in_flight = True
         try:
@@ -285,6 +289,7 @@ class ConsoleRawCliController:
             )
         except Exception:  # noqa: BLE001 -- no worker, no pending confirmation
             self._arm_in_flight = False
+            self._notify(_ARM_FAILED_NOTICE, "error")
             return False
         return True
 
