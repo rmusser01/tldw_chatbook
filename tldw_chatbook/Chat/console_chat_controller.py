@@ -11519,9 +11519,7 @@ class ConsoleChatController:
             # that sent us here. Bookkeeping is strictly less informative than
             # the original exception, and this arm also runs for CancelledError.
             try:
-                (
-                    effect_store if native_owner is not None else self.store
-                ).abandon_durable_postcommit_effect(
+                effect_store.abandon_durable_postcommit_effect(
                     preparation_id, effect_name, fingerprint=fingerprint
                 )
             except Exception as release_exc:
@@ -11533,9 +11531,7 @@ class ConsoleChatController:
                 )
             raise
         try:
-            (
-                effect_store if native_owner is not None else self.store
-            ).complete_durable_postcommit_effect(
+            effect_store.complete_durable_postcommit_effect(
                 preparation_id, effect_name, fingerprint=fingerprint
             )
         except ConsoleDurableAcceptanceRetired:
@@ -12207,6 +12203,9 @@ class ConsoleChatController:
         commit = continuation.commit
         fingerprint = continuation.fingerprint
         session_id = continuation.session_id
+        from .console_pre_provider_stop import AcceptedStopAuthority
+
+        stop_authority = AcceptedStopAuthority(self, session_id)
         try:
             existing_effects = self.store.durable_postcommit_effects_for(
                 preparation_id,
@@ -12576,6 +12575,7 @@ class ConsoleChatController:
             if await self._drain_dispatch_transition(assistant_id):
                 raise asyncio.CancelledError
 
+        stopped_before_stream = False
         try:
 
             async def publish_identity_and_settings() -> None:
@@ -12793,15 +12793,20 @@ class ConsoleChatController:
                 continuation=continuation,
             )
         except ConsoleDispatchSettlementError:
-            self._restore_dispatch_recovery_after_settlement_failure(
-                session_id,
-                commit.assistant_message_id,
+            before_dispatch = stop_authority.accepted_before_dispatch(
+                continuation, commit.assistant_message_id
             )
-            if continuation.origin is ConsoleSubmissionOrigin.QUEUED:
-                self.prompt_queue_coordinator.retain_durable_acceptance(session_id)
+            current = stop_authority.is_current(self)
+            if current:
+                self._restore_dispatch_recovery_after_settlement_failure(
+                    session_id,
+                    commit.assistant_message_id,
+                )
+                if continuation.origin is ConsoleSubmissionOrigin.QUEUED:
+                    self.prompt_queue_coordinator.retain_durable_acceptance(session_id)
             return ConsoleSubmitResult(
                 True,
-                True,
+                current,
                 "Accepted turn is retained for recovery.",
                 session_id=session_id,
                 user_message_id=commit.user_message_id,
@@ -12811,7 +12816,7 @@ class ConsoleChatController:
                 queue_entry_id=continuation.queue_entry_id,
                 committed_context_epoch=continuation.committed_context_epoch,
                 preparation_id=preparation_id,
-                provider_started=True,
+                provider_started=not before_dispatch,
             )
         except BaseException as exc:
             if not isinstance(exc, asyncio.CancelledError):
@@ -12847,16 +12852,34 @@ class ConsoleChatController:
                 if not any(row.id == session_id for row in self.store.sessions()):
                     return self._session_closed_result(session_id=session_id)
                 if self._accepted_cancellation_was_requested(session_id):
-                    stopped = self._mark_stream_stopped(
-                        commit.assistant_message_id,
-                        visible_copy="Response stopped.",
-                    )
-                    stream_result = ConsoleSubmitResult(
-                        True,
-                        True,
-                        stopped.content,
-                        terminal_status=ConsoleRunStatus.STOPPED,
-                    )
+                    recovery = self.store.dispatch_recovery_for_session(session_id)
+                    if (
+                        recovery is not None
+                        and recovery.assistant_message_id == commit.assistant_message_id
+                        and recovery.kind is ConsoleDispatchRecoveryKind.ACCEPTED
+                        and not recovery.in_flight
+                    ):
+                        from .console_pre_provider_stop import (
+                            settle_accepted_pre_stream_stop,
+                        )
+
+                        stream_result = await settle_accepted_pre_stream_stop(
+                            self, continuation
+                        )
+                        if stream_result.terminal_status is ConsoleRunStatus.BLOCKED:
+                            return stream_result
+                        stopped_before_stream = True
+                    else:
+                        stopped = self._mark_stream_stopped(
+                            commit.assistant_message_id,
+                            visible_copy="Response stopped.",
+                        )
+                        stream_result = ConsoleSubmitResult(
+                            True,
+                            True,
+                            stopped.content,
+                            terminal_status=ConsoleRunStatus.STOPPED,
+                        )
                 else:
                     failed = self.store.mark_message_failed(commit.assistant_message_id)
                     self._set_run_state(
@@ -13028,6 +13051,8 @@ class ConsoleChatController:
                 )
         if not any(row.id == session_id for row in self.store.sessions()):
             return self._session_closed_result(session_id=session_id)
+        if not stop_authority.is_current(self):
+            return replace(stream_result, should_clear_draft=False)
         # Terminal persistence and checkpoint deletion completed atomically
         # inside the stream finalizer. The volatile preparation can now leave.
         self._settle_accepted_preparation(preparation_id)
@@ -13066,7 +13091,14 @@ class ConsoleChatController:
             queue_entry_id=continuation.queue_entry_id,
             committed_context_epoch=continuation.committed_context_epoch,
             preparation_id=preparation_id,
-            provider_started=True,
+            provider_started=not (
+                stopped_before_stream
+                or (
+                    stream_result.preparation_id == preparation_id
+                    and stream_result.terminal_status is ConsoleRunStatus.STOPPED
+                    and not stream_result.provider_started
+                )
+            ),
         )
 
     async def _resolve_dispatch_retry_context(
@@ -17883,6 +17915,12 @@ class ConsoleChatController:
         review_stopped = review_stopped or received_stopped or received_cancelled
         if review_stopped:
             self._signal_stop(session_id=session_id)
+        from .console_pre_provider_stop import request_accepted_pre_stream_stop
+
+        if request_accepted_pre_stream_stop(
+            self, session_id, record_user_stop=record_user_stop
+        ):
+            return True
         from .console_preparation_reads import preparation_tasks_for
 
         # TASK-33621.22: an accepted run's setup owns its Stop; a read then in
@@ -24201,6 +24239,13 @@ class ConsoleChatController:
     ) -> ConsoleSubmitResult:
         from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
 
+        from .console_pre_provider_stop import AcceptedStopAuthority
+
+        destination_authority = (
+            AcceptedStopAuthority(self, turn_context.session_id)
+            if isinstance(turn_context, ConsoleTurnExecutionContext)
+            else None
+        )
         scope = (
             nullcontext()
             if work_origin is WorkOrigin.AUTOMATIC
@@ -24239,9 +24284,12 @@ class ConsoleChatController:
                     compaction_ask_bypassed=compaction_ask_bypassed,
                 )
         finally:
-            if isinstance(turn_context, ConsoleTurnExecutionContext):
+            if (
+                destination_authority is not None
+                and destination_authority.is_current(self)
+            ):
                 try:
-                    self.store.settle_session_library_destination(
+                    destination_authority.store.settle_session_library_destination(
                         turn_context.session_id,
                         expected_attempt_id=turn_context.library_authority.attempt_id,
                         expected_message_id=assistant_message_id,
@@ -24686,6 +24734,24 @@ class ConsoleChatController:
                     skill_bindings,
                 ),
             )
+        except asyncio.CancelledError:
+            cancel_event = self._active_cancel_events.get(owner_id)
+            recovery = self.store.dispatch_recovery_for_session(owner_id)
+            if (
+                cancel_event is not None
+                and cancel_event.is_set()
+                and assistant_message_id in self._replies_in_pre_provider_setup
+                and recovery is not None
+                and recovery.assistant_message_id == assistant_message_id
+                and recovery.kind is ConsoleDispatchRecoveryKind.ACCEPTED
+                and not recovery.in_flight
+            ):
+                from .console_pre_provider_stop import PreProviderSetupStop
+
+                return await PreProviderSetupStop(
+                    self, assistant_message_id, cancel_event
+                ).settle(owner_id)
+            raise
         finally:
             self._trace_last_provider_activity = time.monotonic()
             self._deferred_user_stop_markers.discard(assistant_message_id)
@@ -25440,8 +25506,23 @@ class ConsoleChatController:
             ),
             may_emit_thinking=bool(getattr(resolution, "may_emit_thinking", False)),
         )
+        from .console_pre_provider_stop import AcceptedStopAuthority
+
+        generation_authority = AcceptedStopAuthority(self, owner_id)
+        generation_store = generation_authority.store
+        with generation_store.durable_preparation_lock:
+            generation_preparation = generation_store.preparation_for_session(owner_id)
+            generation_continuation = (
+                self._durable_postcommit_continuations.get(
+                    generation_preparation.preparation_id
+                )
+                if generation_preparation is not None
+                else None
+            )
         if generation_token is None:
-            generation_token = self.store.begin_generation_attempt(assistant_message_id)
+            generation_token = generation_store.begin_generation_attempt(
+                assistant_message_id
+            )
         try:
             if variant_mode:
                 self.store.begin_variant_stream(
@@ -25457,7 +25538,7 @@ class ConsoleChatController:
                 try:
                     self.store.append_stream_chunk(assistant_message_id, prefill)
                 except KeyError:
-                    self.store.retire_generation_attempt(
+                    generation_store.retire_generation_attempt(
                         assistant_message_id,
                         generation_token,
                     )
@@ -25478,7 +25559,7 @@ class ConsoleChatController:
                     status="started",
                 )
         except BaseException:
-            self.store.retire_generation_attempt(
+            generation_store.retire_generation_attempt(
                 assistant_message_id,
                 generation_token,
             )
@@ -25853,6 +25934,42 @@ class ConsoleChatController:
                 # separate task. Cancelling this stream does not cancel that
                 # callback, so join its handoff before touching the owner.
                 await self._drain_dispatch_transition(assistant_message_id)
+                if not generation_authority.is_current(self):
+                    return ConsoleSubmitResult(
+                        True,
+                        False,
+                        "Accepted turn ownership changed before settlement.",
+                        session_id=owner_id,
+                        assistant_message_id=assistant_message_id,
+                        terminal_status=ConsoleRunStatus.BLOCKED,
+                        provider_started=not generation_authority.accepted_before_dispatch(
+                            generation_continuation, assistant_message_id
+                        ),
+                    )
+                recovery = self.store.dispatch_recovery_for_session(owner_id)
+                if (
+                    recovery is not None
+                    and recovery.assistant_message_id == assistant_message_id
+                    and recovery.kind is ConsoleDispatchRecoveryKind.ACCEPTED
+                    and not recovery.in_flight
+                ):
+                    from .console_pre_provider_stop import PreProviderSetupStop
+
+                    if not generation_store.retire_generation_attempt(
+                        assistant_message_id, generation_token
+                    ):
+                        raise ConsoleDispatchSettlementError(
+                            "Stopped setup no longer owns its generation attempt."
+                        )
+                    stopped = await PreProviderSetupStop(
+                        self,
+                        assistant_message_id,
+                        cancel_event,
+                        accepted_content=prefill or "",
+                    ).settle(owner_id)
+                    if generation_authority.is_current(self):
+                        self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
+                    return stopped
                 self.store.record_trajectory_timing(
                     assistant_message_id, model_status="cancelled"
                 )
@@ -25937,7 +26054,7 @@ class ConsoleChatController:
             # own matching pop.
             if self._active_cancel_events.get(owner_id) is cancel_event:
                 self._active_cancel_events.pop(owner_id, None)
-            self.store.retire_generation_attempt(
+            generation_store.retire_generation_attempt(
                 assistant_message_id,
                 generation_token,
             )
@@ -28697,6 +28814,14 @@ class ConsoleChatController:
             recovery is not None
             and recovery.assistant_message_id == assistant_message_id
             and not recovery.in_flight
+            and not (
+                self.store.session_is_ephemeral(owner_id)
+                and recovery.kind is ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED
+                and recovery.runtime_active
+                and not recovery.recovery_needed
+                and recovery.checkpoint is not None
+                and recovery.checkpoint.state is ConsoleDispatchCheckpointState.ACCEPTED
+            )
         ):
             raise ConsoleDispatchSettlementError(
                 "Dispatch terminal settlement previously failed."

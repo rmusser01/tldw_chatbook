@@ -619,7 +619,12 @@ async def test_cancelled_accepted_settlement_keeps_loop_and_native_owner_live_un
         await asyncio.sleep(0.05)
         commit_release.set()
         assert await _until(settlement_entered.is_set, timeout=5)
-        await asyncio.sleep(0.02)
+        # Callback entry precedes native admission and the worker's SQLite open.
+        # Observe that handle while the original competing lock is still held.
+        assert await _until(
+            lambda: db.registered_connection_count() == baseline_connections + 1,
+            timeout=1,
+        )
         assert (
             max(stalls) < 0.5
         ), f"accepted settlement blocked the event loop for {max(stalls):.3f}s"

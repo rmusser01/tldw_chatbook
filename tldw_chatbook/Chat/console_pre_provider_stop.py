@@ -14,9 +14,9 @@ the turn's preparation kept the tab's send slot. Every later send was refused
 :class:`PreProviderSetupStop` wraps the window. While it is open,
 ``stop_active_run`` leaves settlement to it, as it already did while the
 checkpoint move drains: settling an ACCEPTED durable checkpoint synchronously
-fails closed and showed "Response recovery failed". An explicit Stop (the run's
-own cancel event is set) is suppressed at the window's edge, and :meth:`settle`
-records it as Stopped:
+fails closed and showed "Response recovery failed". An explicit lifecycle cancellation (Stop, close or shutdown sets the run's
+own cancel event) is suppressed at the window's edge, and :meth:`settle`
+records it as Stopped. Only user Stop earns the transcript marker:
 
 * An ACCEPTED durable checkpoint settles directly as stopped, through the
   store's accepted-turn settlement, so no provider dispatch is invented.
@@ -45,6 +45,7 @@ from .console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunState,
     ConsoleRunStatus,
+    ConsoleSubmissionOrigin,
 )
 
 if TYPE_CHECKING:
@@ -54,6 +55,71 @@ if TYPE_CHECKING:
 STOPPED_COPY = "Response stopped."
 #: The transcript record an explicit user Stop leaves (TASK-337 AC3).
 USER_STOP_RECORD = "Response stopped by user."
+
+
+class AcceptedStopAuthority:
+    """Snapshot publication authority without extending a native lease."""
+
+    def __init__(self, controller: Any, session_id: str) -> None:
+        self.store = controller.store
+        self.persistence = self.store.persistence
+        self.database = getattr(self.persistence, "db", None)
+        self.session = next(
+            (row for row in self.store.sessions() if row.id == session_id), None
+        )
+
+    def is_current(self, controller: Any) -> bool:
+        return (
+            controller.store is self.store
+            and self.store.persistence is self.persistence
+            and getattr(self.persistence, "db", None) is self.database
+            and self.session is not None
+            and any(row is self.session for row in self.store.sessions())
+        )
+
+    def accepted_before_dispatch(self, continuation: Any, assistant_id: str) -> bool:
+        """Prove no dispatch from this captured owner's exact ACCEPTED state."""
+        from .console_dispatch_checkpoint import ConsoleDispatchCheckpointState
+        from .console_turn_preparation import ConsoleTurnPreparationState
+
+        if (
+            continuation is None
+            or self.session is None
+            or continuation.session_id != self.session.id
+            or continuation.commit.assistant_message_id != assistant_id
+        ):
+            return False
+        store = self.store
+        preparation_id = continuation.preparation_id
+        commit = continuation.commit
+        try:
+            with store.durable_preparation_lock:
+                preparation = store.preparation_for_session(continuation.session_id)
+                recovery = store.dispatch_recovery_for_session(continuation.session_id)
+                return (
+                    store.persistence is self.persistence
+                    and getattr(self.persistence, "db", None) is self.database
+                    and any(row is self.session for row in store.sessions())
+                    and preparation is not None
+                    and preparation.preparation_id == preparation_id
+                    and preparation.state is ConsoleTurnPreparationState.ACCEPTED
+                    and store.durable_acceptance_fingerprint_for(preparation_id)
+                    == continuation.fingerprint
+                    and store.durable_turn_commit_for(
+                        preparation_id, fingerprint=continuation.fingerprint
+                    )
+                    is commit
+                    and recovery is not None
+                    and recovery.assistant_message_id == assistant_id
+                    and recovery.preparation_id == preparation_id
+                    and recovery.kind is ConsoleDispatchRecoveryKind.ACCEPTED
+                    and not recovery.in_flight
+                    and recovery.checkpoint == commit.checkpoint
+                    and commit.checkpoint.state
+                    is ConsoleDispatchCheckpointState.ACCEPTED
+                )
+        except Exception:  # noqa: BLE001 - unavailable original proof stays conservative.
+            return False
 
 
 class PreProviderSetupStop:
@@ -75,6 +141,8 @@ class PreProviderSetupStop:
         prepares_row: True for a Retry or a variant, whose row the reply
             prepares for the new attempt inside the window; the reply sets
             :attr:`row_prepared` once it has.
+        accepted_content: User-authored direct prefill to retain on a stopped
+            accepted row; never provider output.
     """
 
     def __init__(
@@ -84,12 +152,14 @@ class PreProviderSetupStop:
         cancel_event: threading.Event,
         *,
         prepares_row: bool = False,
+        accepted_content: str = "",
     ) -> None:
         self._controller = controller
         self._assistant_message_id = assistant_message_id
         self._cancel_event = cancel_event
         self._prepares_row = prepares_row
-        #: True once an explicit Stop ended the window; :meth:`settle` is due.
+        self._accepted_content = accepted_content
+        #: True once lifecycle cancellation ended the window; settlement is due.
         self.stopped = False
         #: True once a Retry or variant row was prepared for the new attempt.
         self.row_prepared = False
@@ -171,7 +241,10 @@ class PreProviderSetupStop:
         """Settle an ACCEPTED durable checkpoint as stopped, never as sent."""
         from . import console_chat_controller as _source_controller
         from .console_chat_store import ConsoleDispatchSettlementError
-        from .console_native_commit import settle_accepted_durable_turn_owned
+        from .console_native_commit import (
+            accepted_terminal_state_matches,
+            settle_accepted_durable_turn_owned,
+        )
 
         controller = self._controller
         store = controller.store
@@ -186,22 +259,191 @@ class PreProviderSetupStop:
             raise ConsoleDispatchSettlementError(
                 "Stopped turn has no matching durable acceptance."
             )
-        persistence = store.persistence
+        commit = store.durable_turn_commit_for(
+            preparation.preparation_id, fingerprint=fingerprint
+        )
+        if self._accepted_content:
+            continuation = controller._durable_postcommit_continuations.get(
+                preparation.preparation_id
+            )
+            if (
+                continuation is None
+                or continuation.fingerprint != fingerprint
+                or continuation.commit is not commit
+                or continuation.prefill != self._accepted_content
+            ):
+                raise ConsoleDispatchSettlementError(
+                    "Stopped prefill no longer matches its accepted continuation."
+                )
+        authority = AcceptedStopAuthority(controller, session_id)
         completion = await settle_accepted_durable_turn_owned(
             store,
             preparation.preparation_id,
             fingerprint=fingerprint,
             terminal_state="stopped",
-            content="",
-            persistence=persistence,
-            database=getattr(persistence, "db", None),
+            content=self._accepted_content,
+            persistence=authority.persistence,
+            database=authority.database,
+            expected_accepted_prefill=self._accepted_content,
         )
-        if not completion.settled or completion.error is not None:
+        settled = (
+            completion.settled and completion.error is None
+        ) or accepted_terminal_state_matches(
+            store,
+            preparation.preparation_id,
+            fingerprint=fingerprint,
+            commit=commit,
+            terminal_state="stopped",
+            content=self._accepted_content,
+        )
+        current = authority.is_current(controller)
+        if not settled and current:
             raise ConsoleDispatchSettlementError(
                 "Stopped turn could not settle before provider dispatch."
             )
-        publish_stopped_run(controller, assistant_id, session_id, STOPPED_COPY)
-        return _source_controller.ConsoleSubmitResult(True, True, "")
+        if current:
+            publish_stopped_run(controller, assistant_id, session_id, STOPPED_COPY)
+        else:
+            controller._deferred_user_stop_markers.discard(assistant_id)
+        return _source_controller.ConsoleSubmitResult(
+            True,
+            current,
+            self._accepted_content,
+            session_id=session_id,
+            user_message_id=commit.user_message_id,
+            assistant_message_id=assistant_id,
+            terminal_status=(
+                ConsoleRunStatus.STOPPED if settled else ConsoleRunStatus.BLOCKED
+            ),
+            preparation_id=preparation.preparation_id,
+            provider_started=False,
+        )
+
+
+def request_accepted_pre_stream_stop(
+    controller: Any, session_id: str, *, record_user_stop: bool
+) -> bool:
+    """Cancel only the live accepted submit before a stream owner takes over."""
+    from .console_turn_preparation import ConsoleTurnPreparationState
+
+    if (
+        session_id in controller._active_stream_tasks
+        and session_id in controller._active_cancel_events
+        and (
+            controller._active_assistant_message_ids.get(session_id)
+            in controller._replies_in_pre_provider_setup
+            or controller._active_assistant_message_ids.get(session_id)
+            in controller._pending_dispatch_transitions
+        )
+    ) or controller._ordinary_native_commit_tasks(session_id):
+        return False
+    store = controller.store
+    with controller._active_submit_tasks_lock, store.durable_preparation_lock:
+        preparation = store.preparation_for_session(session_id)
+        if (
+            preparation is None
+            or preparation.state is not ConsoleTurnPreparationState.ACCEPTED
+        ):
+            return False
+        continuation = controller._durable_postcommit_continuations.get(
+            preparation.preparation_id
+        )
+        recovery = store.dispatch_recovery_for_session(session_id)
+        if (
+            continuation is None
+            or continuation.session_id != session_id
+            or store.durable_acceptance_fingerprint_for(preparation.preparation_id)
+            != continuation.fingerprint
+            or store.durable_turn_commit_for(
+                preparation.preparation_id, fingerprint=continuation.fingerprint
+            )
+            is not continuation.commit
+            or recovery is None
+            or recovery.kind is not ConsoleDispatchRecoveryKind.ACCEPTED
+            or recovery.assistant_message_id != continuation.commit.assistant_message_id
+            or recovery.preparation_id != preparation.preparation_id
+            or recovery.checkpoint != continuation.commit.checkpoint
+            or recovery.in_flight
+            or not recovery.runtime_active
+            or recovery.recovery_needed
+        ):
+            return False
+        tasks = tuple(
+            task
+            for task, owner_session in controller._active_submit_tasks.items()
+            if owner_session == session_id
+            and controller._active_submit_preparations.get(task)
+            == preparation.preparation_id
+            and not task.done()
+        )
+        if len(tasks) != 1 or tasks[0] is asyncio.current_task():
+            return False
+    # Stream registration precedes ledger/project startup. Keep this exact
+    # accepted task's settlement ownership until the actual reply takes over.
+    controller._replies_in_pre_provider_setup.add(
+        continuation.commit.assistant_message_id
+    )
+    controller._active_cancel_events.setdefault(session_id, threading.Event())
+    controller._signal_stop(
+        session_id=session_id, reason="user" if record_user_stop else "shutdown"
+    )
+    controller.prompt_queue_coordinator.pause_for_stop(session_id)
+    if record_user_stop:
+        controller._deferred_user_stop_markers.add(
+            continuation.commit.assistant_message_id
+        )
+    controller._cancel_task_on_owner_loop(tasks[0])
+    return True
+
+
+async def settle_accepted_pre_stream_stop(
+    controller: Any, continuation: Any
+) -> ConsoleSubmitResult:
+    """Settle the cancelled accepted continuation and retire its early signal."""
+    from .console_chat_controller import ConsoleSubmitResult
+    from .console_chat_store import ConsoleDispatchSettlementError
+
+    session_id = continuation.session_id
+    assistant_id = continuation.commit.assistant_message_id
+    cancel_event = controller._active_cancel_events.get(session_id)
+    authority = AcceptedStopAuthority(controller, session_id)
+    stop = PreProviderSetupStop(
+        controller, assistant_id, cancel_event or threading.Event()
+    )
+    try:
+        return await stop.settle(session_id)
+    except ConsoleDispatchSettlementError:
+        if authority.is_current(controller):
+            controller._restore_dispatch_recovery_after_settlement_failure(
+                session_id, assistant_id
+            )
+        if (
+            authority.is_current(controller)
+            and continuation.origin is ConsoleSubmissionOrigin.QUEUED
+        ):
+            controller.prompt_queue_coordinator.retain_durable_acceptance(session_id)
+        return ConsoleSubmitResult(
+            True,
+            authority.is_current(controller),
+            "Accepted turn is retained for recovery.",
+            session_id=session_id,
+            user_message_id=continuation.commit.user_message_id,
+            assistant_message_id=assistant_id,
+            terminal_status=ConsoleRunStatus.BLOCKED,
+            origin=continuation.origin,
+            queue_entry_id=continuation.queue_entry_id,
+            committed_context_epoch=continuation.committed_context_epoch,
+            preparation_id=continuation.preparation_id,
+            provider_started=False,
+        )
+    finally:
+        controller._deferred_user_stop_markers.discard(assistant_id)
+        if (
+            cancel_event is not None
+            and controller._active_cancel_events.get(session_id) is cancel_event
+        ):
+            controller._active_cancel_events.pop(session_id, None)
+            controller._active_stop_reasons.pop(session_id, None)
 
 
 def publish_stopped_run(
