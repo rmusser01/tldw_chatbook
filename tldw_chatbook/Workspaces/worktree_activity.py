@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING
+from unicodedata import normalize
 from uuid import uuid4
 
 from tldw_chatbook.Utils.filesystem_identity import (
@@ -68,10 +69,18 @@ class WorktreeScope:
                 raise ValueError("safe admitted root identity required")
             suffix = self.path.relative_to(ancestor).parts
             locations.append(
-                (identity.device, identity.inode, tuple(p.casefold() for p in suffix))
+                (
+                    identity.device,
+                    identity.inode,
+                    tuple(normalize("NFC", p).casefold() for p in suffix),
+                )
             )
-        # shortcut: case-only names serialize; refine if case-sensitive contention warrants it.
-        object.__setattr__(self, "_parts", tuple(p.casefold() for p in self.path.parts))
+        # shortcut: case/Unicode aliases serialize; refine if distinct-name contention warrants it.
+        object.__setattr__(
+            self,
+            "_parts",
+            tuple(normalize("NFC", p).casefold() for p in self.path.parts),
+        )
         object.__setattr__(self, "_locations", tuple(locations))
         try:
             metadata = os.lstat(self.path)

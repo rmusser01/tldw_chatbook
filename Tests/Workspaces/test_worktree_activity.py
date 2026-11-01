@@ -709,3 +709,36 @@ def test_fabricated_or_retired_owners_cannot_bind_or_attach(
     parent.finish_root()
     with activity.prelaunch(footprint=footprint) as unlaunched:
         assert unlaunched is not None
+
+
+@pytest.mark.parametrize("subtree", [False, True])
+@pytest.mark.parametrize("rename_root", [False, True])
+def test_absent_unicode_aliases_conflict_without_changing_admitted_paths(
+    tmp_path, native, subtree, rename_root
+):
+    _, begin = native
+    root = tmp_path / "root"
+    root.mkdir()
+    first_name = "\u00e9" if subtree else "\u00e9.txt"
+    second_name = "e\u0301/child.txt" if subtree else "e\u0301.txt"
+    first = _scope(root, first_name, subtree=subtree)
+    original_path = first.path
+    if rename_root:
+        renamed = tmp_path / "renamed"
+        root.rename(renamed)
+        root = renamed
+    second = _scope(root, second_name)
+    assert not first.path.exists()
+    assert not second.path.exists()
+    assert first.path == original_path
+    assert second.path == root.resolve() / second_name
+    activity = WorktreeActivity()
+    assert activity.try_acquire(
+        owner=begin(), footprint=WorktreeFootprint(writes=(first,))
+    )
+    assert (
+        activity.try_acquire(
+            owner=begin(), footprint=WorktreeFootprint(writes=(second,))
+        )
+        is None
+    )
