@@ -105,7 +105,7 @@ Reason: cross-system service contract (client↔server execution ownership, resu
 - **AC#3 tick rationale:** the notification channel works end-to-end post-#3225 (server read-back) + #2874 (client parse); live rounds verified the results inbox, unread flow, review pushback, and notification-triggered pull.
 - **AC#4 tick rationale:** server audit events (`run_{status}` with run ids) are durable and client-visible in the run-history surface (slice 4); live rounds read them.
 - **AC#6 tick rationale:** no-double-count attribution + client-missed vs server-ran semantics are test-pinned (18937, ADR-077 decision), run-slot dedupe on redelivery is pinned (incl. `approval_required` replay); live reconnect-scenario E2E rides AC#8's remaining evidence.
-- **Server issue #2805 CLOSED** (complete via #3039/#3042/#3231); the result-generation gap is filed as **tldw_server TASK-13952** (optional-mode runs write no `automation_results` row).
+- **Server issue #2805 CLOSED** (complete via #3039/#3042/#3231); the result-generation gap is filed as **tldw_server TASK-13960** (optional-mode runs write no `automation_results` row).
 
-**Remaining:** AC#8 only — the two evidence gaps named below (server-side result generation → TASK-13952; a local run producing an inbox row needs an indexed-content profile). Everything else in this task is landed.
+**Remaining:** AC#8 only — the two evidence gaps named below (server-side result generation → TASK-13960; a local run producing an inbox row needs an indexed-content profile). Everything else in this task is landed.
 
