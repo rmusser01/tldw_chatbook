@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-31T23:49:00Z'
-updated_date: '2026-11-01T00:24:00Z'
+updated_date: '2026-11-01T00:53:00Z'
 labels: []
 dependencies: []
 ---
@@ -18,9 +18,9 @@ The merged portable bundle introduced an autouse private temporary directory tha
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 All three native temporary selectors reach and pass their launch-environment assertions with the autouse private fixture active.
-- [ ] #2 The targeted eval-recovery workflow and remaining PR checks are verified or their unresolved results are explicitly recorded.
-- [ ] #3 Windows recovery tests and their child processes use owned APPDATA and LOCALAPPDATA sandboxes so ambient installed pet state cannot enter a test backup.
+- [x] #1 All three native temporary selectors reach and pass their launch-environment assertions with the autouse private fixture active.
+- [x] #2 The targeted eval-recovery workflow and remaining PR checks are verified or their unresolved results are explicitly recorded.
+- [x] #3 Windows recovery tests and their child processes use owned APPDATA and LOCALAPPDATA sandboxes so ambient installed pet state cannot enter a test backup.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -38,5 +38,13 @@ Reason: routine test-only namespace collision; no new runtime or trust boundary.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Scope update before implementation: clean qualification exposed ambient Windows APPDATA leaking host pet state into the full backup fixture. Add test-only native AppData isolation; production recovery correctly refused wrong relocation and remains unchanged. Existing ADR-126 applies, no new ADR.
+Repaired the FileExistsError in all three original PR #3287 eval-recovery jobs by giving the selector test its own selected-temp directory. Native qualification also found ambient Windows pet state entering the full backup fixture through APPDATA; the shared recovery fixture now creates private APPDATA/LOCALAPPDATA roots. Both new isolation regressions failed before the fix and pass afterward. Generic restart filtering and all production recovery guards remain unchanged.
+
+Verification on source commit e2ec8715e3850551a75361cf68531403bb82bd57: hosted nine-file eval-recovery lane passed on Ubuntu (85), macOS (85), and Windows (84 passed, one unsupported-FIFO skip). Run: https://github.com/rmusser01/tldw_chatbook/actions/runs/41257072705. Final local same-lane run: 81 passed, four native capability skips, 1061.94s; real pet-state bytes unchanged. Scoped Ruff/format/whitespace checks and independent code review passed. Full repository suite not run under opt-in policy.
+
+The first optional-heavy local environment timed out at the unchanged 90s cold-start budget. Clean qualification then correctly refused a shared source folder and ambient pet relocation; private native setup and AppData fixture isolation resolved those failures without changing runtime code or timeouts. Generated copies from the failed ambient-state test were removed only from its verified task-owned temporary subtree.
+
+Changed test files: Tests/Backup_Recovery/conftest.py and test_profile_launch_environment.py. Added plan and incident lessons. ADR required: no new ADR; existing backlog/decisions/126-complete-local-backup-and-recovery.md applies to unchanged recovery authority/private storage policy.
+
+Draft follow-up: https://github.com/rmusser01/tldw_chatbook/pull/3342. Keep In Progress: the original PR still has 36 queued checks; this follow-up has 34 queued checks and is behind dev. Update its base only when preparing to merge, then satisfy required current-head checks/review. No merge or auto-merge was requested or performed. Subsequent documentation-only commit preserves all verified runtime/test bytes.
 <!-- SECTION:NOTES:END -->

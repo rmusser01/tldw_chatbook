@@ -21,14 +21,22 @@ Files: Tests/Backup_Recovery/test_profile_launch_environment.py; task record; le
 
 - [x] Reproduce the three FileExistsError failures with the autouse fixture active.
 - [x] Change only the test-owned directory from private-temp to selected-temp.
-- [ ] Run the five-case module, then the exact workflow's nine test files with --timeout=180.
-- [ ] Run scoped Ruff/format and diff checks; review the full change.
-- [ ] Record results, inspect every remaining PR #3287 check, and publish a follow-up PR.
+- [x] Run the five-case module, then the exact workflow's nine test files with --timeout=180.
+- [x] Run scoped Ruff/format and diff checks; review the full change.
+- [x] Record results, inspect every remaining PR #3287 check, and publish a follow-up PR.
 
 ## Added scope: Native AppData fixture isolation
 
 The full native test discovered that HOME redirection leaves ConfigFileStorage's Windows APPDATA selector pointing at ambient pet state. Isolate APPDATA and LOCALAPPDATA in the existing per-test recovery fixture. Production recovery policy is unchanged; existing ADR-126 applies.
 
-- [ ] Add a parameterized regression requiring both native selectors to name pinned private paths under tmp_path while generic restart filtering continues to exclude them; observe it fail first.
-- [ ] Create two private fixture-owned native application-data roots and redirect the selectors with monkeypatch.
-- [ ] Verify all seven launch-environment cases, the complete backup/reopen case, and the full CI selection. Keep host profile data outside test archives.
+- [x] Add a parameterized regression requiring both native selectors to name pinned private paths under tmp_path while generic restart filtering continues to exclude them; observe it fail first.
+- [x] Create two private fixture-owned native application-data roots and redirect the selectors with monkeypatch.
+- [x] Verify all seven launch-environment cases, the complete backup/reopen case, and the full CI selection. Keep host profile data outside test archives.
+
+## Verification and remaining gates
+
+- Source e2ec8715e3850551a75361cf68531403bb82bd57: hosted Ubuntu 85 passed; macOS 85 passed; Windows 84 passed, 1 unsupported-FIFO skip. [Matrix run](https://github.com/rmusser01/tldw_chatbook/actions/runs/41257072705).
+- Final native local nine-file selection: 81 passed, 4 platform capability skips, 1061.94 seconds; actual host pet-state bytes unchanged.
+- Seven focused environment cases, scoped Ruff/format/whitespace and independent review passed. Production recovery checks/timeouts remain unchanged. Full repository suite was not run.
+- [Draft follow-up #3342](https://github.com/rmusser01/tldw_chatbook/pull/3342) remains In Progress pending 34 queued checks and a base update when preparing to merge. Original PR #3287 still has 36 queued checks. No merge/auto-merge performed.
+- The verification-record commit changes only documentation; all tested source bytes match e2ec8715e3.
