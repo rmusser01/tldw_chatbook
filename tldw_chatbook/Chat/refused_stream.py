@@ -7,7 +7,8 @@ they share the one classification below:
 
 * TASK-37421 (owner decision 2026-10-29): a self-hosted server or a Custom
   OpenAI-compatible slot is asked once more without streaming, the way the
-  llama.cpp path always has. A retry there costs nothing.
+  llama.cpp path already supports. Each physical retry retains its own
+  admission, usage and trace; missing usage is not proof of zero spend.
 * TASK-37180: a provider that is not retried (a cloud provider, where a
   silent second paid call is not wanted, and for now a named custom endpoint
   run by the hosted engine) names the Streaming setting in its failure copy,
@@ -63,7 +64,7 @@ def is_refused_stream(exc: BaseException) -> bool:
     ):
         return False
     status = getattr(exc, "status_code", None)
-    if type(status) is not int or status not in REFUSED_STREAM_STATUSES:
+    if type(status) is not int or status not in REFUSED_STREAM_STATUSES:  # noqa: E721 - reject booleans and coerced statuses
         return False
     from tldw_chatbook.Chat.provider_error_reason import is_context_overflow_error
 

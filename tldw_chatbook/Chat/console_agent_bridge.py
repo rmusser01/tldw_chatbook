@@ -2662,6 +2662,40 @@ def _openai_usage_from_provider_call(
     return usage
 
 
+def _openai_usage_from_provider_calls(
+    payloads: Sequence[Mapping[str, Any] | None], *, provider: str, model: str
+) -> dict[str, Any] | None:
+    """Sum observed physical legs after validating every reported count.
+
+    Missing usage remains unknown (the automatic ledger retains its own
+    reservation); this view reports only observed usage. Malformed reported
+    usage invalidates the logical total so the existing budget fallback runs.
+    """
+    if len(payloads) == 1:
+        return _openai_usage_from_provider_call(payloads[0], provider=provider, model=model)
+    total: ProviderUsage | None = None
+    for payload in payloads:
+        if payload is None:
+            continue
+        if not isinstance(payload, Mapping) or not _has_strict_budget_usage_counts(payload):
+            return None
+        leg = ProviderUsage.from_provider_payload(payload, provider=provider, model=model)
+        if leg is None:
+            return None
+        total = leg if total is None else total.plus(leg)
+    if total is None:
+        return None
+    return {
+        "prompt_tokens": total.uncached_input + total.cache_read + total.cache_write,
+        "completion_tokens": total.output,
+        "total_tokens": total.total_tokens,
+        "prompt_tokens_details": {
+            "cached_tokens": total.cache_read,
+            "cache_creation_tokens": total.cache_write,
+        },
+    }
+
+
 class _StreamingProviderResponse(dict[str, Any]):
     """OpenAI-shaped public response plus one private typed continuation."""
 
@@ -3553,6 +3587,14 @@ class _StreamingModelAdapter:
             if type(value) is int and value >= 0:
                 return value
         return None
+
+    @classmethod
+    def _provider_calls_output_count(cls, payloads) -> int | None:
+        """Keep text estimates until the current leg reports output usage."""
+        if not payloads or payloads[-1] is None:
+            return None
+        counts = [cls._provider_output_count(item) for item in payloads if item is not None]
+        return sum(counts) if counts and all(count is not None for count in counts) else None
 
     async def _resolve_routed_resolution(
         self,

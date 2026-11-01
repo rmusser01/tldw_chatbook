@@ -1,18 +1,17 @@
 ---
 id: TASK-37421
-title: >-
-  Console: retry a refused streamed request once without streaming for
-  self-hosted OpenAI-compatible servers
+title: 'Console: retry a refused streamed request once without streaming for self-hosted
+  OpenAI-compatible servers'
 status: Done
 assignee:
-  - '@claude'
-created_date: '2026-10-29 07:34'
-updated_date: '2026-10-29 17:52'
+- '@claude'
+created_date: 2026-10-29 07:34
+updated_date: 2026-11-01 08:14
 labels:
-  - console
-  - streaming
-  - local-models
-  - p3
+- console
+- streaming
+- local-models
+- p3
 dependencies: []
 priority: low
 ---
@@ -20,9 +19,8 @@ priority: low
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Since TASK-33620.10 every Console provider streams by default, and [chat_defaults] streaming = true outranks a provider's own [api_settings.<provider>] streaming = false. A self-hosted OpenAI-compatible server (Custom, Custom_2, a custom-ep entry) that does not support streaming used to work out of the box because those templates shipped streaming = false; it now fails the first reply with HTTP 400 until the user turns Streaming off for that model or provider (seen live on 2026-10-29 in TASK-33620.10's verification run). The llama.cpp path already retries once without streaming when a streamed request is refused or yields no text (console_provider_gateway.py, the LLAMA_FALLBACK route, with its own trace capture and dispatch authorization). This task decides whether the same one-shot retry should cover self-hosted OpenAI-compatible providers, where a retry costs nothing, and implements it if so. Cloud providers stay out of scope: a 400 there is usually a real request error and a silent second paid call is not wanted. TASK-37180 (advice copy on the failure) is the alternative if the answer is no.
+Since TASK-33620.10 every Console provider streams by default, and [chat_defaults] streaming = true outranks a provider's own [api_settings.<provider>] streaming = false. A self-hosted OpenAI-compatible server (Custom, Custom_2, a custom-ep entry) that does not support streaming used to work out of the box because those templates shipped streaming = false; it now fails the first reply with HTTP 400 until the user turns Streaming off for that model or provider (seen live on 2026-10-29 in TASK-33620.10's verification run). The llama.cpp path already retries once without streaming when a streamed request is refused or yields no text (console_provider_gateway.py, the LLAMA_FALLBACK route, with its own trace capture and dispatch authorization). This task decides whether the same one-shot retry should cover self-hosted OpenAI-compatible providers, where each physical call must still be admitted and accounted for, and implements it if so. Cloud providers stay out of scope: a 400 there is usually a real request error and a silent second paid call is not wanted. TASK-37180 (advice copy on the failure) is the alternative if the answer is no.
 <!-- SECTION:DESCRIPTION:END -->
-
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The owner decision (retry automatically for self-hosted OpenAI-compatible providers, or rely on the advice in TASK-37180) is recorded in this task
@@ -39,11 +37,11 @@ Since TASK-33620.10 every Console provider streams by default, and [chat_default
 4. Fold in TASK-37180: a refused stream that is not retried (cloud) names the Streaming setting.
 5. Docs: chat-basics, CHANGELOG Unreleased. Live: real llama-server behind a front that refuses stream=true, before/after; a cloud provider refused the same way.
 6. Rebase on origin/dev, re-run gates, preflight.
+PR3304 integration: follow Docs/superpowers/plans/2026-11-01-pr3304-review-repair.md. ADR required: no new ADR; existing ADR134, ADR131, ADR156 and ADR097 govern separate physical-call admission, strict disjoint usage and trace settlement. Add failing real-adapter budget/usage regressions, repair each physical generation scope and logical reporting, verify capture-on and targeted regressions, then independent requesting-code-review.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 **Decision (AC#1).** Owner decision 2026-10-29 (relayed by the coordinator for TASK-33620.10's PR): retry. Every self-hosted provider and every Custom OpenAI-compatible endpoint (`custom`, `custom_2`, a `custom-ep:<slug>` entry and the `custom-hosted` engine key it runs through; `is_self_hosted_provider`) that refuses a streamed request, or streams no text, is asked once more without streaming, and the copy points at the Streaming setting. Cloud providers are never retried; their refused stream names the Streaming setting instead (TASK-37180, closed in the same branch).
 
 **Measured first** (branch head 7e2167e0a7, real `ConsoleAgentBridge` + gateway + `chat_api_call` + adapters against a loopback server that answers `"stream": true` with HTTP 400): Custom, a custom-ep entry and vLLM each failed the reply with "Provider error from <name>: bad request. Status: 400 ... choose another model from the model picker"; a stream that opens and sends no text failed with "provider unavailable. Status: 502". Probing the cloud adapters the same way: Anthropic, OpenRouter, Groq, DeepSeek, Mistral AI, ZenMux and Vercel each surface the 400 once; OpenAI turns it into an SSE error, so the agent runtime sees a status-less 502 and sends it three times (filed as TASK-37700).
@@ -65,4 +63,5 @@ Since TASK-33620.10 every Console provider streams by default, and [chat_default
 **Review fixes (2026-10-29, independent review of 55f4913501).** Blocking: the User Guide and the CHANGELOG said every cloud provider's refused stream names the Streaming setting after one request; OpenAI does not (re-measured: three streamed requests, "provider returned HTTP 502 (Provider error from OpenAI: unexpected provider error)"). Both now carve OpenAI out until TASK-37700, whose priority is raised to high (OpenAI streams by default since TASK-33620.10), and TASK-37180 AC#1 says so. Follow-ups fixed test-first (red on 55f4913501): `transfer_usage_to` replaces the replaced call's usage with the retry's instead of key-merging two calls' payloads (an empty stream's cached_tokens no longer lands beside the retry's prompt as a phantom cache read; live: usage_json 538 uncached / 0 cache read / 21 output against an empty stream that reported 8000 prompt / 7777 cached); the retry runs after the `_StreamFallbackRequired` handler, so a retry failure is not chained to it; a self-hosted stream that fails after its first text is pinned as not retried and not advised. **New finding, live:** a named OpenAI-compatible custom endpoint (`custom-ep:<slug>`, hosted engine) whose server refuses streaming ended "Run: Blocked — capture failed" with capture on: every custom-ep call's traced surface is a provider-overlay omission (alignment_mismatch, on dev too), so the retry's reservation raised `surface_replacement_checkpoint_unavailable`. `retries_refused_stream` now leaves the `custom-hosted` key out (AC#2 amended); such an endpoint's refused stream fails once with the Streaming advice (live, after the fix). Filed TASK-37762 (trace alignment, then restore the retry). This deviates from the owner decision's scope (it named custom-ep entries) and is flagged in the PR. Two review-fix paths only a custom-hosted response could reach (the hosted engine's unreadable-stream retry and an empty tools stream with terminal metadata) were dropped with that exclusion. Also filed TASK-37760 (the retry shares the bridge's first-token window with the empty stream) and TASK-37761 (Custom and vLLM show a server's whole-JSON answer to a streamed request as raw JSON). Live on the review-fix head: Custom (empty stream with usage) and vLLM (refused) each retried once with capture on, trace agent_first error + llama_fallback complete; custom-ep refused -> one request + advice; OpenAI refused -> three requests + 502 copy, as the docs now say. Ratchet: gateway row 8333 -> 8355 with a dated owner-decision comment.
 
 **Merge evidence (review-fix head, rebased onto origin/dev d36affec9b, 2026-10-29).** New and changed tests under the plain command: Tests/Chat/test_console_refused_stream_retry.py 12 passed, Tests/UI/test_console_refused_stream_retry_screen.py 1 passed, the 5 new gateway tests passed; on origin/dev the same files fail 9 of 12, 1 of 1 and 4 of 5 (the passes are the guards: 401, 429, a non-streamed refusal, a stream that fails after text). 29 neighbouring files (gateway 472 passed, agent bridge 342, trace model retries / call lifecycle / settlement, failure copy, hosted engine and preset contracts, config streaming default, fallback rows, CI contract, provider registry, ...) compared by test id against a detached origin/dev worktree: no new failure (shared reds: 2 base-URL pins in the gateway file, 8 unrelated ratchet rows, the exchanges/export/voice/settlement/failure-copy reds and the RecoveryRequired file; test_local_qwen_reasoning fails to import on both). UI-ready module census 4 passed, boot CSS budget passed, gateway ratchet row 8355 passes; ./scripts/preflight.sh passed (diagnostic inventory verified). Live on the rebased head: Custom with an empty stream that reports usage -> one retry, usage_json is the retry's own.
-<!-- SECTION:NOTES:END -->
+PR3304 integration, 2026-11-01 (supersedes earlier transfer/discard-usage and actorless generic-fallback descriptions above): each physical generation has separate automatic admission and immutable usage; known first-leg usage is retained and logical reporting validates/sums the two raw legs. Unknown usage keeps its automatic reservation. Generic agent retries preserve the actor/chain and exact accepted-owner recovery; the final trace guard permits only a verified streaming True-to-False transport change. Real JSON-on-stream completions now normalize content/tools/usage once. ADR097/131/134/156 apply; no new ADR. Independent requesting-code-review found no remaining Critical/Important finding. Qualification: 200 focused tests passed; all targeted mounted UI behaviors have passing receipts, including the isolated finite-worker cleanup repair. 51 automatic-budget tests passed; two unrelated gateway base-URL expectations reproduce on dev. Full evidence/limits in Docs/superpowers/qa/2026-11-01-pr3304-backlog-integration.md. Named custom-hosted, cloud OpenAI status loss and shared first-token deadline remain their recorded deferrals.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

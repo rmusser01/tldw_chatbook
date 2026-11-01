@@ -932,6 +932,18 @@ async def test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_val
         assert _row_copy(screen, "streaming")[0] == "Console Behavior"
         if not seed:
             assert not screen._category_has_unsaved_changes(CONSOLE_BEHAVIOR)
+            # PR3304: this no-save path otherwise exits while the fresh
+            # profile's native FTS backfill is still seeding built-in cards.
+            # Observe that finite owner before teardown; keep the native join
+            # deadline and profile-retirement guards unchanged.
+            await _wait_until(
+                pilot,
+                lambda: (gate := getattr(app, "_boot_worker_gate", None)) is not None
+                and not gate.is_closed
+                and "chachanotes_fts_backfill" not in gate.pending + gate.in_flight,
+                "the initial ChaChaNotes backfill to finish",
+            )
+            assert not screen._category_has_unsaved_changes(CONSOLE_BEHAVIOR)
             return
         await _choose_streaming(pilot, streaming, "true")
         assert _row_copy(screen, "streaming")[0] == "edited *"

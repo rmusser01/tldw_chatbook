@@ -32,7 +32,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     completed_replay_source_revision_id,
     current_turn_source_revision_id,
     frozen_policy_from_provenance,
-    request_route_provenance,
+    stream_fallback_route_provenance,
     saved_response_source_revision_id,
 )
 from tldw_chatbook.Chat.console_trace_repository import (
@@ -184,6 +184,22 @@ class ConsoleTraceBoundaryFactory:
         route: object,
     ) -> ConsoleTraceCallBoundary:
         """Reverify the exact live owner's reservation without allocating a call."""
+        provenance = request.provenance
+        route_identity = getattr(route, "value", None)
+        if route is ConsoleRequestRoute.LLAMA_FALLBACK and provenance is not None:
+            original = next((item for item in provenance.metadata
+                             if type(item) is RequestRouteTraceProvenance), None)
+            if original is not None:
+                projected = stream_fallback_route_provenance(
+                    original, provider=resolution.provider,
+                    execution_key=getattr(resolution, "execution_key", ""),
+                    has_tools=bool(request.tools),
+                )
+                route_identity = projected.route.value
+                provenance = replace(provenance, metadata=tuple(
+                    projected if type(item) is RequestRouteTraceProvenance else item
+                    for item in provenance.metadata
+                ))
         try:
             if (
                 type(boundary) is not ConsoleTraceCallBoundary
@@ -192,7 +208,7 @@ class ConsoleTraceBoundaryFactory:
                 or accepted_preparation is None
                 or boundary._request != request
                 or boundary._resolution != resolution
-                or boundary.admission.route_identity != getattr(route, "value", None)
+                or boundary.admission.route_identity != route_identity
                 or boundary.dispatch_started
                 or boundary._recovery_transferred
                 or boundary.dispatch_outcome == "unknown"
@@ -221,7 +237,7 @@ class ConsoleTraceBoundaryFactory:
                         segment_id=reserved.segment_id,
                         route_identity=boundary.admission.route_identity,
                         preparation_identity=new_opaque_id(),
-                        provenance=request.provenance,
+                        provenance=provenance,
                         values=tuple(request.messages_payload)
                         + tuple(
                             _checkpoint_semantic_value(group.checkpoint)
@@ -298,7 +314,11 @@ class ConsoleTraceBoundaryFactory:
         if requested_route is not None and requested_route != route_identity:
             if route is not ConsoleRequestRoute.LLAMA_FALLBACK:
                 raise ValueError("trace_route_mismatch")
-            fallback_route = request_route_provenance(route)
+            fallback_route = stream_fallback_route_provenance(
+                route_record, provider=_resolution.provider,
+                execution_key=getattr(_resolution, "execution_key", ""),
+                has_tools=bool(request.tools),
+            )
             provenance = replace(
                 provenance,
                 metadata=tuple(

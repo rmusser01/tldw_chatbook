@@ -583,8 +583,9 @@ def chat_call_impl(
                 and attributed is not None
             ):
                 try:
-                    partial_usage = call_signals.usage_snapshot()
-                    partial_count = self._provider_output_count(partial_usage)
+                    partial_count = self._provider_calls_output_count(
+                        call_signals.logical_usage_snapshots()
+                    )
                     if partial_count is not None:
                         self._emit_live_usage(
                             bridge.AgentLiveUsageEvent(
@@ -716,20 +717,33 @@ def chat_call_impl(
         raw_usage_payload = (
             terminal_metadata.usage if terminal_metadata is not None else None
         )
-        if raw_usage_payload is None and call_signals is not None:
-            raw_usage_payload = call_signals.usage_snapshot()
+        legs = (
+            call_signals.logical_usage_snapshots() if call_signals is not None else ()
+        )
+        if len(legs) > 1:
+            raw_usage_payload = bridge._openai_usage_from_provider_calls(
+                legs,
+                provider=effective_resolution.provider,
+                model=effective_resolution.model or model or "",
+            )
+        elif raw_usage_payload is None and legs:
+            raw_usage_payload = legs[0]
         usage = bridge._openai_usage_from_provider_call(
             raw_usage_payload,
             provider=effective_resolution.provider,
             model=effective_resolution.model or model or "",
         )
         if usage is None and call_signals is not None:
-            usage = bridge._openai_usage_from_provider_call(
-                call_signals.usage_snapshot(),
+            usage = bridge._openai_usage_from_provider_calls(
+                legs,
                 provider=effective_resolution.provider,
                 model=effective_resolution.model or model or "",
             )
-        provider_count = self._provider_output_count(raw_usage_payload)
+        provider_count = (
+            self._provider_calls_output_count(legs)
+            if len(legs) > 1
+            else self._provider_output_count(raw_usage_payload)
+        )
     except Exception as exc:  # noqa: BLE001 — observability is never fatal
         usage = None
         provider_count = None

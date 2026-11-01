@@ -690,6 +690,7 @@ ADMISSION_2_TARGETS = (
     # (bootstrap_profile, ten cases, ~12 s) and a mounted Console send that
     # persists one reply with the retry's usage (bootstrap_profile, ~8 s).
     "Tests/Chat/test_console_refused_stream_retry.py",
+    "Tests/Chat/test_self_hosted_retry_accounting.py",
     "Tests/UI/test_console_refused_stream_retry_screen.py",
 )
 

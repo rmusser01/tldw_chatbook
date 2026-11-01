@@ -1370,14 +1370,14 @@ async def test_self_hosted_retry_failure_is_not_chained_to_the_refused_stream() 
 
 
 @pytest.mark.asyncio
-async def test_self_hosted_empty_stream_usage_is_replaced_by_the_retry_usage() -> (
+async def test_self_hosted_empty_stream_and_retry_keep_separate_usage() -> (
     None
 ):
     """TASK-37421 review: two calls' usage is never key-merged.
 
     The empty stream reported its prompt with a cache read; the retry its
-    own prompt and output. The call's usage (what the agent bridge and the
-    trace read) and the turn's bill (the aggregate) are the retry's alone.
+    own prompt and output. Physical traces retain each call; the logical
+    bridge view and aggregate retain both without key-merging cache fields.
     """
     retry_usage = {"prompt_tokens": 50, "completion_tokens": 5, "total_tokens": 55}
 
@@ -1409,8 +1409,11 @@ async def test_self_hosted_empty_stream_usage_is_replaced_by_the_retry_usage() -
     ]
 
     assert items == ["fallback"]
-    assert call_view.usage_snapshot() == retry_usage
-    assert aggregate.usage_payloads() == [retry_usage]
+    first_usage = {"prompt_tokens": 50, "completion_tokens": 0, "total_tokens": 50,
+                   "prompt_tokens_details": {"cached_tokens": 40}}
+    assert call_view.usage_snapshot() == first_usage
+    assert call_view.logical_usage_snapshots() == (first_usage, retry_usage)
+    assert aggregate.usage_payloads() == [first_usage, retry_usage]
 
 
 @pytest.mark.asyncio

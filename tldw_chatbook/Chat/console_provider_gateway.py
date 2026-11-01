@@ -87,6 +87,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceProvenanceAlignmentError,
     TraceProvenance,
     request_route_provenance,
+    stream_fallback_route_provenance,
 )
 from tldw_chatbook.Chat.console_trace_final_values import (
     ProviderOverlayProvenance,
@@ -1149,6 +1150,7 @@ class ConsoleProviderCallSignals:
     # shared across every call this signals object ever makes; this one is
     # per-call and self-clearing, so only the ONE chunk actually generated
     # as fallback UI copy gets labeled, never a later real answer).
+    _retry_call: ConsoleProviderCallSignals | None = field(default=None, init=False, repr=False)
     _synthetic_pending: bool = field(default=False, init=False, repr=False)
     _synthetic_emitted: bool = field(default=False, init=False, repr=False)
 
@@ -1266,41 +1268,26 @@ class ConsoleProviderCallSignals:
             else:
                 self._aggregate._discard_scoped_usage_call(self._token)
 
-    def transfer_usage_to(self, target: "ConsoleProviderCallSignals | None") -> None:
-        """Close this call and make its usage ``target``'s usage instead.
+    def begin_retry_usage_call(self) -> "ConsoleProviderCallSignals":
+        """Finish this physical call and retain its single fallback's view.
 
-        TASK-37421: a non-streaming retry is a call of its own for capture and
-        tracing, but the turn's usage is read from the call it replaced (the
-        agent bridge reads only that view). Publishing here as well would bill
-        the retry twice, so this call's in-flight entry is discarded.
-        ``target``'s usage is REPLACED, never key-merged (two calls' payloads
-        must not merge, see ``usage_payload``): an empty stream that reported
-        its prompt's ``cached_tokens`` would otherwise lend the retry a cache
-        read it never made. The replaced call's own usage is dropped, as its
-        trace call already settles with none.
+        Tokens and capture identities stay attached to their physical calls.
+        The bridge holds this original view; only its logical usage reader
+        follows the fallback. Trace and automatic-budget readers stay physical.
         """
+        self.close_usage_call()
         with self._usage_lock:
-            if self._closed:
-                return
-            self._closed = True
-            payload = (
-                dict(self._usage_payload) if self._usage_payload is not None else None
-            )
-        self._aggregate._discard_scoped_usage_call(self._token)
-        if target is not None:
-            target._replace_usage_payload(payload)
+            if self._retry_call is not None:
+                raise RuntimeError("a fallback call already exists")
+            self._retry_call = self._aggregate.new_usage_call()
+            return self._retry_call
 
-    def _replace_usage_payload(self, payload: Mapping[str, Any] | None) -> None:
+    def logical_usage_snapshots(self) -> tuple[dict[str, Any] | None, ...]:
+        """Return raw physical legs for strict normalization by the bridge."""
         with self._usage_lock:
-            if self._closed or not self._aggregate.accepts_events():
-                return
-            self._usage_payload = dict(payload) if payload is not None else None
-            if self._usage_payload is None:
-                self._aggregate._discard_scoped_usage_call(self._token)
-            else:
-                self._aggregate._record_scoped_usage_call(
-                    self._token, self._usage_payload
-                )
+            payload = dict(self._usage_payload) if self._usage_payload is not None else None
+            retry = self._retry_call
+        return (payload,) if retry is None else (payload, retry.usage_snapshot())
 
     def usage_snapshot(self) -> dict[str, Any] | None:
         """Return a defensive copy of this call's current usage.
@@ -6127,8 +6114,8 @@ class ConsoleProviderGateway:
             or route is not ConsoleRequestRoute.FRESH
         ):
             raise TraceProvenanceAlignmentError("provisional trace admission failed")
-        # ONE invocation of this method == ONE provider call. A turn (agent
-        # runs especially) makes N of them through the SAME signals object,
+        # Each physical call owns a signal view; a local fallback gets a
+        # second view. Turns may share the SAME aggregate signals object,
         # so the in-flight usage payload is closed out here, at the only
         # seam that knows where a call ends -- never in the consumer, which
         # cannot see the boundary at all.
@@ -6242,7 +6229,30 @@ class ConsoleProviderGateway:
                 ),
             )
             capture_off_admission: _ProviderAdapterAdmission | None = None
+            resuming_stream_fallback = False
             if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
+                scope = self._trace_preparation_scope(call_signals)
+                pending = scope.boundary if scope is not None else None
+                if (
+                    pending is not None
+                    and not scope.claimed
+                    and provisional_trace_attempt is None
+                    and route in {ConsoleRequestRoute.FRESH, ConsoleRequestRoute.AGENT_FIRST}
+                    and resolution.execution_key
+                    and not (
+                        resolution.provider in {"llama_cpp", "local_llamacpp"}
+                        and not prepared.tools
+                    )
+                    and getattr(getattr(pending, "admission", None), "route_identity", None)
+                    in {ConsoleRequestRoute.LLAMA_FALLBACK.value, ConsoleRequestRoute.TOOL_LOOP.value}
+                ):
+                    # The original AGENT_FIRST request binding was validated
+                    # above. Resume only its reserved nonstreaming leg; the
+                    # factory still verifies the exact owner, request, incoming
+                    # resolution and route before granting adapter authority.
+                    effective_resolution = replace(effective_resolution, streaming=False)
+                    route = ConsoleRequestRoute.LLAMA_FALLBACK
+                    resuming_stream_fallback = True
                 if provisional_trace_attempt is not None:
                     trace_call_boundary = self._begin_provisional_voice_trace_call(
                         provisional_trace_attempt
@@ -6271,7 +6281,7 @@ class ConsoleProviderGateway:
                     initial_boundary,
                     (),
                     outcome=TraceCallState.ERROR,
-                    usage=None,
+                    usage=call_signals.usage_snapshot() if call_signals is not None else None,
                     signals=call_signals,
                 )
 
@@ -6291,6 +6301,7 @@ class ConsoleProviderGateway:
                         prepared,
                         fallback_resolution,
                         ConsoleRequestRoute.LLAMA_FALLBACK,
+                        signals=call_signals,
                     )
                 else:
                     fallback_boundary = self._begin_provisional_voice_trace_call(
@@ -6751,6 +6762,7 @@ class ConsoleProviderGateway:
                             before_provider_dispatch=before_provider_dispatch,
                             dispatch_purpose=dispatch_purpose,
                             stream_fallback=retries_refused_stream(effective_resolution),
+                            fallback_retry=resuming_stream_fallback,
                         ):
                             observe_response(emission.item, synthetic=emission.synthetic)
                             observe_emission(emission.synthetic)
@@ -6759,53 +6771,35 @@ class ConsoleProviderGateway:
                         # The retry runs after this handler, so its own
                         # failure is not chained to the internal signal.
                         stream_refused = True
-                    if stream_refused:
-                        # TASK-37421: a self-hosted server refused the stream,
-                        # or sent nothing, before any text. Ask once more
-                        # without streaming, as the llama.cpp path does: its
-                        # own traced call and capture, and its usage replacing
-                        # this call's (never merged), so it is billed once.
-                        if call_signals is not None:
-                            call_signals._aggregate.mark_model_retry()
-                            call_signals.close_exchange(status="error")
-                        await settle_failed_stream_call()
-                        reserved = reserve_stream_fallback_call()
-                        fallback_boundary = reserved[0] if reserved else None
-                        retry_signals = (
-                            call_signals._aggregate.new_usage_call()
-                            if call_signals is not None
-                            else None
-                        )
-                        _bind_legacy_capture_to_trace_call(retry_signals, fallback_boundary)
-                        retry_completed = False
-                        try:
-                            async for emission in self._stream_generic_chat(
-                                replace(effective_resolution, streaming=False),
-                                prepared,
-                                signals=retry_signals,
-                                capture_mode=capture_mode,
-                                trace_call_boundary=fallback_boundary,
-                                capture_off_admission=None
-                                if reserved
-                                else self._capture_off_admission(
-                                    ConsoleRequestRoute.LLAMA_FALLBACK
-                                ),
-                                route=ConsoleRequestRoute.LLAMA_FALLBACK,
-                                dispatch_purpose=dispatch_purpose,
-                                fallback_retry=True,
-                            ):
-                                observe_response(
-                                    emission.item, synthetic=emission.synthetic
-                                )
-                                observe_emission(emission.synthetic)
-                                yield emission.item
-                            retry_completed = True
-                        finally:
-                            if retry_signals is not None:
-                                retry_signals.close_exchange(
-                                    status="complete" if retry_completed else "stopped"
-                                )
-                                retry_signals.transfer_usage_to(call_signals)
+                if stream_refused:
+                    # Each physical request owns its own admission, usage,
+                    # trace and exchange. The logical bridge observes both.
+                    if call_signals is not None:
+                        call_signals._aggregate.mark_model_retry()
+                        call_signals.close_exchange(status="error")
+                    await settle_failed_stream_call()
+                    reserved = reserve_stream_fallback_call()
+                    fallback_boundary = reserved[0] if reserved else None
+                    if call_signals is not None:
+                        call_signals = call_signals.begin_retry_usage_call()
+                    _bind_legacy_capture_to_trace_call(call_signals, fallback_boundary)
+                    with _automatic_generation(prepared, call_signals):
+                        async for emission in self._stream_generic_chat(
+                            replace(effective_resolution, streaming=False),
+                            prepared,
+                            signals=call_signals,
+                            capture_mode=capture_mode,
+                            trace_call_boundary=fallback_boundary,
+                            capture_off_admission=None
+                            if reserved
+                            else self._capture_off_admission(ConsoleRequestRoute.LLAMA_FALLBACK),
+                            route=ConsoleRequestRoute.LLAMA_FALLBACK,
+                            dispatch_purpose=dispatch_purpose,
+                            fallback_retry=True,
+                        ):
+                            observe_response(emission.item, synthetic=emission.synthetic)
+                            observe_emission(emission.synthetic)
+                            yield emission.item
                 completed = True
                 return
         except Exception:
@@ -7007,7 +7001,8 @@ class ConsoleProviderGateway:
                 fallback_shadow: dict[str, Any] = {}
                 if fallback_retry and capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
                     provenance = self._provenance_for_route(
-                        request.provenance, ConsoleRequestRoute.LLAMA_FALLBACK
+                        request.provenance, ConsoleRequestRoute.LLAMA_FALLBACK,
+                        resolution=resolution, has_tools=bool(request.tools),
                     )
                     fallback_shadow = {
                         "route": ConsoleRequestRoute.LLAMA_FALLBACK,
@@ -7645,6 +7640,7 @@ class ConsoleProviderGateway:
     def _provenance_for_route(
         provenance: ProviderRequestProvenance | None,
         route: ConsoleRequestRoute,
+        *, resolution: ConsoleProviderResolution | None = None, has_tools: bool = False,
     ) -> ProviderRequestProvenance:
         """Replace the single route descriptor for an internal provider call."""
 
@@ -7660,6 +7656,11 @@ class ConsoleProviderGateway:
                 if route_replaced:
                     raise TraceProvenanceAlignmentError(
                         "provider request trace verification failed"
+                    )
+                if route is ConsoleRequestRoute.LLAMA_FALLBACK and resolution is not None:
+                    descriptor = stream_fallback_route_provenance(
+                        item, provider=resolution.provider,
+                        execution_key=resolution.execution_key or "", has_tools=has_tools,
                     )
                 metadata.append(descriptor)
                 route_replaced = True

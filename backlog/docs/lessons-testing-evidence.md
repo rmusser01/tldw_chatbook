@@ -23590,3 +23590,10 @@ The same repair also produced a mixed-source RED attempt when production edits
 started before the remaining cases finished. That receipt is explicitly
 unqualified. Subsequent campaigns freeze the source and record start/end hashes;
 the independent frozen single-case RED remains the causal omission evidence.
+
+
+## PR3304: physical retry accounting needs real trace and lifecycle owners (2026-11-01)
+
+The streaming-default integration's real Custom/vLLM probes found that an empty generation plus retry shared one automatic admission and discarded first-call usage. Restoring separate physical legs then exposed trace failures hidden by boundary doubles: a new actorless fallback broke tool continuation, and a same-chain retry was rejected by the final generation-settings comparison. Real SQLite/factory tests now cover usage on both calls, accepted-owner rollback recovery, tool work before/after retry, and strict rejection of every change except the verified transport True-to-False transition. A usage-view test alone cannot prove durable accounting or continuation authority.
+
+The unset Settings case also passed its assertions but repeatedly failed the three-second native retirement guard. Content-free thread stacks identified `_backfill_chachanotes_messages_fts` seeding built-in cards while a spend read awaited storage initialization. The no-save early-return path now observes that specific key leaving the existing open boot gate's pending/in-flight sets. Its focused rerun passes teardown without changing the grace period or profile guards. Do not replace this evidence with a broad quiet wait or with suppressing cleanup errors. Receipts and limits: `Docs/superpowers/qa/2026-11-01-pr3304-backlog-integration.md`.

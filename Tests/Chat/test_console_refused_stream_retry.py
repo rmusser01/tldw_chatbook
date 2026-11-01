@@ -74,12 +74,21 @@ class _OpenAICompatibleServer(ThreadingHTTPServer):
         empty_stream: bool = False,
         empty_stream_usage: dict[str, Any] | None = None,
         refuse_all: bool = False,
+        ignore_stream: bool = False,
+        json_tools: bool = False,
+        tool_first: bool = False,
+        tool_on_retry: bool = False,
     ) -> None:
         super().__init__(("127.0.0.1", 0), _Handler)
         self.stream_status = stream_status
         self.empty_stream = empty_stream
         self.empty_stream_usage = empty_stream_usage
         self.refuse_all = refuse_all
+        self.ignore_stream = ignore_stream
+        self.json_tools = json_tools
+        self.tool_first = tool_first
+        self.tool_on_retry = tool_on_retry
+        self.payloads: list[dict[str, Any]] = []
         self.stream_flags: list[bool] = []
 
     @property
@@ -101,8 +110,30 @@ class _Handler(BaseHTTPRequestHandler):
         server = self.server
         assert isinstance(server, _OpenAICompatibleServer)
         payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        server.payloads.append(payload)
         streamed = bool(payload.get("stream"))
         server.stream_flags.append(streamed)
+        if streamed and server.tool_on_retry and len(server.stream_flags) == 3:
+            chunk = {"choices": [{"delta": {"content": _REPLY}}], "usage": _USAGE}
+            self._send(
+                200,
+                "text/event-stream",
+                f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n".encode(),
+            )
+            return
+        if streamed and server.tool_first and len(server.stream_flags) == 1:
+            tool_text = (
+                "```tool_call\n"
+                + json.dumps({"name": "calculator", "arguments": {"expression": "6*7"}})
+                + "\n```"
+            )
+            chunk = {"choices": [{"delta": {"content": tool_text}}], "usage": _USAGE}
+            self._send(
+                200,
+                "text/event-stream",
+                f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n".encode(),
+            )
+            return
         if streamed and server.empty_stream:
             body = b""
             if server.empty_stream_usage is not None:
@@ -119,7 +150,7 @@ class _Handler(BaseHTTPRequestHandler):
             body += b"data: [DONE]\n\n"
             self._send(200, "text/event-stream", body)
             return
-        if streamed or server.refuse_all:
+        if (streamed and not server.ignore_stream) or server.refuse_all:
             body = json.dumps(
                 {
                     "error": {
@@ -139,14 +170,39 @@ class _Handler(BaseHTTPRequestHandler):
                 "choices": [
                     {
                         "index": 0,
-                        "message": {"role": "assistant", "content": _REPLY},
+                        "message": (
+                            {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "local-call",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "calculator",
+                                            "arguments": '{"expression":"1+1"}',
+                                        },
+                                    }
+                                ],
+                            }
+                            if server.json_tools
+                            else {
+                                "role": "assistant",
+                                "content": (
+                                    '```tool_call\n{"name":"calculator","arguments":{"expression":"6*7"}}\n```'
+                                    if server.tool_on_retry
+                                    else _REPLY
+                                ),
+                            }
+                        ),
                         "finish_reason": "stop",
                     }
                 ],
                 "usage": _USAGE,
-            }
+            },
+            indent=2,
         ).encode()
-        self._send(200, "application/json", body)
+        self._send(200, "application/json; charset=utf-8", body)
 
     def _send(self, status: int, content_type: str, body: bytes) -> None:
         self.send_response(status)
@@ -276,9 +332,7 @@ def test_self_hosted_refused_stream_is_retried_once_without_streaming(
 
 @pytest.mark.loopback_network
 @pytest.mark.parametrize("provider", ["custom", "vllm"], ids=lambda p: p)
-def test_self_hosted_empty_stream_is_retried_once_without_streaming(
-    tmp_path, provider
-):
+def test_self_hosted_empty_stream_is_retried_once_without_streaming(tmp_path, provider):
     """A server that accepts ``stream`` but sends no text cannot stream."""
     with _server(empty_stream=True) as server:
         gateway, resolution = _resolve(provider, server.base_url)
@@ -314,16 +368,35 @@ def test_empty_stream_usage_is_not_merged_into_the_retry_usage(tmp_path):
 
     assert outcome.status == "done", _copy(outcome)
     assert server.stream_flags == [True, False]
-    assert outcome.total_tokens == _USAGE["total_tokens"]
     payloads = signals.usage_payloads()
-    assert len(payloads) == 1, payloads
-    assert "prompt_tokens_details" not in payloads[0], payloads
+    assert payloads == [empty_usage, _USAGE]
     usage = ProviderUsage.from_provider_payload(
         payloads[0], provider="custom", model=_MODEL
+    ).plus(
+        ProviderUsage.from_provider_payload(
+            payloads[1], provider="custom", model=_MODEL
+        )
     )
-    assert usage.cache_read == 0
-    assert usage.uncached_input == _USAGE["prompt_tokens"]
-    assert usage.output == _USAGE["completion_tokens"]
+    assert usage.cache_read == 16
+    assert usage.uncached_input == 26
+    assert usage.output == 5
+    assert usage.total_tokens == 47
+    # The agent's weighted budget is not raw token usage. Verify through its
+    # existing strict normalizer and pricing, never by dropping the first leg.
+    from tldw_chatbook.Agents.agent_service import _budget_weighted_tokens
+
+    assert outcome.total_tokens == _budget_weighted_tokens(
+        {
+            "usage": {
+                "prompt_tokens": 42,
+                "completion_tokens": 5,
+                "total_tokens": 47,
+                "prompt_tokens_details": {"cached_tokens": 16},
+            }
+        },
+        provider="custom",
+        model=_MODEL,
+    )
 
 
 @pytest.mark.loopback_network
@@ -401,3 +474,18 @@ def test_cloud_refusal_of_a_request_that_was_not_streamed_does_not_name_streamin
     copy = _copy(outcome)
     assert "400" in copy and "model picker" in copy, copy
     assert _STREAMING_ADVICE not in copy, copy
+
+
+@pytest.mark.loopback_network
+@pytest.mark.parametrize("provider", ["custom", "vllm"])
+def test_whole_json_on_stream_preserves_answer_usage_without_regeneration(
+    tmp_path, provider
+):
+    with _server(ignore_stream=True) as server:
+        gateway, resolution = _resolve(provider, server.base_url)
+        outcome, _store, signals = _run_console_reply(tmp_path, gateway, resolution)
+    assert outcome.status == "done", _copy(outcome)
+    assert outcome.final_text == _REPLY
+    assert server.stream_flags == [True]
+    assert signals.usage_payloads() == [_USAGE]
+    assert outcome.total_tokens == 26

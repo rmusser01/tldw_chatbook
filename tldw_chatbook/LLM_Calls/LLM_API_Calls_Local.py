@@ -346,10 +346,16 @@ def _chat_with_openai_compatible_local_server(
 
             def stream_generator():
                 try:
-                    for line in response.iter_lines(decode_unicode=True):
-                        # Empty control chunks stay invisible while returning
-                        # to the owner so Stop can close a keep-alive-only stream.
-                        yield line + "\n\n" if line.startswith("data:") else ""
+                    if response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() == "application/json":
+                        # Some local servers ignore stream=true. Preserve that
+                        # completed generation (including tools and usage) in
+                        # the same SSE envelope consumed by all local callers.
+                        yield f"data: {json.dumps(response.json())}\n\n"
+                    else:
+                        for line in response.iter_lines(decode_unicode=True):
+                            # Return control even for keep-alives so Stop owns
+                            # closing the response; invisible chunks stay empty.
+                            yield line + "\n\n" if line.startswith("data:") else ""
                 except requests.exceptions.ChunkedEncodingError as e_chunked:
                     logging.error(
                         f"{provider_name}: ChunkedEncodingError during stream: {e_chunked}",
