@@ -142,7 +142,7 @@ _BUDGETS: dict[str, int] = {
     # into app_keep_alive.py).
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
     # PR3342: cohesive worker settlement extraction lowers the combined owner.
-    "tldw_chatbook/app_lifecycle.py": 2113,
+    "tldw_chatbook/app_lifecycle.py": 2098,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
@@ -733,7 +733,7 @@ _BUDGETS: dict[str, int] = {
     # live row count (dead sequences inside the range count too).
     # 2026-10-31, PR3298 user size waiver: +31 to select the completed proof
     # by exact descriptors and its permitted start before full validation.
-    "tldw_chatbook/Chat/console_trace_service.py": 6765,
+    "tldw_chatbook/Chat/console_trace_service.py": 6759,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6054,

@@ -138,6 +138,9 @@ async def _drain_app_unmount_services(
 class LifecycleMixin:
     """``TldwCli``'s lifecycle, shutdown and quit members (moved from ``app.py``)."""
 
+    # The accepted native write is assigned on the app, across disposable screens.
+    console_emergency_stop_write: asyncio.Future[Any] | None = None
+
     @property
     def recovery_service(self):
         """Retain accepted recovery work independently of any navigation view."""
@@ -346,28 +349,10 @@ class LifecycleMixin:
             await client.disconnect_all()
 
     async def _close_local_writing_service(self) -> None:
-        """Release the writing suite's held SQLite connections (TASK-21125).
+        """Close the existing Writing owner off-loop without constructing it."""
+        from .app_shutdown_services import close_local_writing_service
 
-        Peeks the slot rather than reading through any accessor: a service that
-        was never wired must not be constructed purely to close it. A close
-        failure is logged (type name only) and never allowed to abort the rest
-        of unmount.
-
-        Runs on a thread, NOT inline. ``close()`` waits for an autosave still
-        running on a worker thread, and a synchronous call here froze the event
-        loop for the whole settle timeout (measured: 5.00 s during which a 50 ms
-        ticker fired zero times) -- which also starved the very operation it was
-        waiting for.
-        """
-        service = getattr(self, "local_writing_service", None)
-        if service is None:
-            return
-        try:
-            await asyncio.to_thread(service.close)
-        except Exception as exc:
-            self.loguru_logger.error(
-                f"Error closing local writing service: {type(exc).__name__}"
-            )
+        await close_local_writing_service(self)
 
     async def _close_local_research_service(self) -> None:
         """Release the research store's held SQLite connections (TASK-21127).

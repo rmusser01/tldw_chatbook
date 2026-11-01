@@ -6,6 +6,8 @@ only when shutdown actually reaches those phases.
 
 from __future__ import annotations
 
+from typing import Any
+
 
 async def cancel_and_settle_workers(self, phase: str) -> None:
     """Cancel every live worker and actually wait for them, bounded.
@@ -278,3 +280,30 @@ async def _drain_app_unmount_services(
                 raise
     if service_cleanup_primary is not None:
         raise service_cleanup_primary
+
+
+async def close_local_writing_service(self: Any) -> None:
+    """Release the writing suite's held SQLite connections (TASK-21125).
+
+    Peeks the slot rather than reading through any accessor: a service that
+    was never wired must not be constructed purely to close it. A close
+    failure is logged (type name only) and never allowed to abort the rest
+    of unmount.
+
+    Runs on a thread, NOT inline. ``close()`` waits for an autosave still
+    running on a worker thread, and a synchronous call here froze the event
+    loop for the whole settle timeout (measured: 5.00 s during which a 50 ms
+    ticker fired zero times) -- which also starved the very operation it was
+    waiting for.
+    """
+    from tldw_chatbook import app_lifecycle as _owner
+
+    service = getattr(self, "local_writing_service", None)
+    if service is None:
+        return
+    try:
+        await _owner.asyncio.to_thread(service.close)
+    except Exception as exc:
+        self.loguru_logger.error(
+            f"Error closing local writing service: {type(exc).__name__}"
+        )

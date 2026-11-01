@@ -43,7 +43,8 @@ class _Screen:
     def __init__(self) -> None:
         self.notices: list[str] = []
         self.app_instance = SimpleNamespace(
-            notify=lambda message, **_kwargs: self.notices.append(str(message))
+            console_emergency_stop_write=None,
+            notify=lambda message, **_kwargs: self.notices.append(str(message)),
         )
         self.drafts_cleared = 0
 
