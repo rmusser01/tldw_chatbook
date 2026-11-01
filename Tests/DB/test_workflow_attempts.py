@@ -282,7 +282,7 @@ def test_private_custody_issues_once_after_exact_live_owner_acceptance(workflow)
 
     from tldw_chatbook.Chat.console_workflow_runs import _accept_workflow_phase
 
-    db, snap, _ = workflow
+    db, snap, clock = workflow
     a = prepare(db, snap)
     session = SimpleNamespace(
         id="session", persisted_conversation_id=snap.request.conversation_id
@@ -302,6 +302,32 @@ def test_private_custody_issues_once_after_exact_live_owner_acceptance(workflow)
     )
     authorization = _accept_workflow_phase(controller, a.id, session_id="session")
     assert authorization.context.check().chain_id == snap.chain_id
+    from Tests.Agents.test_tool_catalog import FakeCatalogProvider
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+
+    registry = ToolCatalogRegistry()
+    provider = FakeCatalogProvider(count=1)
+    invoke = provider.invoke
+    observed = []
+
+    def effect(*args):
+        clock[:] = [100005.0, 99005.0]
+        observed.append(db.automatic_work.workflow_active_seconds(snap.id))
+        return invoke(*args)
+
+    provider.invoke = effect
+    registry.register_provider(provider)
+    clock[:] = [1010.0, 10.0]
+    assert db.automatic_work.quiesce_workflow_phase(
+        a.id, owner_id="owner", drained=True
+    )
+    clock[:] = [100000.0, 99000.0]
+    authorization.context.check()
+    assert db.automatic_work.workflow_active_seconds(snap.id) == 10
+    with authorization.context.scope():
+        registry.invoke_by_name("t0", {})
+    assert observed == [15]
+
     assert _accept_workflow_phase(controller, a.id, session_id="session") is None
     controller.store.sessions = lambda: [
         SimpleNamespace(
@@ -386,3 +412,162 @@ def test_recovery_rejects_corrupt_workflow_admission_links(workflow, damage):
                 (float("inf"),),
             )
         assert validate_workflow_rows(conn)
+
+
+def _accepted_planning(db, tmp_path):
+    from Tests.Agents.workflow_support import make_workflow_request
+
+    snap = db.workflow_runs.create(
+        make_workflow_request(tmp_path), launch_id="planning"
+    )
+    phase = db.automatic_work.prepare_workflow_planning(
+        snap.id, owner_id="owner", session_id="session", command_id="plan-command"
+    )
+    db.automatic_work.accept_workflow_phase(phase.id, owner_id="owner")
+    return snap, phase
+
+
+@pytest.mark.parametrize("outcome", ["failed", "cancelled"])
+def test_unsuccessful_planning_settles_without_publishing_or_refilling(
+    workflow, tmp_path, outcome
+):
+    db, _, clock = workflow
+    snap, phase = _accepted_planning(db, tmp_path)
+    if outcome == "cancelled":
+        db.workflow_runs.set_status(
+            snap.id, status="paused", expected_control_revision=1
+        )
+    token = (
+        db.automatic_work.admit_call(
+            snap.chain_id,
+            call_id="planning-call",
+            owner_id="owner",
+            input_tokens=2,
+            output_tokens=3,
+        )
+        if outcome == "failed"
+        else None
+    )
+    if token:
+        db.automatic_work.settle(token, owner_id="owner", actual_amount=4)
+    clock[:] = [1010.0, 10.0]
+    assert not db.automatic_work.settle_workflow_phase(
+        phase.id, owner_id="owner", drained=False, outcome=outcome
+    )
+    before = db.workflow_runs.get(snap.id)
+    assert db.automatic_work.settle_workflow_phase(
+        phase.id, owner_id="owner", drained=True, outcome=outcome
+    )
+    assert not db.automatic_work.settle_workflow_phase(
+        phase.id, owner_id="owner", drained=True, outcome=outcome
+    )
+    after = db.workflow_runs.get(snap.id)
+    assert after.plans == () and after.control_revision == before.control_revision
+    assert after.accounting.used == before.accounting.used
+    assert after.accounting.used["generation"] == 1
+    stored = db.automatic_work.read_workflow_attempt(phase.id, owner_id="owner")
+    assert stored.state == "completed" and stored.outcome == outcome
+    clock[:] = [100000.0, 99000.0]
+    assert db.automatic_work.workflow_active_seconds(snap.id) == 10
+    db.workflow_runs.set_status(
+        snap.id, status="stopped", expected_control_revision=after.control_revision
+    )
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT status,retirement,result_bytes FROM workflow_phase_attempts WHERE native_attempt_id=?",
+            (phase.id,),
+        ).fetchone()
+        assert tuple(row) == (
+            "closed" if outcome == "cancelled" else "failed",
+            "drained",
+            0,
+        )
+
+
+def test_failed_planning_settlement_failure_retains_capacity_and_open_clock(
+    workflow, tmp_path
+):
+    import sqlite3
+
+    db, _, clock = workflow
+    snap, phase = _accepted_planning(db, tmp_path)
+    with db.connection() as conn:
+        conn.execute(
+            "CREATE TEMP TRIGGER reject_failure BEFORE UPDATE OF status ON workflow_phase_attempts WHEN NEW.status='failed' BEGIN SELECT RAISE(ABORT,'reject settlement'); END"
+        )
+    clock[:] = [1010.0, 10.0]
+    with pytest.raises(sqlite3.IntegrityError, match="reject settlement"):
+        db.automatic_work.settle_workflow_phase(
+            phase.id, owner_id="owner", drained=True, outcome="failed"
+        )
+    clock[:] = [1020.0, 20.0]
+    assert db.automatic_work.workflow_active_seconds(snap.id) == 20
+    assert (
+        db.automatic_work.read_workflow_attempt(phase.id, owner_id="owner").state
+        == "accepted"
+    )
+    with db.connection() as conn:
+        assert (
+            conn.execute(
+                "SELECT result_bytes FROM workflow_phase_attempts WHERE native_attempt_id=?",
+                (phase.id,),
+            ).fetchone()[0]
+            == 131072
+        )
+
+
+def test_failed_planning_cannot_publish_stale_plan(workflow, tmp_path):
+    import json
+
+    from Tests.Agents.workflow_support import plan_data
+    from tldw_chatbook.Agents.workflow_models import WorkflowPlan
+
+    db, _, _ = workflow
+    snap, phase = _accepted_planning(db, tmp_path)
+    db.workflow_runs.set_status(snap.id, status="paused", expected_control_revision=1)
+    plan = WorkflowPlan.model_validate_json(json.dumps(plan_data(tmp_path)))
+    with pytest.raises(ValueError, match="revision_conflict"):
+        db.automatic_work.settle_workflow_phase(
+            phase.id, owner_id="owner", drained=True, plan=plan
+        )
+    with pytest.raises(ValueError):
+        db.automatic_work.settle_workflow_phase(
+            phase.id, owner_id="owner", drained=True, plan=plan, outcome="cancelled"
+        )
+    assert db.workflow_runs.get(snap.id).plans == ()
+
+
+@pytest.mark.parametrize("outcome", ["failed", "cancelled"])
+def test_unsuccessful_planning_retains_uncertain_usage(workflow, tmp_path, outcome):
+    db, _, clock = workflow
+    snap, phase = _accepted_planning(db, tmp_path)
+    token = db.automatic_work.admit_call(
+        snap.chain_id,
+        call_id="unknown-call",
+        owner_id="owner",
+        input_tokens=2,
+        output_tokens=3,
+    )
+    db.automatic_work.settle(token, owner_id="owner", actual_amount=None)
+    clock[:] = [1010.0, 10.0]
+    with pytest.raises(RuntimeError, match="workflow_not_settled"):
+        db.automatic_work.settle_workflow_phase(
+            phase.id, owner_id="owner", drained=True, outcome=outcome
+        )
+    with pytest.raises((ValueError, RuntimeError), match="owner"):
+        db.automatic_work.settle_workflow_phase(
+            phase.id, owner_id="foreign", drained=True, outcome=outcome
+        )
+    clock[:] = [1020.0, 20.0]
+    assert db.automatic_work.workflow_active_seconds(snap.id) == 20
+    assert (
+        db.automatic_work.read_workflow_attempt(phase.id, owner_id="owner").state
+        == "accepted"
+    )
+    assert db.automatic_work.snapshot(snap.chain_id).reserved["tokens"] == 5
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT retirement,result_bytes FROM workflow_phase_attempts WHERE native_attempt_id=?",
+            (phase.id,),
+        ).fetchone()
+        assert tuple(row) == ("pending", 131072)

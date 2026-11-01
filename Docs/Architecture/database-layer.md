@@ -85,7 +85,12 @@ payloads and revoked control revisions refuse.
 
 Workflow active time uses one open interval per workflow, charged through physical
 cleanup uncertainty. Positive drain plus durable required results closes an interval;
-planning publication and closure commit atomically. Drained review waits consume no
+planning publication and closure commit atomically. Within-phase quiescence closes
+only a positively drained interval, retaining acceptance and unlaunched claims;
+explicit resume and native provider/child dispatch reopen it transactionally. Planning
+failed/cancelled settlement retains statuses `failed`/`closed`, consumed charges and
+control revision without publishing a plan; only confirmed drain releases unused
+result capacity. Unknown usage refuses closure. Drained review/capacity waits consume no
 time. Foreign open intervals retain uncertainty and conservatively exhaust the
 captured allowance at startup. Goal/fleet absolute deadlines are unchanged. The
 phase coordinator must supply the native physical-drain observation; a logical

@@ -326,3 +326,23 @@ the same precreated run). Its existing commit is the exactly-once launch fence.
 `bind_workflow_task_run` records that exact native run; repeated claims are lookups,
 not permission to launch again. The native scheduling/physical-owner integration
 is a subsequent slice; these APIs do not create another scheduler or executor.
+
+`quiesce_workflow_phase(..., drained=True)` durably closes a capacity wait without
+completing the accepted phase or discarding its claim receipts. Unclaimed and
+reserved-but-unlaunched children do not keep the interval open; dispatched tasks
+need their durable result and positive retirement, and unknown usage refuses closure.
+The coordinator must supply a real native physical-drain observation including tools
+and owned effects. `resume_workflow_phase` rechecks acceptance/control/live ceilings
+before explicit work; native `admit_call` and child-reservation `commit` also reopen
+inside their own FULL dispatch transaction. The tool registry resumes after its live
+custody check and immediately before provider invocation. Polls and task reservations
+do not resume time. No new generation is consumed by resumption.
+
+Planning settlement accepts `outcome="failed"` or `"cancelled"` with no plan after
+positive drain, including after a pause advances control authority. Native attempt
+state `completed` means settled; `WorkflowPhaseAttempt.outcome` distinguishes success,
+failure and cancellation. Existing planning phase statuses map `failed` to failure
+and `closed` to cancellation. This path preserves charges, releases the unused
+planning-result capacity, and changes neither current plan nor workflow control
+revision. Unknown usage keeps the attempt open. Successful planning still requires
+atomic plan publication with the original control-revision CAS.

@@ -2643,6 +2643,10 @@ class ToolCatalogRegistry:
                         return ToolResult.blocked("reviewed tool definition changed")
                 except Exception:  # noqa: BLE001 -- fail closed
                     return ToolResult.blocked("reviewed tool definition unavailable")
+            if automatic is not None and automatic.workflow is not None:
+                automatic.ledger.resume_workflow_phase(
+                    automatic.attempt_id, owner_id=automatic.owner_id
+                )
             return provider.invoke(tool_id, args)
 
         if self._ephemeral:

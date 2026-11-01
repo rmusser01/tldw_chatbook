@@ -317,6 +317,7 @@ class WorkflowPhaseAttempt(WorkflowModel):
     session_id: Identity
     owner_id: Identity
     state: Literal["prepared", "accepted", "completed", "aborted", "review_required"]
+    outcome: Literal["completed", "failed", "cancelled"] | None = None
 
 
 class WorkflowTaskClaim(WorkflowTaskAttempt):

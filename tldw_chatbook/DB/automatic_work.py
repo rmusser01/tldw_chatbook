@@ -16,7 +16,7 @@ from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from tldw_chatbook.Agents.agent_models import TERMINAL_RUN_STATUSES
@@ -298,9 +298,13 @@ class AutomaticWorkLedger:
                 "SELECT 1 FROM workflow_runs WHERE chain_id=?", (root,)
             ).fetchone():
                 return "workflow_phase"
-            return "goal_iteration" if conn.execute(
-                "SELECT 1 FROM goal_runs WHERE chain_id=?", (root,)
-            ).fetchone() else "fleet_wake"
+            return (
+                "goal_iteration"
+                if conn.execute(
+                    "SELECT 1 FROM goal_runs WHERE chain_id=?", (root,)
+                ).fetchone()
+                else "fleet_wake"
+            )
 
     def _check_admission(
         self,
@@ -718,6 +722,7 @@ class AutomaticWorkLedger:
             self._check_admission(
                 conn, chain_id, kind="tokens", amount=amount, limits=limits
             )
+            self._resume_workflow_dispatch(conn, chain_id, owner_id)
             now = self._wall_clock()
             conn.executemany(
                 "INSERT INTO automatic_work_reservations "
@@ -753,6 +758,8 @@ class AutomaticWorkLedger:
             )
             if row["kind"] == "generation":
                 self._start_automatic(conn, chain_id)
+            else:
+                self._resume_workflow_dispatch(conn, chain_id, owner_id)
         return True
 
     def release(self, reservation_id: str, *, owner_id: str) -> bool:
@@ -1574,8 +1581,14 @@ class AutomaticWorkLedger:
                 (self._wall_clock(), attempt_id),
             )
             if kind == "goal_iteration":
-                conn.execute("DELETE FROM goal_payload_reservations WHERE attempt_id=?", (attempt_id,))
-                conn.execute("UPDATE goal_iterations SET status='aborted', revision=revision+1 WHERE attempt_id=?", (attempt_id,))
+                conn.execute(
+                    "DELETE FROM goal_payload_reservations WHERE attempt_id=?",
+                    (attempt_id,),
+                )
+                conn.execute(
+                    "UPDATE goal_iterations SET status='aborted', revision=revision+1 WHERE attempt_id=?",
+                    (attempt_id,),
+                )
         with self._progress_claim_lock:
             for message_id, _ in self._temporary_progress_attempts.get(attempt_id, ()):
                 self._temporary_progress_claims.pop(message_id, None)
@@ -1682,8 +1695,13 @@ class AutomaticWorkLedger:
                 [(chain_id,) for chain_id in chains],
             )
             goals = tuple(
-                (row["id"], row["revision"],
-                 "recovery_required" if row["chain_id"] in chains or row["status"] == "recovery_required" else "paused")
+                (
+                    row["id"],
+                    row["revision"],
+                    "recovery_required"
+                    if row["chain_id"] in chains or row["status"] == "recovery_required"
+                    else "paused",
+                )
                 for row in conn.execute(
                     "SELECT g.* FROM goal_runs g WHERE g.status NOT IN ('completed','removed','closed','stopped','awaiting_result_review') "
                     "AND EXISTS (SELECT 1 FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id WHERE i.goal_id=g.id AND a.state!='aborted')"
@@ -2018,6 +2036,11 @@ class AutomaticWorkLedger:
                 session_id=native["session_id"],
                 owner_id=native["owner_id"],
                 state=native["state"],
+                outcome={
+                    "completed": "completed",
+                    "failed": "failed",
+                    "closed": "cancelled",
+                }.get(phase["status"]),
             )
 
     @staticmethod
@@ -2367,6 +2390,117 @@ class AutomaticWorkLedger:
         with self._db.connection() as conn:
             return self._workflow_active_seconds(conn, workflow_id)
 
+    def _resume_workflow_dispatch(self, conn, chain_id, owner_id) -> bool:
+        """Reopen workflow time inside the same transaction as native dispatch."""
+        root = self._allowance_chain(conn, chain_id)["id"]
+        workflow = conn.execute(
+            "SELECT id FROM workflow_runs WHERE chain_id=?", (root,)
+        ).fetchone()
+        if workflow is None:
+            return False
+        native = conn.execute(
+            "SELECT id FROM automatic_wake_attempts WHERE chain_id=? "
+            "AND attempt_kind='workflow_phase' AND state='accepted'",
+            (root,),
+        ).fetchone()
+        if native is None:
+            raise AutomaticWorkRefused("acceptance_required")
+        self._workflow_current(conn, native["id"], owner_id, accepted=True)
+        already_open = conn.execute(
+            "SELECT 1 FROM workflow_active_intervals WHERE workflow_id=? AND ended_at IS NULL",
+            (workflow["id"],),
+        ).fetchone()
+        self._start_automatic(conn, root)
+        return already_open is None
+
+    def resume_workflow_phase(self, attempt_id: str, *, owner_id: str) -> bool:
+        """Resume attributable tool work after a positively drained capacity wait.
+
+        Native provider admission and child commit also reopen transactionally;
+        polling and reserving an unlaunched child do not resume active time.
+        """
+        attempt = self.read_workflow_attempt(attempt_id, owner_id=owner_id)
+        with self._admission_transaction(attempt.chain_id) as conn:
+            self._workflow_current(conn, attempt_id, owner_id, accepted=True)
+            self._check_admission(
+                conn,
+                attempt.chain_id,
+                kind="generation",
+                limits=AutomaticWorkLimits.from_settings("workflow_phase"),
+            )
+            return self._resume_workflow_dispatch(conn, attempt.chain_id, owner_id)
+
+    def _workflow_unsettled(self, conn, phase, chain_id, *, quiescing=False):
+        # Unclaimed/reserved children have not dispatched. Keep their receipts
+        # through a capacity wait, but require every task for phase completion.
+        task_filter = (
+            "(t.run_id IS NOT NULL OR a.state NOT IN ('reserved','released')) AND "
+            if quiescing
+            else ""
+        )
+        unsettled = conn.execute(
+            "SELECT 1 FROM workflow_task_claims c "
+            "JOIN workflow_task_attempts t ON t.id=c.task_attempt_id "
+            "LEFT JOIN automatic_work_reservations a ON a.id=c.child_reservation_id "
+            "LEFT JOIN workflow_results r ON r.attempt_id=t.id "
+            "WHERE c.phase_attempt_id=? AND "
+            + task_filter
+            + "(c.child_reservation_id IS NULL OR t.retirement!='drained' "
+            "OR t.status NOT IN ('completed','failed') OR r.attempt_id IS NULL) LIMIT 1",
+            (phase["id"],),
+        ).fetchone()
+        reservation_filter = (
+            "AND NOT (r.state='reserved' AND r.kind='child_launch')"
+            if quiescing
+            else ""
+        )
+        return (
+            unsettled
+            or conn.execute(
+                "SELECT 1 FROM automatic_work_reservations r "
+                "JOIN automatic_work_chains c ON c.id=r.chain_id "
+                "WHERE (c.id=? OR c.allowance_root_chain_id=?) "
+                "AND (r.state IN ('reserved','uncertain') OR (r.kind='tokens' AND r.state='committed')) "
+                + reservation_filter
+                + " LIMIT 1",
+                (chain_id, chain_id),
+            ).fetchone()
+        )
+
+    def _close_workflow_interval(self, conn, workflow_id) -> bool:
+        self._workflow_active_seconds(conn, workflow_id, observe=True)
+        return (
+            conn.execute(
+                "UPDATE workflow_active_intervals SET ended_at=? WHERE workflow_id=? AND ended_at IS NULL",
+                (self._wall_clock(), workflow_id),
+            ).rowcount
+            > 0
+        )
+
+    def quiesce_workflow_phase(
+        self, attempt_id: str, *, owner_id: str, drained: bool
+    ) -> bool:
+        """Close only a positively drained wait, retaining acceptance and receipts.
+
+        The native owner must observe physical drain, including tools and owned
+        effects. Terminal task rows alone are not that observation.
+        """
+        if type(drained) is not bool:
+            raise ValueError("invalid drain observation")
+        attempt = self.read_workflow_attempt(attempt_id, owner_id=owner_id)
+        with self.transaction() as conn:
+            self._check_runtime_owner(conn, owner_id)
+            native = self._attempt(conn, attempt_id, owner_id, "workflow_phase")
+            if native["state"] != "accepted" or not drained:
+                return False
+            phase = conn.execute(
+                "SELECT * FROM workflow_phase_attempts WHERE native_attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            if self._workflow_unsettled(conn, phase, attempt.chain_id, quiescing=True):
+                raise AutomaticWorkRefused("workflow_not_settled")
+            return self._close_workflow_interval(conn, attempt.workflow_id)
+
     def settle_workflow_phase(
         self,
         attempt_id: str,
@@ -2374,15 +2508,26 @@ class AutomaticWorkLedger:
         owner_id: str,
         drained: bool,
         plan: WorkflowPlan | None = None,
+        outcome: Literal["completed", "failed", "cancelled"] = "completed",
     ) -> bool:
         """Close only after the owner proves physical drain and required durable results.
 
         The app-owned coordinator supplies its physical-drain observation. Logical
         completion, permission waits and user acknowledgments are not observations.
+        Planning failure/cancellation publishes no plan and does not change control
+        authority. Existing phase statuses failed/closed retain those outcomes.
         """
         if type(drained) is not bool:
             raise ValueError("invalid drain observation")
+        if outcome not in {"completed", "failed", "cancelled"}:
+            raise ValueError("invalid workflow outcome")
         attempt = self.read_workflow_attempt(attempt_id, owner_id=owner_id)
+        if outcome != "completed" and (
+            attempt.purpose != "planning" or plan is not None
+        ):
+            raise ValueError(
+                "only unsuccessful planning may settle without publication"
+            )
         with self.transaction() as conn:
             self._check_runtime_owner(conn, owner_id)
             native = self._attempt(conn, attempt_id, owner_id, "workflow_phase")
@@ -2394,37 +2539,23 @@ class AutomaticWorkLedger:
                 "SELECT * FROM workflow_phase_attempts WHERE native_attempt_id=?",
                 (attempt_id,),
             ).fetchone()
-            unsettled = conn.execute(
-                "SELECT 1 FROM workflow_task_claims c JOIN workflow_task_attempts t ON t.id=c.task_attempt_id LEFT JOIN workflow_results r ON r.attempt_id=t.id WHERE c.phase_attempt_id=? AND (c.child_reservation_id IS NULL OR t.retirement!='drained' OR t.status NOT IN ('completed','failed') OR r.attempt_id IS NULL) LIMIT 1",
-                (phase["id"],),
-            ).fetchone()
-            if (
-                unsettled
-                or conn.execute(
-                    "SELECT 1 FROM automatic_work_reservations WHERE chain_id=? AND (state IN ('reserved','uncertain') OR (kind='tokens' AND state='committed')) LIMIT 1",
-                    (attempt.chain_id,),
-                ).fetchone()
-            ):
+            if self._workflow_unsettled(conn, phase, attempt.chain_id):
                 raise AutomaticWorkRefused("workflow_not_settled")
             if phase["purpose"] == "planning":
-                if plan is None:
+                if outcome == "completed" and plan is None:
                     raise AutomaticWorkRefused("planning_result_missing")
             elif plan is not None:
                 raise ValueError("execution phase cannot publish a plan")
-            self._workflow_active_seconds(conn, attempt.workflow_id, observe=True)
-            conn.execute(
-                "UPDATE workflow_active_intervals SET ended_at=? WHERE workflow_id=? AND ended_at IS NULL",
-                (self._wall_clock(), attempt.workflow_id),
-            )
+            self._close_workflow_interval(conn, attempt.workflow_id)
             conn.execute(
                 "UPDATE automatic_wake_attempts SET state='completed',completed_at=? WHERE id=?",
                 (self._wall_clock(), attempt_id),
             )
             conn.execute(
-                "UPDATE workflow_phase_attempts SET status='completed',retirement='drained',result_bytes=0 WHERE id=?",
-                (phase["id"],),
+                "UPDATE workflow_phase_attempts SET status=?,retirement='drained',result_bytes=0 WHERE id=?",
+                ("closed" if outcome == "cancelled" else outcome, phase["id"]),
             )
-            if phase["purpose"] == "planning":
+            if phase["purpose"] == "planning" and outcome == "completed":
                 self._db.workflow_runs._save_plan(
                     conn,
                     attempt.workflow_id,
