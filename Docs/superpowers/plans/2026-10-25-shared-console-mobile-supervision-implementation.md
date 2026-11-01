@@ -16,7 +16,7 @@
 
 **Baseline:** `8dbf79077b10d5671dabd4f9cbe06ea9c2ee8c15`. This commit contains the approved specification and overflow correction; product implementation has not started. Re-check symbols and schema ceilings after rebasing.
 
-**Status:** Implementation in progress. Tasks 1–7 passed independent task review; targeted evidence and inherited-check limits are recorded in their Backlog records and execution ledger. Tasks 8–11 remain pending. Final shared-mobile qualification and phone/VPN receipt remain open.
+**Status:** Tasks 1–11 are complete. Independent task reviews and final whole-feature review with its one combined correction/scoped rereview are closed at code22bae10d3dd6. Targeted evidence and inherited-check limits remain recorded in Backlog and the execution ledger. Physical phone/VPN qualification remains unverified.
 
 ```text
 ADR required: no
