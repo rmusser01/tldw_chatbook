@@ -3250,6 +3250,12 @@ async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context(
 async def test_notes_handoff_evidence_bundle_reaches_capture_as_real_context(request):
     """Same round trip as the media case, for a Library note handoff."""
     app = _build_test_app()
+
+    async def no_local_discovery(_config):
+        return ()
+
+    # This handoff-only host has no provider connection to discover.
+    app.console_local_server_discovery = no_local_discovery
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(180, 48)) as pilot:
@@ -3284,6 +3290,12 @@ async def test_conversation_handoff_evidence_bundle_reaches_capture_as_real_cont
     conversations) get the same deep, unmocked capture-round-trip proof,
     not just two of the three."""
     app = _build_test_app()
+
+    async def no_local_discovery(_config):
+        return ()
+
+    # This handoff-only host has no provider connection to discover.
+    app.console_local_server_discovery = no_local_discovery
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(180, 48)) as pilot:
