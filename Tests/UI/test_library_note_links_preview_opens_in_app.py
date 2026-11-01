@@ -22,6 +22,7 @@ from Tests.UI.library_note_links_support import (
     WEB,
     WEB_URL,
     _app,
+    _library,
     _armed_editor,
     _click_preview_link,
     _open_note,
@@ -31,7 +32,7 @@ from Tests.UI.library_note_links_support import (
     _title_value,
     _until,
 )
-from Tests.UI.library_quit_guard_support import SIZE, _library, _record_toasts
+from Tests.UI.library_quit_guard_support import SIZE, _record_toasts
 from Tests.UI.test_library_notes_files_sync_journey import (
     _isolate_actor_pack_recovery,  # noqa: F401 - autouse fixture, re-exported
 )

@@ -22457,6 +22457,12 @@ showed the unrelated copy changes. The patch was rebuilt from exact Git bytes
 decoded as UTF-8, all unrelated method/string ASTs were compared again, and the
 intermediate verification runs were excluded from final evidence.
 
+During PR3290 backlog integration (2026-10-31), the same mistake in a follow-up
+test-helper edit changed the expected deleted-note notice while the production
+notice stayed intact. The mouse journey reached its last assertion but timed
+out comparing the corrupted text. Restoring original UTF-8 literals and rerunning
+all three affected link journeys passed; intermediate passes were not reused.
+
 Use explicit `encoding="utf-8"` for repository text reads and writes, including
 small follow-up scripts. For a Unicode-heavy large file, inspect the complete
 diff and compare untouched method/string ASTs before treating targeted green

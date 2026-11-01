@@ -241,3 +241,14 @@ retains actual XML/commands and member hashes. The
 checks the shared paths and conflict resolution; it does not repeat the approved
 product review. Final pushed-head CI and feedback results are recorded in the
 PR description; the successful predecessor is not proof of the rebased result.
+
+
+## 2026-10-31 backlog-clearance integration
+
+Rebased on dev `dcdb2249294c60c5b660011e8d7b0f3c8babb28c`. The owner authorized targeted local tests and independent Superpowers review in place of the hosted CI/Qodo merge gates, and waived size limits. Earlier hosted measurements above remain historical evidence, not a qualification of this head.
+
+All four product blobs match reviewed source `188fe0fc92dfd64ddb70f3fc890919640f77d036`. Integration retains the current YAML tags/timestamp contract, exact output/source/atomicity assertions, all current-dev workflow targets and guards. The census is 1,242 unique entries: all 1,198 dev selections plus 44 source-only additions, with the source's 1,189-entry order intact. The 32-shard/17-concurrent model and timeouts are unchanged; 53 newer selections have no source-model measurement, so no complete current-capacity forecast pass is claimed.
+
+The metadata campaign yielded 246 passes and two obsolete exact-target pins; those pins were corrected and their two checks passed. Native representative checks yielded nine passes and seven setup/oracle failures. Diagnosis corrected real source readiness via bounded Retry/publication, the legacy node's private bootstrap marker, exact Windows path comparison, current Context focus, and export-worker/notification ownership. The export boundary retry passed three cases; the legacy export content control passed. An intermediate helper edit used the Windows default encoding and changed fixture text; those link results are not final evidence. Restoring the exact original UTF-8 constants and rerunning all three link journeys passed, including actual in-app mouse navigation, browser dispatch and deleted-target refusal. No production admission guard, file protection, timeout, or behavior assertion was weakened.
+
+The [integration index](2026-10-28-textual-followups-implementation/backlog-clearance-2026-10-31/integration.json), [raw selected receipts and independent reviews](2026-10-28-textual-followups-implementation/backlog-clearance-2026-10-31/local-receipts.tar.gz), and [partial capacity qualification](2026-10-28-textual-followups-implementation/backlog-clearance-2026-10-31/capacity-partial.json) retain commands, XML, source hashes and intermediate failures. Final independent integration review found no new Critical/Important issue; publication additionally checks exact-head conservation and resolved threads. No full sweep, live-provider replay, release or main promotion was performed.

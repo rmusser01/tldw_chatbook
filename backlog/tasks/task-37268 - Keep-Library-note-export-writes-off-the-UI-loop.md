@@ -14,7 +14,7 @@ references:
 - tldw_chatbook/UI/Screens/library_screen.py
 assignee:
 - '@codex'
-updated_date: 2026-10-29 03:59
+updated_date: 2026-11-01 00:38
 ---
 
 ## Description
@@ -63,6 +63,7 @@ Files: UI/Library_Modules/library_file_export.py, new native responsiveness test
 ADR required:no; existing ADR-033/036/031 retained, with shared CI amendment ADR-103. Independent task review approved with no Critical/Important; root-owned hosted/inventory gates remain explicit.
 
 Shared enrollment conserves all 1140 inherited selectors and adds43 new native cases plus the canonical-class guard (1184 total). ADR-103's existing measured capacity policy is amended to32 serial shards with max-parallel17 and unchanged timeouts/aggregation. QA and portable raw receipts/reviews: Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md. Final Superpowers whole-branch review is approved. Hosted application, Perf Guard and required checks pass on 7c2b8f5aab066035ed9d06f9719a93d184f8e5c3; all44 added selections and the exact existing Notes Escape/Replace case have execution receipts. PR3290 is open against dev. Final delivery rechecks the metadata-only closure head; earlier local failures/qualifications remain historical, not relabeled passes.
+2026-10-31 backlog integration on dev dcdb224929: product source unchanged from188fe0; current YAML tags/timestamp oracles retained. Census1242 conserves1198dev+44PR,53 unmeasured capacity selections remain unqualified. Metadata246pass plus2 corrected exact-target checks; representative native9pass followed by3export retry passes, legacy export pass, and final3link journey passes after restored UTF-8. Bounded real Retry/publication, bootstrap fixture, actual delivered notice, export-worker-only wait, Context focus and full Windows path fixes preserve original behavior/security assertions. Independent integration review no new Critical/Important findings; exact-head publication verification remains root-owned. Hosted CI and size gates waived by owner; targeted tests only. Raw receipts, failed attempts and reviews: Docs/superpowers/qa/2026-10-28-textual-followups-implementation/backlog-clearance-2026-10-31/. No full capacity/platform/provider qualification or release claimed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

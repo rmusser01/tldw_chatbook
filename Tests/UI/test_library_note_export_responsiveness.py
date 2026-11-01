@@ -71,6 +71,17 @@ def _note_host(monkeypatch):
     return app, host
 
 
+async def _wait_for_note_exports(host):
+    """Drain accepted export work without joining replaceable source refreshes."""
+    await asyncio.gather(
+        *(
+            worker.wait()
+            for worker in host.workers
+            if worker.group == "library-note-export"
+        )
+    )
+
+
 async def _ready_note(host, pilot):
     screen = _active_library_screen(host)
     await _wait_for_library_shell(screen, pilot)
@@ -117,6 +128,8 @@ async def test_note_export_dispatches_app_key_before_destination_release(
         destination.write_bytes(PRECIOUS)
     entered, release = threading.Event(), threading.Event()
     dispatch, writer_threads, publications, timeline = [], [], [], []
+    delivered_notices = []
+    real_add_notice = host._notifications.add
     real_write = library_file_export.write_export_text
     real_on_event = host.on_event
     main_thread = threading.get_ident()
@@ -124,6 +137,18 @@ async def test_note_export_dispatches_app_key_before_destination_release(
 
     def mark(event, **detail):
         timeline.append({"event": event, "time": time.monotonic(), **detail})
+
+    def observe_notice(notification):
+        # Retain actual delivery: unrelated workers can outlive the toast.
+        # Forward unchanged so native rendering and expiry still run.
+        result = real_add_notice(notification)
+        delivered_notices.append(notification.message)
+        mark(
+            "notification_delivered",
+            message=notification.message,
+            timeout=notification.timeout,
+        )
+        return result
 
     async def observe_event(event):
         result = await real_on_event(event)
@@ -151,6 +176,7 @@ async def test_note_export_dispatches_app_key_before_destination_release(
         return result
 
     monkeypatch.setattr(host, "on_event", observe_event)
+    monkeypatch.setattr(host._notifications, "add", observe_notice)
     monkeypatch.setattr(library_file_export, "write_export_text", destination_writer)
     try:
         async with host.run_test(size=(160, 45)) as pilot:
@@ -181,7 +207,7 @@ async def test_note_export_dispatches_app_key_before_destination_release(
                     and _note_status(screen) == "Export complete.",
                     message="real Notes export did not complete",
                 )
-                await host.workers.wait_for_complete()
+                await _wait_for_note_exports(host)
                 await pilot.pause()
                 if held:
                     await _wait_for_condition(
@@ -201,17 +227,15 @@ async def test_note_export_dispatches_app_key_before_destination_release(
                     == "complete"
                 )
                 assert screen.focused.id == "library-note-body"
-                success = [
-                    m for m in _notice_messages(host) if "exported successfully" in m
-                ]
-                assert len(success) == 1
+                success = [m for m in delivered_notices if "exported successfully" in m]
+                assert len(success) == 1, timeline
                 assert str(destination).replace("\\", "/") in success[0].replace(
                     "\\", "/"
                 )
                 assert not list(tmp_path.glob(".*.tmp"))
             finally:
                 release.set()
-                await host.workers.wait_for_complete()
+                await _wait_for_note_exports(host)
     finally:
         release.set()
         (tmp_path / "dispatch-timeline.json").write_text(
@@ -347,14 +371,16 @@ async def test_note_export_accepted_write_preserves_changed_result_owner(
                 await _wait_for_condition(
                     pilot,
                     lambda: screen._notes_controller._library_notes_active_region()
-                    == "context",
-                    message="the real Notes context action did not change region",
+                    == "context"
+                    and getattr(screen.focused, "id", None)
+                    == "library-note-context-region",
+                    message="the real Notes context action did not publish its region and focus",
                 )
                 await pilot.pause()
             focus = host.screen.focused
             release.set()
             await asyncio.to_thread(finished.wait)
-            await host.workers.wait_for_complete()
+            await _wait_for_note_exports(host)
             await pilot.pause()
             assert publications == [EXPECTED_MARKDOWN]
             assert app.notes_scope_service.notes == source
@@ -373,7 +399,7 @@ async def test_note_export_accepted_write_preserves_changed_result_owner(
             release.set()
             if entered.is_set():
                 await asyncio.to_thread(finished.wait)
-            await host.workers.wait_for_complete()
+            await _wait_for_note_exports(host)
 
 
 @private_profile_test

@@ -33,6 +33,7 @@ from Tests.UI.library_note_links_support import (
     LISBON,
     TWO,
     _app,
+    _library,
     _info_backlinks,
     _open_note,
     _painted,
@@ -44,7 +45,6 @@ from Tests.UI.library_note_links_support import (
 )
 from Tests.UI.library_quit_guard_support import (
     SIZE,
-    _library,
     _new_blank_note,
     _scaled_autosave,
     _type,

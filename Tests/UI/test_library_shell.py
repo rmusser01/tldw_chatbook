@@ -22909,6 +22909,7 @@ async def test_library_shell_note_export_pushes_file_save_dialog(
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_write_export_file_writes_expected_content(tmp_path):
     """The export write-path (bypassing the dialog UI, which is exercised

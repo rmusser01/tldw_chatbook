@@ -31,6 +31,7 @@ from tldw_chatbook.UI.Library_Modules.screen_constants import (
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.library_quit_guard_support import (
     _armed_editor,
+    _library as _mounted_library,
     _NotesProfile,
     _until,
 )
@@ -82,6 +83,45 @@ def _app(tmp_path):
     app.notes_scope_service = profile.scope_service
     app.notes_service = profile.interop
     return app, profile
+
+
+async def _library(app, pilot):
+    """Enter the link journey only after a healthy, published source snapshot."""
+    screen = await _mounted_library(app, pilot)
+    for _ in range(2):
+        if screen._library_lookup_error is None:
+            break
+        await _until(
+            pilot,
+            lambda: screen._library_lookup_error is None
+            or bool(screen.query("#library-source-retry")),
+            "the real source Retry control",
+        )
+        if screen._library_lookup_error is None:
+            break
+        previous_generation = screen._library_snapshot_state_generation
+        screen.query_one("#library-source-retry", Button).press()
+        await _until(
+            pilot,
+            lambda: screen._library_snapshot_state_generation > previous_generation,
+            "source Retry to publish its completed result",
+        )
+    assert (
+        screen._library_loaded and screen._library_lookup_error is None
+    ), "Notes link setup never obtained a healthy source snapshot"
+    await _until(
+        pilot,
+        lambda: screen._library_loaded
+        and screen._library_lookup_error is None
+        and screen._library_snapshot_rendered_generation
+        == screen._library_snapshot_state_generation
+        and not screen._library_entry_reconcile_dirty
+        and not screen.query("#library-canvas-error")
+        and bool(screen.query("#library-row-browse-notes"))
+        and screen.query_one("#library-row-browse-notes").is_parent_active,
+        "the healthy Library source DOM",
+    )
+    return screen
 
 
 def _record_open_url(monkeypatch, app) -> list[str]:
