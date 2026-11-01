@@ -525,7 +525,7 @@ def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool = False) 
             if summaries and not dry_run:
                 message += f"; earlier effects retained: {'; '.join(summaries)}"
             raise LocalToolError(message) from exc
-        except LocalToolError as exc:
+        except (LocalToolError, OSError) as exc:
             prior = "; ".join(summaries)
             message = f"fs_patch failed: {rel_path}: {exc}"
             if prior and not dry_run:
@@ -580,7 +580,7 @@ def patch_validated_files(
             if summaries and not dry_run:
                 message += f"; earlier effects retained: {'; '.join(summaries)}"
             raise LocalToolError(message) from exc
-        except LocalToolError as exc:
+        except (LocalToolError, OSError) as exc:
             prior = "; ".join(summaries)
             message = f"fs_patch failed: {rel_path}: {exc}"
             if prior and not dry_run:

@@ -4872,7 +4872,7 @@ def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool=False) ->
             if summaries and (not dry_run):
                 message += f"; earlier effects retained: {'; '.join(summaries)}"
             raise LocalToolError(message) from exc
-        except LocalToolError as exc:
+        except (LocalToolError, OSError) as exc:
             prior = '; '.join(summaries)
             message = f'fs_patch failed: {rel_path}: {exc}'
             if prior and (not dry_run):
@@ -4915,7 +4915,7 @@ def patch_validated_files(plans: tuple[PatchFile, ...], *, root: PinnedWorkspace
             if summaries and (not dry_run):
                 message += f"; earlier effects retained: {'; '.join(summaries)}"
             raise LocalToolError(message) from exc
-        except LocalToolError as exc:
+        except (LocalToolError, OSError) as exc:
             prior = '; '.join(summaries)
             message = f'fs_patch failed: {rel_path}: {exc}'
             if prior and (not dry_run):
@@ -5871,4 +5871,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("5699e3c3a851ff607e23375163f4871724ddaac3ed4365444647685657109201")
+BUNDLE_SHA256 = _enter_worker_exchange("031dd750a624f2c86eb50d78678b7ef9e7bc22eb41be9d4a1afe0b59ecb4c36c")

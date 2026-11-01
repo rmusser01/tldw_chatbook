@@ -166,3 +166,93 @@ def test_edit_patch_respects_held_target_lock(tmp_path, operation):
     assert "target is being modified" in frames[-1].error
     assert "digest changed" not in frames[-1].error
     assert target.read_bytes() == b"old\n"
+
+
+@pytest.mark.parametrize(
+    ("backend", "entrypoint"),
+    [("local", "public"), ("local", "pinned"), ("bundle", "pinned")],
+)
+@pytest.mark.parametrize("failure", ["permission", "missing"])
+def test_patch_later_read_io_failure_retains_progress(
+    tmp_path, monkeypatch, backend, entrypoint, failure
+):
+    import builtins
+    import errno
+
+    from tldw_chatbook.Tools.workspace_root_pin import pin_workspace_root
+    from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+
+    for name in ("a.txt", "b.txt"):
+        (tmp_path / name).write_bytes(b"old\n")
+    module = patch_tool_impls if backend == "local" else remote_worker_bundle
+    error = (
+        PermissionError(errno.EACCES, "second target unreadable", "b.txt")
+        if failure == "permission"
+        else FileNotFoundError(errno.ENOENT, "second target disappeared", "b.txt")
+    )
+
+    def fail_second_read(path, *args, **kwargs):
+        if str(path).endswith("b.txt"):
+            if failure == "missing":
+                (tmp_path / "b.txt").unlink()
+            raise error
+        return builtins.open(path, *args, **kwargs)
+
+    monkeypatch.setattr(module, "open", fail_second_read, raising=False)
+    diff = _diff("a.txt") + _diff("b.txt")
+    with pytest.raises(module.LocalToolError) as caught:
+        if entrypoint == "public":
+            module.patch_files(diff, workspace_root=tmp_path)
+        else:
+            chain = capture_directory_chain(tmp_path)
+            with pin_workspace_root(chain.canonical_root, chain) as root:
+                module.patch_validated_files(
+                    module.parse_patch_targets(diff), root=root
+                )
+    assert caught.value.__cause__ is error
+    assert caught.value.__cause__.errno == error.errno
+    assert "b.txt" in str(caught.value)
+    assert "earlier effects retained: patched a.txt" in str(caught.value)
+    assert (tmp_path / "a.txt").read_bytes() == b"new\n"
+    if failure == "permission":
+        assert (tmp_path / "b.txt").read_bytes() == b"old\n"
+    else:
+        assert not (tmp_path / "b.txt").exists()
+
+
+@pytest.mark.parametrize("backend", ["local", "bundle"])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_patch_worker_read_io_failure_reports_only_real_prior_effects(
+    tmp_path, monkeypatch, backend, dry_run
+):
+    import builtins
+    import errno
+
+    for name in ("a.txt", "b.txt"):
+        (tmp_path / name).write_bytes(b"old\n")
+    module = patch_tool_impls if backend == "local" else remote_worker_bundle
+
+    def fail_second_read(path, *args, **kwargs):
+        if str(path).endswith("b.txt"):
+            raise PermissionError(errno.EACCES, "second target unreadable", "b.txt")
+        return builtins.open(path, *args, **kwargs)
+
+    monkeypatch.setattr(module, "open", fail_second_read, raising=False)
+    frames = _worker(
+        tmp_path,
+        "fs_patch",
+        {"diff": _diff("a.txt") + _diff("b.txt"), "dry_run": dry_run},
+        backend,
+    )
+    assert [frame.outcome for frame in frames] == ["admitted", "failure"]
+    assert frames[-1].code == "tool_failure"
+    assert frames[-1].cleanup_proven
+    assert "b.txt" in frames[-1].error
+    assert "second target unreadable" in frames[-1].error
+    if dry_run:
+        assert "earlier effects retained" not in frames[-1].error
+        assert (tmp_path / "a.txt").read_bytes() == b"old\n"
+    else:
+        assert "earlier effects retained: patched a.txt" in frames[-1].error
+        assert (tmp_path / "a.txt").read_bytes() == b"new\n"
+    assert (tmp_path / "b.txt").read_bytes() == b"old\n"
