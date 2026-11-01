@@ -5237,6 +5237,7 @@ class AgentService:
                             "UPDATE workflow_task_attempts SET status='closed',retirement='drained' WHERE id=? AND run_id IS NULL",
                             (authorization.claim.id,),
                         )
+                        self.db.workflow_runs._release_unused_result(conn, authorization.claim.workflow_id, authorization.claim.id)
                 else:
                     self.db.automatic_work.bind_workflow_task_run(
                         authorization.claim.phase_attempt_id,

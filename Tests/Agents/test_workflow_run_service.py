@@ -556,8 +556,11 @@ def test_original_failed_launch_receipt_distinguishes_no_row_and_unknown(
 ):
     from Tests.Agents.test_agent_service import ScriptedChat
     from Tests.Agents.test_workflow_child_launch import _launch, _prepared_service
+    from Tests.DB.test_workflow_evidence_retention import payload_headroom
     from tldw_chatbook.Agents.agent_service import _WorkflowChildLaunchFailed
+    from tldw_chatbook.Agents.workflow_models import RECORD_BYTES
     from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
+    from tldw_chatbook.DB.recovery_workflow_schema import validate_workflow_rows
 
     host = workflow_host
     service = WorkflowRunService(host.db, _history_persistence(host.root))
@@ -577,8 +580,16 @@ def test_original_failed_launch_receipt_distinguishes_no_row_and_unknown(
             "get_run",
             lambda *args: (_ for _ in ()).throw(OSError("database unavailable")),
         )
+    workflow_id = host.authorization.claim.workflow_id
+    before = payload_headroom(host.db, workflow_id, monkeypatch)
     with pytest.raises(_WorkflowChildLaunchFailed) as failed:
         _launch(native, host)
+    after = payload_headroom(host.db, workflow_id, monkeypatch)
+    released = RECORD_BYTES if failure == "no_row" else 0
+    assert tuple(a - b for a, b in zip(after, before, strict=True)) == (
+        released,
+        released,
+    )
     receipt = failed.value.receipt
     assert (
         receipt.failure
@@ -590,6 +601,11 @@ def test_original_failed_launch_receipt_distinguishes_no_row_and_unknown(
     with pytest.raises(_WorkflowChildLaunchFailed) as repeated:
         _launch(native, host)
     assert repeated.value.receipt is receipt
+    assert payload_headroom(host.db, workflow_id, monkeypatch) == after
+    if failure == "no_row":
+        assert service.get(workflow_id).results == ()
+        with host.db.connection() as conn:
+            assert validate_workflow_rows(conn) == ()
     with host.activity.prelaunch(footprint=host.authorization.footprint) as claim:
         assert (claim is not None) is (failure == "no_row")
     if failure == "durable_setup":
@@ -749,3 +765,163 @@ def test_completed_task_handoff_rejects_later_input_change_without_verifiers(tas
     (host.root / "input.txt").write_text("changed after completion")
     with pytest.raises(ValueError, match="stale_task_input"):
         service._fresh_task_result(saved, host.authorization.task)
+
+
+def test_partial_quiescent_recovery_reclaims_only_unused_payload_with_real_published_sibling(
+    task_host, monkeypatch
+):
+    import copy
+
+    from Tests.DB.test_workflow_evidence_retention import payload_headroom
+    from tldw_chatbook.Agents.workflow_models import RECORD_BYTES
+    from tldw_chatbook.DB.recovery_workflow_schema import validate_workflow_rows
+
+    def edit(data, root):
+        sibling = copy.deepcopy(data["phases"][0]["tasks"][0])
+        sibling["id"] = "task-2"
+        data["phases"][0]["tasks"].append(sibling)
+
+    host = task_host(plan_edit=edit)
+    host.owner.finish_root()
+    host.claim.settle(durable=True)
+    service, _receipt, result = _native_result(host)
+    service.checkpoint_task(result, drained=True)
+    before = payload_headroom(host.db, result.workflow_id, monkeypatch)
+    used = service.get(result.workflow_id).accounting.used
+    assert host.db.automatic_work.quiesce_workflow_phase(
+        host.phase.attempt.id, owner_id="owner", drained=True
+    )
+    host.db.automatic_work.recover(current_owner_id="new")
+    after = payload_headroom(host.db, result.workflow_id, monkeypatch)
+    assert tuple(a - b for a, b in zip(after, before, strict=True)) == (
+        RECORD_BYTES,
+        RECORD_BYTES,
+    )
+    saved = service.get(result.workflow_id)
+    assert saved.results == (result,) and saved.accounting.used == used
+    with host.db.connection() as conn:
+        assert [
+            tuple(row)
+            for row in conn.execute(
+                "SELECT t.task_id,r.state FROM workflow_task_attempts t JOIN workflow_payload_reservations r ON r.attempt_id=t.id ORDER BY t.task_id"
+            )
+        ] == [("task-1", "published"), ("task-2", "removed")]
+        assert validate_workflow_rows(conn) == ()
+    host.db.automatic_work.recover(current_owner_id="new")
+    assert payload_headroom(host.db, result.workflow_id, monkeypatch) == after
+    assert service.get(result.workflow_id).results == (result,)
+
+
+def test_native_done_without_approved_verifier_stays_missing_and_blocks_quality_and_next_phase(
+    task_host,
+):
+    import copy
+    import hashlib
+
+    from Tests.Agents.test_agent_service import ScriptedChat, fence
+    from Tests.Agents.test_workflow_child_launch import (
+        _join,
+        _launch,
+        _prepared_service,
+    )
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
+    from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
+    from tldw_chatbook.Chat.console_raw_cli import RawCliRuntime
+
+    runtime = RawCliRuntime(lambda: True)
+    runtime.arm()
+    runtime.grant_model_session("session")
+
+    def edit(data, root):
+        task = data["phases"][0]["tasks"][0]
+        dependent = copy.deepcopy(task)
+        dependent.update(
+            id="task-2", dependencies=["task-1"], inputs=["task-1:source.py"]
+        )
+        data["phases"].append({"id": "phase-2", "tasks": [dependent]})
+        wrapper = root / "verify.sh"
+        wrapper.write_text("#!/bin/bash\ntrue\n")
+        wrapper.chmod(0o700)
+        task["footprint"].append({"path": "verify.sh", "access": "read"})
+        task["expected_checks"] = ["unit-tests"]
+        task["verifiers"] = [
+            {
+                "id": "unit-tests",
+                "executor_tool_id": "shell_exec",
+                "verifier_path": str(wrapper),
+                "verifier_sha256": hashlib.sha256(wrapper.read_bytes()).hexdigest(),
+                "input_paths": ["source.py"],
+            }
+        ]
+
+    host = task_host(
+        mode="exclusive",
+        tools=("shell_exec",),
+        plan_edit=edit,
+        configure=lambda registry, root, binding: registry.register_provider(
+            RawShellToolProvider(
+                runtime=runtime,
+                console_session_id="session",
+                initial_directory=lambda: root,
+            )
+        ),
+    )
+    host.controller.app.raw_cli_runtime = runtime
+    host.owner.finish_root()
+    host.claim.settle(durable=True)
+    service = WorkflowRunService(host.db, _history_persistence(host.root))
+    seed = service.prepare_task_inputs(host.authorization)
+    native, _ = _prepared_service(
+        host,
+        ScriptedChat(
+            [
+                fence("shell_exec", {"command": "true", "shell": "bash"}),
+                "done; unit-tests passed",
+            ]
+        ),
+        seed=seed,
+    )
+    try:
+        receipt = _launch(native, host)
+        _join(host)
+        assert host.db.get_run(receipt.run_id)["status"] == "done"
+        service.bind_native_receipt(host.authorization, receipt)
+        result = WorkflowTaskResult(
+            workflow_id=host.authorization.claim.workflow_id,
+            attempt_id=receipt.attempt_id,
+            run_id=receipt.run_id,
+            status="completed",
+            summary="Model says tests passed",
+            handoff="Complete handoff",
+            checks=(
+                WorkflowCheck(
+                    id="unit-tests",
+                    status="passed",
+                    verifier="unit-tests",
+                    input_manifest="0" * 64,
+                    output_manifest="0" * 64,
+                    exit_code=0,
+                    reason="model_claim",
+                ),
+            ),
+        )
+        saved = service.checkpoint_task(result, drained=True)
+        check = saved.results[0].checks[0]
+        assert check.status == "missing" and check.exit_code is None
+        assert service._checkpoint(saved.id, receipt.attempt_id).verifiers == ()
+        host.db.automatic_work.settle_workflow_phase(
+            host.phase.attempt.id, owner_id="owner", drained=True
+        )
+        quality = service.prepare_quality_review(saved.id, phase_id="phase-1")
+        dependent = service.prepare_decision(saved.id, phase_id="phase-2")
+        for review in (quality, dependent):
+            assert (
+                not review.evidence.ready
+                and review.reason == "native_check_missing_or_stale"
+            )
+            with pytest.raises(ValueError, match="stale_workflow_decision"):
+                service.validate_decision(review)
+        with pytest.raises(ValueError, match="stale_workflow_decision"):
+            service.review_quality(quality, accepted=True)
+    finally:
+        runtime.shutdown()

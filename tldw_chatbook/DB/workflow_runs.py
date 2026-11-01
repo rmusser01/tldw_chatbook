@@ -29,6 +29,8 @@ from tldw_chatbook.Agents.workflow_models import (
 _identity = TypeAdapter(Identity).validate_python
 
 if TYPE_CHECKING:
+    import sqlite3
+
     from .AgentRuns_DB import AgentRunsDB
 
 
@@ -404,6 +406,47 @@ class WorkflowRunsStore:
             ("drained" if drained else "unknown", attempt_id),
         )
 
+    @staticmethod
+    def _closed_without_native_run(
+        conn: sqlite3.Connection, workflow_id: str, attempt_id: str
+    ) -> bool:
+        """Recognize only positively retired, unused original task custody."""
+        return (
+            conn.execute(
+                "SELECT 1 FROM workflow_task_attempts t "
+                "JOIN workflow_task_claims c ON c.task_attempt_id=t.id "
+                "LEFT JOIN automatic_work_reservations a ON a.id=c.child_reservation_id "
+                "WHERE t.id=? AND t.workflow_id=? AND t.status='closed' "
+                "AND t.retirement='drained' AND t.run_id IS NULL "
+                "AND (c.child_reservation_id IS NULL OR a.state IN ('reserved','released')) "
+                "AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.id=c.launch_run_id)",
+                (attempt_id, workflow_id),
+            ).fetchone()
+            is not None
+        )
+
+    @staticmethod
+    def _release_unused_result(
+        conn: sqlite3.Connection, workflow_id: str, attempt_id: str
+    ) -> bool:
+        """Tombstone an unused slot inside its caller's conclusive FULL closure."""
+        if not conn.in_transaction:
+            raise ValueError("workflow_closure_transaction_required")
+        if not WorkflowRunsStore._closed_without_native_run(
+            conn, workflow_id, attempt_id
+        ):
+            return False
+        return (
+            conn.execute(
+                "UPDATE workflow_payload_reservations SET state='removed' "
+                "WHERE attempt_id=? AND workflow_id=? AND state='reserved' "
+                "AND NOT EXISTS (SELECT 1 FROM workflow_results WHERE attempt_id=?) "
+                "AND NOT EXISTS (SELECT 1 FROM workflow_checkpoints WHERE attempt_id=?)",
+                (attempt_id, workflow_id, attempt_id, attempt_id),
+            ).rowcount
+            == 1
+        )
+
     def reserve_result(
         self, workflow_id: str, attempt_id: str, *, bytes: int = RECORD_BYTES
     ) -> WorkflowPayloadReservation:
@@ -545,8 +588,11 @@ class WorkflowRunsStore:
             ).fetchone()
         ):
             raise ValueError("workflow_required_result_missing")
+        unused_tombstones = (
+            conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] >= 27
+        )
         for row in conn.execute(
-            "SELECT a.status,a.run_id,p.workflow_id AS reservation_owner,p.state AS reservation_state,"
+            "SELECT a.id,a.status,a.run_id,p.workflow_id AS reservation_owner,p.state AS reservation_state,"
             "r.workflow_id AS result_owner,r.attempt_id AS result_id FROM workflow_task_attempts a "
             "LEFT JOIN workflow_payload_reservations p ON p.attempt_id=a.id "
             "LEFT JOIN workflow_results r ON r.attempt_id=a.id WHERE a.workflow_id=?",
@@ -570,6 +616,15 @@ class WorkflowRunsStore:
                 )
             elif state == "published":
                 invalid = not result or not required
+            elif state == "removed":
+                invalid = (
+                    result
+                    or required
+                    or not unused_tombstones
+                    or not WorkflowRunsStore._closed_without_native_run(
+                        conn, workflow_id, row["id"]
+                    )
+                )
             else:
                 invalid = (
                     state == "removed"

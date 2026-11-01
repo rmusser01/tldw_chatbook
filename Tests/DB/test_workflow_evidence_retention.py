@@ -167,3 +167,101 @@ def test_actual_historical_catalog_near_bound_payloads_upgrade_without_rewriting
                 )
     finally:
         source.close()
+
+
+def payload_headroom(db, workflow_id, monkeypatch):
+    """Probe actual admission at both capacity ceilings, independently."""
+    from tldw_chatbook.DB import workflow_runs
+
+    available = []
+    for isolated in ("WORKFLOW_BYTES", "TOTAL_BYTES"):
+        with monkeypatch.context() as limits:
+            limits.setattr(workflow_runs, isolated, 2**40)
+            low, high = 0, 2**28
+            with db.connection() as conn:
+                while low < high:
+                    amount = (low + high + 1) // 2
+                    try:
+                        db.workflow_runs._capacity(conn, workflow_id, amount)
+                    except ValueError as exc:
+                        assert str(exc) == "workflow_payload_capacity"
+                        high = amount - 1
+                    else:
+                        low = amount
+            available.append(low)
+    return tuple(available)
+
+
+@pytest.mark.bootstrap_profile
+def test_prepared_recovery_reclaims_unused_payload_capacity_and_keeps_tombstone(
+    tmp_path, monkeypatch
+):
+    from contextlib import closing
+
+    from Tests.DB.test_workflow_runs import planned
+    from tldw_chatbook.Agents import run_log
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.recovery_workflow_schema import validate_workflow_rows
+
+    monkeypatch.setattr(
+        run_log,
+        "_setting",
+        lambda key, default: True if key == "workflow_runs_enabled" else default,
+    )
+    with closing(AgentRunsDB(tmp_path / "unused.db")) as db:
+        snapshot = planned(db, tmp_path)
+        db.automatic_work.recover(current_owner_id="old")
+        db.automatic_work.prepare_workflow_phase(
+            snapshot.id,
+            revision_id=1,
+            phase_id="phase-1",
+            owner_id="old",
+            session_id="s",
+            command_id="prepare",
+        )
+        before = payload_headroom(db, snapshot.id, monkeypatch)
+        used = db.automatic_work.snapshot(snapshot.chain_id).used
+        with db.connection() as conn:
+            tables = (
+                "automatic_work_runtime_owner",
+                "automatic_wake_attempts",
+                "automatic_work_reservations",
+                "workflow_phase_attempts",
+                "workflow_task_attempts",
+                "workflow_payload_reservations",
+            )
+            original = {
+                table: [tuple(row) for row in conn.execute(f"SELECT * FROM {table}")]
+                for table in tables
+            }
+            conn.execute(
+                "CREATE TRIGGER refuse_unused_release BEFORE UPDATE OF state ON workflow_payload_reservations "
+                "WHEN NEW.state='removed' BEGIN SELECT RAISE(ABORT, 'release failed'); END"
+            )
+        with pytest.raises(Exception, match="release failed"):
+            db.automatic_work.recover(current_owner_id="new")
+        with db.connection() as conn:
+            assert original == {
+                table: [tuple(row) for row in conn.execute(f"SELECT * FROM {table}")]
+                for table in tables
+            }
+            conn.execute("DROP TRIGGER refuse_unused_release")
+        assert payload_headroom(db, snapshot.id, monkeypatch) == before
+        db.automatic_work.recover(current_owner_id="new")
+        after = payload_headroom(db, snapshot.id, monkeypatch)
+        assert tuple(a - b for a, b in zip(after, before, strict=True)) == (
+            RECORD_BYTES,
+            RECORD_BYTES,
+        )
+        assert db.workflow_runs.get(snapshot.id).results == ()
+        assert db.automatic_work.snapshot(snapshot.chain_id).used == used
+        with db.connection() as conn:
+            assert tuple(
+                conn.execute(
+                    "SELECT t.status,t.retirement,t.run_id,r.state FROM workflow_task_attempts t JOIN workflow_payload_reservations r ON r.attempt_id=t.id"
+                ).fetchone()
+            ) == ("closed", "drained", None, "removed")
+            assert validate_workflow_rows(conn) == ()
+        db.automatic_work.recover(current_owner_id="new")
+        assert payload_headroom(db, snapshot.id, monkeypatch) == after
+        assert db.workflow_runs.get(snapshot.id).status == "awaiting_resume"

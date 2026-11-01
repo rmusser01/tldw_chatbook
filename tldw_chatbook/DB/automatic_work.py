@@ -1707,6 +1707,8 @@ class AutomaticWorkLedger:
                 "UPDATE workflow_task_attempts SET status='closed',retirement='drained' WHERE run_id IS NULL AND id IN (SELECT task_attempt_id FROM workflow_task_claims WHERE phase_attempt_id=?)",
                 (phase["phase_row"],),
             )
+            for task in tasks:
+                WorkflowRunsStore._release_unused_result(conn, phase["workflow_id"], task["id"])
             conn.execute(
                 "UPDATE workflow_runs SET status='awaiting_resume',control_revision=control_revision+1 WHERE id=? AND status NOT IN ('removed','closed','completed','stopped')",
                 (phase["workflow_id"],),
