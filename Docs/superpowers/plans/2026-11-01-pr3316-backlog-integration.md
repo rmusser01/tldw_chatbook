@@ -1,0 +1,28 @@
+# PR3316 backlog integration plan
+
+> For agentic workers: use superpowers:executing-plans inline and superpowers:requesting-code-review for independent final review.
+
+Goal: integrate the existing preflight and superseded-run cleanup implementation while preserving every current-dev lane, guard and verdict.
+Architecture: retain the checkout-free cleanup job and preflight graph from TASK-37800; reconcile them onto dev after the older PR3315 merges.
+Tech Stack: GitHub Actions, Python/pytest/PyYAML, Node inline-script tests.
+Spec: Docs/superpowers/specs/2026-10-29-ci-preflight-and-superseded-runs.md.
+
+ADR required: no additional ADR beyond the source amendments.
+ADR paths: backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md; backlog/decisions/218-in-repo-merge-queue.md.
+Reason: source already records the CI ordering and bounded cancellation policy.
+
+## Constraints and review focus
+- Source head 1a536c706c42efbcc63340d603d66061fb19accc is OPEN/non-draft/unarmed. Refresh immediately before action.
+- Preserve current-dev 32 UI shards, max-parallel17, all seven application lane definitions, installs, selectors, timeouts and UAT steps; only add their preflight dependency.
+- Keep all13 moved artifact guards byte-equivalent in parsed YAML and retain report-all-failures conditions.
+- Missing/changed PR or run identity must never authorize cancellation; preserve current-head evidence and any controller/verdict work.
+- User waived hosted CI and size limits; report hosted scheduling/cancellation/throughput as unqualified, never as measured.
+- No full suite, manual required-workflow dispatch, release or main promotion. Drafts and PR3267/3297 excluded.
+
+## Execution
+- [ ] Refresh dev after PR3315 merge, record its exact SHA, then rebase source while retaining both lesson sets and newer workflow/tests/ADRs.
+- [ ] Compare parsed application jobs against exact base after removing only new needs. Compare moved guard steps; verify all32 shards and UAT selectors survive.
+- [ ] Run the focused queue/workflow/preflight/cancellation contracts from the initial review, excluding only unchanged exhaustive shard redistribution. Run actual13 artifact guards and the two selector checks with pinned Mermaid reproduction using LF Git bytes.
+- [ ] Diagnose failures against exact base; preserve guards and evidence. Run scoped AST/lint/diff checks.
+- [ ] Record QA and task evidence with hosted limits, commit, obtain independent immutable-head review, then exact-lease publish and authorized merge after refreshed eligibility/threads.
+- [ ] Confirm actual merge and identical branch-protection restoration before next backlog item.

@@ -13,7 +13,7 @@ references:
 - Docs/superpowers/specs/2026-10-29-ci-preflight-and-superseded-runs.md
 - backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md
 - backlog/decisions/218-in-repo-merge-queue.md
-updated_date: 2026-10-30 06:01
+updated_date: 2026-11-01 11:42
 ---
 
 ## Description
@@ -34,8 +34,8 @@ Reduce avoidable runner contention observed with 17 armed PRs and hundreds of qu
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes (amend existing decisions). ADR path: backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md and backlog/decisions/218-in-repo-merge-queue.md. Reason: CI ordering and narrowly scoped cancellation authority. Follow Docs/superpowers/plans/2026-10-29-ci-preflight-and-superseded-runs.md: test the actual cleanup script before implementing its isolated synchronize job; add failing preflight graph and aggregate contracts; move all artifact guards and static selector validation ahead of unchanged lanes; run targeted checks and independent review; record local and hosted evidence separately.
+2026-11-01 backlog integration follows Docs/superpowers/plans/2026-11-01-pr3316-backlog-integration.md. Retain current-dev 32 UI shards, every existing lane, selector, install, timeout, UAT step and guard. Rebase after PR3315 merges, run targeted CI contracts and artifact guards, obtain requesting-code-review on the final head, then merge under the explicit hosted-CI waiver. Live PR is non-draft; historical draft delivery note is superseded by current user scope. Hosted cancellation effectiveness and throughput remain unqualified. ADR required: no new decision beyond existing ADR103/ADR218 source amendments.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
