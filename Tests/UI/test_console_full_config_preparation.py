@@ -80,6 +80,7 @@ def _full_screen(screen, monkeypatch):
         "_start_console_attach_reconciliation",
     ):
         setattr(screen, name, no_op)
+    screen._sync_console_temporary_chip = lambda: False
     screen._sync_console_native_session_tabs = async_no_op
     screen._sync_native_console_transcript = async_no_op
     screen._sync_console_control_bar_under_config = lambda _rail: effects.append("rail")

@@ -514,6 +514,7 @@ async def cold_full_schedules_its_pending_replay():
         _reconcile_h3_image_edit_completions=lambda *_: None,
     )
     owner._sync_console_chat_core_state = lambda: None
+    owner._sync_console_temporary_chip = lambda: False
     owner._session._sync_console_session_draft = lambda: None
 
     async def settled():

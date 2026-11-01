@@ -190,6 +190,116 @@ async def test_preparing_changed_source_after_original_tab_await_replays_full(
         held, results, calls = {}, [], []
         active_full = {}
         original = console._sync_console_chat_core_state
+        hold_started = None
+        timeline, timeline_dropped = [], 0
+        observed_timer_task = timer._task
+
+        def observe_hold(kind, label, frame, value):
+            nonlocal timeline_dropped
+            owner = frame.f_locals.get("self")
+            if owner is not console and owner is not surface:
+                return
+            if (
+                label in {"record", "source"}
+                and kind != sys.monitoring.events.PY_RETURN
+            ):
+                return
+            if len(timeline) == 512:
+                timeline_dropped += 1
+                return
+            parent = (
+                _transition_parent(frame, full_code, console)
+                if label == "surface"
+                else None
+            )
+            is_waiter = type(value) is asyncio.Future and any(
+                waiter is value for waiter in (lock._waiters or ())
+            )
+            timeline.append(
+                (
+                    round((asyncio.get_running_loop().time() - hold_started) * 1000),
+                    label,
+                    {
+                        sys.monitoring.events.PY_START: "start",
+                        sys.monitoring.events.PY_YIELD: "yield",
+                        sys.monitoring.events.PY_RETURN: "return",
+                    }[kind],
+                    frame.f_lineno,
+                    asyncio.current_task() is observed_timer_task,
+                    value is record if label == "record" else value is True,
+                    frame.f_locals.get("poll_record") is record,
+                    parent is not None and parent.f_locals.get("poll_record") is record,
+                    is_waiter,
+                    is_waiter and not value.done(),
+                )
+            )
+
+        def hold_failure():
+            def task_state(task):
+                if task is None:
+                    return {"present": False}
+                error = getattr(task, "_exception", None)
+                waiter = getattr(task, "_fut_waiter", None)
+                return {
+                    "present": True,
+                    "done": task.done(),
+                    "cancelled": task.cancelled(),
+                    "error_type": None if error is None else type(error).__name__,
+                    "surface_waiter": any(
+                        item is waiter for item in (lock._waiters or ())
+                    ),
+                }
+
+            now = asyncio.get_running_loop().time()
+            details = {
+                "hold_elapsed_ms": round((now - hold_started) * 1000),
+                "setup_budget_remaining_ms": round((setup_deadline - now) * 1000),
+                "setup_remaining_at_hold_ms": round(
+                    (setup_deadline - hold_started) * 1000
+                ),
+                "probe_entered": case.probe.entered.is_set(),
+                "probe_release_requested": case.probe.release.is_set(),
+                "probe_release_timed_out": case.probe.release_timed_out,
+                "probe_thread_alive": (
+                    case.probe.thread is not None and case.probe.thread.is_alive()
+                ),
+                "probe_physically_retired": case.probe.retired(),
+                "timer_same": console._console_transcript_sync_timer is timer,
+                "timer_task_same": timer._task is observed_timer_task,
+                "timer_active": timer._active.is_set(),
+                "timer_task": task_state(observed_timer_task),
+                "current_timer_task": task_state(timer._task),
+                "record_task": task_state(record.task),
+                "record_still_custodied": any(
+                    item is record for item in case.runtime._turn_custody.values()
+                ),
+                "screen_closing": console._closing,
+                "screen_closed": console._closed,
+                "runtime_disposed": case.runtime._disposed,
+                "maintenance_paused": vars(console).get(
+                    "_console_sync_maintenance_paused", False
+                ),
+                "attach_reconciled": console._console_attach_reconciled,
+                "attach_running": console._console_attach_reconcile_running,
+                "sync_in_progress": console._console_sync_in_progress,
+                "sync_requested": console._console_sync_requested,
+                "whole_replay": vars(console).get(
+                    "_console_control_bar_replay_whole_sync", False
+                ),
+                "tab_calls": console._console_session_tabs_sync_calls,
+                "completed_source_present": console._console_completed_full_source
+                is not None,
+                "lock_owned_by_test": owned_lock,
+                "lock_locked": lock.locked(),
+                "lock_waiters": len(lock._waiters or ()),
+                "lock_pending_waiters": sum(
+                    not item.done() for item in (lock._waiters or ())
+                ),
+                "timeline": timeline,
+                "timeline_dropped": timeline_dropped,
+            }
+            record_property("preparing_tab_hold_failure", details)
+            return details
 
         def custom(self):
             assert self is console
@@ -197,6 +307,7 @@ async def test_preparing_changed_source_after_original_tab_await_replays_full(
             return original()
 
         def observe(kind, label, frame, value):
+            observe_hold(kind, label, frame, value)
             if label == "surface" and frame.f_locals.get("self") is surface:
                 if kind == sys.monitoring.events.PY_YIELD and not held:
                     full = _transition_parent(frame, full_code, console)
@@ -268,6 +379,7 @@ async def test_preparing_changed_source_after_original_tab_await_replays_full(
         assert type(lock) is asyncio.Lock and not lock.locked()
         await lock.acquire()
         owned_lock = True
+        hold_started = asyncio.get_running_loop().time()
         try:
             with (
                 monkeypatch.context() as changed,
@@ -275,11 +387,14 @@ async def test_preparing_changed_source_after_original_tab_await_replays_full(
                     [
                         ("surface", ConsoleSessionSurface, "sync_sessions"),
                         ("full", ChatScreen, "_sync_native_console_chat_ui"),
+                        ("record", controls, "preparing_poll_record"),
+                        ("source", controls, "poll_source_is_current"),
                     ],
                     observe,
                 ),
             ):
-                assert await _until(lambda: bool(held), 5)
+                found_hold = await _until(lambda: bool(held), 5)
+                assert found_hold, hold_failure()
                 _assert_original_configuration_custody(case)
                 assert not console._console_sync_requested
                 changed.setattr(
