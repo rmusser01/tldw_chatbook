@@ -515,6 +515,12 @@ class RawShellToolProvider:
             return ToolResult(ok=False, error=f"Unknown raw shell tool: {name}")
         run_id = current_run_id()
         call_id = current_tool_call_id() or RAW_SHELL_TOOL_NAME
+        from .workflow_task_scope import check_task_provider
+
+        try:
+            check_task_provider(self, tool_id, dict(args))
+        except Exception:  # noqa: BLE001 - authority failures must refuse
+            return ToolResult.blocked("workflow task scope refused")
         try:
             request = self._validated_request(
                 args,
@@ -581,6 +587,10 @@ class RawShellToolProvider:
                     request.invocation_id
                 )
                 callbacks["admission_scope"] = check_execution.admission_scope
+            try:
+                check_task_provider(self, tool_id, dict(args))
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                return ToolResult.blocked("workflow task scope refused")
             result = self._runtime.execute(
                 request,
                 lambda event: self._emit_progress(run_id, call_id, event),

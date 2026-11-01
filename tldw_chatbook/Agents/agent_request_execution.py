@@ -604,6 +604,9 @@ def make_invoke_tool(
     actor = run_actor or runtime.CurrentRunActor("primary", run_id, None)
 
     owner = current_execution_owner()
+    from .workflow_task_scope import current_task_authorization
+
+    task_authorization = current_task_authorization()
 
     def invoke_tool(call: ToolCall) -> ToolResult:
         if config.review_binding is not None and call.name not in {
@@ -629,7 +632,16 @@ def make_invoke_tool(
         def _invoke() -> ToolResult:
             from .automatic_work_runtime import current_automatic_work
 
-            with runtime.use_run_actor(actor), runtime.use_tool_call_id(call.call_id):
+            with (
+                runtime.use_run_actor(actor),
+                runtime.use_tool_call_id(call.call_id),
+                task_authorization.scope()
+                if task_authorization
+                else runtime.contextlib.nullcontext(),
+                owner.activate()
+                if task_authorization and owner
+                else runtime.contextlib.nullcontext(),
+            ):
                 automatic_work = current_automatic_work()
                 if automatic_work is not None:
                     from .automatic_work_budget import AutomaticWorkRefused

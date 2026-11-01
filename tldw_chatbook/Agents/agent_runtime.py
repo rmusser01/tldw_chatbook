@@ -2400,15 +2400,25 @@ def run_agent_loop(
             )
         load_call_count = sum(call.name == LOAD_TOOLS_NAME for call in calls)
         load_batch_exclusive = load_call_count == 1 and len(calls) == 1
+        from .workflow_task_scope import check_current_task_call
 
-        if deps.prepare_tool_calls is not None and calls:
+        workflow_refusals: dict[int, str] = {}
+        scoped_calls = []
+        for call in calls:
+            try:
+                check_current_task_call(call)
+                scoped_calls.append(call)
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                workflow_refusals[id(call)] = "workflow task scope refused"
+
+        if deps.prepare_tool_calls is not None and scoped_calls:
             preparation = ToolBatchPreparation("proceed")
             try:
                 if deps.project_instruction_payload_state is not None:
                     deps.project_instruction_payload_state.capture(
                         messages, tuple(active), calls
                     )
-                preparation = deps.prepare_tool_calls(list(calls))
+                preparation = deps.prepare_tool_calls(scoped_calls)
                 if not isinstance(preparation, ToolBatchPreparation):
                     raise TypeError("invalid tool batch preparation")
             except Exception:  # noqa: BLE001 - content-free fail-open boundary
@@ -2450,12 +2460,21 @@ def run_agent_loop(
         # makes every `.get(name, "proceed")` lookup below resolve to
         # "proceed" -- the exact same dispatch path as before this hook
         # existed, so absent-hook behavior stays byte-identical.
-        hook_preparation_refusals: dict[int, str] = {}
+        hook_preparation_refusals: dict[int, str] = dict(workflow_refusals)
+
+        for call in calls:
+            try:
+                check_current_task_call(call)
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                hook_preparation_refusals[id(call)] = "workflow task scope refused"
         if deps.prepare_hook_call is not None:
             prepared_calls = []
             for call in calls:
                 try:
+                    check_current_task_call(call)
                     prepared = deps.prepare_hook_call(call)
+                    if not isinstance(prepared, ToolResult):
+                        check_current_task_call(prepared)
                     if isinstance(prepared, ToolResult):
                         if (
                             prepared.ok
@@ -2542,6 +2561,12 @@ def run_agent_loop(
                     call.call_id: "hook: tool guard failed; failing closed"
                     for call in review_calls
                 }
+
+        for call in review_calls:
+            try:
+                check_current_task_call(call)
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                guard_refusals[call.call_id] = "workflow task scope refused"
 
         if deps.accept_hook_preparation is not None:
             for call, review_call in zip(calls, review_calls):
@@ -2937,6 +2962,10 @@ def run_agent_loop(
                     publish_output if deps.on_tool_activity is not None else None
                 )
                 dispatch_refused = False
+                try:
+                    check_current_task_call(call)
+                except Exception:  # noqa: BLE001 - authority failures must refuse
+                    dispatch_refused = True
                 if deps.validate_hook_dispatch is not None:
                     try:
                         deps.validate_hook_dispatch(call)

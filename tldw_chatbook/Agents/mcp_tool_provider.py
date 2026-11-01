@@ -2012,6 +2012,8 @@ class MCPToolProvider:
         future: concurrent.futures.Future | None = None
         execution_coroutine = None
         automatic_work = None
+        task_authorization = None
+        task_effect_started = False
         observation = MCPDispatchObservation()
         execution_completed = threading.Event()
         result_currentness = None
@@ -2022,6 +2024,25 @@ class MCPToolProvider:
         )
         try:
             from .automatic_work_runtime import current_automatic_work
+            from .execution_capacity import current_execution_owner
+            from .run_context import current_run_actor, use_run_actor
+            from .workflow_task_scope import (
+                check_task_provider,
+                current_task_authorization,
+            )
+
+            task_authorization = current_task_authorization()
+            task_owner = current_execution_owner()
+            task_actor = current_run_actor()
+            task_tool_id = next(
+                (
+                    name
+                    for name, entry in self._entry_by_llm_name.items()
+                    if entry[0] is tool
+                ),
+                "",
+            )
+            check_task_provider(self, task_tool_id, args)
 
             automatic_work = current_automatic_work()
             if _result_capture.get() is not None:
@@ -2072,6 +2093,22 @@ class MCPToolProvider:
             # Ordinary submissions retain their exact original coroutine and
             # transfer/close contract. Only hooks need this completion observer.
             execution_factory = execute_observed if policies else create_execution
+
+            if task_authorization is not None:
+                prior_factory = execution_factory
+
+                async def execute_task_authorized():
+                    nonlocal task_effect_started
+                    with (
+                        task_authorization.scope(),
+                        task_owner.activate(),
+                        use_run_actor(task_actor),
+                    ):
+                        check_task_provider(self, task_tool_id, args)
+                        task_effect_started = True
+                        return await prior_factory()
+
+                execution_factory = execute_task_authorized
 
             if automatic_work is not None:
 
@@ -2149,7 +2186,9 @@ class MCPToolProvider:
                         pass
             # Fixed diagnostics cannot disclose arbitrary remote exception text.
             error = "mcp_execution_failed"
-            if future is None:
+            if future is None or (
+                task_authorization is not None and not task_effect_started
+            ):
                 dispatch_state = "not_started"
             elif isinstance(
                 exc,

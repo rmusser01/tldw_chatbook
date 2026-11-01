@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from threading import RLock
+
 from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
 from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
 
@@ -35,6 +37,8 @@ class WorkflowPhaseAuthorization:
         if _key is not _KEY:
             raise PermissionError("workflow authority is coordinator-internal")
         self._controller = controller
+        self._task_scope_lock = RLock()
+        self._task_scopes = {}
         self.attempt = attempt
         self._ledger, self._session = _live_owner(
             controller, attempt.session_id, attempt

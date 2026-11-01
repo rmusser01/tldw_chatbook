@@ -58,6 +58,12 @@ Exact evidence freshness and a bounded plan format also needed explicit rules.
    writes and alternate writer/recursive/runtime escapes refuse. Opaque tools
    require planned exclusive mode and existing permission/trust decisions;
    serialization does not constrain their actual OS or remote authority.
+   Effectful command/MCP hooks additionally require proven native ownership
+   through physical drain; current unowned notification workers make workflow
+   preparation refuse those hooks, including read-only planning. Existing hook
+   configuration and ordinary execution remain unchanged. Workflow skill scripts
+   also refuse, even in exclusive mode, until typed process/reader cleanup proof
+   and owned lifetime are available; exit status or warning text is not proof.
 5. One runtime-owned worktree activity owner coordinates full read/write
    footprints before launch, including aliases, nested roots, ordinary turns and
    survivor children. Read/write dependencies serialize. Acquire complete

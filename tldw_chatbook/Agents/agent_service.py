@@ -4496,10 +4496,23 @@ class AgentService:
         fleet_child: bool = False,
         finish_root: bool = True,
         automatic_child_reservation: str | None = None,
+        workflow_task_authorization: Any = None,
+        workflow_activity_claim: Any = None,
         **kwargs: Any,
     ) -> tuple[str, RunOutcome]:
         """Keep the execution owned through its run and child-driver cleanup."""
         from .automatic_work_budget import AutomaticWorkLimits, AutomaticWorkRefused
+        from .workflow_task_scope import (
+            WorkflowTaskAuthorization,
+            _check_hooks,
+            _runtime,
+        )
+
+        if (
+            workflow_task_authorization is not None
+            and type(workflow_task_authorization) is not WorkflowTaskAuthorization
+        ):
+            raise AutomaticWorkRefused("workflow_task_private_custody_required")
 
         owner = execution_owner or self.runtime_capacity.begin_execution(
             origin=self.work_origin,
@@ -4513,7 +4526,42 @@ class AgentService:
             with (
                 owner.activate(),
                 automatic_work.scope() if automatic_work else contextlib.nullcontext(),
+                workflow_task_authorization.scope()
+                if workflow_task_authorization
+                else contextlib.nullcontext(),
             ):
+                if automatic_work is not None and automatic_work.workflow is not None:
+                    phase = automatic_work.workflow
+                    _check_hooks(_runtime(phase), phase.attempt.session_id)
+                    if (
+                        phase.attempt.purpose == "execution"
+                        and workflow_task_authorization is None
+                    ):
+                        raise AutomaticWorkRefused(
+                            "workflow_task_private_custody_required"
+                        )
+                if workflow_task_authorization is not None:
+                    authorization = workflow_task_authorization
+                    authorization.check_preparation()
+                    if (
+                        authorization.phase.context is not automatic_work
+                        or authorization.phase._ledger._db is not self.db
+                        or authorization.registry is not self.registry
+                        or automatic_child_reservation
+                        != authorization.claim.reservation_id
+                        or (
+                            kwargs.get("precreated_run_id")
+                            or kwargs.get("requested_run_id")
+                        )
+                        != authorization.claim.launch_run_id
+                        or self.guard_tool_calls is not None
+                        or self._hooks_v2_engine is not None
+                        or self._post_tool_call is not None
+                    ):
+                        raise AutomaticWorkRefused(
+                            "workflow_task_native_preparation_refused"
+                        )
+                    kwargs["workflow_activity_claim"] = workflow_activity_claim
                 if automatic_work is not None:
                     automatic_work.check()
                     if (
@@ -4591,6 +4639,7 @@ class AgentService:
         spawn_parent_event_id: str | None = None,
         requested_run_id: str | None = None,
         precreated_run_id: str | None = None,
+        workflow_activity_claim: Any = None,
         lifecycle_owner_seq_start: int | None = None,
         on_run_id: Callable[[str], None] | None = None,
         hook_tool_ids: frozenset[str] | None = None,
@@ -4769,6 +4818,21 @@ class AgentService:
             )
             progress_sender_factory = peer_messenger_factory = None
             drain_mailbox = drain_mailbox_with_causes = None
+        from .workflow_task_scope import current_task_authorization
+
+        task_authorization = current_task_authorization()
+        if task_authorization is not None:
+            task_authorization.bind_native(
+                owner=owner, activity_claim=workflow_activity_claim
+            )
+            config = dataclasses.replace(
+                config,
+                allowed_tools=tuple(
+                    name
+                    for name in config.allowed_tools
+                    if task_authorization.permits_name(name)
+                ),
+            )
         # PR2a Task 6: a threaded child's run id does not exist until this
         # line, and its spawning parent has long since returned a handle to
         # the model. This hook is how the id gets back to the coordinator
@@ -5007,6 +5071,18 @@ class AgentService:
         # Task 7: reused verbatim (not re-derived) as the gate on whether the
         # system prompt's RUN_LOG_PROMPT_SECTION gets appended below, so the
         # prompt can never mention a tool this run didn't actually disclose.
+        if task_authorization is not None:
+            active = [
+                schema
+                for schema in active
+                if task_authorization.permits_name(schema.name)
+            ]
+            disclosed_names = {schema.name for schema in active}
+            runtime_schemas = [
+                schema
+                for schema in runtime_schemas
+                if task_authorization.permits_name(schema.name)
+            ]
         if self._automatic_work is not None and self._automatic_work.goal is not None:
             goal = self._automatic_work.goal
             active = [
@@ -7635,6 +7711,12 @@ class AgentService:
             trace_step_index: int | None = None,
             dispatch_call_id: str = "",
         ) -> ToolResult:
+            from .workflow_task_scope import check_current_task_call
+
+            try:
+                check_current_task_call(call, registry=self.registry)
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                return ToolResult.blocked("workflow task scope refused")
             if self.skill_runner is not None and self.skill_runner.is_skill_tool(
                 call.name
             ):

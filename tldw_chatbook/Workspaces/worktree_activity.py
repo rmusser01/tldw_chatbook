@@ -188,6 +188,7 @@ class _OwnerState:
 @dataclass
 class _ClaimState:
     footprint: WorktreeFootprint
+    custody: WorktreeActivityClaim
     members: dict[str, _OwnerState] = field(default_factory=dict)
 
 
@@ -216,7 +217,7 @@ class WorktreeActivity:
             if any(footprint._conflicts(s.footprint) for s in self._claims.values()):
                 claim = None
             else:
-                self._claims[claim.id] = _ClaimState(footprint)
+                self._claims[claim.id] = _ClaimState(footprint, claim)
         try:
             yield claim
         finally:
@@ -254,6 +255,33 @@ class WorktreeActivity:
             state.members[claim_id] = member
             self._members[claim_id] = member
         owner.on_drained(lambda proven: self.record_drain(claim_id, proven=proven))
+
+    def validate_claim(
+        self,
+        claim: WorktreeActivityClaim,
+        *,
+        owner: ExecutionOwner,
+        footprint: WorktreeFootprint,
+    ) -> None:
+        """Verify original held custody and native membership without granting access."""
+        if not owner.is_admitted:
+            raise ValueError("activity claim owner is not admitted")
+        with self._lock:
+            state = (
+                self._claims.get(claim.id)
+                if type(claim) is WorktreeActivityClaim
+                else None
+            )
+            member = state.members.get(claim.id) if state is not None else None
+            if (
+                state is None
+                or state.custody is not claim
+                or state.footprint != footprint
+                or member is None
+                or member.owner is not owner
+                or member.drained is not None
+            ):
+                raise ValueError("live original activity claim custody required")
 
     def _attach_child(
         self, claim_id: str, owner: ExecutionOwner

@@ -565,6 +565,12 @@ class VirtualCliProvider:
             return ToolResult.blocked(refusal, approval_decision=fact)
 
         def execute() -> ToolResult:
+            from .workflow_task_scope import check_task_provider
+
+            try:
+                check_task_provider(self, tool_id, dict(args))
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                return ToolResult.blocked("workflow task scope refused")
             if not self._authority_is_valid(authority):
                 return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
             if not self._local_tools_are_enabled() or self._kill_switch_engaged():

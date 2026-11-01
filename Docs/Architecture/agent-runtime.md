@@ -327,6 +327,21 @@ the same precreated run). Its existing commit is the exactly-once launch fence.
 not permission to launch again. The native scheduling/physical-owner integration
 is a subsequent slice; these APIs do not create another scheduler or executor.
 
+Task preparation is now exposed by
+`Agents/workflow_task_scope.py::_prepare_workflow_task`. It retains one private
+authorization per claimed task on the original phase. `AgentService._run_owned`
+accepts that authorization and the already acquired activity claim alongside the
+existing child reservation/requested run ID. `_run_one` binds it at the native
+owner/run-row seam and filters both catalog and runtime schemas. The final tool
+thread carries the same custody; actual dispatch checks the live phase, task,
+run, owner and activity claim after permission waits. No workflow scheduling is
+enabled by these preparation/binding APIs.
+
+Workflow tasks with effectful hooks refuse while their notification lifetime is
+unowned. Workflow skill scripts refuse in both modes until typed process/reader
+cleanup proof exists. Ordinary hooks, scripts and Goal policies keep their native
+behavior. These are explicit unsupported paths, not hidden permission overrides.
+
 `quiesce_workflow_phase(..., drained=True)` durably closes a capacity wait without
 completing the accepted phase or discarding its claim receipts. Unclaimed and
 reserved-but-unlaunched children do not keep the interval open; dispatched tasks

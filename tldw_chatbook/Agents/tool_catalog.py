@@ -1613,6 +1613,12 @@ class BuiltinToolProvider:
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         name = tool_id.split(":", 1)[1]
+        from .workflow_task_scope import check_task_provider
+
+        try:
+            check_task_provider(self, tool_id, args)
+        except Exception:  # noqa: BLE001 - authority failures must refuse
+            return ToolResult.blocked("workflow task scope refused")
         tool = self._tools.get(name)
         if tool is None:
             return ToolResult(ok=False, error=f"Unknown builtin tool: {name}")
@@ -1685,6 +1691,10 @@ class BuiltinToolProvider:
                     binding_authority=self._workspace_binding_authority,
                 ),
             ):
+                try:
+                    check_task_provider(self, tool_id, args)
+                except Exception:  # noqa: BLE001 - authority failures must refuse
+                    return ToolResult.blocked("workflow task scope refused")
                 execution_started = True
                 raw = asyncio.run(tool.execute(**args))
         except Exception as exc:  # noqa: BLE001 — captured, never escapes
@@ -2185,6 +2195,16 @@ class ToolCatalogRegistry:
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
         entries = self._ensure_catalog_cache().entries
+        from .workflow_task_scope import current_task_authorization
+
+        task = current_task_authorization()
+        if task is not None:
+            task.check_preparation()
+            entries = tuple(
+                e
+                for e in entries
+                if task.registry is self and task.permits_name(e.name)
+            )
         provider = self._canvas_provider
         return [
             entry
@@ -2399,7 +2419,15 @@ class ToolCatalogRegistry:
         provider = self._owner_and_id(tool_id)
         if provider is None:
             raise KeyError(f"Unknown tool id: {tool_id}")
-        return provider.load_schema(tool_id)
+        schema = provider.load_schema(tool_id)
+        from .workflow_task_scope import current_task_authorization
+
+        task = current_task_authorization()
+        if task is not None and (
+            task.registry is not self or not task.permits_name(schema.name)
+        ):
+            raise KeyError("Tool outside workflow task scope")
+        return schema
 
     def resolve_name(self, name: str) -> str | None:
         record = self._ensure_catalog_cache().by_name.get(name)
@@ -2629,6 +2657,12 @@ class ToolCatalogRegistry:
         # see an exception out of tool invocation.
         def invoke_current() -> ToolResult:
             from .automatic_work_runtime import current_automatic_work
+            from .workflow_task_scope import check_current_task_call
+
+            try:
+                check_current_task_call(ToolCall(name, args), registry=self)
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                return ToolResult.blocked("workflow task scope refused")
 
             automatic = current_automatic_work()
             if automatic is not None and automatic.workflow is not None:

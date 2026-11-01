@@ -2403,6 +2403,12 @@ class LocalToolProvider:
             )
         automatic_work = current_automatic_work()
         automatic_refusal = None
+        from .workflow_task_scope import check_task_provider
+
+        try:
+            check_task_provider(self, tool_id, args)
+        except Exception:  # noqa: BLE001 - authority failures must refuse
+            automatic_refusal = "workflow task scope refused"
         if automatic_work is not None:
             try:
                 automatic_work.check()
@@ -2519,6 +2525,17 @@ class LocalToolProvider:
 
             def _invoke_allowed() -> LocalToolInvocationResult:
                 nonlocal dispatch_started, provider_terminal
+                try:
+                    check_task_provider(self, tool_id, args)
+                except Exception:  # noqa: BLE001 - authority failures must refuse
+                    return LocalToolInvocationResult(
+                        result=ToolResult.blocked("workflow task scope refused"),
+                        final_gate=gate.verdict,
+                        approval_consumed=gate.approval_consumed,
+                        reason_code=LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+                        dispatch_started=False,
+                        provider_terminal=LocalProviderTerminal.NOT_STARTED,
+                    )
                 if not self._authority_is_valid(authority, write=write):
                     return LocalToolInvocationResult(
                         result=ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL),
@@ -2705,6 +2722,17 @@ class LocalToolProvider:
                             dispatch_started=True,
                             provider_terminal=provider_terminal,
                         )
+                try:
+                    check_task_provider(self, tool_id, args)
+                except Exception:  # noqa: BLE001 - authority failures must refuse
+                    return LocalToolInvocationResult(
+                        result=ToolResult.blocked("workflow task scope refused"),
+                        final_gate=gate.verdict,
+                        approval_consumed=gate.approval_consumed,
+                        reason_code=LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+                        dispatch_started=False,
+                        provider_terminal=LocalProviderTerminal.NOT_STARTED,
+                    )
                 try:
                     raw_output = handler_spec.handler(dispatch_args)
                     result = ToolResult(
@@ -2955,6 +2983,12 @@ class LocalToolProvider:
             return ToolResult.blocked(PROMOTION_APPROVAL_REQUIRED), True
 
         def invoke_selected() -> ToolResult:
+            from .workflow_task_scope import check_task_provider
+
+            try:
+                check_task_provider(self, name, args)
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                return ToolResult.blocked("workflow task scope refused")
             if not self._authority_is_valid(authority, write=True):
                 return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
             if kind == "prepare":
@@ -3005,6 +3039,9 @@ class LocalToolProvider:
             preview_args["dry_run"] = True
             preview_args.pop("expected_sha256", None)
             preview_args.pop("expected_absent", None)
+            from .workflow_task_scope import check_task_provider
+
+            check_task_provider(self, spec.name, args)
             preview_text = spec.handler(preview_args)
             preview = json.loads(preview_text)
             proposal = RepositoryInstructionProposal.build(
@@ -3083,6 +3120,12 @@ class LocalToolProvider:
         invoke_args = {
             key: value for key, value in clean_args.items() if key != "proposal_digest"
         }
+        from .workflow_task_scope import check_task_provider
+
+        try:
+            check_task_provider(self, spec.name, args)
+        except Exception:  # noqa: BLE001 - authority failures must refuse
+            return ToolResult.blocked("workflow task scope refused")
         try:
             content = spec.handler(invoke_args)
         except Exception as error:  # noqa: BLE001 - provider protocol boundary

@@ -78,6 +78,23 @@ target uses explicit native POSIX rename semantics while retaining the lock.
 Windows creations/replacements use the facade's private DACL policy, whereas
 POSIX writes retain existing mode preservation. No authority checks are relaxed.
 
+`Agents/workflow_task_scope.py` adds private workflow task restrictions around
+those existing owners. Preparation uses the original accepted phase, its saved
+task definition and selected admitted-root object. Native binding verifies the
+same child reservation, run row, ExecutionOwner and original runtime activity
+claim. Preparation alone cannot invoke tools. Context-local custody is carried
+into the loop and tool threads, so shared providers never store a current task.
+Discovery, pre-review, runtime callbacks and post-wait provider effects enforce
+the same captured tools, provider definitions, binding and footprint. Path hints
+do not grant access: actual filesystem resolution, exclusions and permissions
+still apply. Whole-root glob/grep/Git discovery needs the corresponding read
+scope. Alternate builtin file writers and recursive skills/chat spawning refuse.
+
+Exclusive tasks require the runtime-wide opaque claim and retain normal shell
+arming/MCP permissions. They are not confined by that claim. Effectful hooks and
+skill scripts currently refuse workflow preparation/dispatch because their
+physical lifetime or typed cleanup proof is not yet sufficient (ADR-285).
+
 ## Skills as tools
 
 `SkillToolProvider` lists skills from a per-run snapshot (`{name, description, argument_hint}`; the schema is a single free-form `args` string). Its `invoke()` **raises `RuntimeError` by design** — skill tools never dispatch through the registry. The Console bridge intercepts skill names before registry dispatch and runs them through the run-scoped skill runner, which:

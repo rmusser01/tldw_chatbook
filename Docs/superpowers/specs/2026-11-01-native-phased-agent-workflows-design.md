@@ -101,6 +101,15 @@ with opaque effects require an explicitly planned exclusive task mode and
 their normal exact permission/trust/arming requirements. Their actual OS or
 remote authority remains unchanged; exclusivity is not a sandbox.
 
+Effectful command/MCP hooks also require actual native ownership through physical
+drain. Until that lifetime is supported, workflow preparation explicitly refuses
+configured effectful hooks; read-only planning never silently runs them. Existing
+hooks remain configured and ordinary execution keeps its ordering and permissions.
+Workflow skill scripts likewise refuse in scoped and exclusive modes until typed
+process and reader cleanup proof and owned lifetime are available. An exit code or
+warning string cannot establish that proof. Later launch/coordinator integration
+must preserve these refusals unless it supplies the actual native ownership seam.
+
 Restriction state is keyed by actual native run/task attempt, as existing
 approval stamps and ReadLedger are, because siblings share provider instances.
 Never install one mutable provider-wide current task or trust a task ID supplied

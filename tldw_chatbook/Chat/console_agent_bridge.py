@@ -6846,6 +6846,18 @@ class ConsoleAgentBridge:
                 from tldw_chatbook.Agents.automatic_work_budget import (
                     AutomaticWorkRefused,
                 )
+                from tldw_chatbook.Agents.workflow_task_scope import (
+                    check_current_task_call,
+                )
+
+                task_call = ToolCall(
+                    "run_skill_script",
+                    {"skill": skill_name, "script": script_path, "args": args},
+                )
+                try:
+                    check_current_task_call(task_call)
+                except Exception:  # noqa: BLE001 - authority failures must refuse
+                    return ToolResult.blocked("workflow task scope refused")
 
                 refusal = goal_tool_refusal("run_skill_script")
                 if refusal is not None:
@@ -6933,6 +6945,7 @@ class ConsoleAgentBridge:
                     automatic_work = current_automatic_work()
                     if automatic_work is not None:
                         automatic_work.check()
+                    check_current_task_call(task_call)
                     refusal = goal_tool_refusal("run_skill_script")
                     if refusal is not None:
                         return refusal
