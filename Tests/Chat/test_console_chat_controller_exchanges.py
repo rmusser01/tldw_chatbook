@@ -602,6 +602,7 @@ async def test_temporary_chat_default_send_skips_the_capture_pause(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # real hooks/config admission retains its selected source
 async def test_temporary_capture_on_pauses_real_submit_before_gateway(
     monkeypatch,
 ) -> None:
@@ -1806,16 +1807,17 @@ def test_legacy_writer_requires_both_capture_and_legacy_rollout_gate(
     assert signals.exchange_capture_enabled is expected
 
 
+@pytest.mark.bootstrap_profile  # read the real collection-bound default config
 def test_shipped_config_default_resolves_exchange_capture_true():
     """Make the shipped [console] default itself load-bearing: read the
     REAL resolved settings layer with no controller-side default masking
     whether the TOML key is actually present (``default=None``, not
     ``True``) -- mirrors Tests/test_config_console_defaults.py's own
     default-pin style (e.g. ``test_console_sidechat_model_default_is_
-    empty_string``), which calls ``get_cli_setting`` directly with no
-    extra setup beyond the autouse ``isolate_test_environment`` fixture
-    (Tests/conftest.py) that already redirects XDG_CONFIG_HOME/
-    TLDW_CONFIG_PATH to a per-test temp directory -- this never touches
+    empty_string``), which calls ``get_cli_setting`` directly. The
+    bootstrap_profile marker retains the private profile selected before config
+    import through the real config-participant admission;
+    the autouse fixture restores its bytes between tests. This never touches
     the user's real config (a documented incident in this repo)."""
     from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
 

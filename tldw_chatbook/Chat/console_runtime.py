@@ -3434,15 +3434,15 @@ class ConsoleRuntime:
         return len(turn_ids)
 
     def return_turn_recovery_to_draft(
-        self, preparation_id: str
+        self, preparation_id: str, *, expected_draft_revision: int | None = None
     ) -> ConsoleTurnRecoveryEntry | None:
         """Put a cancelled send's unsent turn back as the draft, attachments too.
 
         TASK-33621.20 review: the card's Cancel used to refill the composer's
         text only; the attachments the send had taken stayed with the dropped
-        shelf entry. The caller has checked that the composer (or, after a tab
-        switch, this session's stored draft) is empty or holds only the sent
-        text the cancel put back, so the draft is replaced rather than merged.
+        shelf entry. The store's synchronous cancellation receipt must still
+        own the exact session draft before either text or attachments moves.
+        A newer draft keeps this turn available for explicit shelf recovery.
 
         Returns:
             The returned unsent turn, or None when the send had none.
@@ -3458,11 +3458,30 @@ class ConsoleRuntime:
         store = self._chat_store
         if entry is None or store is None:
             return None
-        store.restore_transferred_pending_attachments(
-            entry.session_id, entry.attachments
-        )
-        store.set_session_draft(entry.session_id, entry.draft)
-        self.forget_turn_recoveries_for_preparation(preparation_id)
+        from .console_received_intent import _replace_session_draft_locked
+        from .console_received_turn import ConsoleReceivedTurnClaim
+
+        with store._preparation_lock:
+            session = store._sessions.get(entry.session_id)
+            claim = entry.source_claim
+            if (
+                not isinstance(expected_draft_revision, int)
+                or isinstance(expected_draft_revision, bool)
+                or type(claim) is not ConsoleReceivedTurnClaim
+                or claim._store_ref() is not store
+                or session is None
+                or claim._session_ref() is not session
+                or claim._session_incarnation != session.incarnation_id
+                or session.draft_revision != expected_draft_revision
+            ):
+                self.unhold_turn_recoveries_for_preparation(preparation_id)
+                return None
+            store.restore_transferred_pending_attachments(
+                entry.session_id, entry.attachments
+            )
+            _replace_session_draft_locked(session, entry.draft)
+            self.forget_turn_recoveries_for_preparation(preparation_id)
+        store._publish_session_draft_handoff(session, entry.draft)
         return entry
 
     def _record_turn_recovery(

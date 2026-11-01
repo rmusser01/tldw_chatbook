@@ -6854,6 +6854,17 @@ class ConsoleSessionController:
             )
             else ""
         )
+        original_inputs = None
+        if held is not None and held.preparation_id == preparation_id:
+            candidate = controller.store.session_input_snapshot(held.session_id)
+            if candidate.draft_revision == held.input_draft_revision:
+                original_inputs = candidate
+        completed_result = None
+
+        def retain_result(value):
+            nonlocal completed_result
+            completed_result = value
+
         sync_ui = self._read_trace_recovery_finished()
         try:
             if releasable:
@@ -6865,7 +6876,11 @@ class ConsoleSessionController:
                 action,
                 preparation_id,
                 on_started=self._read_trace_recovery_started(),
+                on_result=retain_result,
                 on_finished=self._read_trace_recovery_finished(),
+                restore_draft=not (
+                    kept and getattr(held, "input_draft_revision", None) is None
+                ),
             )
         except BaseException:
             if kept:
@@ -6877,10 +6892,15 @@ class ConsoleSessionController:
                     runtime,
                     controller,
                     preparation_id,
-                    accepted=False,
+                    accepted=bool(getattr(completed_result, "accepted", False)),
                     return_to_composer=False,
                     interrupted=True,
                 )
+                if held is not None and getattr(completed_result, "accepted", False):
+                    clear_answered_draft(
+                        controller.store, held.session_id, held.executed_draft,
+                        inputs=original_inputs,
+                    )
                 self.run_worker(sync_ui, exclusive=False, group="console-sync")
             raise
         composer = self._console_composer_or_none()
@@ -6928,18 +6948,27 @@ class ConsoleSessionController:
                 preparation_id,
                 accepted=bool(getattr(result, "accepted", False)),
                 return_to_composer=refill or to_own_draft,
+                cancelled_draft_revision=(
+                    getattr(result, "cancelled_draft_revision", None)
+                    if getattr(result, "session_id", None) == held.session_id
+                    and getattr(result, "preparation_id", None) == preparation_id
+                    else None
+                ),
             )
             if returned is not None:
                 held_text = returned.draft  # with its attachments restaged
             # A trace pause comes after the durable commit: nothing was kept.
-            refill = refill and (releasable or trace_card or returned is not None)
+            refill = refill and (trace_card or returned is not None)
+        cleared = False
         if refill:
             # Cancel puts the held message back where it came from.
             composer.load_draft(held_text)
-        elif shown and getattr(result, "accepted", False):  # TASK-33621.18
+        elif held is not None and getattr(result, "accepted", False):  # TASK-33621.18
             sent = held.executed_draft if held.preparation_id == preparation_id else ""
-            clear_answered_draft(controller.store, composer, held.session_id, sent)
-        if releasable or returned is not None:
+            cleared = clear_answered_draft(
+                controller.store, held.session_id, sent, inputs=original_inputs
+            )
+        if releasable or returned is not None or cleared:
             await sync_ui()  # the shelf (and the staged attachments) settled
         return result
 

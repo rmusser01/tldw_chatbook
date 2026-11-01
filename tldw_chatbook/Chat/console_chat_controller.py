@@ -3235,6 +3235,8 @@ class ConsoleSubmitResult:
     #: at a context review instead of draining. The shelf shows it as a
     #: warning so the press says why nothing else was sent.
     queue_notice: str = ""
+    #: Cancel restored this original draft revision before any UI await.
+    cancelled_draft_revision: int | None = None
 
 
 @dataclass(frozen=True)
@@ -7910,7 +7912,9 @@ class ConsoleChatController:
                     result,
                 )
 
-    def cancel_library_preparation(self, preparation_id: str) -> ConsoleSubmitResult:
+    def cancel_library_preparation(
+        self, preparation_id: str, *, restore_draft: bool = True
+    ) -> ConsoleSubmitResult:
         """Cancel one exact precommit preparation without provider dispatch."""
 
         preparation = self._preparation_by_id(preparation_id)
@@ -7920,7 +7924,9 @@ class ConsoleChatController:
             preparation.state is ConsoleTurnPreparationState.PAUSED
             and preparation.pause_kind is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
         ):
-            return self._cancel_temporary_capture_preparation(preparation)
+            return self._cancel_temporary_capture_preparation(
+                preparation, restore_draft=restore_draft
+            )
         if (
             preparation.state is ConsoleTurnPreparationState.PAUSED
             and preparation.pause_kind
@@ -7940,6 +7946,7 @@ class ConsoleChatController:
             preparation.session_id,
             preparation.preparation_id,
             expected_state=preparation.state,
+            restore_draft=restore_draft,
         )
         if cancelled is None:
             return self._prepared_action_refusal(
@@ -7956,11 +7963,16 @@ class ConsoleChatController:
             ConsoleRunState(ConsoleRunStatus.STOPPED, copy),
             session_id=preparation.session_id,
         )
-        return self._prepared_action_refusal(None, copy)
+        return replace(
+            self._prepared_action_refusal(cancelled, copy),
+            preparation_id=cancelled.preparation_id,
+            cancelled_draft_revision=cancelled.cancelled_draft_revision,
+        )
 
     def _cancel_temporary_capture_preparation(
         self,
         preparation: ConsoleTurnPreparation,
+        *, restore_draft: bool = True,
     ) -> ConsoleSubmitResult:
         """Discard one unsent temporary Capture-On preparation and its echo."""
 
@@ -7968,6 +7980,7 @@ class ConsoleChatController:
             preparation.session_id,
             preparation.preparation_id,
             expected_state=ConsoleTurnPreparationState.PAUSED,
+            restore_draft=restore_draft,
         )
         if cancelled is None:
             return self._prepared_action_refusal(
@@ -7982,7 +7995,11 @@ class ConsoleChatController:
             ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
             session_id=preparation.session_id,
         )
-        return self._prepared_action_refusal(preparation, visible_copy)
+        return replace(
+            self._prepared_action_refusal(cancelled, visible_copy),
+            preparation_id=cancelled.preparation_id,
+            cancelled_draft_revision=cancelled.cancelled_draft_revision,
+        )
 
     def _cancel_context_compaction_hold(
         self,
@@ -8751,10 +8768,13 @@ class ConsoleChatController:
         if not callable(accept_turn) or not callable(staged_evidence_snapshot):
             raise RuntimeError("Console runtime custody is unavailable.")
         staged_evidence_launch, _, _ = staged_evidence_snapshot()
+        inputs = self.store.session_input_snapshot(session_id)
         request = ConsoleTurnCustodyRequest(
             turn_id=str(uuid4()),
             session_id=session_id,
             draft=exact_user_text,
+            # Voice owns an unchanged empty draft, never unrelated typed text.
+            draft_revision=inputs.draft_revision if not inputs.draft else None,
             configuration=frozen_session_context.configuration,
             attachment_ids=tuple(
                 attachment.attachment_id

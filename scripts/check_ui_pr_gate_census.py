@@ -721,7 +721,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # about 8 s locally). No existing entry changes shard. Rebased 2026-10-30
 # onto dev 7536ac3b87's 1163 entries: 1163 + 6 = 1169.
 # PR3318 integration: all1276 dev entries plus the6 source selections.
-MINIMUM_FILES = 1282
+# PR3318 integration appends three ownership/interruption entries.
+MINIMUM_FILES = 1285
 
 
 def read_census(path: Path) -> list[str]:

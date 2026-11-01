@@ -23,12 +23,14 @@ file-backed database. Only the provider call is a double.
 
 from __future__ import annotations
 
+import threading
 from uuid import uuid4
 
 import pytest
 from textual.widgets import Button
 
 from Tests.Chat.test_console_automatic_library_preparation import _pending_image
+from Tests.UI.test_console_hook_review_send_freeze import _key
 from Tests.UI.test_console_library_auto_outcome import _shelf_offers_unsent_turn
 from Tests.UI.test_console_received_intent_feedback import (
     _received_console_case,
@@ -291,6 +293,7 @@ async def test_cancel_on_a_capture_pause_gives_back_the_message_and_its_image(
                     turn_id=str(uuid4()),
                     session_id=session_id,
                     draft=sent,
+                    draft_revision=store.session_input_snapshot(session_id).draft_revision,
                     configuration=await capture_runtime_configuration_owned(
                         case.controller, session_id, require_current=lambda: None
                     ),
@@ -327,4 +330,128 @@ async def test_cancel_on_a_capture_pause_gives_back_the_message_and_its_image(
         assert store.preparation_for_session(session_id) is None
         assert _unsent_turns(runtime, session_id) == []
         assert not _shelf_offers_unsent_turn(case.console)
+        assert case.provider_calls == []
+
+
+async def _replace_with_authored_draft(case, text: str) -> int:
+    """Type through the terminal pump, including a fresh identical/empty edit."""
+    composer = case.console._console_composer_or_none()
+    session_id = case.store.active_session_id
+    before = case.store.session_input_snapshot(session_id).draft_revision
+    composer.focus()
+    assert await _until(lambda: case.host.focused is composer, 5)
+    _key(case.host, "ctrl+a")
+    _key(case.host, "backspace")
+    assert await _until(lambda: composer.draft_text() == "", 5)
+    for char in text:
+        _key(case.host, char, char)
+    assert await _until(
+        lambda: (
+            composer.draft_text() == text
+            and case.store.session_draft(session_id) == text
+            and case.store.session_input_snapshot(session_id).draft_revision > before
+        ),
+        5,
+    )
+    return case.store.session_input_snapshot(session_id).draft_revision
+
+
+@pytest.mark.parametrize("action", ["send-without", "save-send"])
+async def test_capture_card_send_preserves_newer_identical_authored_draft(
+    monkeypatch, action
+):
+    from tldw_chatbook.Chat import Chat_Functions
+
+    entered, release = threading.Event(), threading.Event()
+    async with _received_console_case(
+        monkeypatch, f"capture-new-identical-{action}", durable=True
+    ) as case:
+        reply = Chat_Functions.chat_api_call
+
+        def held_reply(**kwargs):
+            entered.set()
+            assert release.wait(20), "test did not release the provider"
+            return reply(**kwargs)
+
+        monkeypatch.setattr(Chat_Functions, "chat_api_call", held_reply)
+        session_id = await _temporary_tab(case)
+        await _turn_capture_on(case, session_id)
+        sent = "Again"
+        await _send_draft(case, sent)
+        assert await _until(lambda: _paused_for_capture(case, session_id), 15)
+        runtime = case.console._console_runtime()
+        assert await _until(lambda: bool(_unsent_turns(runtime, session_id)), 10)
+        button = case.console.query_one(f"#console-trace-{action}", Button)
+        assert await _until(lambda: button.display and not button.disabled, 10)
+        try:
+            button.press()
+            assert await _until(entered.is_set, 45), (case.controller.run_state_for(session_id), case.store.preparation_for_session(session_id), case.provider_calls)
+            revision = await _replace_with_authored_draft(case, sent)
+        finally:
+            release.set()
+        assert await _until(lambda: _replied(case, session_id), 20)
+        assert await _until(lambda: _unsent_turns(runtime, session_id) == [], 10)
+        composer = case.console._console_composer_or_none()
+        assert composer.draft_text() == sent
+        assert case.store.session_draft(session_id) == sent
+        assert case.store.session_input_snapshot(session_id).draft_revision == revision
+        assert len(case.provider_calls) == 1
+
+
+@pytest.mark.parametrize("new_draft", ["", "Again"])
+@pytest.mark.parametrize("edit_time", ["before-cancel", "during-finish"])
+async def test_capture_cancel_preserves_newer_draft_and_keeps_original_recoverable(
+    monkeypatch, new_draft, edit_time
+):
+    from tldw_chatbook.Chat import attachment_core
+    from tldw_chatbook.Chat import console_chat_controller as controller_module
+
+    monkeypatch.setattr(attachment_core, "vision_block_reason", lambda *a, **k: None)
+    monkeypatch.setattr(controller_module, "vision_block_reason", lambda *a, **k: None)
+    async with _received_console_case(
+        monkeypatch, f"capture-cancel-new-{bool(new_draft)}-{edit_time}", durable=True
+    ) as case:
+        session_id = await _temporary_tab(case)
+        await _turn_capture_on(case, session_id)
+        store, runtime = case.store, case.console._console_runtime()
+        image = _pending_image("original.png", b"\x89PNG\r\n\x1a\n-original")
+        assert store.add_pending_attachment(session_id, image)
+        await _send_draft(case, "Again")
+        assert await _until(lambda: _paused_for_capture(case, session_id), 15)
+        assert await _until(
+            lambda: not runtime.has_custodied_turns(session_id), 10
+        )
+        assert store.pending_attachments(session_id) == []
+        revisions = []
+        if edit_time == "before-cancel":
+            revisions.append(await _replace_with_authored_draft(case, new_draft))
+        else:
+            finished = case.console._session._read_trace_recovery_finished()
+
+            async def finish_after_edit():
+                revisions.append(await _replace_with_authored_draft(case, new_draft))
+                await finished()
+
+            monkeypatch.setattr(
+                case.console._session, "_read_trace_recovery_finished",
+                lambda: finish_after_edit,
+            )
+        cancel = case.console.query_one("#console-trace-cancel", Button)
+        assert await _until(lambda: cancel.display and not cancel.disabled, 10)
+        cancel.press()
+        assert await _until(lambda: store.preparation_for_session(session_id) is None, 10)
+        assert await _until(
+            lambda: bool(runtime.recoveries_for_session(session_id))
+            or not _unsent_turns(runtime, session_id),
+            10,
+        )
+        assert case.console._console_composer_or_none().draft_text() == new_draft
+        assert store.session_draft(session_id) == new_draft
+        assert revisions
+        assert store.session_input_snapshot(session_id).draft_revision == revisions[-1]
+        assert store.pending_attachments(session_id) == []
+        recovery, = _unsent_turns(runtime, session_id)
+        assert recovery.draft == "Again"
+        assert recovery.attachments == (image,)
+        assert runtime.recoveries_for_session(session_id)
         assert case.provider_calls == []

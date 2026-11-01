@@ -236,6 +236,8 @@ class ConsoleTurnPreparation:
     next_trace_privacy_revision: int | None = None
     #: None preserves legacy draft restore/clear semantics.
     input_draft_revision: int | None = None
+    #: Exact synchronous Cancel restoration, never a later UI snapshot.
+    cancelled_draft_revision: int | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         """Reject malformed, mutable, or internally inconsistent state."""
@@ -895,6 +897,14 @@ def _validate_preparation(preparation: ConsoleTurnPreparation) -> None:
         or preparation.input_draft_revision < 0
     ):
         _invalid("input draft revision")
+
+    if preparation.cancelled_draft_revision is not None and (
+        not isinstance(preparation.cancelled_draft_revision, int)
+        or isinstance(preparation.cancelled_draft_revision, bool)
+        or preparation.cancelled_draft_revision < 0
+        or preparation.state is not ConsoleTurnPreparationState.CANCELLED
+    ):
+        _invalid("cancelled draft revision")
 
     _validate_execution_context(preparation)
     auto_retrieve = preparation.execution_context.library_authority.policy.auto_retrieve

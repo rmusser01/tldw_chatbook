@@ -15223,9 +15223,14 @@ def test_temporary_tab_marker_is_presentation_only():
 
     assert tooltip.endswith(f"{TEMPORARY_LABEL}.")
     assert "temporary" in tooltip.lower()
+    assert "not saved" in tooltip.lower()
     assert TEMPORARY_LABEL not in _session_tab_tooltip(
         ConsoleChatSession(title="Normal"), active=False
     )
+
+    assert "not saved" not in _session_tab_tooltip(
+        ConsoleChatSession(title="Normal"), active=False
+    ).lower()
 
 
 # ---------------------------------------------------------------------------

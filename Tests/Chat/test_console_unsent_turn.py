@@ -155,7 +155,7 @@ class _Shelf:
     def forget_turn_recoveries_for_preparation(self, _preparation_id):
         self.calls.append("forget")
 
-    def return_turn_recovery_to_draft(self, _preparation_id):
+    def return_turn_recovery_to_draft(self, _preparation_id, **_kwargs):
         self.calls.append("return")
 
     def unhold_turn_recoveries_for_preparation(self, _preparation_id):
@@ -197,34 +197,12 @@ def test_a_library_pause_goes_back_to_the_shelf_after_an_interrupted_action():
     assert shelf.calls == ["unhold"]
 
 
-class _Composer:
-    def __init__(self, text: str) -> None:
-        self.text = text
-
-    def draft_text(self) -> str:
-        return self.text
-
-    def load_draft(self, text: str) -> None:
-        self.text = text
-
-
-class _Drafts:
-    def __init__(self, draft: str) -> None:
-        self.draft = draft
-
-    def session_draft(self, _session_id: str) -> str:
-        return self.draft
-
-    def set_session_draft(self, _session_id: str, text: str) -> None:
-        self.draft = text
-
-
 @pytest.mark.parametrize(
     ("shown", "stored", "sent", "after"),
     [
         # AC#6: the answered prompt goes from the composer and the draft.
         ("Answer me once", "Answer me once", "Answer me once", ("", "")),
-        ("Answer me once  ", "Answer me once", "Answer me once", ("", "")),
+        ("Answer me once  ", "Answer me once  ", "Answer me once", ("", "")),
         # A follow-up typed while the card acted is the user's.
         ("And a follow-up", "And a follow-up", "Answer me once", None),
         # The composer shows something other than what was sent (an expanded
@@ -233,14 +211,17 @@ class _Drafts:
         # An attachment-only send answers no prompt.
         ("", "", "", None),
         # Only the composer still held it: the stored draft is left alone.
-        ("Answer me once", "something else", "Answer me once", ("", "something else")),
+        ("Answer me once", "something else", "Answer me once", None),
     ],
 )
 def test_a_card_sent_turn_clears_only_its_own_answered_prompt(
     shown, stored, sent, after
 ):
-    composer, drafts = _Composer(shown), _Drafts(stored)
-
-    clear_answered_draft(drafts, composer, SESSION, sent)
-
-    assert (composer.text, drafts.draft) == (after or (shown, stored))
+    _controller, store = _paused(ConsolePreparationPauseKind.TEMPORARY_CAPTURE)
+    store.set_session_draft(SESSION, shown)
+    inputs = store.session_input_snapshot(SESSION)
+    store.set_session_draft(SESSION, stored)
+    cleared = clear_answered_draft(store, SESSION, sent, inputs=inputs)
+    expected = bool(after) and shown == stored
+    assert cleared is expected
+    assert store.session_draft(SESSION) == ("" if expected else stored)

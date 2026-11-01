@@ -1864,3 +1864,8 @@ Tests/UI/test_console_temporary_save_copy.py
 # Privacy dialog and a spent Next send (two pure pins and one mounted case,
 # about 8 s locally), appended at the tail.
 Tests/UI/test_console_temporary_status_copy.py
+
+# PR3318 integration: original input ownership and accepted-result cleanup.
+Tests/UI/test_console_temporary_capture_flow.py::test_capture_card_send_preserves_newer_identical_authored_draft
+Tests/UI/test_console_temporary_capture_flow.py::test_capture_cancel_preserves_newer_draft_and_keeps_original_recoverable
+Tests/UI/test_console_temporary_capture_interruption.py

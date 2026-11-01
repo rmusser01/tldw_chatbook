@@ -127,26 +127,38 @@ def card_holds_refusal(controller: Any, preparation_id: str | None) -> bool:
     return card_owned_pause(lookup(preparation_id), preparation_id)
 
 
-def clear_answered_draft(store: Any, composer: Any, session_id: str, sent: str) -> None:
-    """Empty the composer a card-sent turn left holding its own prompt.
+def clear_answered_draft(store: Any, session_id: str, sent: str, *, inputs: Any) -> bool:
+    """Clear only the original prepared draft after its card accepted the turn.
 
-    TASK-33621.18 AC#6: a composer send keeps showing its text until the turn
-    is accepted, and a card action (Send without capture, Save & Send, Retry)
-    accepts it outside the send's own intake, which is what clears it. The
-    answered prompt stayed, so one more Enter sent it again. Only that exact
-    text is cleared: a follow-up typed meanwhile is the user's.
-
-    Args:
-        store: The Console chat store.
-        composer: The composer showing ``session_id``'s draft.
-        session_id: The accepted turn's session.
-        sent: The text the accepted turn carried.
+    ``inputs`` is captured before the card acts, and only when its revision
+    matches the preparation's original input revision. Save & Send can change
+    the conversation binding; cleanup still requires the same session object,
+    incarnation, draft revision and text. It grants no dispatch authority.
+    The existing UI reconciliation projects the resulting revision.
     """
-    if not sent.strip() or composer.draft_text().strip() != sent.strip():
-        return
-    composer.load_draft("")
-    if store.session_draft(session_id).strip() == sent.strip():
-        store.set_session_draft(session_id, "")
+    if inputs is None or not sent.strip() or inputs.draft.strip() != sent.strip():
+        return False
+    from .console_received_intent import _replace_session_draft_locked
+
+    with store._preparation_lock:
+        try:
+            current = store.session_input_snapshot(session_id)
+        except KeyError:
+            return False
+        if (
+            inputs._store_ref() is not store
+            or inputs._session_ref() is not current._session_ref()
+            or inputs.incarnation_id != current.incarnation_id
+            or inputs.draft_revision != current.draft_revision
+            or inputs.draft != current.draft
+        ):
+            return False
+        session = current._session_ref()
+        _replace_session_draft_locked(session, "")
+    store._publish_session_draft_handoff(session, "")
+    return True
+
+
 def release_unsent_turn_preparation(
     controller: Any, session_id: str, preparation_id: str
 ) -> bool:
@@ -220,6 +232,7 @@ def card_action_finished(
     accepted: bool,
     return_to_composer: bool,
     interrupted: bool = False,
+    cancelled_draft_revision: int | None = None,
 ) -> Any:
     """Settle the shelf after a card action on a paused send.
 
@@ -253,6 +266,8 @@ def card_action_finished(
     ):
         return None
     if return_to_composer:
-        return runtime.return_turn_recovery_to_draft(preparation_id)
+        return runtime.return_turn_recovery_to_draft(
+            preparation_id, expected_draft_revision=cancelled_draft_revision
+        )
     runtime.unhold_turn_recoveries_for_preparation(preparation_id)
     return None
