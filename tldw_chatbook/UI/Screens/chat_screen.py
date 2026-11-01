@@ -10491,16 +10491,8 @@ class ChatScreen(BaseAppScreen):
         composer.set_voice_status(session.controller.state, message=message)
 
     def _restore_console_voice_chip(self) -> None:
-        """Repaint the chip from the REAL one-shot dictation state.
-
-        Same idiom (and same reason) as `_teardown_console_hands_free_
-        loop`'s closing lines: the realtime states are not lifecycle states
-        `sync_dictation_state` knows, so only a fresh call with the actual
-        current state clears the borrowed text.
-        """
-        composer = self._console_composer_or_none()
-        if composer is not None:
-            composer.sync_dictation_state(self._console_dictation_state)
+        """Repaint the chip from the current one-shot dictation state."""
+        run_controls.restore_voice_chip(self)
 
     def _request_console_dictation_stop(self) -> None:
         """Stop the live capture and insert its transcript.

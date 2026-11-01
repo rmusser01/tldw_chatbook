@@ -11,6 +11,7 @@ from Tests.UI.test_console_poll_reconciliation import (
     _qualify_warm_capture_sources,
 )
 from Tests.UI.test_console_received_intent_feedback import (
+    _attribute_original_received_read,
     _held_received_record,
     _received_console_case,
     _send,
@@ -169,6 +170,7 @@ async def test_preparing_changed_source_after_original_tab_await_replays_full(
     async with _received_console_case(
         monkeypatch, f"preparing-held-source-{queued_full}", durable=True
     ) as case:
+        _attribute_original_received_read(case, record_property)
         await _qualify_warm_capture_sources(case)
         _send(case, "enter")
         record = await _held_received_record(case)

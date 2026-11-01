@@ -1505,3 +1505,16 @@ def _project_console_saved_input(
         _captured_stash=_captured_stash,
         _captured_inputs=_captured_inputs,
     )
+
+
+def restore_voice_chip(self: Any) -> None:
+    """Repaint the chip from the REAL one-shot dictation state.
+
+    Same idiom (and same reason) as `_teardown_console_hands_free_
+    loop`'s closing lines: the realtime states are not lifecycle states
+    `sync_dictation_state` knows, so only a fresh call with the actual
+    current state clears the borrowed text.
+    """
+    composer = self._console_composer_or_none()
+    if composer is not None:
+        composer.sync_dictation_state(self._console_dictation_state)

@@ -73,6 +73,7 @@ def test_blink_preserves_style_after_expanding_pasted_tabs():
         assert painted.plain[8:9] == "b"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "prefix", ["", "\t", "界\t", "🧪\t", "e\u0301\t", "👩\u200d💻\t", "e\u0301❤️\t"]
 )

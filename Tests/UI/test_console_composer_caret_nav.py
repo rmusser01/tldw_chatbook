@@ -50,6 +50,7 @@ async def _focused_composer(host, pilot, text: str) -> ConsoleComposerBar:
     return composer
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_up_from_mid_row_two_lands_on_the_same_column_in_row_one():
     _, host = _ready_host()
@@ -70,6 +71,7 @@ async def test_up_from_mid_row_two_lands_on_the_same_column_in_row_one():
         assert composer.cursor_index == 16 + 5
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_down_mirrors_up_back_to_the_same_column_in_row_two():
     _, host = _ready_host()
@@ -88,6 +90,7 @@ async def test_down_mirrors_up_back_to_the_same_column_in_row_two():
         assert composer.cursor_index == 35 + 5
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_up_from_the_first_row_returns_false_and_moves_nothing():
     _, host = _ready_host()
@@ -103,6 +106,7 @@ async def test_up_from_the_first_row_returns_false_and_moves_nothing():
         assert composer.cursor_index == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_down_from_the_last_row_returns_false_and_moves_nothing():
     _, host = _ready_host()
@@ -150,6 +154,7 @@ def test_collapsed_paste_before_first_segment_has_no_synthetic_prefix_boundary()
     assert composer.cursor_index == len(pasted)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_up_from_a_long_rows_column_fifty_clamps_into_a_twenty_char_row():
     _, host = _ready_host()
@@ -174,6 +179,7 @@ async def test_up_from_a_long_rows_column_fifty_clamps_into_a_twenty_char_row():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_up_across_a_soft_wrapped_line_lands_on_the_same_column():
     _, host = _ready_host()
@@ -208,6 +214,7 @@ async def test_up_across_a_soft_wrapped_line_lands_on_the_same_column():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pilot_press_up_and_down_move_the_real_caret():
     _, host = _ready_host()
@@ -230,6 +237,7 @@ async def test_pilot_press_up_and_down_move_the_real_caret():
         assert composer.cursor_index == 6 + 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pilot_press_up_on_the_first_row_leaves_the_caret_untouched():
     """Side-effect signal only (fragile to prove non-consumption this way
@@ -246,6 +254,7 @@ async def test_pilot_press_up_on_the_first_row_leaves_the_caret_untouched():
         assert composer.cursor_index == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_on_key_only_consumes_up_and_down_when_the_move_actually_happened(
     monkeypatch,
@@ -297,6 +306,7 @@ async def test_on_key_only_consumes_up_and_down_when_the_move_actually_happened(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_moving_up_above_the_visible_window_scrolls_it_to_follow_the_caret():
     """>MAX_DRAFT_ROWS-row draft; walk the caret up from the last row past
@@ -355,6 +365,7 @@ def _painted_caret_rowcol(visible_draft: Static) -> tuple[int, int]:
     raise AssertionError("caret glyph not painted in any visible row")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_down_across_soft_wrapped_rows_matches_painted_caret_including_column_zero():
     """HIGH fix: Down across soft-wrapped rows, at several columns including
@@ -422,6 +433,7 @@ async def test_down_across_soft_wrapped_rows_matches_painted_caret_including_col
         assert _painted_caret_rowcol(visible_draft) == (last_index, expected_column)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_up_from_the_first_column_after_a_whitespace_wrap_boundary_ascends():
     """MEDIUM fix: a caret sitting right at a whitespace wrap boundary (the
@@ -461,6 +473,7 @@ async def test_up_from_the_first_column_after_a_whitespace_wrap_boundary_ascends
         assert _painted_caret_rowcol(visible_draft) == (0, 0)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_windowed_draft_with_unequal_row_lengths_clamps_while_climbing():
     """Windowed (>8-row) draft with genuinely UNEQUAL row lengths -- the
@@ -578,6 +591,7 @@ def test_noop_down_breaks_typed_run_coalescing_like_every_other_cursor_key():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clamp_into_a_soft_wrap_contiguous_row_stays_on_that_row_not_the_next():
     """Reviewer's live reproduction (re-review), reproduced generically: a

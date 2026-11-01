@@ -47,6 +47,8 @@ class _OriginalConfigurationWorkspaceRead:
         self.release_timed_out = False
         self.foreign_registry = None
         self.foreign_calls = 0
+        self.observe_entry = None
+        self.entry_observation_error = None
 
     def _line(self, code, _line):
         if code is not self.code:
@@ -78,6 +80,13 @@ class _OriginalConfigurationWorkspaceRead:
                 self.lease in storage._live_leases
                 and self.lease.resource_thread is self.thread
             )
+        if self.observe_entry is not None:
+            try:
+                self.observe_entry(parent)
+            except (
+                Exception
+            ) as error:  # Preserve the original reader on diagnostic failure.
+                self.entry_observation_error = type(error).__name__
         self.entered.set()
         self.release_timed_out = not self.release.wait(8)
 
@@ -115,6 +124,7 @@ def _mounted_capture_provider(case):
 
     from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
     from tldw_chatbook.UI.Console_Modules.wiring import _stock_console_scratch_snapshot
+
     owner = ConsoleSessionController.__new__(ConsoleSessionController)
     owner.app_instance = case.app
     owner._provider_readiness_app_config_fn = lambda: case.app.app_config
@@ -133,7 +143,8 @@ def _mounted_capture_provider(case):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route", ["runtime", "mounted", "received"])
 async def test_original_configuration_workspace_read_does_not_block_input_loop(
-    runtime_case, route,
+    runtime_case,
+    route,
 ):
     """The existing public capture must not execute real Workspace SQL on its loop."""
     from tldw_chatbook import config
@@ -185,7 +196,10 @@ async def test_original_configuration_workspace_read_does_not_block_input_loop(
             releaser.start()
             started = True
             captured = await asyncio.wait_for(
-                case.controller.capture_turn_configuration_snapshot(case.session.id, **capture_kwargs), 15
+                case.controller.capture_turn_configuration_snapshot(
+                    case.session.id, **capture_kwargs
+                ),
+                15,
             )
             await asyncio.sleep(0)
             assert probe.entered.is_set(), "original Workspace reader was not reached"
@@ -235,7 +249,6 @@ async def configuration_workspace(runtime_case):
 
 
 async def _wait_for_original_reader(probe, task):
-
     assert await _until(lambda: probe.entered.is_set() or task.done(), 10)
     if task.done() and not probe.entered.is_set():
         task.result()
@@ -367,7 +380,9 @@ async def test_original_configuration_refuses_source_replacement_without_success
     with probe.installed():
         try:
             task = asyncio.create_task(
-                case.controller.capture_turn_configuration_snapshot(case.session.id, **capture_kwargs)
+                case.controller.capture_turn_configuration_snapshot(
+                    case.session.id, **capture_kwargs
+                )
             )
             await _wait_for_original_reader(probe, task)
             if replacement == "registry":
@@ -402,6 +417,7 @@ async def test_mounted_policy_callback_change_retains_affinity_and_refuses_stale
     case = configuration_workspace
     provider = _mounted_capture_provider(case)
     observed = []
+
     def custom_profile(app, workspace_id):
         observed.append(threading.current_thread())
         return "custom-current-policy"
@@ -412,7 +428,9 @@ async def test_mounted_policy_callback_change_retains_affinity_and_refuses_stale
         )
 
     if phase == "before":
-        monkeypatch.setattr(turn_admission, "resolve_turn_tool_policy_profile_id", custom_profile)
+        monkeypatch.setattr(
+            turn_admission, "resolve_turn_tool_policy_profile_id", custom_profile
+        )
         result = await capture()
         assert result.tool_policy_profile_id == "custom-current-policy"
         assert observed == [threading.current_thread()]
@@ -422,7 +440,9 @@ async def test_mounted_policy_callback_change_retains_affinity_and_refuses_stale
         task = asyncio.create_task(capture())
         try:
             await _wait_for_original_reader(probe, task)
-            monkeypatch.setattr(turn_admission, "resolve_turn_tool_policy_profile_id", custom_profile)
+            monkeypatch.setattr(
+                turn_admission, "resolve_turn_tool_policy_profile_id", custom_profile
+            )
             probe.release.set()
             with pytest.raises(RecoveryRequired):
                 await task
