@@ -37,6 +37,35 @@ accepted or uncertain attempt. The final focused checks also found that FAILED
 was published before the transcript replaced its Waiting row: visible-copy
 tests must wait for the actual painted text, not a fixed delay after model state.
 
+## HOME redirection leaves Windows native AppData ambient (TASK-38268, 2026-10-31)
+
+**Incident.** Qualifying PR #3287's full eval recovery lane with a populated
+Windows account captured existing pet state through APPDATA even though HOME,
+USERPROFILE and XDG roots were private. Restore correctly refused the fixture's
+incorrect pet destination. The recovery fixture now owns private APPDATA and
+LOCALAPPDATA roots; both regressions failed against the ambient paths before
+that change, and complete backup/restore/reopen then passed. Production restart
+filtering continues to drop ambient native app-data selectors.
+
+**What to do.** Isolate the platform selectors that installed stores actually
+use. A fresh HOME alone does not isolate Windows applications. Preserve recovery
+refusals and give tests private native roots instead of broadening restart
+inheritance or relaxing the destination checks.
+
+## Autouse fixture directories can collide with older test-owned paths (TASK-38268, 2026-10-31)
+
+**Incident.** PR #3287 added an autouse recovery fixture that creates
+`tmp_path/private-temp`. The existing launch-environment test independently
+created the same path. Ubuntu, macOS and Windows each failed all three TEMP,
+TMP and TMPDIR cases with FileExistsError before any selector assertions ran.
+Using `selected-temp` for the test-owned directory preserved the private
+fixture and restored all five launch-environment cases locally.
+
+**What to do.** When introducing an autouse fixture that creates paths, check
+existing tests for the same names and run the complete affected CI selection.
+Keep test-owned paths distinct instead of hiding unexpected existing paths
+with exist_ok or removing the security fixture.
+
 
 ## A daemon thread cannot enforce its subprocess timeout after interpreter exit (PR #3155, 2026-10-31)
 
