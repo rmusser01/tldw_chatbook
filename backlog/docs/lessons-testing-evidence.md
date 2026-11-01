@@ -600,6 +600,52 @@ same way. Expect the setup-modal and caret-blink cases to flip from run to run u
 shared profile, on dev as well; rerun a suspect alone on both trees before you call it a
 regression.
 
+## A crash fix that makes a value encodable is not a fix until the consumer accepts it (TASK-33621.9, 2026-10-29)
+
+**Incident.** The Inspector could never load a captured call: the native trace
+reader ran `json.dumps(dict(usage))` on usage frozen into nested
+mappingproxy, and every Anthropic and OpenAI call raised TypeError. Deep-thawing
+the value made the reader test pass, but a test that also read the call through
+the production `ConsoleTraceProjection` still returned nothing: the projection
+rejected the now-encodable raw provider keys as `usage_json`, because the
+capture contract carries normalized ProviderUsage. Both layers had to change.
+
+**What to do.** After a serialization fix, read the value through the next real
+consumer (here the projection the Inspector's loader uses), not just the
+function that crashed. Use a payload the provider actually stored (read it from
+a live profile's database) rather than a flat fixture that both layers accept.
+
+## A layout fix on a shared class lands on every list that wears it (TASK-33621.9 review, 2026-10-29)
+
+**Incident.** To stop a wrapped usage row leaving its basis label alone on a
+line, `text-wrap: nowrap; text-overflow: ellipsis` went on
+`.inspector-section-list`, the class all three Inspector tabs share. The
+painted-frame tests passed: they drew the Usage list and the Exchange *turn*
+rows, both short. Review flagged the other consumers, and a painted-frame
+probe at 235x52 confirmed it: the Context list cut "Current · Retained messages (12)" to "Retained messag…" and
+every Exchange *call* row to "Call · call 0 [complete] …", dropping counts,
+model, cost and capture detail. The rule moved to `.inspector-usage-detail
+.inspector-section-list`.
+
+**What to do.** Before changing a rule on a shared class, list every widget
+that carries the class and paint each one at the reference sizes with its
+longest real label, not only the one you are fixing. Scope the rule to the
+consumer that needs it unless all of them do.
+
+## A focused list that "scrolls down one row" may be painted over, not scrolled (TASK-33621.9, 2026-10-29)
+
+**Incident.** The review and its triage both described the Conversation
+Inspector's section list as scrolling one row on focus, hiding Turn 1. The
+painted frame showed no scroll: the app-wide `*:focus` outline was drawn over
+the list's first row, and the first visible text was the second line of a
+wrapped row. A compositor-strip test at 80x24 and 235x52 reproduced it in all
+four list/size cases; TASK-28226's content-safe cue (no outline, focus tint,
+focus-coloured highlight) and single-line rows fixed it.
+
+**What to do.** Before changing scroll logic, read the painted rows inside the
+widget's region (`screen._compositor.render_strips()`). An outline occupies no
+layout space, so geometry and scroll offsets look correct while a row is hidden.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
@@ -23892,3 +23938,21 @@ was still valid and totalled 401.3 runner-minutes. The cause of those inverted
 timestamps was not established. Report unavailable wait rows explicitly instead
 of clamping negative durations to zero. A median over the one remaining valid
 row is a partial sample, not the workflow's overall queue delay.
+
+## Trigger an error for real before writing the recovery advice it shows (TASK-33621.8 review, 2026-10-29)
+
+**Incident.** The Trace export dialog's plain copy told users to "reopen the
+Trace view to rebuild it, then export again" for every validation failure. A
+second review found the advice false: the failures left after the fix (duplicate
+event ids, invalid field states) come from stored data, so a rebuilt snapshot
+fails identically. It was the same false-retry pattern the sibling task had just
+removed from the Inspector, written again in the same branch. The obvious fix
+for the credential backstop, "try a less detailed profile", was false too: a
+probe of identity, label, model and field-name inputs under all three profiles
+found that only a credential-looking field name reaches the check, and it is
+blocked under every profile alike, because field names survive all scrubbing.
+
+**What to do.** Before writing a recovery step into error copy, produce the
+error with real inputs under each option the copy would suggest, and keep only
+advice that turned a failure into a success in that probe. When nothing does,
+say what stopped the operation and where the details are; do not offer a retry.

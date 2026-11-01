@@ -16,6 +16,7 @@ $ds-text-primary: $text;
 $ds-text-muted: $text-muted;
 $ds-text-disabled: $text-disabled;
 $ds-action-focus: $primary;
+$ds-focus-list-tint: 12%;
 $ds-focus-fg: $ds-text-primary;
 $ds-focus-bg: $block-cursor-blurred-background;
 $ds-focus-accent: $primary;
