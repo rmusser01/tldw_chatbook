@@ -13,3 +13,5 @@ Reason: restore existing export, capture normalization and Inspector contracts w
 5. After PR3320, refresh/rebase on confirmed dev and finish necessary current-base qualification. Publish only the current non-draft/unarmed exact head with lease, require resolved threads and verify actual merge under the existing CI waiver. Drafts and PR3267/3297 remain excluded; no release/main work.
 
 Qualification repair: the design-token negative control correctly refused an active raw hex color, but its hard-coded POSIX diagnostic-path regex failed on Windows. Match the escaped native relative fixture path; preserve the exact guard, allowance and rejection assertion. Run that control and the unexecuted CSS/census tail after the semantic preservation checks already passed.
+
+Final integration: PR3320 merged as5d8f4df56739; rebase completed atf1a7ac922e with only census conflicts. Exact1303-entry prefix plus8 retained;168 affected current-base tests pass with49 frozen hashes; final independent whole-branch review underway. No additional runtime behavior or policy change during final integration.

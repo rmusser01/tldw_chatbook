@@ -1,6 +1,6 @@
-# PR3321 integration evidence — in progress
+# PR3321 integration evidence — reviewed for merge
 
-Provisional base: `d424d1b6887a0f834ca4f68bcf2103e869e89a9d`; rebased source head: `af66ed9a349c5bbe3555eef3123c2d9320dd09f2`. Source PR head remains `6dea577761df57be4b829612944d6ce76094dd20`, confirmed OPEN/non-draft/unarmed with no review threads. Final rebase after PR3320 is still required. No merge-readiness claim.
+Final base: `5d8f4df567398f93e4b291c2e2c5b9b2737b5169` (confirmed PR3320 merge); integrated head: `f1a7ac922ef1541f51d25f47b330bedae9f47f88`. Original source remains `6dea577761df57be4b829612944d6ce76094dd20`, OPEN/non-draft/unarmed at refresh. Final independent review approved the candidate with C0/I0/M1; no merge is claimed. The earlier provisional-base evidence below remains explicitly scoped to d424.
 
 Independent requesting-code-review found C0/I0/M2. Both minor findings are corrected: explicit existing ADR dispositions added to TASK33621.8/.9 plans; exact 12% focus tint promoted to `$ds-focus-list-tint`, documented and regenerated. Literal bold underline remains the constitution-required focus cue.
 
@@ -15,4 +15,15 @@ Follow-up independent review of the repairs and accessible content-free receipt 
 - CSS rebuilt from source, including separately generated screen sheets that carry the central token catalog. No visual value change from the token promotion.
 - Diagnostic inventory matches exactly:718 owners,1066 TASK492 calls,56 TASK31551 calls,7793 TASK494 calls,16 sink files. Inspected three added statements: export-cleared-reference count/field/kind metadata; Inspector reason/exception type; export-validation diagnostic through existing redacting pipeline. No owner rows removed.
 
-Remaining: final-base qualification and independent final review after PR3320. No hosted CI, full-suite or real-provider claim.
+The provisional qualification above was followed by the final-base verification below. No hosted CI, full-suite or real-provider claim.
+
+## Final-base qualification
+
+- Rebased onto PR3320 merge5d8f4df56739. Only the two census files conflicted; all1303 current-dev entries retained, eight verified Inspector/export selectors appended for1311. Canonical census checker passes.
+- All24 other touched Python/CSS blobs match the previously reviewed provisional candidate. The controller PR-only delta has identical stable patch ID across the old/new bases; inherited accepted-Stop/native retirement code is preserved.
+- `r-14ffcb07`:168 passed,zero failures/errors/skips,116.00s runner/108.209s pytest. Three touched Chat modules, both touched UI modules and Full-to-Safe disclosure clearing run on the actual final base. Parent verified49 identical before/after/current enrolled hashes. Full command, case outcomes and hashes are in the local content-free receipt export.
+- All13 touched Python files parse; scoped Ruff has77 existing findings and zero introduced against5d8f4df. Diagnostic inventory verified719 owners,1067 TASK492 calls,56 TASK31551 calls,7793 TASK494 calls,16 sinks. No diagnostic regeneration was needed after the rebase.
+- Earlier286-case provisional evidence remains valid within its documented scope; unchanged CSS/native preservation checks were not repeated without a new concern. The final168 selection covers the actual integrated Trace/Inspector behavior.
+- TASK38112 remains open for Chat fast-lane selection/timing decisions. Its original blanket claim of no new UI riders is superseded by the eight appended UI selectors. This work does not certify a30s whole-file performance budget. TASK38113 remains a known minor: current painted Usage-row tests do not mutation-pin overflow wrapping, although the scoped production rule is correct.
+
+Final independent requesting-code-review: spec satisfied, quality acceptable, ready to merge; C0/I0/M1. The only minor is existing TASK38113 overflow mutation coverage. Reviewer reconciled168 final-base outcomes and49 input hashes,41 reviewed file hashes and3 final documentation hashes. TASK38110 inferred reparenting is unnecessary under AC3 clearing;38111 standalone fixture admission,38112 remaining Chat lane/timing,38113 overflow guard and37990 prior staged-send stall remain explicitly separate and are not claimed resolved. No runtime/security protection was waived.
