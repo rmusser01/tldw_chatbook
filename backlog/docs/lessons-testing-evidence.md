@@ -1,5 +1,18 @@
 # Lessons: what counts as evidence a change works
 
+## A supplied app monitor is not a per-turn cleanup seam (PR3320,2026-11-01)
+
+The old Connecting-tools test waited for `UIResponsivenessMonitor.close`, but the
+received UI path now supplies its app-owned monitor; the send scope does not close
+it. The test missed its tail barrier even on unchanged pre-repair code. Holding
+the real queue `_after_turn` await after terminal work, and asserting that the same
+accepted runtime custody task is still live, restored the intended repeated-Stop
+check. All four corrected cases passed in `r-518d3372`. Observe the operation's
+actual lifetime owner instead of assuming a similarly named cleanup method runs.
+Windows native admission also took48.296s before the first reply could fail;
+measured outer readiness watchdogs are functional guards, not latency evidence.
+
+
 ## Visible send completion precedes durable acceptance (PR3319, 2026-11-01)
 
 The deferred-Enter preservation check observed the second in-memory user row,
@@ -249,6 +262,44 @@ POSIX rename semantics passed native replacement. The regression attempts a
 competing lock immediately inside the replacement call, proving the original
 lock remains held, and independently refuses a late target-inode substitution.
 Releasing the lock to make rename succeed would discard the guarantee under test.
+
+## One Stop press is not the Stop a user makes: press it again after the first one settles (TASK-33621.22, 2026-10-29)
+
+**Incident.** The first fix settled a Stop pressed in the "Connecting tools…"
+window, and the single-press test went green. Live, with Ctrl+G pressed every
+30 ms, one round still failed the turn: `controller_submit status=failed`
+with `exception_type=CancelledError`, and the next send was refused. The
+log showed why. The first press was settled. A later press landed after the
+reply had returned but before the turn's runtime task ended. That press went
+down `stop_active_run`'s first branch, `runtime.cancel_received_intents`,
+which still cancelled the finished turn's intake custody. The task then died
+in its last await, the send diagnostic's `to_thread(monitor.close)`. A test
+that held that close and pressed Stop there went red on every run.
+
+**What to do.** For any Stop or cancel fix, press the control again at three
+points: before the first press is handled, while it is settling, and after the
+work has returned but before its task ends. Hold the task's last await so that
+the late press is deterministic, not a sampling race. Count the outcome of the
+task itself (returned, cancelled, raised), not only the transcript: here the
+transcript read "Stopped" either way.
+
+Two traps in the durable received-intent harness (`_received_console_case(...,
+durable=True)`) cost time here. A second turn fails trace reservation with
+exchange capture on (`unsupported_surface_change`), even with no Stop before
+it, so set `[console] exchange_capture = false` through the real setting. An
+Enter pressed before the store holds the new draft ends in
+`RecoveryRequired: console_snapshot_owner_changed`, so wait for
+`store.session_draft(...)` to match first.
+
+**Second incident, same task: one entry point is not the window.** The fix,
+its tests and three live rounds all used a fresh send. Review then pressed
+Stop on a Retry of a failed reply in the same window, and the tab locked
+exactly as before, while the new owner reported the Stop as a success. A Retry
+enters the window with its row still "failed" (the reply prepares it for the
+new attempt only after tool composition), and marking that row stopped is
+refused, so the run was never stopped. Before calling a window fixed, list
+every caller that reaches it (fresh send, Retry, variant, queued prompt, wake,
+close) and ask what state each one's row is in there.
 
 ## "Kept, not restarted" needs identity, not outputs (TASK-33626.1 review, 2026-10-29)
 

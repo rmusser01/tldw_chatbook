@@ -47,6 +47,7 @@ class _ConsoleNativeBinding:
     persistence: object
     database: object
     settlement_helper: Callable[..., bool] | None = None
+    expected_accepted_prefill: str = ""
 
 
 _native_commit_binding: contextvars.ContextVar[_ConsoleNativeBinding | None] = (
@@ -215,6 +216,7 @@ async def settle_accepted_durable_turn_owned(
     persistence: object,
     database: object,
     metadata_json: str | None = None,
+    expected_accepted_prefill: str = "",
 ) -> ConsoleNativeSettlementCompletion:
     """Retire the exact accepted terminal write without blocking the owner loop.
 
@@ -227,6 +229,8 @@ async def settle_accepted_durable_turn_owned(
         persistence: Original persistence captured by the controller owner.
         database: Original database captured by the controller owner.
         metadata_json: Optional terminal metadata object.
+        expected_accepted_prefill: Exact authored seed from the retained direct
+            continuation; every other accepted settlement requires empty content.
 
     Returns:
         Actual settlement/refusal or error, plus observed caller cancellation.
@@ -256,7 +260,12 @@ async def settle_accepted_durable_turn_owned(
         )
 
     binding = _ConsoleNativeBinding(
-        store, fingerprint, persistence, database, settlement_helper
+        store,
+        fingerprint,
+        persistence,
+        database,
+        settlement_helper,
+        expected_accepted_prefill,
     )
     result, error, cancelled = await _run_owned_native_call(binding, settle)
     return ConsoleNativeSettlementCompletion(bool(result), error, cancelled)
@@ -417,6 +426,58 @@ def _controller_retain_original_native_commit_recovery(self, owner, commit=None)
     )
 
 
+def accepted_terminal_state_matches(
+    store: ConsoleChatStore,
+    preparation_id: str,
+    *,
+    fingerprint: ConsoleDurableAcceptanceFingerprint,
+    commit: ConsoleDurableTurnCommit | None,
+    terminal_state: str,
+    content: str,
+) -> bool:
+    """Reconcile the original terminal outcome after native physical retirement.
+
+    A callback or owned connection cleanup can raise after the real write.
+    Check the original owner and its complete terminal projection, never replay.
+    """
+    from loguru import logger
+
+    from .console_chat_models import ConsoleMessageRole
+
+    if commit is None:
+        return False
+    try:
+        with store.durable_preparation_lock:
+            if (
+                store.durable_acceptance_fingerprint_for(preparation_id) != fingerprint
+                or store.durable_turn_commit_for(
+                    preparation_id, fingerprint=fingerprint
+                ) is not commit
+            ):
+                return False
+            assistant = store.get_message(commit.assistant_message_id)
+            recovery = store.dispatch_recovery_for_session(fingerprint.session_id)
+            return (
+                assistant.id == commit.assistant_message_id
+                and assistant.persisted_message_id == commit.assistant_message_id
+                and assistant.parent_message_id == commit.user_message_id
+                and assistant.role is ConsoleMessageRole.ASSISTANT
+                and assistant.status == terminal_state
+                and assistant.assistant_generation_state == terminal_state
+                and assistant.content == content
+                and (
+                    recovery is None
+                    or recovery.assistant_message_id != commit.assistant_message_id
+                )
+            )
+    except Exception as error:  # noqa: BLE001 - preserve recovery on uncertain original state.
+        logger.warning(
+            "Accepted turn settlement reconciliation failed (exception_type={})",
+            type(error).__name__,
+        )
+        return False
+
+
 async def _controller_settle_cancelled_native_commit(self, owner, continuation):
     """Settle an exact ACCEPTED owner without crossing provider dispatch."""
     from . import console_chat_controller as _source_controller
@@ -442,45 +503,14 @@ async def _controller_settle_cancelled_native_commit(self, owner, continuation):
         database=owner.database,
     )
     owner.caller_cancelled |= completion.caller_cancelled
-    settled = completion.settled and completion.error is None
-    if not settled:
-        # A callback or owned connection cleanup can raise AFTER the real
-        # terminal write. Reconcile existing original state, never replay it.
-        try:
-            with owner.store.durable_preparation_lock:
-                if (
-                    owner.store.durable_acceptance_fingerprint_for(
-                        continuation.preparation_id
-                    )
-                    == continuation.fingerprint
-                    and owner.store.durable_turn_commit_for(
-                        continuation.preparation_id,
-                        fingerprint=continuation.fingerprint,
-                    )
-                    is commit
-                ):
-                    assistant = owner.store.get_message(commit.assistant_message_id)
-                    recovery = owner.store.dispatch_recovery_for_session(session_id)
-                    settled = (
-                        assistant.id == commit.assistant_message_id
-                        and assistant.persisted_message_id
-                        == commit.assistant_message_id
-                        and assistant.parent_message_id == commit.user_message_id
-                        and assistant.role is _source_controller.ConsoleMessageRole.ASSISTANT
-                        and assistant.status == terminal
-                        and assistant.assistant_generation_state == terminal
-                        and assistant.content == content
-                        and (
-                            recovery is None
-                            or recovery.assistant_message_id
-                            != commit.assistant_message_id
-                        )
-                    )
-        except Exception as error:  # noqa: BLE001 - preserve accepted durable recovery and report only the exception type.
-            _source_controller.logger.warning(
-                "Accepted turn settlement reconciliation failed (exception_type={})",
-                type(error).__name__,
-            )
+    settled = (completion.settled and completion.error is None) or accepted_terminal_state_matches(
+        owner.store,
+        continuation.preparation_id,
+        fingerprint=continuation.fingerprint,
+        commit=commit,
+        terminal_state=terminal,
+        content=content,
+    )
     if not self._ordinary_native_commit_current(owner):
         if not settled:
             return self._retain_original_native_commit_recovery(owner, commit)
@@ -1187,7 +1217,10 @@ def _store_settle_accepted_durable_turn(
                 or assistant.persisted_message_id != assistant_id
                 or self._message_session_index.get(user.id) != session_id
                 or self._message_session_index.get(assistant.id) != session_id
-                or assistant.content
+                or assistant.content not in {"", binding.expected_accepted_prefill}
+                or "".join(
+                    self._stream_chunks_by_message.get(assistant_id, [assistant.content])
+                ) != binding.expected_accepted_prefill
             ):
                 return False
             self._dispatch_recovery_message_baselines[session_id] = self._snapshot(
