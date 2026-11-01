@@ -1,6 +1,6 @@
 # PR3328 integration and repair evidence
 
-Behavior candidate: `6357516f55daef96133e4e401f958c78f9064725`, based on merged PR3323/dev `4a38b3d2dba872e46ca8f9569908d9ccfd7aa2e9`. Independent review continues from immutable `fcc069896880d842e3838054336ed64cfcd7132b`; the final evidence delta changes test copy, census and documentation only. No remote operation was performed by the implementer.
+Behavior candidate: `6357516f55daef96133e4e401f958c78f9064725`, based on merged PR3323/dev `4a38b3d2dba872e46ca8f9569908d9ccfd7aa2e9`. Independent review continues from immutable `fcc069896880d842e3838054336ed64cfcd7132b`. Following evidence candidate `a214e3806180acd933f3d9177264246de6488544`, the final review delta changes three user-facing strings and their existing assertions/documentation only; no admission or runtime behavior changes. No remote operation was performed by the implementer.
 
 I1 captures slash/palette origin before scheduling, then applies the existing chat/composer guard before compaction. I3 forwards exact skill bindings through the shared precommit Ask gate from all four turn actions. Its real accounting/SQLite control proves no accepted attempt, sibling or provider call on Ask.
 
@@ -23,14 +23,18 @@ Do not call tool preview for forecast. Its no-I/O docstring does not cover the t
 | r-cc2390f0 | diagnostic failure, 98.25s | Source-only sampling shows progressing native authority reads, not a fixed-lock deadlock |
 | r-e99598da | 3 failed, 272.94s | Supported persisted nonstream fixture trial still times out; incidental fixture change reverted |
 | r-cc804daa | base comparison failure, 165.58s | Exact merged base reproduces the shared early Continue timeout |
+| r-d9e4aa47 | 3 selected nodes: 2 pass / 1 F1 teardown error, 49.33s | F1 body assertions complete; native-worker retirement errors (XML aggregate: 4 / 0 failures / 1 error, including teardown accounting) |
 
 Every receipt above has unchanged paired before/after source hashes. The final GREEN mounted test changes current prompt/catalog and compares mandatory/history/cap/output accounting against real prepared/preflight values, then checks agent low-unknown/high-advisory without tool preview/provider calls. Earlier prompt-capture, margin, framing and warmup fixture failures are not causal RED evidence. Retained I1 action/I3/cold function hashes were reverified after the narrow copy adjustment.
 
-Final SHA256 identities (production is unchanged from behavior candidate):
+SHA256 identities (only the final review copy changes production after the behavior candidate):
 
 | File | SHA256 |
 | --- | --- |
-| `UI/Console_Modules/compact_command.py` | `4cafa5f43330b1de8547e5f36f1301105a3fe9efb3abe2c8535ea5cd8361108b` |
+| `UI/Console_Modules/compact_command.py` (r-d9e4aa47) | `d3ed729e6dd80320494e1fb409588c610df3026f01cb4afc8e753ee4f63ad349` |
+| `Chat/console_context_budget_copy.py` (r-d9e4aa47) | `4594f4c138da8c0abfa4d9626de9572cecb7b3d8f021862b9fd4f36372080520` |
+| `Tests/Chat/test_console_compact_command.py` (r-d9e4aa47) | `d05240ff33cc404f3df6c1a13fd29728ccc832c4e5eeddfcd7a43db38bd95f6b` |
+| `Tests/UI/test_console_compaction_hold_status.py` (r-d9e4aa47) | `163f3bfc9ddf775a11deca2a22a8f639750a5f609543ded9808f1cf6889d6862` |
 | `Chat/console_compaction_gate.py` | `e70e6e685c1eeed18d575a723ba2a6930a1463567ea8417827ff3c7b40d8b568` |
 | `UI/Console_Modules/context_spend.py` | `21b55771f78c0716046a8f7e4351f6026ee47e7ad3ea859a15a5ced1058c3691` |
 | `Tests/UI/test_console_compaction_forecast.py` (r-29ace5d6) | `096439ea491fdc351eec199176133d98835012147af5c61b7f99dd2211ba206e` |
@@ -46,3 +50,9 @@ Census reconciliation appends seven locally passing node selectors/eight cases, 
 .102 remains Minor: billed compaction can finish without its command-result report when the outer worker is cancelled; accepted-turn custody does not own this command. Other existing follow-ups, including .100/.80/.90/.95/.96/.103/.105/.92/.93/.99/.101/.104, remain unresolved. Capture-on held rewind provenance and broader dynamic forecast semantics are not certified here. Historical task implementation/live/all-green/raised-ratchet paragraphs describe earlier source heads and are explicitly superseded by this integration qualification.
 
 Canonical plan: [2026-11-01-pr3328-backlog-integration.md](../plans/2026-11-01-pr3328-backlog-integration.md). ADR required: no; existing ADR052/230 apply. Full content-free receipt hash maps, lint comparison and inventory comparison are retained in the ignored integration evidence package for the same independent reviewer.
+
+## Final review copy correction
+
+The `/compact` exception catch now says only “Conversation compaction failed.” A postcommit finish/flatten failure cannot justify the former claim that memory was not updated; this change makes no persisted-state claim. Logging still includes exception type only, with the identical diagnostic statement. F1 limits hold-card choices to prepared composer sends, names queued/Buddy/unprepared over-trigger cardless refusals, and qualifies static forecast estimates versus unavailable agent/tool forecasts and possible high-context advisory.
+
+Only the directly affected compact-error, hold-detail copy and existing F1 help controls were selected in r-d9e4aa47. The first two pass cleanly. F1 completed its body assertions, but teardown hit `Tests/conftest.py:487` executor shutdown grace and `Tests/conftest.py:1869` refused config retirement while native workers remained uncertain. This receipt is not all-GREEN; no comparative evidence establishes this teardown error as inherited. The guard and existing timeouts remain intact, with no unrelated shutdown/admission repair. No new tests or census changes are needed for these existing controls. I1/I2/I3 guards, partial AC3, .102 and all prior qualification limits remain unchanged.

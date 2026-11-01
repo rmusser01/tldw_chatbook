@@ -156,7 +156,7 @@ def test_a_compaction_that_raises_is_logged_by_type_and_reported() -> None:
         logger.remove(sink)
 
     assert screen.rows == [
-        ("Conversation compaction failed before memory was updated.", "session-1")
+        ("Conversation compaction failed.", "session-1")
     ]
     (line,) = [text for text in logged if "/compact failed" in text]
     assert "exception_type=RuntimeError" in line

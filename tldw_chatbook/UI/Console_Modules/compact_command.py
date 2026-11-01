@@ -61,7 +61,7 @@ async def run_compact_command(screen: Any, *, origin: CommandOrigin | None) -> b
         )
         compacted, copy = (
             False,
-            "Conversation compaction failed before memory was updated.",
+            "Conversation compaction failed.",
         )
     await screen._append_native_console_system_message(copy, session_id=session_id)
     await screen._sync_native_console_chat_ui()

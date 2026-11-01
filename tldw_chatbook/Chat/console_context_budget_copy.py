@@ -34,13 +34,17 @@ CONTEXT_LIMIT_HELP: tuple[str, tuple[tuple[str, str], ...]] = (
     (
         (
             "Ask (default)",
-            "a send over the compaction trigger is held: Compact and send, "
-            "Send without compacting, Change policy, or Cancel send",
+            "a prepared composer send over the compaction trigger is held: "
+            "Compact and send, Send without compacting, Change policy, or Cancel send; "
+            "other over-trigger sends (queued, Buddy or unprepared) are refused "
+            "without a hold card",
         ),
         (
             "Before it",
-            "the header reads Next send pauses to compact; Inspect and the "
-            "status strip's run chip, Pauses for compaction",
+            "when a qualified static-input estimate predicts an Ask hold, the header "
+            "reads Next send pauses to compact; Inspect/run chip: Pauses for compaction. "
+            "Agent/tool-dependent next-send forecasts are unavailable; high estimated "
+            "context may show an advisory",
         ),
         ("/compact", "summarize older turns now (one model call)"),
         ("/rewind", "Summarize up to here previews what would be summarized"),

@@ -67,3 +67,14 @@ changing its floor. TASK33621.4 stays In Progress and broad AC3 unchecked; old
 task implementation/live/all-green/ratchet paragraphs are historical source
 evidence, superseded by this final qualification. Parent owns independent review
 continuation and remote actions.
+
+Final review copy correction: remove the unproved precommit claim from the
+compact exception report; qualify F1 hold-card choices as prepared composer
+behavior and its forecast row as estimated/static versus unavailable agent/tool
+prediction. Preserve type-only logging, all ownership/admission guards and the
+existing runtime owners. Narrow receipt r-d9e4aa47 has two clean direct-copy
+passes and completed F1 body assertions with a native-worker teardown error
+(three selected nodes; XML aggregate4/0 failures/1 error includes teardown
+accounting); it is not an all-GREEN receipt or an established
+inherited teardown issue. No further reruns, new tests, census changes or
+unrelated shutdown repair are part of this correction.

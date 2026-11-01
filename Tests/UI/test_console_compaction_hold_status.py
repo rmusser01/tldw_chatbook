@@ -83,11 +83,17 @@ async def test_f1_help_says_what_happens_at_the_context_limit() -> None:
 
     assert "Context limit:" in text
     for phrase in (
+        "prepared composer send",
         "Compact and send",
         "Send without compacting",
         "Change policy",
         "Cancel send",
+        "queued, Buddy or unprepared",
+        "without a hold card",
+        "qualified static-input estimate",
         "Next send pauses to compact",
+        "Agent/tool-dependent next-send forecasts are unavailable",
+        "advisory",
         "/compact",
         "/rewind",
     ):
