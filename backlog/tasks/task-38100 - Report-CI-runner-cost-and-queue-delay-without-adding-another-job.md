@@ -9,7 +9,7 @@ labels:
 - ci
 - testing
 priority: high
-updated_date: 2026-10-30 06:27
+updated_date: 2026-11-01 12:03
 ---
 
 ## Description
@@ -30,8 +30,8 @@ Make the cost of each required qualification visible so coverage growth and sche
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes. ADR path: backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md. Reason: observe CI cost with a narrow non-gating diagnostic exception. Follow Docs/superpowers/plans/2026-10-29-ci-cost-reporting.md: execute failing tests against the actual inline script, implement the one-step report and fail-closed contract exception, run focused checks and an offline audit sample, obtain independent review, and record local versus hosted evidence before delivery.
+2026-11-01 backlog integration follows Docs/superpowers/plans/2026-11-01-pr3317-backlog-integration.md. Apply only the source report commit onto the current PR3316 integration, preserve all application jobs and verdicts, rebase after confirmed PR3316 merge, run focused local contracts, and obtain independent requesting-code-review before authorized merge. Live PR is non-draft; historical draft delivery wording is superseded. Hosted summary, actual API pagination and timing remain unqualified under the user waiver. ADR required: no additional ADR beyond the source ADR103 amendment.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
