@@ -1499,3 +1499,7 @@ append-plan operation could duplicate steps.
 ## Bound catalog output by fields, not lines (PR3290 CI repair, 2026-10-29)
 
 A root investigation used Get-Content -TotalCount4 on its single-line52MB task-catalog JSON. The line limit emitted the entire corpus and the tool truncated it, producing noisy unusable output. Load the JSON in Python and print only selected IDs/titles/counts or bounded excerpts; keep the corpus private. A line count is not a size bound for machine-generated single-line data.
+
+## Pin the fetched target commit when worktrees share remote refs (PR #3342, 2026-10-31)
+
+During PR #3342 qualification, the inspected dev commit was 2561efd658, but origin/dev advanced before a local rebase. The published head 56a934ad44 actually included dev 3926ab8e67; its parent chain and merge-base agreed, and the remote-ref reflog recorded both fetch updates. A verification note initially named the earlier inspected base and needed correction. Worktrees share remote-tracking refs, so capture the target object ID, rebase onto that pinned ID, and verify the completed branch's actual ancestry before naming its tested base.

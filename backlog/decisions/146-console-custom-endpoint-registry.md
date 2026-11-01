@@ -31,3 +31,7 @@ Chatbook could address only two user-defined OpenAI-compatible endpoints: the ha
 - Readiness for an entry is the family's readiness (API-key rules included); URL validity is checked against the entry, not a config alias.
 - F9 Settings gains a Custom endpoints section with rename (display name only), edit URL/credentials (existing sessions re-resolve on next send), and delete guarded while any known conversation references the entry, with detach-to-conversation-only-endpoint as the recovery path.
 - Registry load failures (malformed TOML section) disable the registry surface for that boot with one warning naming the offending slug; built-in providers are unaffected. Discovery failures report but never roll back a created entry.
+
+## Shared route-suffix ownership (2026-10-31, TASK-38268)
+
+ROUTE_SUFFIXES belongs to the pure runtime provider_endpoint_contract module. Setup facts import and re-export that same mapping rather than making the runtime import the setup catalog. This retains one data owner and all existing endpoint/Z.ai semantics while restoring the frozen agent-runtime import footprint. No registry format, endpoint value, credential precedence or wire family changes.

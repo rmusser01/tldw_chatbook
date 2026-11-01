@@ -712,6 +712,9 @@ def _admit_console_turn_to_runtime(
     record_send_stage("ui_submit", "accepted")
     if request._pressed_inputs is not None:
         try:
+            from .config_sync import note_send_accepted
+
+            note_send_accepted(screen)
             if (
                 not runtime._disposed
                 and runtime.view is screen
@@ -3504,7 +3507,7 @@ async def _capture_console_configuration_async(
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
     app = screen.app_instance
-    app_config = getattr(app, "app_config", None)
+    app_config = app.app_config
     runtime = screen._console_runtime()
     store = screen._ensure_console_chat_store()
     controller = screen._ensure_console_chat_controller()
@@ -3519,7 +3522,7 @@ async def _capture_console_configuration_async(
     current_provider = session_controller._build_console_turn_execution_context
     if (
         screen.app_instance is not app
-        or getattr(app, "app_config", None) is not app_config
+        or app.app_config is not app_config
         or screen._console_runtime() is not runtime
         or runtime._chat_store is not store
         or runtime._chat_controller is not controller

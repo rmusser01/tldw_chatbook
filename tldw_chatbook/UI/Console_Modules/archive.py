@@ -183,7 +183,7 @@ async def request_conversation_resume(
             from ...Constants import TAB_CHAT
             from ...UI.Navigation.main_navigation import NavigateToScreen
 
-            screen_stack = getattr(app, "screen_stack", ())
+            screen_stack = app.screen_stack
             source_screen = screen_stack[-1] if screen_stack else None
 
             def resume_same_screen(succeeded: bool) -> None:
@@ -192,7 +192,7 @@ async def request_conversation_resume(
                     succeeded
                     and source_screen is not None
                     and request_current()
-                    and getattr(app, "screen", None) is source_screen
+                    and app.screen is source_screen
                 ):
                     consume = getattr(
                         source_screen, "_consume_pending_conversation_resume", None

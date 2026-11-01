@@ -70,3 +70,77 @@ Reason: test-inventory correction documenting current UI geometry; no production
 - [x] Reproduce the existing reverse census failure on the current source (one failed, five passed; exact seven classes).
 - [x] Add only the seven individually justified exemptions to Tests/UI/modal_wide_tier_registry.py (+9 lines).
 - [x] Run the existing six static contracts (six passed, 62.66s), scoped Ruff/format and whitespace checks; independent review before pushing.
+
+## Added scope: remaining UI-shard-5 contracts
+
+Hosted shard 5 has three failures: setup-card reverse focus traversal, an unsaved snapshot-preference assertion, and the Console stylesheet's 2,001 active lines exceeding the existing 2,000 ceiling. Investigate each against dev db7e04cf48 before changing source; the old hosted snapshot predates the latest setup/Console merges.
+
+ADR required: no new ADR for routine test corrections or a stylesheet refactor preserving behavior.
+ADR path: existing backlog/decisions/150-design-token-system-and-design-language.md and backlog/decisions/161-component-pattern-library.md; use the governing feature ADR if a product fix proves necessary.
+Reason: retain the current keyboard, preference review and component vocabulary contracts.
+
+- [ ] Reproduce each exact failing case on the rebased tree and identify stale test assumptions versus product faults.
+- [ ] Repair the smallest proven cause without weakening focus, dirty-state, size, timeout or census checks.
+- [ ] Split one cohesive Console CSS vocabulary into its proper source module; rebuild generated CSS and prove selector/declaration equivalence.
+- [ ] Verify the affected cases, relevant style guards, scoped lint and independent review before the next push and fresh current-head CI.
+
+## Proven status ownership and later CI failures
+
+The metadata trace proves the restored Providers & Models draft is dirty and its inspector initially says Unsaved changes. An asynchronous Internal Prompts count callback then updates that shared inspector/banner for the inactive category. Enforce the accepted ADR-033 contract by putting those two selected-surface writes inside the existing active-category guard. Preserve category rail and category-owned descendant updates. Replay the real callback in the existing retained-edit test and assert the dirty model, edited value, inspector, selected banner and rail remain consistent; a wait cannot substitute for the repair.
+
+ADR required: no new ADR; direct repair of accepted behavior.
+ADR path: backlog/decisions/033-settings-commit-models-three-honestly-labeled.md.
+
+Hosted UI shard16 also found warmup inventory drift: console_received_dispatch is now resident at UI-ready, while console_plugin_context and Agents.hook_permissions remain lazy send imports. Update the production/test inventories only, preserving route ordering, guards and the94-module ceiling. Governing ADRs: backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/198-gc-policy-freeze-boot-heap.md; backlog/decisions/230-console-send-preparation-and-io-ownership.md. No new ADR.
+
+The second admission lane's project-chat UAT expects deferred full-tool discovery and project-binding disclosure, but its preconfigured tools section omits the new opt-in full-agent mode. Reproduce its fenced case, explicitly enable the existing mode in this test's saved config, describe that substitution, and qualify all four variants plus receipt and negative-evidence checks. Preserve product defaults, permissions and every model/file-evidence assertion. Existing backlog/decisions/104-token-budgeted-agent-tool-disclosure.md and its light-surface amendment govern the mode; no new ADR.
+
+The CSS split's native guard run found two existing portability assumptions: the atomic text writer translates canonical LF content to CRLF on Windows, taking the physical boot census over608,090bytes, and a synthetic diagnostic assertion expects a literal POSIX separator. Publish generated UTF-8 text with explicit LF through the existing atomic writer, and assert the escaped native relative path in that existing test. Rebuild and rerun both observed failures plus reproducibility checks; retain the exact45,315-token stream and all numeric ceilings. These are routine representation/test-path corrections under the existing artifact and ADR-150/161 contracts; no new ADR.
+
+Hosted UI13 found one raw dimension: #setup-provider-choice's40vh cap. Add$ds-setup-provider-choice-max-height:40vh beside existing setup geometry and reference it from that selector; an unrelated Messages token must not couple these features. Preserve resolved max_height at multiple viewport sizes, run the existing zero-literal/definition/bundle/budget guards, and retain the earlier exact token-stream proof for the separate Console extraction. Existing ADR-150/161 govern this token adoption; no existing token value changes.
+
+Hosted UI12 found two added visible destinations absent from an otherwise exact expected class map: kanban/KanbanBoardScreen and plugins/PluginsScreen. Reproduce and add only those two entries, retaining the complete equality and real lazy route resolution. UI15 repeats the already repaired keyboard action-order failure.
+
+The native dimension-floor run also exposed a pre-existing path-key assumption: core\\_variables.tcss did not match the canonical core/_variables.tcss exemption. Canonicalize _sheet_sources keys with relative_to(CSS).as_posix(); preserve the exact token-file exemption and every zero floor, then rerun only the failed dimension case because the other three guards already pass.
+
+## Primary architecture and remaining contract repairs
+
+ADR required: yes, clarify existing ownership decisions before implementation.
+ADR paths: backlog/decisions/036-application-service-composition-lifecycle.md; backlog/decisions/250-application-services-bundle.md; backlog/decisions/146-console-custom-endpoint-registry.md.
+Reason: preserve established service and runtime boundaries while repairing new reflection, upward imports and import-footprint growth. No new permission or resource owner is introduced.
+
+- Replace the identified new app-reflection sites with declared/current service references or explicit borrowed owners/readers. Notes must retain a cached non-constructing peek plus off-loop safe read; MCP switch checks stay fresh and fail closed. Plugin caching stays in the existing public app owner; selected-tool counts get an explicit publication owner. Preserve required fake-host contracts, lower any genuinely reduced census rows, and remove stale private-name entries only when their last real lookup disappears.
+- Move the complete220-line unmount service phase and its cohesive47-line worker-settlement body into app_shutdown_services.py, classified by the existing app_* presentation rule. Retarget the sole lifecycle caller and source-inspection test, keep public mixin delegates/patch points, grace constants and cancellation/primary-error semantics. Lower measured source-size rows; no shim or allowlist addition. Verify the actual size guard: app_lifecycle currently2150 against2135, Utils app_shutdown776.
+- Put the shared suffix mapping in provider_endpoint_contract and have setup facts re-export it. Verify route behavior, single ownership and unchanged runtime footprint.
+- Resolve the first-send fixture's intermittent fromlist anti-vacuity observation by invoking the real safe voice-chip restore from the test gateway under an asserted real send frame, before delegating. Do not change frame recognition, start audio, relax assertions or raise the94-module ceiling. Find a legitimate eager dependency paydown for the remaining95→94 gap before claiming GREEN.
+- Re-key .setup-key-hint Static to the sole existing #setup-provider-key-hint-text ID, keeping width:$ds-width-fill and the270 performance ceiling; prove matched-target/computed-width equivalence.
+- Update only the stale no-overhead context fake and explicit custody request field census for current immutable input witnesses. The witness fields are repr-hidden and generation-fenced; controller/runtime lifetime checks remain exact.
+- Guard the Notes replacement query with a presence check during recompose; preserve exact detached-old/new-focus conditions and the10-second limit.
+
+First-send residual proof: the two necessary lazy entries leave95 cold modules against94. The legitimate paydown is the optional Character avatar edge: character_tool_service imports character_avatar solely for an explicit generate-avatar summary and the validated avatar-save branch. Keep the service warm; defer only those helper imports until those existing branches. Preserve the service-level image_backend_configured patch point with a typed lazy forwarding function and keep avatar resolution after validation. Run the full character-tool service tests with strict first-send/cycle/payload guards. This follows the existing ADR-097 lazy-feature boundary; no budget or runtime-authority change.
+
+## Final observed UI contracts
+
+ADR required: no new ADR; existing ADR-150/161 and ADR-230/231 govern these direct repairs.
+
+- UI25: reproduce all Plugins focus-edge contrast failures, replace only that component edge's token with an existing contrast-safe semantic foreground token, and verify every theme plus representative focused geometry. Preserve thresholds, debt records and layout.
+- UI26: replace SetupStep.show_step_error's three finite inline padding states with token-backed classes; verify repeated errors and step transitions preserve 2/4/6-column alignment and the style floor stays unchanged.
+- UI31: successful pressed-input fallback acceptance skips the old captured-draft commit callback, so it also lost note_send_accepted. Restore that marker in the successful custody branch before polling. Keep custody, the received-intent path, provider-entry marker and three-second expiry. Verify the existing failing node, all seven quiet-gap cases and durable-commit window contracts.
+
+Stale-contract GREEN: nine targeted arrival, custody and actual lazy-navigation tests passed in26.84s. Complete equality and lifetime/privacy assertions remain intact.
+
+Architecture source-size detail before apply: the current MCP reader adds three lines to the frozen Console runtime. Move its existing37-line recover_console_trace_calls implementation into the already-owning Chat/console_trace_settlement leaf, retaining the exact lazy delegate/signature and call-time imports in console_runtime. Preserve recovery timestamp, grace interval, repository behavior and patch points; run direct recovery/grace controls. This is an existing-boundary extraction, not comment/whitespace compression or a budget increase. Existing ADR-036/097 and trace-settlement contract apply; no new ADR.
+
+Quiet-gap covering test investigation before the additional test edit: the paused timer's task is sleeping, but its whole-sync replay still owns presentation. Minimal callback snapshots reproduced the unchanged exact first-poll count failure with sync_in_progress=False, replay_whole_sync=True and sync_scheduled=True at callback entry and return; the production gate correctly leaves a request and returns without projection. Extend only this test's existing settled predicate to wait for replay_whole_sync to clear as well, keeping30s and every exact first-sync/held-tick/count assertion. The separately selected Notes creation control requires an explicit collection-time bootstrap-profile probe because its unmarked mixed-profile fixture correctly refuses raw_source_selection_changed before UI; with that disclosed harness substitution, the real New/Blank-note assertions passed1/24.88s. No production gate/authority changes.
+
+UI25 compositor check confirms the inherited solid outline masks a border-only token repair: perimeter ratios stay2.563/1.196/1.591 on textual-dark/pastel_dreams/cloudy_day at80x24 and140x40. Set this component's focused outline to the same existing ds-active-fg token, preserving solid thickness, geometry and contrast thresholds. This is the already-approved visible-focus repair, not a global focus-token change.
+
+Independent architecture review found one compatibility gap before tracked apply: ProviderStep still accepts wizard/config=None, so its direct app-config read must retain an explicit absent-owner branch. Add that conditional and focused constructor-based optional-owner coverage in the existing provider guard tests. Keep declared-owner reads direct and all frozen counts unchanged. Other reviewed ownership/extraction semantics had no material finding; actual applied-tree tests remain pending.
+
+Canonical LF checkout boundary before edit: Git reports no text/eol attribute for the generated root CSS. Its real checkout filter emits20,255CRLF lines/443,333bytes for the HEAD main bundle, versus the current canonical generated423,398bytes; main-bundle smudging alone exceeds the unchanged13KB remaining boot headroom. After the active CSS run exits, add a narrow tldw_chatbook/css/*.tcss text eol=lf attribute, following existing exact-byte artifact attributes. Verify Git checkout filters emit exact LF blobs, then validate the committed integrated artifacts through the same filters. Generated publication and fresh Windows checkout must both preserve canonical bytes. Existing ADR-150/artifact reproducibility applies; no new ADR or runtime behavior.
+
+Counts/MCP actual run:83passed/2failed838.72s; all new ownership/current-reader controls passed. The two failures are existing gated llama.cpp tests that inspect only native tools rows, while current preview deliberately renders fenced schemas into the system message for that native-incapable resolution. Existing light-fenced prepared-vs-service-request control passes. Correct the two tests using existing _capacity_request and actual disclosed_schemas helpers: require no native rows, exact LIGHT fenced names for roomy/reasoning requests, and retain the unverified-window minimal plain fallback. Keep native OpenAI control and both complete request-representation controls. No production planner/accounting/limit change; existing ADR-104 applies. Native baseline/new fixture source control required before marking this green.
+
+Plugin qualification boundary: all13 selected real managed-runtime fixtures retain their existing64-bit Darwin guard, so the Windows run is13skipped, not mounted-host success. Add one process-free cache-ownership regression to the already-selected test_plugins_browse.py, using the real app mixin property and actual PluginOperations facade over an inert service. Verify repeated public reads retain one presentation owner and existing draft state over the app-owned service, while separate app owners remain isolated; no managed runtime, capability flag or permission is substituted. This tests the changed cache/borrow seam without claiming portable managed execution. Existing ADR-036/162 apply; no new ADR or production behavior.
+
+Pre-integration opt-in proof: the real fenced project-chat UAT now passes (208.48s), including workspace creation, instruction review, actual file evidence, persisted/painted answer and clean shutdown. All four variants and the missing-README negative control still qualify the final integrated head. Backlog readability/ID guards pass across6,016 tasks; final publication must also retain the complete UI census and current-head hosted checks.

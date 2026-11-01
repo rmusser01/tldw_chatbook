@@ -1005,9 +1005,14 @@ class SkillServiceWiringMixin:
     @property
     def plugin_operations(self) -> Any:
         """Retain one lazy presentation state over the existing plugin owner."""
-        from tldw_chatbook.UI.Plugins_Modules.operations import app_operations
+        owner = getattr(self, "_plugin_operations", None)
+        if owner is None:
+            from tldw_chatbook.UI.Plugins_Modules.operations import PluginOperations
 
-        return app_operations(self, self._build_plugin_service())
+            owner = self._plugin_operations = PluginOperations(
+                self._build_plugin_service()
+            )
+        return owner
 
     @property
     def plugin_source_service(self) -> Any:

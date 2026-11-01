@@ -159,3 +159,9 @@ repository-wide constant.
 - [TASK-1602: Define production local apply-store ownership](../tasks/task-1602%20-%20Define-production-local-apply-store-ownership-for-manual-Sync-v2.md)
 - [ADR-033: Application Session State Ownership](033-application-session-state-ownership.md)
 - [ADR-032: Immutable Installed Distribution Assets](032-immutable-installed-distribution-assets.md)
+
+## CI boundary repair (2026-10-31, TASK-38268)
+
+Application consumers use declared service interfaces or explicitly supplied owner/read callbacks. New string reflection on the app is not a compatibility layer. Keep lazy services outside the immutable ADR-250 bundle: Notes attention receives a non-constructing cached-owner peek and an off-loop safe reader/failure projection; MCP kill-switch decisions read the current service on each call and retain fail-closed errors. Neither path may construct a service as a side effect of a UI preview.
+
+Managed plugin operation caching belongs to the existing public app-owned plugin_operations property. Per-session selected-tool counts have a declared publication owner before readers use them. Consumers borrow those owners or current values; they do not create replacement service graphs. Existing workspace/profile identities, permission checks and resource lifetimes remain the contract. This records implementation ownership while repairing the frozen reflection census; it introduces no container, new authority, or allowed-name expansion.

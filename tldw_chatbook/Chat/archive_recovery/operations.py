@@ -146,7 +146,7 @@ async def execute_restore(
     """
     chat_changed = workspace_changed = False
     status = "restored"
-    registry = getattr(app, "workspace_registry_service", None)
+    registry = app.workspace_registry_service
     phase = on_phase or (lambda _phase: None)
     try:
         current = await read_recovery_target(app, target.conversation_id)

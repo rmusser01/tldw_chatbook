@@ -4571,6 +4571,7 @@ class ConsoleChatController:
         #: ``request_mcp_approvals`` a safe no-op UI bridge that still
         #: resolves via cancellation/timeout.
         self.app: Any | None = None
+        self._selected_tool_counts: dict[str, int] = {}
         #: TASK-32954: one CharacterReadGuard per Console session, kept
         #: across turns (never rebuilt per turn) -- a full read of a field
         #: in one turn must still permit character_save on a later turn of
@@ -15340,45 +15341,28 @@ class ConsoleChatController:
         not_connected_count: int | None,
         session_id: str | None = None,
     ) -> None:
-        """Publish this run's MCP catalog counts for the inspector's "MCP" row.
+        """Publish composed MCP counts and clear this session's selected count.
 
-        ``setattr`` onto ``self.app`` -- the exact same object
-        ``ChatScreen._console_mcp_tool_count``/``_console_mcp_not_connected_
-        count`` ``getattr`` from (wired onto this controller as ``self.app``
-        by ``ChatScreen._ensure_console_chat_controller``). Every
-        ``_compose_mcp_provider`` return path calls this: ``(None, None)``
-        is the row's documented "absent" contract (see
-        ``console_display_state._mcp_inspector_row``) for the no-service /
-        kill-switch-on / compose-failed / empty-catalog paths; the eligible
-        path publishes the real counts.
-
-        No separate UI refresh is triggered here by design -- piggybacking
-        on machinery the screen already runs, not a new mechanism:
-        ``_compose_mcp_provider`` always executes on the main loop while
-        this run's state is already STREAMING (set moments earlier by
-        ``_run_agent_reply``), so the screen's own active-run poll timer
-        (``ChatScreen._start_console_transcript_sync_timer``, already
-        ticking every 0.2s by the time this runs -- started before
-        ``submit_draft`` is even awaited) and the guaranteed post-
-        ``submit_draft`` sync (runtime custody)
-        both already re-derive inspector state from these attributes on
-        their own next pass.
+        Selected counts belong to this controller; the existing application
+        counters remain the control bar's fallback until a request is selected.
+        The active-run poll and post-submit sync paint these current values.
         """
+        self._selected_tool_counts.pop(session_id, None)
         if self.app is None:
             return
         from tldw_chatbook.Agents.plain_chat_tool_surface import offered_builtin_tool_count
 
-        getattr(self.app, "console_selected_tool_counts", {}).pop(session_id, None)
         self.app.console_tool_count = offered_builtin_tool_count(self._agent_bridge, session_id)
         self.app.console_mcp_tool_count = tool_count
         self.app.console_mcp_not_connected_count = not_connected_count
 
     def _publish_selected_tool_count(self, session_id: str, count: int) -> None:
         """Publish the selected first request on the controller loop."""
-        if self.app is not None:
-            counts = getattr(self.app, "console_selected_tool_counts", {})
-            counts[session_id] = count
-            self.app.console_selected_tool_counts = counts
+        self._selected_tool_counts[session_id] = count
+
+    def selected_tool_count(self, session_id: str | None) -> int | None:
+        """Return this controller's last selected count without composing tools."""
+        return self._selected_tool_counts.get(session_id)
 
     def _console_tool_kill_switch_reader(self) -> Callable[[], bool] | None:
         """Forward to the documented InterruptRoundHost implementation."""
@@ -29641,7 +29625,7 @@ def _stock_console_tool_composition_current(controller):
 
     if (not providers._controller_factory_current(MCPToolProvider)
         or not standard_console_catalog_sources(
-            getattr(controller.app, "unified_mcp_service", None)
+            controller.app.unified_mcp_service if controller.app is not None else None
         )):
         return False
     for name, original, code, namespace, defaults, keyword_defaults, keyword_items, closure in _CONSOLE_TOOL_COMPOSITION_METHODS:

@@ -37,6 +37,25 @@ accepted or uncertain attempt. The final focused checks also found that FAILED
 was published before the transcript replaced its Waiting row: visible-copy
 tests must wait for the actual painted text, not a fixed delay after model state.
 
+## A finished sync can still leave its replay owning the next manual tick (TASK-38268, 2026-10-31)
+
+**Incident.** Qualifying PR#3342's restored pressed-send acceptance marker made
+an existing durable-commit test intermittently count zero projections on its
+first manually driven poll. Its setup waited for sync_in_progress=False, but
+minimal callback snapshots showed replay_whole_sync=True and sync_scheduled=True
+at both entry and return. The paused timer task was sleeping; the whole-sync
+replay, rather than an active callback, still owned presentation. The production
+gate correctly retained a request instead of projecting. Waiting for both the
+running sync and replay ownership to settle kept the same30-second deadline and
+every exact tick/count assertion; all11 quiet-gap, durable-window and Notes-focus
+cases then passed uninstrumented in128.59s. Global profiling and per-event writes
+had delayed the tick enough to hide the failure and were removed.
+
+**What to do.** Before manually driving a callback, settle all owners that can
+legitimately refuse it, including a deferred replay. Capture a failed edge with
+minimal metadata; a slower instrumented green does not establish a fix. Preserve
+the production refusal and the test's behavioral assertions.
+
 ## HOME redirection leaves Windows native AppData ambient (TASK-38268, 2026-10-31)
 
 **Incident.** Qualifying PR #3287's full eval recovery lane with a populated

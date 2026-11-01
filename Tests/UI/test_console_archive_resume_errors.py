@@ -25,6 +25,8 @@ async def test_workspace_read_failure_notifies_without_navigation_and_allows_ret
         ),
         workspace_registry_service=SimpleNamespace(get_workspace=workspace_read),
         pending_handoffs=PendingHandoffStore(),
+        screen_stack=(),
+        screen=None,
         notify=Mock(),
         push_screen=Mock(),
         post_message=Mock(),

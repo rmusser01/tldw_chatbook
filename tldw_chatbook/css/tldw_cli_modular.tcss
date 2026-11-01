@@ -100,6 +100,8 @@ $ds-workflow-dialog-max-width: 100;
 $ds-setup-voice-wide-share: 21fr;
 $ds-setup-voice-medium-share: 14fr;
 $ds-setup-voice-narrow-share: 11fr;
+
+$ds-setup-provider-choice-max-height: 40vh;
 $ds-library-source-action-width: auto;
 $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
@@ -8426,6 +8428,7 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 
 #console-control-hooks.hooks-attention{color:$ds-status-approval-required;}
 
+/* ===== MODULE: features/_console_archive_recovery.tcss ===== */
 
 #console-archive-recovery, #console-archive-recovery-controls {
     height: $ds-height-auto;
@@ -16112,6 +16115,13 @@ SmartContentTree Tree > .selected-node {
     padding: $ds-space-0 $ds-space-2;
 }
 
+#setup-step-error-pinned.setup-step-error-inset {
+    padding: $ds-space-0 $ds-space-2 $ds-space-0 $ds-size-4;
+}
+#setup-step-error-pinned.setup-step-error-wide-inset {
+    padding: $ds-space-0 $ds-space-2 $ds-space-0 $ds-size-6;
+}
+
 .setup-step-note { color: $text-muted; margin-top: $ds-space-1; }
 .setup-field-label { margin-top: $ds-space-1; }
 .setup-probe-status { color: $text-muted; margin-top: $ds-space-1; }
@@ -16256,7 +16266,7 @@ SmartContentTree Tree > .selected-node {
     color: $ds-focus-fg;
 }
 
-#setup-provider-choice { max-height: 40vh; }
+#setup-provider-choice { max-height: $ds-setup-provider-choice-max-height; }
 .setup-provider-filter { width: $ds-width-fill; }
 .setup-provider-count { width: auto; margin-left: $ds-space-2; }
 .setup-no-server { height: auto; }
@@ -16469,7 +16479,7 @@ FirstRunSetupWizard SetupWizardContainer .wizard-progress {
 .setup-key-hint, #setup-provider-key-source { height: auto; }
 
 #setup-provider-key-source SetupRadioButton { text-wrap: wrap; }
-.setup-key-hint Static { width: $ds-width-fill; }
+#setup-provider-key-hint-text { width: $ds-width-fill; }
 
 
 FirstRunSetupWizard SetupWizardContainer {

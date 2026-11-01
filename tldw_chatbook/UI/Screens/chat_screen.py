@@ -10673,8 +10673,8 @@ class ChatScreen(BaseAppScreen):
             staged_source_count=console_staged_source_count(pending_launch),
             tool_count=self._console_tool_count(),
             tools_estimate=True,
-            selected_tool_count=getattr(self.app_instance, "console_selected_tool_counts", {}).get(
-                getattr(active_session, "id", None)
+            selected_tool_count=self._console_runtime().selected_tool_count(
+                active_session.id if active_session else None
             ),
             mcp_tool_count=self._console_mcp_tool_count(),
             approval_count=self._console_pending_approval_count(),
@@ -17845,7 +17845,7 @@ class ChatScreen(BaseAppScreen):
                 await self._sync_native_console_transcript()
                 if not poll_is_current():
                     return False
-                if getattr(self.app_instance, "_ui_ready", True):
+                if self.app_instance._ui_ready:
                     await self._archive_recovery_view().sync()
                 if not poll_is_current():
                     return False

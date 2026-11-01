@@ -8,6 +8,7 @@ This document describes the `TldwCli` Textual application: startup phases, the s
 | --- | --- |
 | `tldw_chatbook/app.py` | `TldwCli` — composition root (ADR-036): config load, service graphs, navigation dispatch, global bindings, boot worker fleet, quit flow |
 | `tldw_chatbook/app_startup.py` | Delegated startup timers and footer wiring; app methods retain named dependency and callback routes |
+| `tldw_chatbook/app_shutdown_services.py` | Presentation-owned unmount service drain and bounded worker settlement; lifecycle delegates retain patch points and grace constants (ADR-250) |
 | `tldw_chatbook/app_served.py` | Deferred served control/approval relay wiring; App keeps task, publisher and client ownership plus live dependency lookups (ADR-236) |
 | `tldw_chatbook/Constants.py` | `TAB_*` route ids, `TAB_DISPLAY_LABELS`, navigation-context contract keys, subscription/splash constants |
 | `tldw_chatbook/UI/Navigation/shell_destinations.py` | `ShellDestination` dataclass, `SHELL_DESTINATION_ORDER`, `SHELL_DESTINATION_SHORTCUTS`, `resolve_shell_route()` |
@@ -17,7 +18,7 @@ This document describes the `TldwCli` Textual application: startup phases, the s
 | `tldw_chatbook/UI/Navigation/screen_state_store.py` | `ScreenStateStore` — per-route snapshots keyed by runtime identity (ADR-033) |
 | `tldw_chatbook/Utils/boot_worker_policy.py` | `BOOT_WORKER_POLICY`, `StaggeredBootWorkerGate` — two-tier boot worker fleet |
 | `tldw_chatbook/Logging_Config.py` | redacting rotating file logs, loguru→stdlib bridge, in-app log screen feed, crash forensics |
-| `tldw_chatbook/css/build_css.py` | CSS module build: 64 ordered `.tcss` sources → 5 generated sheets |
+| `tldw_chatbook/css/build_css.py` | Ordered CSS module build, consolidated core sheets and lazy feature sheets |
 
 ## The app class
 
@@ -37,11 +38,13 @@ App-level state includes the DB handles (`media_db`, `prompts_db`, `subscription
 
 `action_quit` runs as `run_worker(group="application-quit", exclusive=True, exit_on_error=False)`, consults the current screen's `confirm_quit`/`prepare_for_quit` and the console-runtime quit confirmation; any pre-quit failure keeps the app alive with a notify.
 
+Application consumers borrow declared services or explicit current-owner readers (ADR-036). The public `plugin_operations` property retains presentation state over the existing plugin service; it does not introduce another resource owner. The unmount service phase lives in `app_shutdown_services.py`, while `LifecycleMixin` retains its delegate and patch points and `Utils/app_shutdown.py` keeps lower-level retirement and exit primitives. Cancellation, primary errors and grace constants retain their existing owners.
+
 ## Navigation system
 
 Three layers resolve a route string to a screen:
 
-1. **Destinations** (`shell_destinations.py`) — 13 shell destinations in strip order (home, console, library, personas, watchlists_collections, schedules, workflows, acp, lab, logs, settings, research, meetings). Artifacts (ADR-172) and MCP (ADR-240) are retired from the strip: their routes alias Library and Settings respectively, and ctrl+6/ctrl+9 survive as compatibility deep-links. `_ROUTE_MAP` folds legacy route names at import time; unknown routes resolve to themselves.
+1. **Destinations** (`shell_destinations.py`) — 15 shell destinations in strip order (home, console, library, personas, watchlists_collections, schedules, workflows, acp, lab, logs, settings, research, meetings, plugins, kanban). Artifacts (ADR-172) and MCP (ADR-240) are retired from the strip: their routes alias Library and Settings respectively, and ctrl+6/ctrl+9 survive as compatibility deep-links. `_ROUTE_MAP` folds legacy route names at import time; unknown routes resolve to themselves.
 2. **Screen registry** (`screen_registry.py`) — lazy `module_path`/`class_name` per route so `app.py` never imports screen classes directly (circular-import guard). `resolve_screen_target()` resolution order: aliases → routes → shell destinations (so `"lab"` → `"llm"`, `"console"` → `"chat"`). `dependency_check` gates optional screens via `Utils/optional_deps.py`.
 3. **App dispatch** (`app.py`) — `@on(NavigateToScreen)` runs `handle_screen_navigation` as a worker (an inline await of a confirm dialog would starve the App's single message task — the "zombie-modal soft-lock"), under an `asyncio.Lock` that gives overlapping navigations FIFO ordering.
 
@@ -89,7 +92,9 @@ The session controller imports it inside its Rename handler (ADR-097).
 
 ## CSS and design tokens
 
-Sources live in `tldw_chatbook/css/{core,layout,components,features,utilities}/*.tcss`; `build_css.py` compiles 64 ordered modules (starting `core/_variables.tcss`, `_reset.tcss`, `_base.tcss`, `_typography.tcss`) into five generated sheets: the app bundle, two consolidated widget-defaults sheets (class-level `BUNDLED_CSS` consolidation dodges Textual's `LRUCache(64)` parse cache — a full destination tour used to hit 94 sources and 125–380 ms cold parses), and two screen-CSS sheets bracketing the bundle. Never edit `tldw_cli_modular.tcss` directly; rebuild with `python tldw_chatbook/css/build_css.py`. `check_bundle_sync.py` plus a build manifest guard the generated files.
+Sources live in `tldw_chatbook/css/{core,layout,components,features,utilities}/*.tcss`; `build_css.py` compiles ordered source modules (starting `core/_variables.tcss`, `_reset.tcss`, `_base.tcss`, `_typography.tcss`) into five generated sheets: the app bundle, two consolidated widget-defaults sheets (class-level `BUNDLED_CSS` consolidation dodges Textual's `LRUCache(64)` parse cache — a full destination tour used to hit 94 sources and 125–380 ms cold parses), and two screen-CSS sheets bracketing the bundle. Never edit `tldw_cli_modular.tcss` directly; rebuild with `python tldw_chatbook/css/build_css.py`. `check_bundle_sync.py` plus a build manifest guard the generated files.
+
+Generated styles publish canonical UTF-8/LF text atomically, and `.gitattributes` retains LF bytes for root CSS sheets on Windows checkout. The physical boot-byte limit therefore covers the same bytes on each platform. The cohesive archive-recovery vocabulary lives in `features/_console_archive_recovery.tcss`, immediately after `_console.tcss` in the builder order.
 
 The Console sheet is deliberately boot-parsed (the Console is the initial tab; lazy loading cost a ~100 ms full-app restyle), while the library/settings sheets load lazily via each screen's `CSS_PATH` and the evals/scheduling/watchlists feature sheets load app-side on first navigation.
 
@@ -101,7 +106,7 @@ All visual values are `$ds-*` tokens in `core/_variables.tcss` (ADR-150): spacin
 - Never bind terminal-convention keys (ctrl+c/v/x/s/d/z/a/r/w) for app actions.
 - Screen actions use single-letter htop-style bindings; destructive actions require a confirm dialog.
 - Footer hints must be truthful: advertised ⊆ bound, and advertised == working in the active context.
-- The destination hotkey layer is one left-to-right keyboard walk: ctrl+1..ctrl+5, ctrl+7, ctrl+8, ctrl+0, then f2/f3/f4/f5/f7 — defined in `SHELL_DESTINATION_SHORTCUTS`, owned by the destination contract, and moving in lockstep with `SHELL_DESTINATION_ORDER`; destination-local bindings may not shadow these keys (ADR-152). ctrl+6 (Artifacts → Library, ADR-172) and ctrl+9 (Tools & MCP → Settings, ADR-240) sit outside the walk as retained compatibility deep-links for retired destinations. The embedded Console terminal viewport encodes F-keys to the pty when focused.
+- The destination hotkey layer is one left-to-right keyboard walk: ctrl+1..ctrl+5, ctrl+7, ctrl+8, ctrl+0, then f2/f3/f4/f5/f7/f8/f9 — defined in `SHELL_DESTINATION_SHORTCUTS`, owned by the destination contract, and moving in lockstep with `SHELL_DESTINATION_ORDER`; destination-local bindings may not shadow these keys (ADR-152). ctrl+6 (Artifacts → Library, ADR-172) and ctrl+9 (Tools & MCP → Settings, ADR-240) sit outside the walk as retained compatibility deep-links for retired destinations. The embedded Console terminal viewport encodes F-keys to the pty when focused.
 
 ## Settings surface
 

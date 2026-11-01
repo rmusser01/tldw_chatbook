@@ -229,3 +229,7 @@ The owner answered yes to all five questions on 2026-10-27.
 - [ADR-234: Served mobile companion surface](234-served-mobile-companion-surface.md)
 - [ADR-004: Settings storage defaults restart boundary](004-settings-storage-defaults-restart-boundary.md)
 - [Architecture review 2026-10-25](../../Docs/QA/architecture-review-2026-10-25/report.md)
+
+## Unmount owner clarification (2026-10-31, TASK-38268)
+
+The TUI's domain-service unmount phase belongs to presentation composition, not the kernel exit/watchdog utility. A cohesive app_shutdown_services owner may hold that phase and its worker-settlement helper, with LifecycleMixin retaining its existing delegate/patch points. Preserve phase order, primary errors, cancellation, grace constants and refusal to retire uncertain workers. The owner adds no resource or bundle field. Keeping domain/presentation imports in Utils would violate the accepted layer map; moving the complete phase avoids that dependency without an allowlist exception or a larger lifecycle module pin.

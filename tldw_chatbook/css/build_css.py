@@ -73,7 +73,7 @@ HASH_CHUNK_SIZE_BYTES = 65536
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
-    """Publish generated text atomically for parallel readers/builders."""
+    """Publish canonical UTF-8/LF text atomically for parallel readers/builders."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
     mode = path.stat().st_mode & 0o777 if path.exists() else 0o644
@@ -82,6 +82,7 @@ def _atomic_write_text(path: Path, content: str) -> None:
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",
+            newline="\n",
             dir=path.parent,
             prefix=f".{path.name}.",
             suffix=".tmp",
@@ -267,6 +268,7 @@ CSS_MODULES = [
     # and _settings.tcss are the split SOURCES for the lazily-loaded
     # screen_agentic_{library,settings}.tcss sheets.
     "features/_console.tcss",
+    "features/_console_archive_recovery.tcss",
     "features/_console_panels.tcss",
     "features/_console_response_rules.tcss",
     "features/_library.tcss",

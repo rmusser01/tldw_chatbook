@@ -22,10 +22,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from tldw_chatbook.Character_Chat.character_avatar import (
-    image_backend_configured,
-    resolve_avatar,
-)
 from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
 
 _LOGGER = logging.getLogger(__name__)
@@ -285,6 +281,15 @@ def _character_id(arguments: Mapping[str, Any], key: str = "id") -> int:
     if value < 1:
         raise _InvalidArgument(f"'{key}' must be a positive integer")
     return value
+
+
+def image_backend_configured() -> str | None:
+    """Read the optional avatar backend only when an avatar action needs it."""
+    from tldw_chatbook.Character_Chat.character_avatar import (
+        image_backend_configured as read_backend,
+    )
+
+    return read_backend()
 
 
 def save_approval_summary(arguments: Mapping[str, Any]) -> dict[str, Any]:
@@ -567,6 +572,8 @@ class CharacterToolService:
 
         avatar_status, payload, clear_image = "none", dict(changes), False
         if isinstance(avatar_req, Mapping):
+            from tldw_chatbook.Character_Chat.character_avatar import resolve_avatar
+
             outcome = resolve_avatar(avatar_req, card_for_prompt, generate=self._generate_avatar)
             if outcome.kind == "image" and outcome.image:
                 payload["image_base64"] = base64.b64encode(outcome.image).decode("ascii")

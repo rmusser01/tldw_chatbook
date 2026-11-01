@@ -213,6 +213,10 @@ def test_runtime_owned_custody_tracks_only_lifetime_handles():
         "one_shot_prefill",
         "one_shot_prefill_revision",
         "draft_revision",
+        # Same-view input witnesses are detached from controller/queue state.
+        "_pressed_inputs",
+        "_pressed_stash",
+        "_pressed_attachment_generation",
     }
     assert {field.name for field in fields(type(record))} == {
         "turn_id",

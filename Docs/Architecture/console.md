@@ -15,11 +15,16 @@ This document describes the Console (`chat` destination): the screen layout, the
 | Data models | `Chat/console_chat_models.py` | `ConsoleMessageRole`, `ConsoleRunStatus`, `ConsoleRunState`, `ConsoleChatMessage`, `ConsoleVariantSet`, `ConsoleDispatchRecoveryState` |
 | Store (state + persistence) | `Chat/console_chat_store.py` | `ConsoleChatStore`, `ConsoleChatSession`, `append_message()`, `append_stream_chunk()`, `persist_message_if_needed()` |
 | Agent bridge | `Chat/console_agent_bridge.py` | `ConsoleAgentBridge.run_reply()`, the `_StreamingModelAdapter`, fleet coordination, tool marker projection |
+| Trace settlement/recovery | `Chat/console_trace_settlement.py` | Settlement coordinator and cold-call recovery; the runtime retains its lazy recovery delegate and public patch point |
 | Persistence service | `Chat/chat_persistence_service.py` | `ChatPersistenceService.commit_durable_turn()` — the durable turn boundary |
 | Transcript grouping | `Chat/console_turn_grouping.py` | `group_console_transcript_messages()`, `ConsoleAssistantTurn` |
 | Compaction | `Chat/console_context_compaction.py`, `console_context_policy.py`, `console_context_repository.py` | `CompactionPlan`, `ResolvedConsoleContextPolicy`, memory records |
 
 Supporting modules: `console_chat_fork.py` (fork/branch), `console_prompt_queue_coordinator.py` (bounded prompt queue, ADR-098), `console_fleet_wake.py`, `console_interrupt_rounds.py`, `console_dispatch_checkpoint.py` (crash recovery).
+
+Selected tool counts belong to `ConsoleChatController`, keyed by session. `ConsoleRuntime.selected_tool_count()` reads only an existing controller and returns no count before construction or for an unknown session, without falling back to another session; composition clears only its named session. The MCP kill-switch adapter borrows a current service reader on every call: an absent service retains the no-switch contract, while reader/getter failures fail closed. These projections grant no tool or folder authority (ADR-036).
+
+Successful received-intent and pressed-input acceptance both mark the send-start window. It ends at provider entry or the existing three-second limit; the marker does not replay a captured-draft commit or alter runtime custody. Durable-commit polling retains its existing first-sync/one-held-tick behavior, including whole-sync replay ownership (ADR-230/231).
 
 Frozen automatic Library preparation is delegated to `Chat/console_library_preparation.py` through the controller's unchanged entry point. Controller and runtime retain ownership of preparation transitions, timeout configuration and recovery.
 

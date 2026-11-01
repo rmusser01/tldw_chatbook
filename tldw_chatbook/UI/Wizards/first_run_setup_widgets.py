@@ -401,12 +401,17 @@ class SetupStep(step_guard.WizardErrorGuard, WizardStep):
             return
         # TASK-34100.6 (review provider-16): an error reads as one, not by colour.
         strip.update(message if message.startswith("✗") else f"✗ {message}")
-        # Padded to this step's content column (review round 1, live F8): the
-        # strip's own padding matches the step edge; add the wrapper's indent.
+        # Match the step's content column through its token-backed wrapper
+        # state, including when the shared strip moves between steps.
         wrapper = next(iter(self.children), None)
-        indent = wrapper.styles.padding.left if wrapper is not None else 0
-        top, right, bottom, left = strip.styles.base.padding
-        strip.styles.padding = (top, right, bottom, left + indent)
+        wide_inset = wrapper is not None and wrapper.has_class("setup-welcome")
+        strip.set_class(
+            wrapper is not None
+            and not wide_inset
+            and bool(wrapper.classes & {"setup-provider", "setup-voice"}),
+            "setup-step-error-inset",
+        )
+        strip.set_class(wide_inset, "setup-step-error-wide-inset")
         strip.remove_class("hidden")
 
     def clear_step_error(self) -> None:

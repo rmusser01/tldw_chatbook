@@ -27,8 +27,15 @@ pytestmark = [pytest.mark.unit, pytest.mark.bootstrap_profile]
 class _App:
     def __init__(self, *, same_thread: bool = True) -> None:
         self._thread_id = threading.get_ident() if same_thread else -1
+        self.notes_sync_runtime_owner = None
         self.timers: list[tuple[float, object]] = []
         self.marshalled: list[tuple[object, tuple[object, ...]]] = []
+
+    def peek_notes_sync_runtime(self):
+        return self.notes_sync_runtime_owner, False
+
+    def read_notes_sync_runtime_owner(self):
+        return self.notes_sync_runtime_owner
 
     def _context(self):
         return contextlib.nullcontext()
