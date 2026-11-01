@@ -59,6 +59,42 @@ not ready, it says so on the callout and leaves the send paused with the same
 three choices; nothing is sent twice, and your Capture Off choice still
 applies when you choose it again once the provider is ready.
 
+When the provider answers with an error such as HTTP 429 (rate limited), 500
+or 504, Console retries the call automatically. If that retry's trace record
+cannot be saved, the retry is not sent, and the callout leads with the
+provider's error instead: for example "OpenAI returned HTTP 429 (rate limit
+exceeded)", with "Impact: OpenAI was contacted; no reply arrived" and a note
+that the automatic retry was not sent. **Retry** is the first action there.
+Otherwise the Impact line says what is known about this send: "The provider
+was not contacted", "The provider was contacted earlier in this send; this
+request was not sent", or "It is not known whether the provider was
+contacted". On this callout:
+
+- **Retry** (or **Retry capture**) sends the turn again with capture on. When
+  Console cannot confirm whether the failed retry left a trace reservation
+  behind, it says so on the callout ("Trace capture could not be confirmed for
+  this send ...") and sends nothing; **Send without capture** then becomes the
+  first action, and **Cancel send** remains available.
+- **Send without capture** sends the turn once with capture off.
+- **Cancel send** ends the send, even when the trace reservation's state is
+  unknown, and puts your message back in the composer if the composer is
+  empty. Any reservation left behind is closed as not sent by Console's
+  startup trace maintenance, once it is a few minutes old. If the chat
+  database cannot be written at that moment, the callout says the
+  cancellation could not be saved and the send stays paused.
+
+When Console can prove the provider refused every earlier call of the send,
+none of these opens the "Response delivery status is unknown" panel. That panel is for a request
+that may have reached the provider without a known outcome: if the provider
+already answered an earlier call of the same send (for example a tool step)
+and a later call's trace record then fails, **Retry** or **Send without
+capture** can still lead to it, because replaying the turn could repeat work
+the provider already did.
+
+A timeout or synthetic error status is not proof of rejection. Missing HTTP
+response or retry-history evidence also keeps delivery uncertain, including
+provider adapters that discard that evidence when sanitizing their errors.
+
 If an interrupted tool run leaves a pending response after reopening the
 conversation, **Discard** retains the user message and earlier trace history.
 The next question can use Capture On again when that discarded response has an

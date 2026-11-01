@@ -50,6 +50,10 @@ class TraceCallRecoveryState:
     #: without Library resumed fell into on its way out (provider not ready,
     #: not saved); None otherwise. Its card offers Retry and Cancel.
     resend_pause: ConsolePreparationPauseKind | None = None
+    #: TASK-33621.5: for a TRACE_CALL pause, whether the send reached the
+    #: provider ("yes"/"no"/"unknown") and its last HTTP refusal, as the
+    #: controller recorded them; None when nothing was recorded.
+    provider_contact: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +69,7 @@ def trace_call_recovery_state(
     *,
     context_hold: ContextCompactionHold | None = None,
     library_reason: str = "",
+    provider_contact: object | None = None,
 ) -> TraceCallRecoveryState | None:
     """Project only an actionable pre-dispatch pause into the transcript UI.
 
@@ -74,6 +79,8 @@ def trace_call_recovery_state(
             compaction threshold (TASK-34350); required for that pause.
         library_reason: Why automatic Library retrieval paused the send
             (TASK-33621.20); a generic reason stands in when empty.
+        provider_contact: The controller's provider-contacted record for a
+            TRACE_CALL pause (TASK-33621.5).
 
     Returns:
         Content-free recovery identity for a supported pause, otherwise None.
@@ -133,7 +140,46 @@ def trace_call_recovery_state(
         provenance=(
             preparation.pause_kind is ConsolePreparationPauseKind.TRACE_PROVENANCE
         ),
+        provider_contact=(
+            provider_contact
+            if preparation.pause_kind is ConsolePreparationPauseKind.TRACE_CALL
+            else None
+        ),
     )
+
+
+def _trace_call_copy(state: TraceCallRecoveryState) -> tuple[str, str, str] | None:
+    """Title, Problem and Impact for a TRACE_CALL card from what it reached.
+
+    TASK-33621.5: the card said "Impact: The provider was not contacted" after
+    the provider had answered HTTP 429 and only the automatic retry's trace
+    failed. A recorded refusal now leads, with the trace failure as a note;
+    without a record the Impact line says what is known.
+    """
+    if state.provider_contact is None and not (
+        state.provenance or state.temporary_capture
+    ):
+        contacted = "unknown"
+    else:
+        contacted = getattr(state.provider_contact, "contacted", "no")
+    rejection = getattr(state.provider_contact, "rejection", None)
+    if contacted == "yes" and rejection is not None:
+        provider = rejection.provider or "The provider"
+        refused = f"{provider} returned HTTP {rejection.status_code} ({rejection.meaning})"
+        return (
+            refused,
+            f"Problem: {refused}.",
+            f"Impact: {provider} was contacted; no reply arrived. Note: the "
+            "automatic retry was not sent because its trace record could not "
+            "be saved.",
+        )
+    impact = {
+        "yes": "Impact: The provider was contacted earlier in this send; this "
+        "request was not sent. Choose how to continue.",
+        "unknown": "Impact: It is not known whether the provider was contacted. "
+        "Choose how to continue.",
+    }.get(contacted)
+    return None if impact is None else ("", "", impact)
 
 
 #: TASK-33621.2: why a turn is stuck, short enough that the run chip's
@@ -188,6 +234,12 @@ def blocked_turn_reason(controller: Any) -> str:
     preparation = getattr(controller, "trace_call_recovery_preparation", None)
     paused = preparation() if callable(preparation) else None
     if trace_call_recovery_state(paused) is None:
+        # TASK-33621.6 AC#4: an unresolved response recovery refuses the next
+        # send too; the composer, rail and Inspect said so, the header "Ready".
+        store = getattr(controller, "store", None)
+        blocks = getattr(store, "dispatch_recovery_blocks_submission", None)
+        if callable(blocks) and blocks(getattr(store, "active_session_id", None)):
+            return "recovery needed"
         return ""
     if paused.pause_kind is ConsolePreparationPauseKind.RETRIEVAL:
         outcome_for = getattr(controller, "preparation_outcome", None)
@@ -375,9 +427,16 @@ class TraceCallRecoveryCallout(Vertical):
             if state is not None and state.resend_pause is not None
             else ""
         )
+        call_copy = (
+            _trace_call_copy(state)
+            if state is not None and hold is None and not library and not resend
+            else None
+        )
         _set_copy(
             self.query_one("#console-trace-title", Static),
-            "Context limit reached; your message is held"
+            call_copy[0]
+            if call_copy is not None and call_copy[0]
+            else "Context limit reached; your message is held"
             if hold is not None
             else f"{library or resend}; your message was not sent"
             if library or resend
@@ -405,7 +464,9 @@ class TraceCallRecoveryCallout(Vertical):
             else:
                 _set_copy(
                     detail_rows[1],
-                    f"Problem: {library} before this send could use it."
+                    call_copy[1]
+                    if call_copy is not None and call_copy[1]
+                    else f"Problem: {library} before this send could use it."
                     if library
                     else _RESEND_PROBLEMS.get(state.resend_pause, "")
                     if resend
@@ -417,7 +478,9 @@ class TraceCallRecoveryCallout(Vertical):
                 )
                 _set_copy(
                     detail_rows[2],
-                    "Impact: The provider was not contacted. Choose how to continue.",
+                    call_copy[2]
+                    if call_copy is not None
+                    else "Impact: The provider was not contacted. Choose how to continue.",
                 )
         for button in self.query(Button):
             button.display = state is not None
@@ -427,14 +490,27 @@ class TraceCallRecoveryCallout(Vertical):
         )
         retry = self.query_one("#console-trace-retry", Button)
         retry.display = state is not None and not temporary and hold is None
+        provider_error = call_copy is not None and bool(call_copy[0])
         retry.label = (
             "Retry Library search"
             if library
             else "Retry send"
             if resend
+            else "Retry"
+            if provider_error
             else "Retry capture"
         )
-        self.query_one("#console-trace-send-without", Button).display = (
+        # TASK-33621.5 AC#1: after a provider refusal, Retry is the way on --
+        # unless Capture-On Retry was already refused as unconfirmed, when
+        # only Send without capture can continue (the status line says so).
+        unconfirmed = bool(
+            call_copy is not None
+            and getattr(state.provider_contact, "capture_unconfirmed", False)
+        )
+        retry.variant = "primary" if provider_error and not unconfirmed else "warning"
+        send_without = self.query_one("#console-trace-send-without", Button)
+        send_without.variant = "primary" if unconfirmed else "warning"
+        send_without.display = (
             state is not None and hold is None and not library and not resend
         )
         self.query_one("#console-trace-send-without-library", Button).display = bool(

@@ -179,6 +179,45 @@ def test_plain_provider_unavailable_copy_is_unchanged_without_a_body() -> None:
     )
 
 
+def test_a_trace_persistence_failure_is_not_called_a_provider_error() -> None:
+    """TASK-33621.5 AC#4: the run trace read 'unexpected provider error'.
+
+    The agent run records ``describe_stream_failure`` as its error step. A
+    trace write that failed before a call went out is a local failure, and
+    the request it guarded was not sent.
+    """
+    from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+
+    for exc in (
+        TraceCallPersistenceError(),
+        TraceCallPersistenceError(reservation_status="unknown"),
+    ):
+        copy = describe_stream_failure(exc)
+        assert "provider error" not in copy
+        assert copy == (
+            "trace capture could not be saved, so this request was not sent"
+        )
+
+
+@pytest.mark.parametrize(
+    ("status", "meaning"),
+    [
+        (408, "request timed out"),
+        (500, "internal server error"),
+        (502, "provider unavailable"),
+        (503, "provider unavailable"),
+        (504, "gateway timed out"),
+    ],
+)
+def test_a_generic_provider_failure_says_what_its_status_means(
+    status: int, meaning: str
+) -> None:
+    """TASK-33621.5 AC#1: a 504 read 'provider unavailable' (an outage)."""
+    assert safe_provider_error_copy(
+        "openai", ChatProviderError(status_code=status)
+    ) == (f"Provider error from OpenAI: {meaning}. Status: {status}.")
+
+
 def test_a_404_reads_model_not_found_whatever_error_class_carries_it() -> None:
     """Live (fresh profile, Gemini, gemini-2.0-flash, 2026-10-03): the 404
     reached Console as a provider error and read 'provider unavailable.

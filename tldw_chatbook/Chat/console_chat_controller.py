@@ -369,6 +369,7 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 )
 from tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet
     TraceCallPersistenceError,
+    TraceReservationUnconfirmed,
 )
 from tldw_chatbook.Chat.library_preparation import LibraryPreparationContribution
 from tldw_chatbook.Chat.rag_scope import EffectiveScope
@@ -3796,6 +3797,8 @@ class ConsoleChatController:
             str, _DurablePostcommitContinuation
         ] = {}
         self._trace_call_boundaries_by_preparation: dict[str, object] = {}
+        #: TASK-33621.5: whether each trace-paused send reached the provider.
+        self._trace_call_provider_contacts: dict[str, object] = {}
         self._provider_config = provider_config
         #: Task 4 (D2 fix wave, "bonus race"): screen-owned callable that
         #: builds a fresh default `ConsoleSessionSettings` snapshot (mirrors
@@ -7502,6 +7505,11 @@ class ConsoleChatController:
             )
         return await self.resume_durable_postcommit(preparation.preparation_id)
 
+    def trace_call_provider_contact(self, preparation_id: str) -> object | None:
+        """Return whether a trace-paused send reached the provider (TASK-33621.5)."""
+
+        return self._trace_call_provider_contacts.get(preparation_id)
+
     def trace_call_recovery_preparation(self) -> ConsoleTurnPreparation | None:
         """Return only the active preparation offering a pre-dispatch card."""
 
@@ -8141,24 +8149,22 @@ class ConsoleChatController:
         boundary = self._trace_call_boundaries_by_preparation.get(
             preparation.preparation_id
         )
-        if boundary is not None:
-            reservation_status = getattr(boundary, "reservation_status", "unknown")
-            if reservation_status not in {"established", "not_established"}:
-                return self._prepared_action_refusal(
-                    preparation, "Trace reservation status is unavailable."
-                )
-            if reservation_status == "established":
-                mark_not_dispatched = getattr(boundary, "mark_not_dispatched", None)
+        # TASK-33621.6 (owner decision 2026-10-27): Cancel always ends the
+        # send. A reservation whose status is unknown, or whose cancellation
+        # could not be written, is abandoned here; the call never reached
+        # the provider, and startup trace maintenance settles any reservation
+        # that did commit (RESERVED -> NOT_DISPATCHED, recover_open_calls).
+        reservation_status = getattr(boundary, "reservation_status", "unknown")
+        if boundary is not None and reservation_status == "established":
+            mark_not_dispatched = getattr(boundary, "mark_not_dispatched", None)
+            try:
                 if not callable(mark_not_dispatched):
-                    return self._prepared_action_refusal(
-                        preparation, "Trace cancellation could not be saved."
-                    )
-                try:
-                    mark_not_dispatched()
-                except TraceCallPersistenceError:
-                    return self._prepared_action_refusal(
-                        preparation, "Trace cancellation could not be saved."
-                    )
+                    raise TraceCallPersistenceError()
+                mark_not_dispatched()
+            except TraceCallPersistenceError:
+                logger.warning("Trace cancel not saved; left to startup recovery.")
+        elif boundary is not None and reservation_status != "not_established":
+            logger.info("Trace-blocked send canceled; reservation status unknown.")
 
         continuation = self._durable_postcommit_continuations.get(
             preparation.preparation_id
@@ -8379,6 +8385,7 @@ class ConsoleChatController:
             self._preparation_outcomes.pop(preparation_id, None)
             self._prepared_send_continuations.pop(preparation_id, None)
             self._trace_call_boundaries_by_preparation.pop(preparation_id, None)
+            self._trace_call_provider_contacts.pop(preparation_id, None)
             self._context_compaction_holds.pop(preparation_id, None)
             self._compaction_hold_after_effects.discard(preparation_id)
             if ConsoleTurnPreparationState.CANCELLED in expected_states:
@@ -12221,7 +12228,18 @@ class ConsoleChatController:
                 # gateway recovery independently checks the newly prepared bytes.
                 # An explicit Capture-Off action uses this same ownership proof,
                 # but never re-admits or changes the abandoned trace reservation.
-            except TraceCallPersistenceError:
+            except TraceCallPersistenceError as exc:
+                if type(exc) is TraceReservationUnconfirmed:
+                    # TASK-33621.6: the failed call never went out; only its
+                    # reservation is unknown. Back to the card, not a false
+                    # unknown delivery.
+                    from .console_trace_call_recovery import (
+                        repause_unconfirmed_trace_call,
+                    )
+
+                    repaused = repause_unconfirmed_trace_call(self, preparation_id)
+                    if repaused is not None:
+                        return repaused
                 visible_copy = (
                     "Delivery status is unknown. Use Retry anyway or Discard."
                 )
@@ -12880,6 +12898,15 @@ class ConsoleChatController:
                 ):
                     self._trace_call_boundaries_by_preparation[preparation_id] = (
                         exc.boundary if exc.boundary is not None else exc
+                    )
+                    from .console_trace_call_recovery import provider_contact_for_pause
+
+                    self._trace_call_provider_contacts[preparation_id] = (
+                        provider_contact_for_pause(
+                            self.provider_gateway,
+                            continuation.stream_signals,
+                            dispatch_started=any_provider_started,
+                        )
                     )
                     current = self._preparation_by_id(preparation_id)
                     if current is not None and current.state in {

@@ -11,8 +11,12 @@ through this module.
 import asyncio
 
 from tldw_chatbook.Chat.Chat_Deps import ChatAPIError, ChatConfigurationError
+from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
 
 _MDN_BOILERPLATE_MARKER = "For more information check:"
+TRACE_PERSISTENCE_FAILURE_SUMMARY = (
+    "trace capture could not be saved, so this request was not sent"
+)
 
 
 def _provider_error_body_detail(response: object) -> str:
@@ -78,6 +82,11 @@ def describe_stream_failure(exc: BaseException) -> str:
     Returns:
         A short, user-readable failure description that is never empty.
     """
+    if isinstance(exc, TraceCallPersistenceError):
+        # TASK-33621.5 AC#4: a trace write that failed before its call went
+        # out is local, and the run trace called it "unexpected provider
+        # error (Provider call trace persistence failed)".
+        return TRACE_PERSISTENCE_FAILURE_SUMMARY
     detail = str(exc).strip()
     response = getattr(exc, "response", None)
     status_code = getattr(response, "status_code", None) or getattr(

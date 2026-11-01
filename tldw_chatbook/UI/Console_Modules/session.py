@@ -6825,6 +6825,7 @@ class ConsoleSessionController:
             card_action_started,
             own_draft_takes_it_back,
             shelf_releasable,
+            trace_card_returns_draft,
         )
 
         controller = self._ensure_console_chat_controller()
@@ -6835,12 +6836,14 @@ class ConsoleSessionController:
         runtime = self._console_runtime_accessor() if releasable else None
         # TASK-34350: read the held text BEFORE the action: the UI sync that
         # follows it mirrors the (empty) composer back into the session draft.
+        trace_card = trace_card_returns_draft(held, preparation_id)  # TASK-33621.6
         held_text = (
             held.executed_draft
             if held is not None
             and held.preparation_id == preparation_id
             and (
                 releasable
+                or trace_card
                 or controller.context_compaction_hold(preparation_id) is not None
             )
             else ""
@@ -6880,6 +6883,8 @@ class ConsoleSessionController:
         settled = bool(held_text) and (
             not shelf_releasable(now_held, preparation_id)
             if releasable
+            else not trace_card_returns_draft(now_held, preparation_id)
+            if trace_card
             else controller.context_compaction_hold(preparation_id) is None
         )
         # TASK-33621.20: a tab switch during the action leaves the composer on
@@ -6952,6 +6957,11 @@ class ConsoleSessionController:
             outcome = controller.preparation_outcome(preparation.preparation_id)
             code = getattr(outcome, "error_code", None)
             library["library_reason"] = library_pause_copy(code)
+        elif preparation is not None:  # TASK-33621.5: did it reach the provider?
+            contact = getattr(controller, "trace_call_provider_contact", None)
+            library["provider_contact"] = (
+                contact(preparation.preparation_id) if callable(contact) else None
+            )
         return self._read_trace_recovery_state()(
             preparation,
             context_hold=(

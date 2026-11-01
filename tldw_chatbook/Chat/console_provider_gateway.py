@@ -31,13 +31,11 @@ from loguru import logger
 from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Chat.Chat_Deps import (
-    ChatAuthenticationError,
     ChatAPIError,
     project_provider_error,
     ChatBadRequestError,
     ChatConfigurationError,
     ChatProviderError,
-    ChatRateLimitError,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleResolvedDestination
@@ -106,6 +104,8 @@ from tldw_chatbook.Chat.console_trace_custom_pii import (
 from tldw_chatbook.Chat.console_trace_models import TraceCallState
 from tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet
     TraceCallPersistenceError,
+    TraceReservationRefused,
+    TraceReservationUnconfirmed,
     TraceSurfaceChangeRefused,
 )
 
@@ -486,6 +486,15 @@ class _TraceAcceptedPreparation:
     construction_failure: TraceCallPersistenceError | None = field(
         default=None, repr=False
     )
+    #: TASK-33621.5/.6: what the provider did with this run's calls so far.
+    #: A rejection requires an observed HTTP error response, never a suggested
+    #: status synthesized from a local/transport failure. Every
+    #: call that passed its trace admission counts as dispatched, so a call
+    #: whose outcome no adapter path recorded is never read as a refusal.
+    provider_dispatches: int = 0
+    provider_rejections: int = 0
+    provider_answered: bool = False
+    last_rejection: object | None = None
 
 
 class _ProviderAdapterAdmission:
@@ -1560,33 +1569,15 @@ def safe_provider_error_copy(
         Redacted user-facing error text that categorizes the failure without
         including raw exception content.
     """
-    category = "unexpected provider error"
-    if isinstance(exc, ChatAuthenticationError):
-        category = "authentication failed"
-    elif isinstance(exc, ChatRateLimitError):
-        category = "rate limit exceeded"
-    elif isinstance(exc, ChatBadRequestError):
-        category = "bad request"
-    elif isinstance(exc, ChatConfigurationError):
-        category = "configuration error"
-    elif isinstance(exc, ChatProviderError):
-        category = "provider unavailable"
-    if getattr(exc, "status_code", None) == 404 and not isinstance(
-        exc, (ChatAuthenticationError, ChatRateLimitError)
-    ):
-        # TASK-34100.5 AC#4: a 404 is the model, whichever class carried it
-        # (live: Gemini's retired-model 404 arrived as a provider error).
-        category = "model or endpoint not found"
     from tldw_chatbook.Chat.provider_error_reason import (
-        CONTEXT_OVERFLOW_CATEGORY,
         CONTEXT_OVERFLOW_FIX,
         is_context_overflow_error,
+        provider_error_category,
         provider_reason_for_exception,
     )
 
+    category = provider_error_category(exc)
     overflow = is_context_overflow_error(exc)
-    if overflow:
-        category = CONTEXT_OVERFLOW_CATEGORY  # review round 2, V2-F3
     # The catalog name the user sees elsewhere ("NVIDIA NIM", not "nvidia");
     # an unmapped or custom-endpoint id stays as given (TASK-33002.14).
     provider_copy = _sanitized_provider_diagnostic(
@@ -3385,6 +3376,7 @@ class ConsoleProviderGateway:
         if type(admission) is not _ProviderAdapterAdmission:
             raise TraceCallPersistenceError()
         _entry_gate = kwargs.pop("_console_adapter_entry_gate", None)
+        trace_signals = kwargs.pop("_console_trace_signals", None)
         if _entry_gate is not None:
             if type(_entry_gate) is not _ProviderAdapterEntryGate:
                 raise TraceCallPersistenceError()
@@ -3393,6 +3385,7 @@ class ConsoleProviderGateway:
                 self._adapter_admission_issuer,
             )
             record_send_stage("provider_entry")
+            self._note_provider_dispatch(trace_signals)
             return adapter(*args, **kwargs)
         # Consumption is owned by the gateway, not dynamically dispatched to
         # the presented object's method.  Otherwise a subclass can override
@@ -3405,6 +3398,7 @@ class ConsoleProviderGateway:
                 raise TraceCallPersistenceError()
             admission._consumed = True
         record_send_stage("provider_entry")
+        self._note_provider_dispatch(trace_signals)
         return adapter(*args, **kwargs)
 
     def _bind_trace_preparation(
@@ -3440,6 +3434,114 @@ class ConsoleProviderGateway:
             raise TraceCallPersistenceError()
         return scope
 
+    def _note_provider_dispatch(self, signals: object) -> None:
+        """Count one admitted provider call of a bound run (TASK-33621.6)."""
+        with contextlib.suppress(Exception):
+            scope = self._trace_preparation_scope(signals)
+            if scope is not None:
+                scope.provider_dispatches += 1
+                scope.last_rejection = None
+
+    def _note_provider_outcome(self, signals: object, rejection: object) -> None:
+        """Record one call's outcome for trace recovery (TASK-33621.5/.6).
+
+        ``rejection`` is its definitive HTTP refusal; ``None`` means it
+        answered, or failed without proof of refusal, which also retires an
+        earlier refusal as the run's last word. Bookkeeping only.
+        """
+        with contextlib.suppress(Exception):
+            scope = self._trace_preparation_scope(signals)
+            if scope is not None and rejection is None:
+                scope.provider_answered = True
+                scope.last_rejection = None
+            elif scope is not None:
+                scope.provider_rejections += 1
+                scope.last_rejection = rejection
+
+    def _note_provider_failure(
+        self, signals: object, provider: str, exc: BaseException,
+        *, api_key: str | None = None, direct_http: bool = False,
+    ) -> None:
+        from .console_trace_call_recovery import TraceProviderRejection
+        from .provider_error_reason import PROVIDER_STATUS_CATEGORIES, provider_error_category
+
+        # ChatAPIError.status_code is a suggested presentation status, including
+        # synthetic 5xx for transport timeouts. Only response-owned evidence can
+        # establish rejection. Do not cross a suppressed or non-API exception
+        # boundary to accidentally borrow an earlier request's response.
+        import requests
+        from urllib3.util.retry import RequestHistory, Retry
+
+        current: BaseException | None = exc
+        seen: set[int] = set()
+        status = None
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            response = getattr(current, "response", None)
+            if isinstance(response, requests.Response):
+                retries = getattr(getattr(response, "raw", None), "retries", None)
+                if response.history or not isinstance(retries, Retry) or any(
+                    not isinstance(attempt, RequestHistory)
+                    or attempt.error is not None
+                    or type(attempt.status) is not int
+                    or not 400 <= attempt.status <= 599
+                    or attempt.redirect_location is not None
+                    for attempt in retries.history
+                ):
+                    break
+                status = response.status_code
+                break
+            if direct_http and isinstance(response, httpx.Response):
+                # This gateway's local HTTP leg has exactly one request.
+                # SDK/manual retry loops cannot prove their earlier outcomes.
+                if response.history:
+                    break
+                status = response.status_code
+                break
+            if not isinstance(current, ChatAPIError):
+                break
+            current = current.__cause__ or (
+                current.__context__ if not current.__suppress_context__ else None
+            )
+        if status is None:
+            # Leave this dispatch unmatched: unknown delivery is not permission
+            # to replay, nor evidence for the card's "provider contacted: yes".
+            with contextlib.suppress(Exception):
+                scope = self._trace_preparation_scope(signals)
+                if scope is not None:
+                    scope.last_rejection = None
+            return
+        meaning = provider_error_category(exc)
+        if meaning == "unexpected provider error":
+            meaning = {
+                401: "authentication failed", 404: "model or endpoint not found",
+                429: "rate limit exceeded", **PROVIDER_STATUS_CATEGORIES,
+            }.get(status, "bad request" if 400 <= status < 500 else "provider unavailable")
+        self._note_provider_outcome(
+            signals,
+            None  # an observed non-error response, including an empty HTTP 200
+            if not 400 <= status <= 599
+            else TraceProviderRejection(
+                _sanitized_provider_diagnostic(
+                    provider_display_name(provider),
+                    known_credentials=(api_key or "",),
+                ),
+                status,
+                meaning,
+            ),
+        )
+
+    def trace_provider_contact(self, signals: object) -> tuple[bool, object] | None:
+        """Return ``(contacted, last_rejection)`` for a bound run, else ``None``."""
+        try:
+            scope = self._trace_preparation_scope(signals)
+        except TraceCallPersistenceError:
+            return None
+        if scope is None:
+            return None
+        contacted = scope.provider_answered or scope.provider_rejections > 0
+        return contacted, scope.last_rejection
+
     def _verify_trace_preparation_recovery(
         self,
         owner: object,
@@ -3469,6 +3571,20 @@ class ConsoleProviderGateway:
                 # explicit Capture Off. Neither permits cold/foreign replay.
                 scope.construction_failure = None
                 return
+        elif (
+            type(boundary) is TraceCallPersistenceError
+            and boundary.reservation_status == "unknown"
+        ):
+            scope = self._trace_preparation_scope(signals)
+            if (
+                scope is not None
+                and scope.owner is owner
+                and scope.construction_failure is boundary
+            ):
+                # TASK-33621.6: this call never entered the adapter, so its
+                # delivery is not unknown; only its reservation is. Keep the
+                # proof for an explicit Capture Off send or Cancel.
+                raise TraceReservationUnconfirmed()
         if (
             boundary is None
             or getattr(boundary, "_accepted_preparation", None) is not owner
@@ -3532,6 +3648,19 @@ class ConsoleProviderGateway:
             and scope.boundary is None
             and route in {ConsoleRequestRoute.FRESH, ConsoleRequestRoute.AGENT_FIRST}
         )
+        # TASK-33621.6: the agent's in-place retry after the provider refused
+        # every call so far (HTTP 429/5xx) re-sends nothing the provider
+        # accepted, so its failed reservation may be recovered like a first
+        # call's. A run with any other outcome -- including a dispatched call
+        # whose outcome went unrecorded -- keeps the unknown-delivery path.
+        first_call = first_call or (
+            scope is not None
+            and scope.boundary is None
+            and route is ConsoleRequestRoute.TOOL_LOOP
+            and scope.provider_rejections > 0
+            and scope.provider_rejections == scope.provider_dispatches
+            and not scope.provider_answered
+        )
         if scope is not None:
             scope.reservation_attempted = True
             scope.construction_failure = None
@@ -3569,7 +3698,8 @@ class ConsoleProviderGateway:
             failure = TraceCallPersistenceError(
                 reservation_status=(
                     "not_established"
-                    if type(exc) is TraceSurfaceChangeRefused and boundary is None
+                    if type(exc) in (TraceSurfaceChangeRefused, TraceReservationRefused)
+                    and boundary is None
                     else "unknown"
                 )
             )
@@ -5109,6 +5239,7 @@ class ConsoleProviderGateway:
         ) = None,
         _automatic_prepared: PreparedProviderRequest | None = None,
         _automatic_signals: ConsoleProviderCallSignals | None = None,
+        _trace_signals: object = None,
     ) -> AsyncIterator[ProviderStreamItem]:
         """Stream OpenAI-compatible chat completion chunks from llama.cpp.
 
@@ -5196,11 +5327,19 @@ class ConsoleProviderGateway:
                     request_url,
                     json=payload,
                     headers=headers,
+                    _console_trace_signals=_trace_signals,
                 )
                 async with stream_context as response:
                     if getattr(response, "is_error", False) is True:
                         await response.aread()  # the body says why (V2-F3)
-                    response.raise_for_status()
+                    try:
+                        response.raise_for_status()
+                    except httpx.HTTPStatusError as exc:
+                        self._note_provider_failure(
+                            _trace_signals, provider, exc, api_key=api_key, direct_http=True
+                        )
+                        raise
+                    self._note_provider_outcome(_trace_signals, None)
                     async for line in response.aiter_lines():
                         _check_automatic_dispatch()
                         if line.startswith("data:"):
@@ -5342,6 +5481,7 @@ class ConsoleProviderGateway:
             thinking_stream_disposition=thinking_stream_disposition,
             include_thinking_events=True,
             adapter_admission=fallback_admission,
+            _trace_signals=_trace_signals,
             **(
                 {
                     "_automatic_prepared": prepared,
@@ -5418,6 +5558,7 @@ class ConsoleProviderGateway:
         adapter_admission: _ProviderAdapterAdmission | None = None,
         _automatic_prepared: PreparedProviderRequest | None = None,
         _automatic_signals: ConsoleProviderCallSignals | None = None,
+        _trace_signals: object = None,
     ) -> str | _LocalCompletionResult:
         """Request a non-streaming OpenAI-compatible chat completion.
 
@@ -5514,6 +5655,7 @@ class ConsoleProviderGateway:
                         request_call,
                         client,
                         request_url,
+                        _console_trace_signals=_trace_signals,
                         **request_kwargs,
                     )
                 else:
@@ -5521,9 +5663,17 @@ class ConsoleProviderGateway:
                         admission,
                         request_call,
                         request_url,
+                        _console_trace_signals=_trace_signals,
                         **request_kwargs,
                     )
-                response.raise_for_status()
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    self._note_provider_failure(
+                        _trace_signals, provider, exc, api_key=api_key, direct_http=True
+                    )
+                    raise
+                self._note_provider_outcome(_trace_signals, None)
                 if call_signals is not None:
                     payload_response = response.json()
                     if isinstance(payload_response, Mapping):
@@ -6146,12 +6296,17 @@ class ConsoleProviderGateway:
         # here a no-op), so this flag only decides "complete" vs "stopped".
         completed = False
         provider_failed = False
+        answer_noted = False
         trace_call_boundary: object | None = None
         response_accumulator = _TraceResponseAccumulator()
 
         def observe_response(
             item: ProviderStreamItem, *, synthetic: bool = False
         ) -> None:
+            nonlocal answer_noted
+            if not answer_noted:  # every adapter path, llama.cpp direct included
+                answer_noted = True
+                self._note_provider_outcome(call_signals, None)
             aggregate = getattr(call_signals, "_aggregate", call_signals)
             provisional_observer = getattr(aggregate, "observe_trace_response", None)
             first = (
@@ -6541,6 +6696,7 @@ class ConsoleProviderGateway:
                             _automatic_prepared=prepared if automatic is not None else None,
                             _automatic_signals=call_signals if automatic is not None else None,
                             before_adapter=commit_llama_dispatch,
+                            _trace_signals=call_signals,
                         )
                     except Exception:
                         if call_signals is not None:
@@ -6718,6 +6874,7 @@ class ConsoleProviderGateway:
                             else None
                         ),
                         before_adapter=commit_llama_dispatch,
+                        _trace_signals=call_signals,
                     ):
                         synthetic = (
                             call_signals.take_synthetic_pending()
@@ -7130,6 +7287,7 @@ class ConsoleProviderGateway:
                         admission,
                         self._chat_api_call,
                         _console_adapter_entry_gate=adapter_entry_gate,
+                        _console_trace_signals=signals,
                         **adapter_wire_kwargs(kwargs),
                     )
                 except _ProviderAdapterEntryCancelled:
@@ -7251,6 +7409,7 @@ class ConsoleProviderGateway:
                     if calls or metadata is not None:
                         enqueue(_QueueItem.native_tool_calls(calls, metadata))
                     elif not delivered and stream_fallback:
+                        self._note_provider_outcome(signals, None)
                         enqueue(_QueueItem("stream_fallback"))
                     elif not emitted_content:
                         # PR #648 review Minor 1: the turn produced NEITHER
@@ -7264,6 +7423,7 @@ class ConsoleProviderGateway:
                             "Provider returned no content and no tool calls.",
                             provider=resolution.provider,
                         )
+                        self._note_provider_outcome(signals, None)  # it answered
                         if signals is not None:
                             signals.close_exchange(status="error")
                         try:
@@ -7282,6 +7442,7 @@ class ConsoleProviderGateway:
                             )
                         )
                 elif not delivered and stream_fallback:
+                    self._note_provider_outcome(signals, None)
                     enqueue(_QueueItem("stream_fallback"))
             except TraceCallPersistenceError as exc:
                 enqueue(_QueueItem.trace_persistence_error(exc.boundary))
@@ -7301,6 +7462,10 @@ class ConsoleProviderGateway:
                     resolution.streaming and not delivered and is_refused_stream(exc)
                 )
                 if refused_stream and stream_fallback:
+                    self._note_provider_failure(
+                        signals, resolution.provider, exc,
+                        api_key=resolution.api_key,
+                    )
                     if signals is not None:
                         signals.close_exchange(status="error")
                     enqueue(_QueueItem("stream_fallback"))
@@ -7331,13 +7496,17 @@ class ConsoleProviderGateway:
                 )
                 if signals is not None:
                     signals.close_exchange(status="error")
+                local = isinstance(exc, ChatConfigurationError) and status_code is None
+                if not local:
+                    self._note_provider_failure(
+                        signals, resolution.provider, exc, api_key=resolution.api_key
+                    )
                 enqueue(
                     _QueueItem.error(
                         error_copy,
                         status_code=status_code,
                         typed_error=project_provider_error(exc, resolution.provider),
-                        local=isinstance(exc, ChatConfigurationError)
-                        and status_code is None,
+                        local=local,
                     )
                 )
             finally:
@@ -7363,6 +7532,7 @@ class ConsoleProviderGateway:
             signals is not None
             and signals.register_provider_work(worker_task, close_response_off_loop)
         )
+        answer_noted = False
         try:
             while True:
                 acknowledge_delivery()
@@ -7403,6 +7573,9 @@ class ConsoleProviderGateway:
                     )
                 if item.kind == "trace_persistence_error":
                     raise TraceCallPersistenceError(boundary=item.payload)
+                if not answer_noted:  # the provider answered this call
+                    answer_noted = True
+                    self._note_provider_outcome(signals, None)
                 if item.kind == "tool_calls":
                     yield _ProviderStreamEmission(cast(ProviderToolCalls, item.payload))
                     continue
@@ -8303,7 +8476,7 @@ def _hosted_transport_policy(
         or not isinstance(timeout, (int, float))
         or not math.isfinite(float(timeout))
         or timeout <= 0
-        or type(retries) is not int
+        or type(retries) is not int  # noqa: E721 - booleans and coercible values are not retry counts
         or retries < 0
         or isinstance(retry_delay, bool)
         or not isinstance(retry_delay, (int, float))

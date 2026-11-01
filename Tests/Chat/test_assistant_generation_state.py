@@ -71,11 +71,11 @@ def test_assistant_state_uses_the_closed_state_vocabulary():
     [
         (
             AssistantGenerationState.ACCEPTED,
-            "Response accepted on another device; waiting for dispatch.",
+            "Response accepted; waiting for dispatch.",
         ),
         (
             AssistantGenerationState.DISPATCH_STARTED,
-            "Response delivery status is unknown on the source device.",
+            "Response delivery status is unknown.",
         ),
     ],
 )
