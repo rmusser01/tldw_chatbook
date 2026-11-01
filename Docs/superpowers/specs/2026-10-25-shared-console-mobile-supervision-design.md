@@ -1,7 +1,7 @@
 # Shared Console ownership and mobile agent supervision
 
 Date: 2026-10-25
-Status: Design accepted 2026-10-25; implementation, Task11 bounded qualification and whole-feature review with scoped corrections are complete at code22bae10d3dd6 (2026-11-01). Physical phone/VPN remains unverified; recorded evidence limits apply.
+Status: Design accepted 2026-10-25; implementation and scoped code reviews are present at code22bae10d3dd6. Fresh UAT on8491688b was13P1F; later retention checks passed but the first mouse failure remains unclassified. Task11/AC1 is reopened; physical phone/VPN remains unverified.
 Task: [TASK-36728](../../../backlog/tasks/task-36728%20-%20Design-shared-Console-ownership-and-mobile-agent-supervision.md)
 Decision: [ADR-244](../../../backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md)
 Implementation plan: [Shared Console mobile supervision](../plans/2026-10-25-shared-console-mobile-supervision-implementation.md)

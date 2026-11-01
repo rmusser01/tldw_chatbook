@@ -1,7 +1,7 @@
 ---
 id: TASK-36769
 title: Qualify shared served Console control and document release limits
-status: Done
+status: In Progress
 created_date: 2026-10-25 17:40
 dependencies:
 - TASK-36768
@@ -17,7 +17,7 @@ documentation:
 - backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
 assignee:
 - '@codex'
-updated_date: 2026-11-01 19:25
+updated_date: 2026-11-01 20:17
 ---
 
 ## Description
@@ -28,7 +28,7 @@ Demonstrate the full phone-to-existing-Console workflow through real served proc
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 A real served child with isolated SQLite and a controlled agent/tool sequence keeps the same process, session and run across terminal closure, phone reconnection and terminal reattachment; mouse, multiline paste and resize work afterward.
+- [ ] #1 A real served child with isolated SQLite and a controlled agent/tool sequence keeps the same process, session and run across terminal closure, phone reconnection and terminal reattachment; mouse, multiline paste and resize work afterward.
 - [x] #2 Cold explicit Create/Open selection and immediate Send, multi-chat and multi-subagent correction, background decisions, command acknowledgement loss, expiry, stale attachment races and projection overflow are verified through production routes with honest outcomes.
 - [x] #3 Migration crash/retry, populated conflicts, cross-config source claims and completed-result quarantine have current targeted evidence; retired mobile engine constructors are absent from the shared path.
 - [x] #4 Authentication, revocation, Canvas-disabled operation, same-origin protections and inert content hold in real browser journeys without granting authority from VPN access.
@@ -51,6 +51,7 @@ Reason: Qualifies the approved canonical ownership, migration and retained-runti
 6. Index-only untrack the single named tracked SDD Task8graphreport while preserving local file/history. Update living/user/QA/ADR/spec implementation evidence from verified facts; ordinary-extension documenter preserves incumbent PRODUCT/DESIGN files and reports pre-existing drift. Separate automated, actual served-browser and physical phone/VPN receipts; mark unavailable hardware checks explicitly unverified.
 7. Source-freeze targeted final commands/raw outputs/source epochs/owned child exits; scoped lint/format/AST/diff with exact inherited-debt qualification. Self-review, complete report/manifest and normal explicit local commit excluding root task metadata/scratch. Independent task review then one final wholefeature review remain root gates. No fullsuite/dependencies/newworktree/realprofilemigration/push/PR/merge/cleanup.
 8. Final whole-feature correction (one combined wave): retain immutable original command action/full target before effect POST; isolate unresolved outcome gating and presentation by applicable exact target while preserving visible historical unknowns, no replay, stale/disconnect/reset confirmation and native exact Stop. Correct predecessor receipt labels and make the unrelated-receipt negative test await actual delivery/client processing. Use meaningful both-engine regressions, an integrated native old-owner receipt-discovery control, full affected portable file and only necessary connected actual/native cases; preserve original reports/manifests/epochs and append separate whole-feature fix evidence. Update QA/notes, self-review, normal explicit commit; one same-reviewer scoped rereview follows. ADR required:no new ADR; existing ADR-244 and spec exact-target/no-replay/Stop requirements apply. No storage, runtime, permission or unrelated Evals change.
+9. Fresh user-requested UAT before draft PR: run the14-case actual served suite on8491688b; preserve13P1F783.26s/all8655bindings. Diagnose only failed retention mouse input with the reviewed bounded passive pointer/WS/public terminal modes and pre/post native receipts, original callbacks/guards/deadlines/assertion unchanged. Guard closed-context artifact capture so the original failure survives. Record temporary test bytes as their own epoch and restore exact original bytes, without committing diagnostics. Require demonstrated cause and separate minimum proposal before any repair. Then qualify actual affected behavior and document honest UAT results/limitations in the draft PR. ADR required:no new ADR; existingADR244 applies.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -63,12 +64,14 @@ The original Task11 review's4Important findings closed in FIX1 at2356c7ae94c1. F
 Final executable-source cover:93P150.01s, comprising90 portable Chromium/WebKit cases,2 integrated native receipt/projection cases and1 real TLS loss journey. Separate4P64.67s includes3 unchanged-native preparing/streaming/subagent Stop-at-capacity controls and overlapping transport; counts are not summed. Earlier source-bound retention/process/migration/security/fleet/inventory76 evidence remains at its exact scope. Root verified79 final artifacts,4HEAD-current paths,8epochs,34current code/test bindings,22unchanged native Stop bindings, preserved original reports/manifests and actual child exit0/provider2/four exact durable rows. This fix has full-file changed-Python Ruff/format/native AST and JS/diff checks clean with0exclusions; earlier whole-feature debt remains qualified.
 
 ADR required:no new ADR; existing backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md and its recorded pre-code amendments apply. Original and final source/evidence/independent review packets remain in the plan's local SDD directory. Lesson added from the actual cross-target uncertainty defect; final completion changes are documentation/status only. Limits remain: physical iPhone/Safari, Android/Chrome and VPN reconnect UNVERIFIED; native-terminal live phone attachment phase2; controlled providers do not qualify real providers. Evals startup fallback, historical scratch/third-Create attribution, migration-fit, platform/dependency and inherited static qualifications are preserved. No full suite, real-profile migration, dependency changes, push/PR/merge or cleanup.
+Fresh user-requested UAT on8491688b000f2f12aa9fb55ffe183f016983ba5f closed13P1F783.26s with8655 source/config bindings unchanged. All four physical lifecycle cases and the other browser flows passed; retention mouse coordinate was not observed at its original F11 assertion. Exact run/session/incarnation/turn/input Thread were retained, but paste/Canvas-off/post-exit durable checks in that case were not reached. Cause remains unclassified. Perform one failed-retention-only bounded passive pointer/WS/public-terminal-mode/native-receipt diagnostic, preserving native methods/guards/assertion/deadlines; any temporary test edit must restore exact original bytes after its source-bound epoch. No production fix without concrete cause/proposal. ADR required:no new ADR; validation of244.
+Fresh UAT evidence complete at8491688b: full targeted14-case run13P1F783.26s; one passive diagnostic1P69.15s; unchanged original-source confirmation1P70.59s. All8655 release bindings restored/current and300 artifact hashes verified by root; original prior packets preserved. The first reattachment mouse assertion failure remains UNCLASSIFIED and the overall fresh UAT is not green; no production repair was justified or made. Follow-ups reached original mouse/paste/Canvas-off/exact4rows with physical child exit0. Keep task In Progress/AC1 open for stability triage; draft PR may be reviewed with this limitation and current-dev integration conflicts explicitly disclosed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-All6Task11 acceptance outcomes qualified at their documented scope. Original task review/FIX1 and final whole-feature review/one combined correction/scoped rereview are closed; final code22bae10d3dd6 has0open findings. Physical hardware/VPN and the stated CV01–03 limits remain explicit.
+Implementation and original/scoped code reviews closed at22bae10d3dd6. Fresh user-requested UAT on8491688b returned13P1F; passive diagnostic1P and original-source confirmation1P do not explain the initial mouse failure. Task remains In Progress/AC1 open. Draft PR records UAT and current-dev integration limits; no production repair or full sweep was performed.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done

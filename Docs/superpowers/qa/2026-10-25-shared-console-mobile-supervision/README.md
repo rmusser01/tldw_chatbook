@@ -5,6 +5,10 @@ complete. This packet separates source/unit evidence, actual served-browser
 evidence, and physical phone/VPN qualification. The final code review covers
 the recorded source; physical hardware and VPN checks remain open.
 
+Fresh post-review UAT is **not fully green**:13 passed/1 failed, followed by two
+separate passing retention checks. The original mouse failure remains
+unclassified and TASK-36769/AC1 is open. See the [fresh UAT receipt](uat-2026-11-01.md).
+
 ## Actual served-browser evidence
 
 The fixture starts the production TLS server and actual retained `TldwCli`

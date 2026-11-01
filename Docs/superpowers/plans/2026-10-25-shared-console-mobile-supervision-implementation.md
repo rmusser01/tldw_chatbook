@@ -16,7 +16,7 @@
 
 **Baseline:** `8dbf79077b10d5671dabd4f9cbe06ea9c2ee8c15`. This commit contains the approved specification and overflow correction; product implementation has not started. Re-check symbols and schema ceilings after rebasing.
 
-**Status:** Tasks 1–11 are complete. Independent task reviews and final whole-feature review with its one combined correction/scoped rereview are closed at code22bae10d3dd6. Targeted evidence and inherited-check limits remain recorded in Backlog and the execution ledger. Physical phone/VPN qualification remains unverified.
+**Status:** Implementation and original/scoped reviews are complete; Tasks1–10 remain Done. Task11 was reopened after fresh user-requested UAT on8491688b returned13P1F. Diagnostic and original-source retention checks passed separately, but the first mouse failure remains unclassified and AC1 stays open. See the2026-11-01 QA receipt. Physical phone/VPN and current-dev integration remain unverified.
 
 ```text
 ADR required: no
