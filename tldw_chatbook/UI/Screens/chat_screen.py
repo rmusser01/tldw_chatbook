@@ -1239,6 +1239,16 @@ CONSOLE_WORKBENCH_SHORTCUTS_COMPOSER_COLLAPSED = (
     *(pair for pair in CONSOLE_WORKBENCH_SHORTCUTS if pair[0] != "Enter"),
 )
 
+#: TASK-33622.5: the Terminal owns the center and the composer is collapsed;
+#: a focused viewport forwards every key to the shell but F1/F6/Ctrl+P/Ctrl+Q.
+CONSOLE_WORKBENCH_SHORTCUTS_TERMINAL = (
+    ("Ctrl+]", "release input"),
+    ("F6", "next pane"),
+    ("F1", "help"),
+    ("Ctrl+P", "palette"),
+    ("Shift+F6", "previous pane"),
+)
+
 #: TASK-362: the full Console keyboard vocabulary for the F1 help panel, grouped
 #: by surface. The flat CONSOLE_WORKBENCH_SHORTCUTS above stays the compact
 #: footer set; the transcript j/k/c/e/r keys, F2, Shift+Enter and Alt+M were
@@ -1666,6 +1676,11 @@ class ChatScreen(BaseAppScreen):
     #: cold mount (task-31808 / Qodo #2449 review).
     CONSUMER_SETTLE_HEDGE_SECONDS = 0.15
 
+    #: TASK-33622.5: defaults for the bare ``__new__`` screens tests build.
+    _console_terminal_open = False
+    _console_terminal_workspace = None
+    _console_terminal_return_reading = None  # TASK-33622.8
+
     #: ADR-161 task 10: the Console's styling rides the app bundle via
     #: ``features/_console{,_panels}.tcss`` (CSS_MODULES members). The
     #: TASK-25812 console split sheet was dissolved: it always rode the
@@ -1927,8 +1942,10 @@ class ChatScreen(BaseAppScreen):
             every other action.
         """
         if action == "expand_collapsed_console_composer":
+            # TASK-33622.5: under the Terminal, Escape belongs to the shell.
             return (
                 self._console_composer_collapsed
+                and not self._console_terminal_open
                 and not self._console_setup_modal_blocking()
             )
         if action == "stop_console_run":
@@ -1937,6 +1954,11 @@ class ChatScreen(BaseAppScreen):
             # TASK-33622.3: single-letter screen actions belong to list mode.
             return run_controls.focus_in_transcript(self.focused)
         if action == "exit_console_hands_free":
+            if self._console_terminal_open:
+                from ..Console_Modules.terminal import capturing_viewport
+
+                if capturing_viewport(self) is not None:
+                    return False
             # One-line delegation (wave-2 console decomposition, task 1).
             # See `ConsoleHandsFreeController.console_hands_free_exit_
             # available` for the real implementation. TASK-28226: a row
@@ -2236,9 +2258,11 @@ class ChatScreen(BaseAppScreen):
             grid = self.query_one("#console-workspace-grid", Widget)
         except QueryError:
             return
+        from ..Console_Modules import terminal as terminal_center
+
         replacement = self._build_console_center()
         if replacement is current:
-            self.call_after_refresh(self._focus_open_console_terminal)
+            terminal_center.finish_center_swap(self)
             return
         siblings = list(grid.children)
         try:
@@ -2252,15 +2276,10 @@ class ChatScreen(BaseAppScreen):
         replacement.set_styles(width=current.styles.width)
         replacement.styles.min_width = current.styles.min_width
         replacement.styles.min_height = current.styles.min_height
+        terminal_center.capture_center_reading(self, current)
         await current.remove()
         await grid.mount(replacement, before=next_sibling)
-        if self._console_terminal_open:
-            self.call_after_refresh(self._focus_open_console_terminal)
-        else:
-            self.call_after_refresh(
-                self._focus_console_workbench_target,
-                "console-transcript-surface",
-            )
+        terminal_center.finish_center_swap(self)
 
     def _focus_open_console_terminal(self) -> None:
         """Focus the one useful Terminal control for its current authority state."""
@@ -2300,7 +2319,12 @@ class ChatScreen(BaseAppScreen):
         if message.action == "return":
             self._return_from_console_terminal()
             return
-        await self._terminal.handle_action(message.action, message.session_id)
+        handled = await self._terminal.handle_action(
+            message.action, message.session_id
+        )
+        if message.action == "arm" and handled and self._console_terminal_open:
+            # TASK-33622.5: Arm is hidden once armed; New takes focus.
+            self.call_after_refresh(self._focus_open_console_terminal)
 
     @on(ConsoleTerminalInputRequested)
     def on_console_terminal_input_requested(
@@ -4868,6 +4892,9 @@ class ChatScreen(BaseAppScreen):
         focused: object | None,
     ) -> str | None:
         """Return the owning Console Workbench pane id for a focused widget."""
+        # TASK-33622.5: an open Terminal is the center pane (F6 returns to it).
+        if self._console_terminal_open and self._terminal.owns_widget(focused):
+            return "console-transcript-surface"
         current = focused
         while current is not None:
             current_id = getattr(current, "id", None)
@@ -4927,6 +4954,13 @@ class ChatScreen(BaseAppScreen):
 
     def _console_workbench_focus_targets(self, pane_id: str) -> tuple[str, ...]:
         """Return visible focus candidates for a Console Workbench pane."""
+        if self._console_terminal_open and pane_id in (
+            "console-transcript-surface",
+            "console-native-composer",
+        ):
+            # TASK-33622.5: both landings go to the Terminal while it owns the
+            # center (F6, a closing rail's hand-back, the activation restore).
+            return self._terminal.focus_target_ids()
         if pane_id == "console-native-composer":
             if self._console_composer_collapsed:
                 return ("console-composer-expand",)
@@ -4950,6 +4984,8 @@ class ChatScreen(BaseAppScreen):
         """
         if self._is_console_widget_displayed(pane_id):
             return True
+        if pane_id == "console-transcript-surface" and self._console_terminal_open:
+            return self._terminal.owns_widget(self._console_terminal_workspace)
         stand_in = CONSOLE_PANE_COLLAPSED_STAND_IN.get(pane_id)
         return stand_in is not None and self._is_console_widget_displayed(stand_in)
 
@@ -4981,6 +5017,15 @@ class ChatScreen(BaseAppScreen):
             self._apply_console_setup_block(True)
             return
         self._ensure_console_workbench_targets_focusable()
+        if self._console_terminal_open:
+            # TASK-33622.5: a closing modal (Arm, New) or an activation hands
+            # focus back to the Terminal, never the collapsed composer; focus
+            # already on a visible Terminal or rail control stays put.
+            current = self._console_workbench_focus_id_for_widget(self.app.focused)
+            if current is not None and self._console_pane_is_reachable(current):
+                return
+            self._focus_open_console_terminal()
+            return
         if self._console_composer_collapsed:
             self._focus_console_workbench_target("console-native-composer")
             return
@@ -5013,6 +5058,8 @@ class ChatScreen(BaseAppScreen):
             return
         if self._console_setup_modal_blocking():
             shortcuts = CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED
+        elif self._console_terminal_open:  # TASK-33622.5: no chat send here
+            shortcuts = CONSOLE_WORKBENCH_SHORTCUTS_TERMINAL
         elif self._console_composer_collapsed:
             # TASK-25733: same truthfulness rule as the setup-blocked branch --
             # with no composer mounted, "Enter send" names something the key
@@ -5044,7 +5091,8 @@ class ChatScreen(BaseAppScreen):
         if self._console_inspector_active():
             shortcuts = (("n/p", "Sections"), *shortcuts)
         if self._console_rail_focus_active():  # TASK-32322: the rail's exits
-            shortcuts = rail_focus_shortcuts(shortcuts)
+            home = "terminal" if self._console_terminal_open else "composer"
+            shortcuts = rail_focus_shortcuts(shortcuts, home=home)
         shortcuts = run_controls.with_transcript_keys(self, shortcuts)  # 33622.4
         shortcuts = run_controls.with_stop_shortcut(self, shortcuts)
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
@@ -5925,6 +5973,9 @@ class ChatScreen(BaseAppScreen):
         if self._dismiss_console_command_popup():
             return
         if self._dismiss_console_conversation_action_menus():
+            return
+        if self._console_terminal_open:  # TASK-33622.5: composer collapsed
+            self._focus_open_console_terminal()
             return
         self._focus_console_composer_if_needed(force=True)
 
@@ -10497,6 +10548,9 @@ class ChatScreen(BaseAppScreen):
     def _restore_console_transcript_reading_state(
         self,
         state: _ConsoleTranscriptReadingState | None,
+        *,
+        is_current: Callable[[], bool] | None = None,
+        on_restored: Callable[[], None] | None = None,
     ) -> None:
         """Restore the transcript anchor, offset, and selected message.
 
@@ -10504,10 +10558,14 @@ class ChatScreen(BaseAppScreen):
 
         Args:
             state: The reading state captured before the layout change.
+            is_current: Optional owner guard for a queued restore.
+            on_restored: Optional callback after the reading position is applied.
         """
         region = self._console_transcript_region_or_none()
         if region is not None:
-            region.restore_reading_state(state)
+            region.restore_reading_state(
+                state, is_current=is_current, on_restored=on_restored
+            )
 
     def _set_console_composer_collapsed(self, collapsed: bool) -> None:
         """Synchronize screen-owned collapse state with the mounted composer."""
@@ -12574,7 +12632,10 @@ class ChatScreen(BaseAppScreen):
         )
         rail_state = self._agent._apply_fleet_agent_section_auto_open(rail_state)
         rail_state = self._apply_fleet_inspector_rail_auto_open(rail_state)
-        return resolve_console_rail_priority(rail_state, resolved_available_columns)
+        rail_state = resolve_console_rail_priority(rail_state, resolved_available_columns)
+        if self._console_terminal_open:  # TASK-33625.3: a narrow Terminal takes the rails
+            rail_state = self._terminal.yield_rails(rail_state, resolved_available_columns)
+        return rail_state
 
     def _set_console_rail_preference(
         self,
@@ -12586,6 +12647,8 @@ class ChatScreen(BaseAppScreen):
         explicit_right_toggle: bool = True,
     ) -> ConsoleRailState:
         """Persist requested Console rail preference changes and return new state."""
+        if self._console_terminal_open:  # TASK-33625.3: an asked-for rail beats the yield
+            self._terminal.reclaim_rails(left_open=left_open, right_open=right_open)
         if (
             left_open is not None
             or right_open is not None
@@ -14056,7 +14119,9 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         composer.set_draft_focusable(
-            not blocking and not self._console_composer_collapsed
+            not blocking
+            and not self._console_composer_collapsed
+            and not self._console_terminal_open
         )
         if blocking and self._is_descendant_or_self(self.app.focused, composer):
             if self._resume_navigation_startup_in_progress:
@@ -14655,6 +14720,8 @@ class ChatScreen(BaseAppScreen):
         rail_state = resolve_console_rail_priority(rail_state, available_columns)
         rail_state = self._agent._apply_fleet_agent_section_auto_open(rail_state)
         rail_state = resolve_console_rail_priority(rail_state, available_columns)
+        if self._console_terminal_open:  # TASK-33625.3: a narrow Terminal takes the rails
+            rail_state = self._terminal.yield_rails(rail_state, available_columns)
         workbench_state = self._build_console_workbench_state(control_state)
         shell_classes = (
             f"workbench-frame console-workbench-frame density-{workbench_state.density}"
@@ -15155,6 +15222,9 @@ class ChatScreen(BaseAppScreen):
             composer.set_prompt_history(self._ensure_console_prompt_history())
             self._session.initialize_composer_draft(composer)
             composer._authored_draft_observer = self._publish_console_authored_draft
+            if self._console_terminal_open:  # TASK-33622.5: stays collapsed
+                composer.display = False
+                composer.can_focus = False
             # TASK-17651: the composer is a dense-form field, not a framed
             # region — CSS owns its left-edge marker and focus treatment.
             yield composer
@@ -17734,6 +17804,10 @@ class ChatScreen(BaseAppScreen):
                 return False
             if poll_record is None and not self._console_sync_requested and full_source is not None and run_controls.poll_source_is_current(self, full_source):
                 self._console_completed_full_source = full_source
+            if poll_record is None and self._console_terminal_return_reading is not None:
+                from ..Console_Modules.terminal import restore_returned_reading_after_publication
+
+                restore_returned_reading_after_publication(self)
             return True
         except run_controls.PreparingPollChanged:
             self._console_sync_requested = True
@@ -21509,6 +21583,8 @@ class ChatScreen(BaseAppScreen):
         """Focus the native Console composer when no other control owns focus."""
         if _console_screen_is_torn_down(self):
             return
+        if self._console_terminal_open:  # TASK-33622.5: composer collapsed
+            return
         if self._console_composer_collapsed:
             self._focus_console_workbench_target("console-native-composer")
             return
@@ -21537,7 +21613,7 @@ class ChatScreen(BaseAppScreen):
 
     def _should_capture_console_input(self, composer: ConsoleComposerBar) -> bool:
         """Return True when key or paste input belongs to the Console composer."""
-        if composer.collapsed:
+        if composer.collapsed or self._console_terminal_open:  # TASK-33622.5
             return False
         # TASK-33622.2: a focused composer BUTTON is captured too, and
         # `route_composer_control_key` lets it own Enter/Space and moves
@@ -22386,6 +22462,15 @@ class ChatScreen(BaseAppScreen):
 
     def on_paste(self, event: Paste) -> None:
         """Treat pasted text as Console composer draft input by default."""
+        if self._console_terminal_open:
+            from ..Console_Modules.terminal import capturing_viewport
+
+            viewport = capturing_viewport(self)
+            if viewport is not None and not self._console_setup_modal_blocking():
+                self._terminal.send_paste(event.text)
+                event.stop()
+                event.prevent_default()
+            return
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:

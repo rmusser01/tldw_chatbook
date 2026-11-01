@@ -292,6 +292,18 @@ the hosted runner's extra invocation was not stack-traced.
 
 **What to do.** When you add a handler after an existing guarded one, list the guard's refusals and make the new handler defer to each (here: no type-to-compose while the arrival window is open), and test the new handler in each refusal state; a test of the guard alone cannot see the handler behind it. When a ruling changes where keys go, grep the mounted tests for keystrokes on non-text controls and rewrite the pins that encode the old rule to assert the new one, citing the ruling; do not delete them.
 
+## A subclass's `on_blur` runs before Textual clears `has_focus` (TASK-33622.5, 2026-10-29)
+
+**Incident.** TASK-33622.5 made the line under the Console Terminal say "Focus or click the terminal to type in it" whenever the viewport lacked focus, recomputing it in `TerminalViewport.on_focus`/`on_blur` from `viewport.has_focus`. All 17 mounted Terminal tests were green, and none read that line. Live at 235x52, F6 moved the keys to the Inspect handle and the line still said "Ctrl+] Release input". Textual's dispatcher walks the MRO subclass-first and takes one of `_on_blur`/`on_blur` per class (`message_pump._get_dispatch_methods`), so the subclass's `on_blur` ran before `Widget._on_blur` set `has_focus = False`, and on focus the reverse. A mounted test that read the line before and after F6 failed on its first assertion: "Focus or click the terminal…" while the viewport had focus.
+
+**What to do.** Derive focus-dependent state in a `watch_has_focus` override (call `super()`), or defer it with `call_next`; never read `has_focus` inside `on_focus`/`on_blur`. When a fix adds copy that depends on focus, assert that copy in both focus states.
+
+## Hiding a control silently kills every route that lands on it (TASK-33622.5, 2026-10-29)
+
+**Incident.** TASK-33622.5 hid the Console composer while the Terminal owns the center and made `_focus_console_composer_if_needed` return early in that state. All 18 mounted Terminal tests were green, and the live round covered Arm, New, F6 and Return. The independent review then found the TASK-32322 rail exit dead: Esc from a rail reaches that helper through `action_focus_console_composer_home`, so it moved focus nowhere, while the rail footer still taught "Esc composer · F6 panes". No test pressed Esc from a rail with the Terminal open, and the live capture that showed the stale footer was never read for it.
+
+**What to do.** When a change hides or disables a focus target, grep every caller of its focus helper and every footer or hint string that names it. Give each caller a new destination, or drop the hint. Add a mounted test that presses each surviving key and asserts both where focus lands and what the footer says.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen

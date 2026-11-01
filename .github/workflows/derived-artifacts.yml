@@ -848,6 +848,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           pytest \
+            Tests/UI/test_console_terminal_return_input.py \
             Tests/Agents/test_provider_tool_schema_conformance.py \
             Tests/Chat/test_console_tool_definition_rejection.py \
             Tests/Agents/test_local_tool_provider.py::test_todo_update_delete_rule_is_enforced_by_the_handler_not_the_schema \

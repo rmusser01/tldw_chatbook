@@ -333,6 +333,13 @@ class ConsoleTranscriptRegion(Vertical):
         except QueryError:
             return None
 
+    @property
+    def reading_session_id(self) -> str | None:
+        """Return the owner actually published in this transcript region."""
+        transcript = self._transcript_or_none()
+        identity = getattr(transcript, "_session_identity", None)
+        return identity if isinstance(identity, str) else None
+
     def capture_reading_state(self) -> _ConsoleTranscriptReadingState | None:
         """Capture the semantic reading position before composer layout changes.
 
@@ -358,6 +365,9 @@ class ConsoleTranscriptRegion(Vertical):
     def restore_reading_state(
         self,
         state: _ConsoleTranscriptReadingState | None,
+        *,
+        is_current: Callable[[], bool] | None = None,
+        on_restored: Callable[[], None] | None = None,
     ) -> None:
         """Restore the transcript anchor, offset, and selected message.
 
@@ -365,11 +375,13 @@ class ConsoleTranscriptRegion(Vertical):
         state``.
 
         Args:
+            is_current: Optional ownership guard, rechecked after a deferred reveal.
+            on_restored: Optional completion called after the position is applied.
             state: A previously captured reading state; ``None`` is a no-op,
                 which is what callers pass when the capture found no
                 transcript.
         """
-        if state is None:
+        if state is None or (is_current is not None and not is_current()):
             return
         transcript = self._transcript_or_none()
         if transcript is None:
@@ -384,14 +396,20 @@ class ConsoleTranscriptRegion(Vertical):
         transcript.selected_message_id = state.selected_message_id
 
         def _apply_reading_position() -> None:
+            if is_current is not None and (
+                not is_current() or self._transcript_or_none() is not transcript
+            ):
+                return
             if state.anchored:
                 transcript.anchor()
-                return
-            transcript.release_anchor()
-            transcript.scroll_to(
-                y=min(state.scroll_y, float(transcript.max_scroll_y)),
-                animate=False,
-            )
+            else:
+                transcript.release_anchor()
+                transcript.scroll_to(
+                    y=min(state.scroll_y, float(transcript.max_scroll_y)),
+                    animate=False,
+                )
+            if on_restored is not None:
+                on_restored()
 
         if revealed:
             # Read order matters: the offset is clamped against

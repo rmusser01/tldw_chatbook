@@ -6582,6 +6582,12 @@ ConsoleTerminalWorkspace#console-main-column {
     background: $ds-surface-panel;
 }
 
+
+ConsoleTerminalWorkspace#console-main-column > Button {
+    padding: $ds-space-0;
+}
+
+
 #console-terminal-danger,
 #console-terminal-access,
 #console-terminal-open-settings,
@@ -6618,6 +6624,7 @@ ConsoleTerminalWorkspace#console-main-column {
     color: $ds-text-muted;
 }
 
+
 #console-terminal-viewport {
     width: $ds-width-full;
     min-width: $ds-size-0;
@@ -6625,12 +6632,16 @@ ConsoleTerminalWorkspace#console-main-column {
     min-height: $ds-size-0;
     padding: $ds-space-0;
     overflow: hidden;
+    border: none;
+    border-left: solid $ds-control-edge;
     background: $ds-surface-raised;
     color: $ds-text-primary;
 }
 
 #console-terminal-viewport:focus {
-    outline: solid $ds-active-fg;
+    outline: none;
+    border-left: thick $ds-active-fg;
+    background: $ds-input-focus-bg;
 }
 
 #console-right-rail {
