@@ -1035,6 +1035,8 @@ class MediaDatabase:
         db_path: Union[str, Path],
         client_id: str,
         check_integrity_on_startup: bool = False,
+        *,
+        _read_only: bool = False,
     ):
         """
         Initializes the Database instance, sets up the connection pool (via threading.local),
@@ -1050,6 +1052,7 @@ class MediaDatabase:
             DatabaseError: If database initialization or schema setup fails.
         """
         # Determine if it's an in-memory DB and normalize the path lexically.
+        self._read_only = _read_only
         if isinstance(db_path, Path):
             self.is_memory_db = False
             self.db_path = lexical_path(db_path)
@@ -1115,7 +1118,18 @@ class MediaDatabase:
             # --- Core Initialization Logic ---
             # This establishes the first connection for the current thread
             # and applies/verifies the schema.
-            self._initialize_schema()
+            if self._read_only:
+                if self.is_memory_db:
+                    raise ValueError("Read-only inspection requires an existing file.")
+                row = (
+                    self._get_thread_connection()
+                    .execute("SELECT version FROM schema_version LIMIT 1", ())
+                    .fetchone()
+                )
+                if row is None or row[0] != self._CURRENT_SCHEMA_VERSION:
+                    raise SchemaError("Existing database schema is incompatible.")
+            else:
+                self._initialize_schema()
 
             # Run integrity check if requested and not in-memory
             if check_integrity_on_startup and not self.is_memory_db:
@@ -1165,6 +1179,11 @@ class MediaDatabase:
                 )
 
     # --- Connection Management ---
+    @classmethod
+    def open_read_only(cls, db_path: Path):
+        """Read an existing current store without creating or migrating it."""
+        return cls(db_path, client_id="canonical-reader", _read_only=True)
+
     @core_getter
     def _get_thread_connection(self) -> sqlite3.Connection:
         """Retrieve or create the current thread's SQLite connection.
@@ -1222,12 +1241,26 @@ class MediaDatabase:
         if is_closed:
             unpublished = None
             try:
-                conn = unpublished = connect_private_sqlite(
-                    "db.media.primary",
-                    self.db_path_str,
-                    detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
-                    check_same_thread=False,
-                    timeout=10,
+                conn = unpublished = (
+                    connect_private_sqlite(
+                        "db.media.read",
+                        self.db_path_str,
+                        read_only=self._read_only,
+                        must_exist=self._read_only,
+                        detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
+                        check_same_thread=False,
+                        timeout=10,
+                    )
+                    if self._read_only
+                    else connect_private_sqlite(
+                        "db.media.primary",
+                        self.db_path_str,
+                        read_only=self._read_only,
+                        must_exist=self._read_only,
+                        detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
+                        check_same_thread=False,
+                        timeout=10,
+                    )
                 )
                 register_core_connection(self, conn)
                 try:
@@ -1237,7 +1270,7 @@ class MediaDatabase:
                     conn.close()
                     raise
                 conn.row_factory = sqlite3.Row
-                if not self.is_memory_db:
+                if not self.is_memory_db and not self._read_only:
                     conn.execute("PRAGMA journal_mode=WAL;")
                 # NORMAL is safe under WAL (app-crash-safe; only an OS/power
                 # crash can lose the last commit or two, acceptable for this

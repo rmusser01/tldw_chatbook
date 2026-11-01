@@ -9,10 +9,11 @@ _REOPEN = _SCRIPT.split("assert config.get_cli_setting")[0] + (  # nosec B608 - 
     r'''
 import asyncio,sqlite3,sys,time
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.DB import private_sqlite
 from tldw_chatbook.Backup_Recovery import config_participants,raw_participants as raw,storage_admission as storage
 case=sys.argv[1]
-db=AgentRunsDB(data/'fixture'/'agent-runs.db',client_id='fixture')
+db=owned_agent_runs_db(data/'fixture'/'agent-runs.db',client_id='fixture')
 assert db.count_subagents_by_conversation(['fixture-conversation'])=={}
 old=db._held_connection()
 if case!='cached':

@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+
 pytestmark = pytest.mark.bootstrap_profile
 
 from Tests.Agents.test_goal_iteration_report import report
@@ -20,7 +22,6 @@ from tldw_chatbook.Agents.goal_models import (
     GoalToolScope,
     VerificationSpec,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 stores = _stores_fixture
 
@@ -145,7 +146,7 @@ def ambiguous_request(alias):
 
 @pytest.mark.parametrize("alias", [False, True])
 def test_ambiguous_new_launch_refused_after_structural_roundtrip(tmp_path, alias):
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     req = ambiguous_request(alias)
     try:
         hydrated = GoalRequest.model_validate_json(req.canonical_json())
@@ -169,7 +170,7 @@ def test_legacy_ambiguity_reopens_and_replays_but_cannot_prepare_or_accept(
 ):
     monkeypatch.setenv("TLDW_AGENTS_GOAL_RUNS_ENABLED", "true")
     path = tmp_path / "runs.db"
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     req = ambiguous_request(alias)
     unique = req.model_copy(update={"verifiers": req.verifiers[:1]})
     goal = db.goal_runs.create(unique, launch_id="legacy")
@@ -188,7 +189,7 @@ def test_legacy_ambiguity_reopens_and_replays_but_cannot_prepare_or_accept(
             (payload, digest, goal.id),
         )
     db.close()
-    reopened = AgentRunsDB(path)
+    reopened = owned_agent_runs_db(path)
     try:
         hydrated = reopened.goal_runs.get(goal.id)
         replay = reopened.goal_runs.create(

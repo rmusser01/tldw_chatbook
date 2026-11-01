@@ -337,12 +337,13 @@ class HelperLease:
         try:
             frame = encode_frame(
                 {
-                    "version": 1,
+                    "version": 2,
                     "operation": operation,
                     "path": request.path,
                     "writable": request.writable,
                     "create_if_missing": request.create_if_missing,
                     "preserve_source_mode": request.preserve_source_mode,
+                    "require_private_mode": request.require_private_mode,
                 }
             )
         except ProtocolError:
@@ -452,7 +453,7 @@ class HelperLease:
             raise HelperPreDispatchTimeoutError() from None
         budget = OperationDeadline(time.monotonic() + remaining)
         return self._exchange(
-            encode_frame({"version": 1, "operation": operation}), operation, budget
+            encode_frame({"version": 2, "operation": operation}), operation, budget
         )
 
     def retain_terminal_owner(self) -> None:
@@ -567,7 +568,7 @@ class HelperLease:
                 if not self._failed:
                     try:
                         self._exchange(
-                            encode_frame({"version": 1, "operation": "close"}),
+                            encode_frame({"version": 2, "operation": "close"}),
                             "close",
                             normal,
                         )

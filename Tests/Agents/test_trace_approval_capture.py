@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_models import AgentConfig
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
@@ -13,7 +14,6 @@ from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRe
 from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.trajectory import derive_trajectory
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Tools.file_operation_tools import ReadFileTool
 from tldw_chatbook.Tools.tool_executor import Tool
 
@@ -131,7 +131,7 @@ def test_real_agent_service_and_approval_hook_capture_ordered_lifecycle(
     def fake_provider(**_kwargs):
         return replies.pop(0)
 
-    db = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.db", client_id="test")
     try:
         service = AgentService(
             db,
@@ -205,7 +205,7 @@ def test_real_agent_service_and_approval_hook_capture_ordered_lifecycle(
 def test_lifecycle_capture_failure_is_contained_and_diagnosed_when_writable(
     tmp_path, monkeypatch, diagnostic_fails: bool
 ) -> None:
-    db = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.db", client_id="test")
     registry = ToolCatalogRegistry()
     real_insert = db.insert_steps_at_indices
 
@@ -277,7 +277,7 @@ def test_repeated_same_tool_calls_keep_distinct_safe_durable_correlation(
         },
         {"choices": [{"message": {"content": "done"}}]},
     ]
-    db = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.db", client_id="test")
     try:
         service = AgentService(
             db,
@@ -338,7 +338,7 @@ def test_generic_tool_credentials_are_scrubbed_at_durable_agent_step_boundary(
         },
         {"choices": [{"message": {"content": "done"}}]},
     ]
-    db = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.db", client_id="test")
     try:
         service = AgentService(
             db,
@@ -431,7 +431,7 @@ def test_denied_call_cancelled_before_dispatch_is_not_approval_revoked(
         cancel["set"] = True
         return {call.call_id: "deny" for call in calls}
 
-    db = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.db", client_id="test")
     try:
         service = AgentService(
             db,
@@ -481,7 +481,7 @@ def test_denied_call_cancelled_before_dispatch_is_not_approval_revoked(
 def test_agent_service_actual_request_assembly_captures_safe_context_chain(
     tmp_path,
 ) -> None:
-    db = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.db", client_id="test")
     try:
         service = AgentService(
             db,
@@ -562,7 +562,7 @@ def test_agent_service_actual_request_assembly_captures_safe_context_chain(
 def test_agent_service_post_response_cancel_persists_causal_observation(
     tmp_path,
 ) -> None:
-    db = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.db", client_id="test")
     flags = iter((False, True))
     try:
         service = AgentService(

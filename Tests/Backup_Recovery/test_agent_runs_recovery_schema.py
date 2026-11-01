@@ -7,6 +7,7 @@ from threading import Event
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.recovery_operations import _AGENT_RUNS_SCHEMA, recovery_adapters
@@ -55,9 +56,8 @@ def test_exact_agent_catalogs_validate_without_rewriting(tmp_path, route):
     if route != "fresh":
         legacy(path, {"native_v19": 19, "native_v20": 20}.get(route, 18))
     if route != "legacy":
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-        database = AgentRunsDB(path)
+        database = owned_agent_runs_db(path)
         database.close()
     before = path.read_bytes()
     assert validate_candidate(owner(), path, Event(), migrate=False) == ()
@@ -121,7 +121,7 @@ def test_unknown_agent_schema_or_version_refuses(tmp_path, alteration):
     else:
         from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-        database = AgentRunsDB(path)
+        database = owned_agent_runs_db(path)
         database.close()
     with closing(sqlite3.connect(path)) as connection:
         if alteration == "extra_table":
@@ -261,3 +261,113 @@ def test_fixed_v21_to_v22_recovery_route_preserves_historical_variants(tmp_path)
             ]
             assert not connection.execute("PRAGMA foreign_key_check").fetchall()
         assert validate_candidate(owner(), path, Event(), migrate=False) == ()
+
+
+def test_v24_receipt_migration_and_backup_preserve_body_free_evidence(tmp_path):
+    path = tmp_path / "receipt-upgrade.db"
+    schema = next(sql for version, sql in _AGENT_RUNS_SCHEMA if version == 24)
+    with closing(sqlite3.connect(path)) as connection:
+        for sql in sorted(schema, key=lambda sql: not sql.startswith("CREATE TABLE")):
+            if not sql.startswith("CREATE TABLE sqlite_sequence"):
+                connection.execute(sql)
+        connection.execute("INSERT INTO schema_version VALUES (24)")
+        connection.commit()
+    path.chmod(0o600)
+    assert validate_candidate(owner(), path, Event(), migrate=True) == ()
+    from Tests.DB.test_console_command_receipts import receipt
+
+    database = owned_agent_runs_db(path)
+    database.command_receipts.claim(receipt())
+    destination = tmp_path / "backup.db"
+    with (
+        database.connection() as source,
+        closing(sqlite3.connect(destination)) as backup,
+    ):
+        source.backup(backup)
+    database.close()
+    destination.chmod(0o600)
+    before = destination.read_bytes()
+    assert validate_candidate(owner(), destination, Event(), migrate=False) == ()
+    assert destination.read_bytes() == before
+    with closing(sqlite3.connect(destination)) as connection:
+        assert connection.execute(
+            "SELECT command_id,state FROM console_command_receipts"
+        ).fetchall() == [("command-a", "pending")]
+
+
+def test_receipt_migration_authority_does_not_allow_extra_index(tmp_path):
+    from tldw_chatbook.DB.private_sqlite import open_recovery_validation
+
+    path = legacy(tmp_path / "restricted.db")
+    with open_recovery_validation(
+        "db.agent_runs", path, writable=True, with_restrictions=True
+    ) as (connection, restrictions):
+        restrictions.migrating = True
+        restrictions.migration_owner = "db.agent_runs"
+        connection.execute(
+            "CREATE TABLE console_command_receipts(command_id TEXT PRIMARY KEY)"
+        )
+        with pytest.raises(sqlite3.DatabaseError):
+            connection.execute(
+                "CREATE INDEX extra_receipt_index ON console_command_receipts(command_id)"
+            )
+
+
+def test_native_receipt_migration_rolls_back_table_before_version_stamp(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.DB import console_command_receipts
+
+    path = tmp_path / "interrupted-v25.db"
+    schema = next(sql for version, sql in _AGENT_RUNS_SCHEMA if version == 24)
+    with closing(sqlite3.connect(path)) as connection:
+        for sql in sorted(schema, key=lambda sql: not sql.startswith("CREATE TABLE")):
+            if not sql.startswith("CREATE TABLE sqlite_sequence"):
+                connection.execute(sql)
+        connection.execute("INSERT INTO schema_version VALUES (24)")
+        connection.commit()
+    path.chmod(0o600)
+    monkeypatch.setattr(
+        console_command_receipts,
+        "COMMAND_RECEIPT_MIGRATION",
+        (
+            console_command_receipts.COMMAND_RECEIPT_MIGRATION[0],
+            "SELECT no_such_function()",
+        ),
+    )
+    with pytest.raises(sqlite3.OperationalError):
+        owned_agent_runs_db(path)
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone() == (24,)
+        assert (
+            connection.execute(
+                "SELECT name FROM sqlite_master WHERE name='console_command_receipts'"
+            ).fetchone()
+            is None
+        )
+
+
+def test_legacy_mobile_declaration_reuses_exact_agent_schema_policy(tmp_path):
+    from tldw_chatbook.Backup_Recovery.models import (
+        DISCOVERY_CONTEXT_KEY,
+        DiscoveryContext,
+    )
+    from tldw_chatbook.DB.recovery_operations import legacy_mobile_declarations
+
+    config = {
+        "general": {"users_name": "user"},
+        "paths": {"data_dir": str(tmp_path)},
+        DISCOVERY_CONTEXT_KEY: DiscoveryContext(tmp_path / "config.toml", "test"),
+    }
+    runs = next(
+        item
+        for item in legacy_mobile_declarations(config)
+        if item.owner == "db.agent_runs"
+    )
+    assert runs.logical_id == "profile:test:db.agent_runs:legacy-mobile"
+    assert runs.path == tmp_path / "user" / "mobile" / "runs.db"
+    assert runs.status == "unused"
+    assert "profile:test:db.chachanotes.primary:legacy-mobile" in runs.dependencies
+    assert not runs.path.parent.exists()

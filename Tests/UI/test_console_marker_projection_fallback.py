@@ -6,6 +6,8 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
@@ -44,7 +46,7 @@ async def test_marker_projection_declines_before_capture_and_preserves_live_abi(
         ChangeReviewPublicationSignal,
     )
 
-    database = AgentRunsDB(
+    database = owned_agent_runs_db(
         ":memory:" if route == "memory" else tmp_path / "markers.sqlite"
     )
     request.addfinalizer(database.close)

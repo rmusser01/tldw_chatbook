@@ -8,6 +8,7 @@ from collections import OrderedDict
 from concurrent.futures import Future
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -231,7 +232,7 @@ class ConsoleWorktreeRecovery:
                 return RecoveryPage(
                     message="Select a writable named repository in this conversation's project instructions."
                 )
-            db = AgentRunsDB(self.bridge.runs_db.db_path_str)
+            db = AgentRunsDB.open_read_only(Path(self.bridge.runs_db.db_path_str))
             try:
                 rows = AgentWorktreeRepository(db).list_for_conversation(
                     intent.persisted_conversation_id,
@@ -314,7 +315,10 @@ class ConsoleWorktreeRecovery:
                             "missing_authority",
                             "Select a current writable named repository.",
                         )
-                    db = AgentRunsDB(self.bridge.runs_db.db_path_str)
+                    db = AgentRunsDB(
+                        self.bridge.runs_db.db_path_str,
+                        execution_owner=self.bridge.runs_db._execution_owner,
+                    )
                     return recover_agent_worktree(
                         db,
                         authority=authority,

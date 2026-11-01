@@ -31,6 +31,13 @@ from collections import Counter
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Agents.conftest import (
+    join_fleet_children,
+    pin_agent_settings,
+    pin_max_live_subagents,
+    pin_turn_scoped_children,
+)
 from Tests.Agents.test_agent_service import (
     SUBAGENT_PROMPT_PREFIX,
     FleetChat,
@@ -47,8 +54,8 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     RUN_ERROR,
     RUN_RUNNING,
-    RUN_STUCK,
     RUN_SKILL_SCRIPT_TOOL_NAME,
+    RUN_STUCK,
     RUNTIME_TOOL_NAMES,
     SPAWN_TOOL_NAME,
     TERMINAL_RUN_STATUSES,
@@ -62,8 +69,8 @@ from tldw_chatbook.Agents.agent_models import (
     ToolSchema,
 )
 from tldw_chatbook.Agents.agent_service import AgentService, _call_with_timeout
-from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
 from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
+from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
 from tldw_chatbook.Agents.local_tool_provider import (
     LocalToolProvider,
     _default_specs,
@@ -77,9 +84,9 @@ from tldw_chatbook.Agents.tool_catalog import (
     SkillToolProvider,
     ToolCatalogRegistry,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.DB.agent_worktrees import AgentWorktreeRepository
 from tldw_chatbook.Chat.trajectory import derive_trajectory
+from tldw_chatbook.DB.agent_worktrees import AgentWorktreeRepository
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
 from Tests.Agents.conftest import (
@@ -198,7 +205,7 @@ _owned_fleet_services: dict[AgentRunsDB, list[AgentService]] = {}
 
 @pytest.fixture()
 def db(tmp_path):
-    database = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    database = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     _owned_fleet_services[database] = []
     try:
         yield database
@@ -221,7 +228,7 @@ def reopen_db(db):
     databases = []
 
     def create(*, client_id):
-        database = AgentRunsDB(db.db_path, client_id=client_id)
+        database = owned_agent_runs_db(db.db_path, client_id=client_id)
         databases.append(database)
         return database
 
@@ -2786,7 +2793,7 @@ def test_cancel_subagent_revokes_approval_cards_mid_run(db):
     assert any(step["kind"] == "agent_run_cancelled" for step in child["steps"])
     path = db.db_path
     db.close()
-    reopened = AgentRunsDB(path, client_id="cancel-reload")
+    reopened = owned_agent_runs_db(path, client_id="cancel-reload")
     runs = reopened.list_runs("c", include_superseded=True)
     records = [
         record
@@ -3295,7 +3302,7 @@ def test_thread_start_and_persistent_terminal_failure_reconciles_on_reopen(
     db.close()
     AgentRunsDB._swept_paths.discard(str(path))
 
-    reopened = AgentRunsDB(path, client_id="persistent-launch-reload")
+    reopened = owned_agent_runs_db(path, client_id="persistent-launch-reload")
     repaired = reopened.get_run(child["id"])
     assert repaired["status"] == RUN_ERROR
     assert repaired["result"] is None

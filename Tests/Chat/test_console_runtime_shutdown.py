@@ -1120,3 +1120,110 @@ async def test_session_fences_include_exact_hook_custody(refuse_terminal):
     assert not engine.cleanup_pending and not any(
         engine.budget_owner.snapshot().values()
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_execution_lease_survives_bounded_shutdown_with_physical_publisher(tmp_path):
+    from threading import Thread
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_execution_owner import (
+        ConsoleExecutionBusy,
+        ConsoleExecutionOwner,
+    )
+
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=SimpleNamespace(db_path=tmp_path / 'chat.db')))
+    runtime.ensure_activity_receipt_service()
+    db = runtime._agent_runs_db
+    run_id = db.create_run(conversation_id='c', agent_kind='primary')
+    entered, release = Event(), Event()
+    failures = []
+
+    def publisher():
+        entered.set()
+        try:
+            assert release.wait(10)
+            db.set_status(run_id, 'done', result='physical write finished')
+        except BaseException as exc:  # noqa: BLE001 - worker failure asserted below
+            failures.append(exc)
+        finally:
+            db.close()
+
+    worker = Thread(target=publisher)
+    worker.start()
+    runtime._change_review_coordinator = SimpleNamespace(shutdown=lambda _: False)
+    try:
+        assert await asyncio.to_thread(entered.wait, 3)
+        await runtime.dispose(timeout_seconds=0)
+        with pytest.raises(ConsoleExecutionBusy):
+            ConsoleExecutionOwner.acquire(tmp_path / 'agent_runs.db')
+        release.set()
+        await asyncio.to_thread(worker.join, 3)
+        assert not worker.is_alive()
+        assert not failures
+        assert db.get_run(run_id)['result'] == 'physical write finished'
+    finally:
+        release.set()
+        await asyncio.to_thread(worker.join, 3)
+        db.close()
+        runtime._execution_owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "scratch_false",
+        "scratch_error",
+        "gateway_error",
+        "gateway_cancelled",
+        "gateway_pending",
+        "clean",
+    ],
+)
+async def test_execution_lease_requires_successful_physical_cleanup(
+    tmp_path, monkeypatch, outcome
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_execution_owner import (
+        ConsoleExecutionBusy,
+        ConsoleExecutionOwner,
+    )
+
+    runtime = ConsoleRuntime(
+        SimpleNamespace(chachanotes_db=SimpleNamespace(db_path=tmp_path / "chat.db"))
+    )
+    owner = runtime.ensure_execution_owner(tmp_path / "agent_runs.db")
+    if outcome.startswith("scratch_"):
+
+        def dispose_scratch():
+            if outcome == "scratch_error":
+                raise RuntimeError("injected scratch failure")
+            return False
+
+        monkeypatch.setattr(runtime._scratch_spaces, "dispose", dispose_scratch)
+
+    async def close_gateway():
+        if outcome == "gateway_error":
+            raise RuntimeError("injected gateway failure")
+        if outcome == "gateway_cancelled":
+            raise asyncio.CancelledError
+        if outcome == "gateway_pending":
+            await asyncio.Event().wait()
+
+    runtime._provider_gateway = SimpleNamespace(aclose=close_gateway)
+    try:
+        await runtime.dispose(
+            timeout_seconds=0.05 if outcome == "gateway_pending" else 2
+        )
+        if outcome == "clean":
+            with ConsoleExecutionOwner.acquire(tmp_path / "agent_runs.db"):
+                pass
+        else:
+            with pytest.raises(ConsoleExecutionBusy):
+                ConsoleExecutionOwner.acquire(tmp_path / "agent_runs.db")
+    finally:
+        owner.close()
+        await asyncio.sleep(0)

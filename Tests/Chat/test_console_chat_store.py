@@ -2141,7 +2141,9 @@ def test_rollback_restored_session_purges_exact_native_state_without_durable_mut
         persisted_message_id="persisted-active",
         parent_message_id="persisted-root",
     )
+    cleanup_owner = object()
     restored = store.restore_persisted_session(
+        cleanup_owner=cleanup_owner,
         title="Restored",
         workspace_id="workspace-restored",
         persisted_conversation_id="conv-restored",
@@ -2163,12 +2165,14 @@ def test_rollback_restored_session_purges_exact_native_state_without_durable_mut
     store._trajectory_capture_failure_keys.add("shared-event")
     store._trajectory_capture_failure_hydrated.add("conv-restored")
     store._payload_revisions["conv-restored"] = 29
+    store._payload_revisions[prior.id] = 41
     assert restored.id in coordinator._holders
 
     rolled_back = store.rollback_restored_session(
         restored.id,
         expected_session=restored,
         prior_active_session_id=prior.id,
+        cleanup_owner=cleanup_owner,
     )
 
     assert rolled_back is True
@@ -2186,7 +2190,9 @@ def test_rollback_restored_session_purges_exact_native_state_without_durable_mut
     }
     assert store._trajectory_capture_failure_keys == {"shared-event"}
     assert store._trajectory_capture_failure_hydrated == {"conv-restored"}
-    assert store._payload_revisions["conv-restored"] == 29
+    # The cold native ID is now the durable ID; this is exact owned state.
+    assert "conv-restored" not in store._payload_revisions
+    assert store._payload_revisions[prior.id] == 41
     assert persistence.mutations == []
 
 
@@ -9608,6 +9614,7 @@ def _create_staged_canvas_for_console(
         source=f"<!doctype html><html><body>{suffix}</body></html>",
         origin_message_id=f"assistant-{suffix}",
     )
+
 
 def test_presentation_context_carries_persona_display_name():
     store = ConsoleChatStore()

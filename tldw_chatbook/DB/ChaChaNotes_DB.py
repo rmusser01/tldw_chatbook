@@ -772,9 +772,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = (
-        86  # ADR-286 conversation-owned operational prompt mix-ins.
-    )
+    _CURRENT_SCHEMA_VERSION = 87  # ADR-244, after native prompt mix-ins.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2859,6 +2857,8 @@ DELETE FROM keywords
         client_id: str,
         check_integrity_on_startup: bool = False,
         console_library_migration_seed: "ConsoleLibraryMigrationSeed | None" = None,
+        *,
+        _read_only: bool = False,
     ):
         """
         Initializes the CharactersRAGDB instance.
@@ -2890,6 +2890,7 @@ DELETE FROM keywords
                                   a critical error.
             SchemaError: If schema migration or versioning issues occur.
         """
+        self._read_only = _read_only
         if isinstance(db_path, Path):
             self.is_memory_db = False
             self.db_path = lexical_path(db_path)
@@ -2920,7 +2921,22 @@ DELETE FROM keywords
             None if self.is_memory_db else self.db_path_str
         )
         try:
-            self._initialize_schema()
+            if self._read_only:
+                if self.is_memory_db:
+                    raise ValueError("Read-only inspection requires an existing file.")
+                row = (
+                    self._get_thread_connection()
+                    .execute(
+                        "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                        (self._SCHEMA_NAME,),
+                    )
+                    .fetchone()
+                )
+                if row is None or row[0] != self._CURRENT_SCHEMA_VERSION:
+                    raise SchemaError("Existing database schema is incompatible.")
+            else:
+                reject_incompatible_preview(self.db_path_str)
+                self._initialize_schema()
 
             # Run integrity check if requested and not in-memory
             if check_integrity_on_startup and not self.is_memory_db:
@@ -2961,6 +2977,11 @@ DELETE FROM keywords
             raise CharactersRAGDBError(
                 f"Unexpected database initialization error: {exc}"
             ) from exc
+
+    @classmethod
+    def open_read_only(cls, db_path: Path):
+        """Read an existing current store without creating or migrating it."""
+        return cls(db_path, client_id="canonical-reader", _read_only=True)
 
     # --- Connection Management ---
     @core_getter
@@ -3065,9 +3086,9 @@ DELETE FROM keywords
 
             if not conn:
                 try:
-                    conn = connect_private_sqlite(
-                        "db.chachanotes.primary",
-                        self.db_path_str,
+                    connect_options = dict(
+                        read_only=self._read_only,
+                        must_exist=self._read_only,
                         detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
                         check_same_thread=False,  # Required for threading.local approach
                         timeout=15
@@ -3080,6 +3101,14 @@ DELETE FROM keywords
                         ),
                         factory=_QuiescentSQLiteConnection,
                     )
+                    if self._read_only:
+                        conn = connect_private_sqlite(
+                            "db.chachanotes.read", self.db_path_str, **connect_options
+                        )
+                    else:
+                        conn = connect_private_sqlite(
+                            "db.chachanotes.primary", self.db_path_str, **connect_options
+                        )
                     opened_here = True
                     if not isinstance(conn, _QuiescentSQLiteConnection):
                         raise RuntimeError("quiescent_connection_factory")
@@ -3104,7 +3133,7 @@ DELETE FROM keywords
                         conn.set_progress_handler(
                             lambda: int(time.monotonic() >= operation_deadline), 100
                         )
-                    if not self.is_memory_db:
+                    if not self.is_memory_db and not self._read_only:
                         # Finish the statement: an active journal_mode PRAGMA is
                         # a writer that refuses every later COMMIT on this
                         # connection if anything retains its cursor.
@@ -8245,6 +8274,32 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v86_to_v87(self, conn: sqlite3.Connection) -> None:
+        """Install durable consolidation batch evidence."""
+        self._require_migration_entry_version(conn, 86, "V86→V87")
+        path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v86_to_v87_mobile_consolidation.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V86→V87"
+                )
+                updated = cursor.execute(
+                    "UPDATE db_schema_version SET version = 87 WHERE schema_name = ? AND version = 86",
+                    (self._SCHEMA_NAME,),
+                )
+                if updated.rowcount != 1:
+                    raise SchemaError("V86→V87 version update failed")
+            if self._get_db_version(conn) != 87:
+                raise SchemaError("V86→V87 version check failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration V86→V87 failed: {type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v83_to_v84(self, conn: sqlite3.Connection) -> None:
         """Install independent source-bound regions and optional applied provenance."""
         self._require_migration_entry_version(conn, 83, "V83→V84")
@@ -8711,6 +8766,7 @@ DELETE FROM keywords
                     83: self._migrate_from_v83_to_v84,
                     84: self._migrate_from_v84_to_v85,
                     85: self._migrate_from_v85_to_v86,
+                    86: self._migrate_from_v86_to_v87,
                 }
 
                 if current_db_version == 0:
@@ -25852,3 +25908,25 @@ _CONSOLE_BROWSER_NOTES_RETIREMENT_SOURCE = (
         )
     ),
 )
+
+
+def reject_incompatible_preview(db_path: str | Path) -> None:
+    """Refuse unmerged preview metadata before any schema-ready writer access."""
+    import time
+
+    from .mobile_preview_lineage import _existing_preview_target, _reject_preview_connection
+    from .private_sqlite import connect_private_sqlite
+
+    target = _existing_preview_target(db_path)
+    if target is None:
+        return
+    selected, identity = target
+    deadline = time.monotonic() + 5.0
+    connection = connect_private_sqlite(
+        'db.chachanotes.read', selected, read_only=True, must_exist=True, immutable=False,
+        expected_identity=identity, operation_deadline=deadline, timeout=5.0,
+    )
+    try:
+        _reject_preview_connection(connection, 'chat', deadline)
+    finally:
+        connection.close()

@@ -1239,3 +1239,40 @@ async def test_leave_console_is_idempotent_and_cheap_with_no_work():
     # A second leave finds no view attached and does nothing.
     assert await runtime.leave_console(object()) is False
     assert time.monotonic() - started < 2.0
+
+
+def test_runtime_holder_is_lazy_and_chat_names_share_execution_fence(tmp_path):
+    from tldw_chatbook.Chat.console_execution_owner import (
+        ConsoleExecutionBusy,
+        ConsoleExecutionOwner,
+    )
+
+    first = ConsoleRuntime(SimpleNamespace(chachanotes_db=SimpleNamespace(db_path=tmp_path / 'first.db')))
+    second = ConsoleRuntime(SimpleNamespace(chachanotes_db=SimpleNamespace(db_path=tmp_path / 'second.db')))
+    path = tmp_path / 'agent_runs.db'
+    with ConsoleExecutionOwner.acquire(path):
+        pass
+    try:
+        first.ensure_activity_receipt_service()
+        with pytest.raises(ConsoleExecutionBusy):
+            second.ensure_activity_receipt_service()
+    finally:
+        asyncio.run(first.dispose())
+        asyncio.run(second.dispose())
+    with ConsoleExecutionOwner.acquire(path):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_runtime_disposal_retires_remote_subscription_claims():
+    from tldw_chatbook.Chat.console_remote_models import ConsoleHostIdentity
+
+    runtime = ConsoleRuntime(SimpleNamespace())
+    projection = runtime.ensure_remote_projection(
+        ConsoleHostIdentity(server_epoch="epoch", console_id="console")
+    )
+    projection.register_client("phone")
+    await runtime.dispose()
+    assert not projection._clients
+    with pytest.raises(RuntimeError):
+        runtime.ensure_remote_projection(projection.host_identity)

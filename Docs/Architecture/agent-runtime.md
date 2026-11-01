@@ -272,3 +272,82 @@ scripted journeys do not close those gates.
 ### Capture-only native continuation acknowledgment (ADR337)
 
 `LoopDeps.acknowledge_provider_continuation` is optional and runs only after the existing projected persistence callback returns successfully. It receives the exact original/projected event pair and, for a finished call, its capped model-facing result. The Console adapter retains only current-batch projection provenance. The callback does not replace persistence, signing, transitions or tool-side-effect barriers; a failed or missing acknowledgment issues no usable trace custody. Ordinary and Capture Off callers leave it unset. Managed envelopes remain the store finalizer's responsibility, and raw event bodies never enter generic event serialization or provider kwargs through this seam.
+
+## Exact Console command targets (ADR-244)
+
+`ConsoleRemoteCommands` resolves the retained host and exact live session
+incarnation before using native controls. `ConsoleChatController` exposes
+`steer_run(session_id, text, expected_run_id=...)`, `redirect_run(...)` and
+`stop_run(session_id, expected_run_id=..., expected_turn_id=...)`. Active-tab
+wrappers retain their native behavior, including legacy preparation Stop;
+explicit remote Stop refuses an untargeted press. Stop uses the original native
+response-rule, received/prepared-turn, queued-continuation, physical callback,
+stream cancellation and durable settlement paths for that explicit session.
+
+The bridge's `live_primary_run_id` is a last-bound in-memory memo. It is useful
+for display/log routing but cannot prove current execution. The command control
+lookup additionally checks `current_primary_run_id`, qualifying the exact ID
+against the published native service's primary mailbox under its existing lock.
+A finished primary's memo cannot authorize stopping the next turn's preparation.
+Guidance retains the original mailbox's completion race refusal.
+
+Subagent commands require conversation ownership plus both handle and expected
+run. The bridge's existing `steer_subagent` and `cancel_subagent` accept an
+optional expected-run witness; existing native callers preserve their behavior.
+Guidance posts to the conversation coordinator's native user mailbox and returns
+queued; its later drain is the consumption boundary. Stop uses the owning
+service's existing cancel-event and approval-revocation path, including retained
+survivors. Finished/replaced targets refuse without relaunch. Subagent Redirect
+is unsupported.
+
+
+## Imported automatic authority (ADR-244)
+
+Persistent exact holds in AgentRuns27 exclude imported survivors from native
+pending-result, launch and delivery projections. Automatic-work admission checks
+the held identity and shared allowance family before idempotent attempt or
+reservation returns, and before final acceptance. Recovery leaves held attempts,
+reservations, Goal facts and run history intact; fresh process orphan and terminal
+repair also skip held runs. Goal dispatch and manual-send coordination preserve
+those held facts. A held prepared wake keeps its native per-conversation active
+attempt occupancy; a new manual turn can acquire independent fresh authority
+without releasing the imported attempt or delivering its result. See the exact
+owner APIs in [database-layer.md](./database-layer.md#imported-history-authority-adr-244).
+
+## Imported Goal evidence and mutation authority
+
+`DB/goal_runs.py::GoalRunsStore._require_current_authority` checks the existing
+native allowance-family import holds inside each Goal mutation transaction.
+Direct checkpoint writes, result reservations, provisioning, control settlement,
+and launch retries cannot turn retained imported evidence into current authority.
+`Agents/goal_run_service.py` also checks before current binding/evidence probes,
+quality review, completion checks and resume; recovery projection rechecks each
+Goal after the owner's audit so a later hold cannot be overwritten. Pure history,
+checkpoint and evidence reads remain available. Fresh unheld Goals and their
+exact live cancellation path retain normal behavior.
+
+The checkpoint `payload_hash` binds the original full iteration result; the
+checkpoint `artifact_digest` is the original native review identity. They remain
+historical provenance after consolidation, not approval of a mapped request.
+The mapper must separately retain original/mapped request hashes and original
+ID/digest associations in the same owning receipt (ADR-244, linked to ADR-227).
+
+Explicit `remove_payloads` retains its existing settled-state eligibility,
+`unsettled_root` check and native triggers. Eligible Goal/attempt-held history can
+be erased while retaining accounting identity, the removed tombstone, holds and
+batch receipts. A native chain hold sets `review_required`, so that chain is
+unsettled and erasure still refuses; no path clears the marker to force erasure.
+Import/recovery must never invoke erasure automatically or resurrect erased
+bodies from an archive merely to match an old receipt. No hold-release workflow
+is provided.
+
+## Served qualification evidence boundary (Task11)
+
+The actual TLS/AppService fixture controls the provider seam after native prompt
+acceptance. A retained PID alone is insufficient: the recorded session,
+incarnation, run and exact persisted prompt/reply rows establish continuity.
+The browser interaction receipt retains the original input Thread object, so
+matching a reused OS thread identifier cannot masquerade as thread continuity.
+Worker queue acceptance and physical worker exit remain separate native events;
+see the [qualification packet](../superpowers/qa/2026-10-25-shared-console-mobile-supervision/README.md)
+for executed and outstanding journeys.

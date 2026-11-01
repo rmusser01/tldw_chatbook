@@ -711,6 +711,8 @@ def plan_restore(
     local_snapshot: LocalSnapshotSource | None = None,
     retained_configs: tuple[RetainedConfig, ...] = (),
     data_groups: tuple[str, ...] | None = None,
+    _mobile_read_budget=None,
+    _mobile_cancel=None,
 ) -> RestorePlan:
     """Plan explicit local roots and independently checked retained selectors.
 
@@ -937,11 +939,15 @@ def plan_restore(
             raise ValueError("unsupported_schema_version")
     preserved_snapshot = {}
     if local_snapshot is not None:
-        from .later_rollback import _preserved_snapshot_members, _verify_snapshot_source
+        from .later_rollback import _plan_snapshot_members
 
-        _verify_snapshot_source(local_snapshot, mode, archive.digest, archive)
-        preserved_snapshot = _preserved_snapshot_members(
-            local_snapshot, archive, target
+        preserved_snapshot = _plan_snapshot_members(
+            local_snapshot,
+            mode,
+            archive,
+            target,
+            _read_budget=_mobile_read_budget,
+            cancel=_mobile_cancel,
         )
         if any(
             item.logical_id not in safety_scope or key in selected

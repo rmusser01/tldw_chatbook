@@ -40,6 +40,9 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Agents.test_agent_service import fence
+from Tests.Agents.test_fleet_runtime import FLEET_CFG, make_fleet_service
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
@@ -52,11 +55,7 @@ from tldw_chatbook.Agents.run_log import (
     resolve_existing_log_dir,
 )
 from tldw_chatbook.Agents.run_log_search import load_records
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Tools.file_operation_tools import GrepFiles
-
-from Tests.Agents.test_agent_service import fence
-from Tests.Agents.test_fleet_runtime import FLEET_CFG, make_fleet_service
 
 #: What the survivor answers. Distinctive enough that finding it in the
 #: wrong tree is unambiguous.
@@ -67,7 +66,7 @@ _JOIN_TIMEOUT = 10.0
 
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    return owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
 
 
 @pytest.fixture()

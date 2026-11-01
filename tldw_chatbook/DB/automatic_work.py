@@ -32,6 +32,8 @@ from tldw_chatbook.Agents.automatic_work_budget import (
 )
 from tldw_chatbook.Agents.code_review_models import ReviewBoundaryReceipt
 
+from .mobile_import_authority import authority_allowed, chain_allowed, run_allowed
+
 if TYPE_CHECKING:
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
@@ -196,6 +198,7 @@ class AutomaticWorkLedger:
         Nested transactions are rejected before changing the connection. Catch
         BaseException too: cancellation must never leave a fence half-open.
         """
+        self._db._require_execution_owner()
         with self._db.connection() as conn:
             if conn.in_transaction:
                 raise RuntimeError("automatic work transaction cannot be nested")
@@ -220,50 +223,55 @@ class AutomaticWorkLedger:
         with self.transaction() as conn:
             conn.execute("SAVEPOINT automatic_admission")
             try:
+                self._check_imported(conn, chain_id)
                 yield conn
             except AutomaticWorkRefused as exc:
-                observed = self._allowance_chain(conn, chain_id)
-                root_id = observed["id"]
-                conn.execute("ROLLBACK TO automatic_admission")
-                # Elapsed-time observations are not an admission. In particular,
-                # a refused first call in a replacement process must keep its
-                # anchor so a retry cannot gain unattended time.
-                conn.execute(
-                    "UPDATE automatic_work_chains SET last_observed_at=?, clock_owner_id=?, started_monotonic=? WHERE id=?",
-                    (
-                        observed["last_observed_at"],
-                        observed["clock_owner_id"],
-                        observed["started_monotonic"],
-                        root_id,
-                    ),
-                )
-                refusal = exc
-                reason = str(exc)
-                status = (
-                    "review_required"
-                    if reason
-                    in {
-                        "clock_reversed",
-                        "clock_unknown",
-                        "usage_unknown",
-                        "interrupted_work",
-                        "review_required",
-                    }
-                    else "paused"
-                )
-                # A stale callback has no authority to pause its replacement's
-                # otherwise healthy chain. Its admission alone is refused.
-                if reason not in {
-                    "runtime_owner_replaced",
-                    "settlement_unconfirmed",
-                    "review_boundary_already_claimed",
-                    "review_boundary_unavailable",
-                }:
+                if str(exc) == "import_review_required":
+                    conn.execute("ROLLBACK TO automatic_admission")
+                    refusal = exc
+                else:
+                    observed = self._allowance_chain(conn, chain_id)
+                    root_id = observed["id"]
+                    conn.execute("ROLLBACK TO automatic_admission")
+                    # Elapsed-time observations are not an admission. In particular,
+                    # a refused first call in a replacement process must keep its
+                    # anchor so a retry cannot gain unattended time.
                     conn.execute(
-                        "UPDATE automatic_work_chains SET status=?, pause_reason=? "
-                        "WHERE id=? AND status!='review_required'",
-                        (status, reason, root_id),
+                        "UPDATE automatic_work_chains SET last_observed_at=?, clock_owner_id=?, started_monotonic=? WHERE id=?",
+                        (
+                            observed["last_observed_at"],
+                            observed["clock_owner_id"],
+                            observed["started_monotonic"],
+                            root_id,
+                        ),
                     )
+                    refusal = exc
+                    reason = str(exc)
+                    status = (
+                        "review_required"
+                        if reason
+                        in {
+                            "clock_reversed",
+                            "clock_unknown",
+                            "usage_unknown",
+                            "interrupted_work",
+                            "review_required",
+                        }
+                        else "paused"
+                    )
+                    # A stale callback has no authority to pause its replacement's
+                    # otherwise healthy chain. Its admission alone is refused.
+                    if reason not in {
+                        "runtime_owner_replaced",
+                        "settlement_unconfirmed",
+                        "review_boundary_already_claimed",
+                        "review_boundary_unavailable",
+                    }:
+                        conn.execute(
+                            "UPDATE automatic_work_chains SET status=?, pause_reason=? "
+                            "WHERE id=? AND status!='review_required'",
+                            (status, reason, root_id),
+                        )
             finally:
                 conn.execute("RELEASE automatic_admission")
         if refusal is not None:
@@ -273,9 +281,20 @@ class AutomaticWorkLedger:
         """Read immutable goal origin from the canonical allowance root."""
         with self._db.connection() as conn:
             root = self._allowance_chain(conn, chain_id)["id"]
-            return "goal_iteration" if conn.execute(
-                "SELECT 1 FROM goal_runs WHERE chain_id=?", (root,)
-            ).fetchone() else "fleet_wake"
+            return (
+                "goal_iteration"
+                if conn.execute(
+                    "SELECT 1 FROM goal_runs WHERE chain_id=?", (root,)
+                ).fetchone()
+                else "fleet_wake"
+            )
+
+    def _check_imported(self, conn, chain_id, authorities=()) -> None:
+        if not chain_allowed(conn, chain_id) or any(
+            not authority_allowed(conn, kind, identity)
+            for kind, identity in authorities
+        ):
+            raise AutomaticWorkRefused("import_review_required")
 
     def _check_admission(
         self,
@@ -286,6 +305,7 @@ class AutomaticWorkLedger:
         amount: int = 0,
         limits: AutomaticWorkLimits | None = None,
     ) -> None:
+        self._check_imported(conn, chain_id)
         self._check_unconfirmed_starts(conn, chain_id)
         snapshot = self._snapshot(conn, chain_id)
         if snapshot.status == "review_required":
@@ -859,6 +879,11 @@ class AutomaticWorkLedger:
                 raise AutomaticWorkRefused("source_chain_missing")
             source_chain_id = source["work_chain_id"]
         with self._admission_transaction(source_chain_id) as conn:
+            self._check_imported(
+                conn,
+                source_chain_id,
+                (("run", source_run_id), ("chat_start_attempt", attempt_id)),
+            )
             self._check_runtime_owner(conn, owner_id)
             existing = conn.execute(
                 "SELECT * FROM automatic_chat_start_attempts WHERE id=?", (attempt_id,)
@@ -962,6 +987,9 @@ class AutomaticWorkLedger:
         with self._admission_transaction(chain_id) as conn:
             self._check_runtime_owner(conn, owner_id)
             attempt = self._chat_start_attempt(conn, attempt_id, owner_id)
+            self._check_imported(
+                conn, attempt["chain_id"], (("chat_start_attempt", attempt_id),)
+            )
             if attempt["state"] != "prepared":
                 return False
             self._check_admission(conn, chain_id, kind="generation", limits=limits)
@@ -986,6 +1014,9 @@ class AutomaticWorkLedger:
         """Refund only this owner's still-prepared, uncommitted attempt."""
         with self.transaction() as conn:
             attempt = self._chat_start_attempt(conn, attempt_id, owner_id)
+            self._check_imported(
+                conn, attempt["chain_id"], (("chat_start_attempt", attempt_id),)
+            )
             if attempt["state"] != "prepared":
                 return False
             reservation = self._reservation(
@@ -1065,6 +1096,9 @@ class AutomaticWorkLedger:
         """Settle accepted native work once, without survivor delivery marks."""
         with self.transaction() as conn:
             attempt = self._chat_start_attempt(conn, attempt_id, owner_id)
+            self._check_imported(
+                conn, attempt["chain_id"], (("chat_start_attempt", attempt_id),)
+            )
             if attempt["state"] != "accepted":
                 return False
             self._check_runtime_owner(conn, owner_id)
@@ -1171,6 +1205,14 @@ class AutomaticWorkLedger:
             raise ValueError("wake batch contains duplicate run IDs")
         with self._progress_claim_lock:
             with self._admission_transaction(chain_id) as conn:
+                self._check_imported(
+                    conn,
+                    chain_id,
+                    (("wake_attempt", attempt_id),)
+                    + tuple(("run", identity) for identity in selected)
+                    + tuple(("progress", identity) for identity, _ in progress)
+                    + tuple(("run", identity) for _, identity in progress),
+                )
                 self._check_runtime_owner(conn, owner_id)
                 existing = conn.execute(
                     "SELECT * FROM automatic_wake_attempts WHERE id=?", (attempt_id,)
@@ -1419,7 +1461,11 @@ class AutomaticWorkLedger:
                 "AND source.work_chain_id=? AND source.agent_kind!='primary'",
                 (source_run_id, parent_run_id, chain_id),
             ).fetchone()
-            return row["conversation_id"] if row is not None else None
+            return (
+                row["conversation_id"]
+                if row is not None and run_allowed(conn, source_run_id)
+                else None
+            )
 
     def pending_progress_sources(
         self, conversation_id: str, progress_messages: Sequence[tuple[str, str]]
@@ -1430,7 +1476,11 @@ class AutomaticWorkLedger:
             for message_id, source_id in progress_messages:
                 _identity(message_id)
                 _identity(source_id)
-                if message_id in self._temporary_progress_claims:
+                if (
+                    message_id in self._temporary_progress_claims
+                    or not authority_allowed(conn, "progress", message_id)
+                    or not run_allowed(conn, source_id)
+                ):
                     continue
                 row = conn.execute(
                     "SELECT work_chain_id FROM agent_runs WHERE id=? AND conversation_id=? AND agent_kind!='primary' AND parent_run_id IS NOT NULL AND work_chain_id IS NOT NULL",
@@ -1467,6 +1517,9 @@ class AutomaticWorkLedger:
         """Release a proven pre-acceptance refusal; accepted work never refunds."""
         with self.transaction() as conn:
             attempt = self._attempt(conn, attempt_id, owner_id, kind)
+            self._check_imported(
+                conn, attempt["chain_id"], (("wake_attempt", attempt_id),)
+            )
             if attempt["state"] != "prepared":
                 return False
             conn.execute(
@@ -1503,6 +1556,9 @@ class AutomaticWorkLedger:
 
         with self.transaction() as conn:
             attempt = self._attempt(conn, attempt_id, owner_id)
+            self._check_imported(
+                conn, attempt["chain_id"], (("wake_attempt", attempt_id),)
+            )
             if attempt["state"] != "accepted":
                 return False
             conn.execute(
@@ -1533,6 +1589,15 @@ class AutomaticWorkLedger:
                 "ON CONFLICT(singleton) DO UPDATE SET owner_id=excluded.owner_id",
                 (current_owner_id,),
             )
+            held_chains = {
+                row[0]
+                for row in conn.execute("SELECT id FROM automatic_work_chains")
+                if not chain_allowed(conn, row[0])
+            }
+            hold_filter = (
+                " AND chain_id NOT IN (" + ",".join("?" for _ in held_chains) + ")"
+            )
+            held = tuple(sorted(held_chains))
             chains = {
                 row[0]
                 for row in conn.execute(
@@ -1556,19 +1621,24 @@ class AutomaticWorkLedger:
                 if row["id"] not in self._temporary_progress_attempts
             )
             chains = {
-                self._allowance_chain(conn, chain_id)["id"] for chain_id in chains
+                self._allowance_chain(conn, chain_id)["id"]
+                for chain_id in chains
+                if chain_id not in held_chains
             }
             conn.execute(
-                "UPDATE automatic_chat_start_attempts SET state='review_required' WHERE owner_id!=? AND state IN ('prepared', 'accepted')",
-                (current_owner_id,),
+                "UPDATE automatic_chat_start_attempts SET state='review_required' WHERE owner_id!=? AND state IN ('prepared', 'accepted')"
+                + hold_filter,
+                (current_owner_id, *held),
             )
             conn.execute(
-                "UPDATE automatic_wake_attempts SET state='review_required' WHERE owner_id!=? AND state IN ('prepared', 'accepted')",
-                (current_owner_id,),
+                "UPDATE automatic_wake_attempts SET state='review_required' WHERE owner_id!=? AND state IN ('prepared', 'accepted')"
+                + hold_filter,
+                (current_owner_id, *held),
             )
             conn.execute(
-                "UPDATE automatic_work_reservations SET state='uncertain', updated_at=? WHERE owner_id!=? AND (state='reserved' OR (kind='tokens' AND state='committed'))",
-                (self._wall_clock(), current_owner_id),
+                "UPDATE automatic_work_reservations SET state='uncertain', updated_at=? WHERE owner_id!=? AND (state='reserved' OR (kind='tokens' AND state='committed'))"
+                + hold_filter,
+                (self._wall_clock(), current_owner_id, *held),
             )
             conn.executemany(
                 "UPDATE automatic_work_chains SET status='review_required', pause_reason='interrupted_work' WHERE id=?",
@@ -1581,8 +1651,12 @@ class AutomaticWorkLedger:
                     "SELECT g.* FROM goal_runs g WHERE g.status NOT IN ('completed','removed','closed','stopped','awaiting_result_review') "
                     "AND EXISTS (SELECT 1 FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id WHERE i.goal_id=g.id AND a.state!='aborted')"
                 )
+                if row["chain_id"] not in held_chains
+                and authority_allowed(conn, "goal", row["id"])
             )
-            audit = RuntimeRecoveryResult(current_owner_id, tuple(sorted(chains)), goals)
+            audit = RuntimeRecoveryResult(
+                current_owner_id, tuple(sorted(chains)), goals
+            )
             # Snapshot only the entries covered while this transaction owns
             # recovery. Later recoveries/setters may run before our return.
             with _UNCONFIRMED_STARTS_LOCK:
@@ -1662,6 +1736,7 @@ class AutomaticWorkLedger:
         _identity(goal_id)
         goal = self._db.goal_runs.get(goal_id)
         with self._admission_transaction(goal.chain_id) as conn:
+            self._check_imported(conn, goal.chain_id, (("goal", goal_id),))
             self._check_runtime_owner(conn, owner_id)
             row = conn.execute(
                 "SELECT * FROM goal_runs WHERE id=?", (goal_id,)
@@ -1809,6 +1884,9 @@ class AutomaticWorkLedger:
         with self._admission_transaction(chain_id) as conn:
             self._check_runtime_owner(conn, owner_id)
             attempt = self._attempt(conn, attempt_id, owner_id, kind)
+            self._check_imported(
+                conn, attempt["chain_id"], (("wake_attempt", attempt_id),)
+            )
             if attempt["state"] != "prepared":
                 return False
             if attempt["review_boundary_id"] is not None:

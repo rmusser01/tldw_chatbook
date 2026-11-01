@@ -164,6 +164,9 @@ def storage_logical_id(
     context: DiscoveryContext, owner: str, local_id: str = ""
 ) -> str:
     """Format explicit profile/owner IDs, also used for cross-owner dependencies."""
+    from .mobile_preview_budget import reserve
+
+    reserve(128 + 8 * (len(context.profile_id) + len(owner) + len(local_id)))
     if not owner or ":" in owner or ":" in local_id:
         raise ValueError("invalid_logical_id")
     return f"profile:{context.profile_id}:{owner}" + (

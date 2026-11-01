@@ -147,3 +147,178 @@ the typed Library/Chatbook export preserves their canonical definition and place
 Sealed citation row-set comparison lives in
 `Chat/citation_artifact_ownership.py` and uses the repository's already acquired
 connection; transaction and seal ownership remain on the repository.
+
+## AgentRuns execution and inspection (ADR-244)
+
+File-backed `AgentRunsDB` construction now requires a current
+`ConsoleExecutionOwner` before schema initialization or orphan reconciliation.
+All mutation methods, transaction entry points (including automatic-work/Goals),
+and vacuum require the same owner. In-memory isolated stores require no OS lease.
+`AgentRunsDB.open_read_only(path)` opens an existing store through the
+`db.agent_runs.read` private-SQLite policy and participants provenance; it never
+initializes/migrates schema or sweeps runs, and refuses mutation/recovery.
+
+The stable adjacent lock is never unlinked. After winning it, native private-path
+admission securely hardens a trusted owned legacy file to 0600; symlinks, multiple
+links, foreign ownership and unsafe parents fail closed. A contender cannot
+harden, create or sweep the run store. Ownership is independent of maintenance
+admission, which continues to gate all native connections.
+
+
+## Console remote command evidence (ADR-244)
+
+AgentRuns v26 executes `agent_runs_v25_to_v26_console_command_receipts.sql`
+through the native owner and the exact backup migration registry. Its
+`command_receipts` repository uses the existing execution lease and SQLite
+transaction owner; read-only handles can query without migrating or sweeping.
+Rows contain identities, keyed payload fingerprints, monotonic issuance/expiry,
+native outcome state and fixed reason codes, never submitted text.
+
+An atomic `claim` returns explicit `inserted` ownership. A pending row does not
+permit dispatch. The internal total bound is 4,096 receipts: capacity refuses
+new non-idempotent effects. Pre-claim pruning can remove known acceptance,
+queue, application or refusal evidence only after expiry in that same owner
+clock domain. Prior-owner known outcomes remain queryable after restart; only
+at full capacity does a new claim atomically reclaim one oldest known prior-owner
+outcome to admit one command. Matching retries reclaim nothing. Pending/unknown
+and current-owner valid evidence are never reclaimed under pressure.
+A new served owner changes prior pending handoffs to `outcome_unknown`, without
+replaying them or changing the original native run/dispatch recovery facts.
+Unresolved reads use bounded keyset pages, including receipts for closed chats.
+
+
+## Imported history authority (ADR-244)
+
+The installed heads are ChaChaNotes86, Workspace11 and AgentRuns27. Their
+file-backed `*_mobile_consolidation.sql` migrations add
+`mobile_consolidation_batches(operation_id, source_fingerprint, batch_key,
+mapping_json, committed_at)` with primary key `(operation_id, batch_key)`.
+AgentRuns and Workspace also own `mobile_import_authority_holds`, keyed by
+`(authority_kind, authority_id)` with an operation identity and nullable
+`reviewed_at`. These schemas provide native storage; they do not perform imports.
+
+`AgentRunsDB.hold_imported_authority(cursor, operation_id, authorities)` borrows
+its active owner transaction, so imported rows, holds and batch evidence can
+commit or roll back together. It requires the execution owner and refuses a
+foreign cursor. Exact kinds identify native `agent_runs.id` (`run`),
+`automatic_work_chains.id` (`chain`), `goal_runs.id` (`goal`),
+`automatic_wake_attempts.id` (`wake_attempt`), progress message identity
+(`progress`), and `automatic_chat_start_attempts.id` (`chat_start_attempt`).
+Holding a chain marks it review-required without rewriting runs or accounting.
+`WorkspaceDB.hold_imported_bindings(cursor, operation_id, binding_ids)` similarly
+holds exact `workspace_runtime_bindings.binding_id` values. The corresponding
+`imported_authority_allowed` / `imported_binding_allowed` methods read exact
+holds; `DB/mobile_import_authority.py` adds linked run and allowance-family
+checks for automatic consumers. There is no release API: manual work or saving
+a binding never constitutes review.
+
+
+The internal consolidation owner scope in `Backup_Recovery/storage_admission.py`
+can construct these three exact installed repositories under native maintenance.
+`participants.py` checks the actual tagged repository before core operations and
+connection registration; `private_sqlite.py` accepts only the exact native
+ChaChaNotes quiescent factory or the native base SQLite factory for its matching
+owner/path. Retained cursors and transaction commits revalidate the live grant,
+selector binding and object witnesses. Ordinary maintenance constructors and
+foreign factories remain refused.
+
+For AgentRuns, `ConsoleExecutionOwner._acquire_consolidation(scope)` accepts only
+the actual live native run-owner scope. It uses the ordinary stable adjacent lock,
+nonblocking flock and identity/refcount checks. After acquiring that lock, native
+consolidation journals any required main/sidecar 0644-to-0600 transition before
+constructing the repository. Ordinary acquisition retains its existing hardening
+behavior. The native scope holds an execution use through physical SQLite
+retirement; a call to `close()` while users remain cannot release the execution fence. No imported
+transaction or batch receipt is manufactured by this admission machinery.
+
+The mobile scope supplies an internal `require_private_mode` requirement to the
+strict v2 private-SQLite helper request. This is derived from the real bound grant,
+not a public connect flag or owner string. Every existing DB/sidecar must already
+be 0600 after its journaled transition; a late nonprivate generation refuses
+without mutation. The connection seam also rechecks the initial fixed cohort
+after helper completion and before SQLite allocation, refusing even a private
+replacement generation. The helper leaves absent optional sidecars absent.
+Optional-sidecar revalidation during SQLite ownership and native 0600 main-file
+creation remain unchanged. Fixed sidecar observations at ownership retirement or
+recovery allow ordinary WAL generations to change without weakening permanent DB/ancestor
+witnesses or writing per-row journal records.
+
+
+### Passive imported command history (ADR-244 R105)
+
+`DB/console_command_history.py::_retain_command_history` borrows the actual native
+AgentRuns transaction and supplied original `_TraceReadBudget`. It validates fixed
+operational-history rows and complete readability before writing children plus a
+passive manifest in `mobile_consolidation_batches`. Foreign connections, absent
+transactions, duplicate records and repeat retention refuse. The primitive never
+commits the caller's transaction. No consolidation caller is enabled; source and
+mapped-ownership proof plus all-owner readiness remain later importer duties.
+
+The manifest key is `history.command`; children append `:` and the original
+command ID. Strict versioned JSON preserves all twelve SQL fields, including raw
+epoch/target strings, with original/mapped Run pairs separately represented.
+The manifest certifies passive history only, never completion of the Runs owner.
+
+`ConsoleCommandReceiptRepository.list_imported_history(operation_id,
+source_fingerprint, *, cursor=None, limit=50)` returns immutable historical DTOs
+and a bound continuation. It refuses an already-active transaction and owns a
+single deferred read snapshot, including on admitted read-only handles. Missing,
+foreign, malformed and incomplete manifests refuse; empty retention is explicit.
+It checks count/source/key coverage and each returned record's exact grammar.
+
+SQL BLOB byte lengths gate master/child materialization; children have a 16 MiB
+encoded ceiling and pages share one 16 MiB representation allowance covering keys,
+metadata, JSON/native decoding and results. Default/max record counts are 50/100.
+Allowance pressure returns complete records plus continuation; an individually
+unreadable record refuses. These limits are representation admission, not heap
+measurement or whole-profile capacity. No full-history JSON is materialized.
+
+Live command lookup, claims, transitions, unresolved queries, invalidation,
+pruning and 4,096 capacity still address only `console_command_receipts`.
+Passive records have no expiry or new deletion API; database backup/lifecycle and
+applicable privacy semantics remain. This component introduces no RunLog reader,
+imported-definition activation, schema migration or owner-readiness handoff.
+
+## Task11 SQLite seam qualification
+
+Fixed mobile preview reads are opened by the existing module-owned
+`mobile_consolidation._open_preview_read`; installed disposable candidates use
+`sqlite_validation._open_installed_candidate`. The latter resolves the installed
+owner and forwards the same cancellation/custody objects to restricted read-only
+validation. Callers retain their transaction, exact schema, hash and receipt
+checks. Structural inventory controls reject changes to owner resolution,
+writable/restriction flags and cancellation/custody forwarding. Neither helper
+adds a registered role or grants live repository write authority.
+
+The two Notes startup probes use `NotesDeviceStateStore._connect(read_only=True,
+must_exist=True)`, retaining their exact SELECT and missing/corrupt error policy.
+They do not initialize schema or create a parent/store; each connection and
+store closes after observation. The probe result remains startup evidence, not
+permission to import or activate Notes sync.
+
+## Native mobile compatibility and preflight (ADR-244 R168–R173)
+
+Integrated Core86, Workspace11 and Runs27 append receipts/holds after all native
+migrations. Authenticated source Core81–85, Workspace8–10 and Runs24/25 retain
+exact physical catalog variants. Unsupported populated source portrait/review
+history refuses before writing; canonical portrait, review and archive state
+remains native. Source workspace binding witnesses, including tombstones, retain
+their mapped revisions and import holds. Workspace8 uses the native revision1
+insertion witness with explicit provenance, never a fabricated source row.
+
+`DB/mobile_preview_lineage.py` coordinates metadata-only checks of the actual
+atomic-selected owner paths before the first constructor; each constructor repeats
+its actual-path guard. Known colliding unmerged mobile previews refuse with retained
+copy/matching-build guidance. These are refusal checks, never schema acceptance.
+Core and Runs reuse native read roles; Workspace owns `db.workspaces.preflight`.
+All opens are must-exist, nonimmutable, admitted read-only connections with finite
+helper and SQL deadlines and physical close. They see current WAL metadata, issue
+no schema/stamp/checkpoint SQL, and do not lend recovery or writer authority.
+
+SQLite may coordinate SHM and create a new empty WAL. Retain those files; main
+bytes/identity/mode and every pre-existing WAL remain unchanged. A new nonempty WAL
+or modified existing WAL is outside this allowance. Ordinary reads preserve modes;
+inside mobile custody the existing helper requires already-private artifacts and
+refuses rather than chmod. This exception applies only to the fixed preflight,
+not strict capture, legacy-source, ciphertext or rollback preservation. Existing
+older-writer quiescence remains required; preflight is no external-writer lock.

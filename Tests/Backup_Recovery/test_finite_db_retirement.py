@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Backup_Recovery.test_participant_lifetimes import (
     local_root as local_root,  # noqa: PLC0414
 )
@@ -33,7 +34,6 @@ def worker_leases(db):
 @pytest.fixture(params=["subscriptions", "conversations", "owned_notes", "owned_runs", "owned_workspaces"])
 def offload(request, tmp_path, local_root, monkeypatch):
     if request.param.startswith("owned_"):
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
         from tldw_chatbook.DB.base_db import run_owned_db_call
         from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
@@ -41,7 +41,7 @@ def offload(request, tmp_path, local_root, monkeypatch):
             db = CharactersRAGDB(tmp_path / "notes.db", "test")
             read = db.list_all_active_conversations
         elif request.param == "owned_runs":
-            db = AgentRunsDB(tmp_path / "runs.db")
+            db = owned_agent_runs_db(tmp_path / "runs.db")
             read = db.pending_wake_conversation_ids
         else:
             db = WorkspaceDB(tmp_path / "workspaces.db")
@@ -156,11 +156,13 @@ async def test_app_retention_retires_its_constructed_database(tmp_path, local_ro
             raise ValueError("prune failed")
         return report
 
+    owner = owned_agent_runs_db(tmp_path / "agent_runs.db")
     monkeypatch.setattr(change_retention, "prune_change_history", prune)
     result = await asyncio.to_thread(
         change_retention.run_retention_for_app,
         tmp_path / "chachanotes.db",
         service=SimpleNamespace(available=True),
+        execution_owner=owner._execution_owner,
     )
     assert result is (None if fail else report)
     assert not worker_leases(observed[0])

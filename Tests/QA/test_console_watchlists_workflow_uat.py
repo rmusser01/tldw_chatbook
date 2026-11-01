@@ -21,16 +21,16 @@ from typing import Callable
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.Chat.console_library_destination import (
     resolve_console_destination,
 )
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.Chat.provider_setup_persistence import persist_provider_setup
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.MCP import local_server_tools
 from tldw_chatbook.MCP.local_server_tools import (
@@ -42,10 +42,10 @@ from tldw_chatbook.MCP.permission_store import (
     definition_hash,
     resolve_effective_state,
 )
-from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.scheduler.handlers.briefing_handler import (
     BriefingJobHandler,
 )
+from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Skills_Interop.skill_package_inspection import (
     inspect_skill_directory,
 )
@@ -68,7 +68,6 @@ from tldw_chatbook.UI.Library_Modules.library_skill_import_controller import (
     LibrarySkillImportCoordinator,
 )
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
-
 
 BRIEFING_ONLY_MARKER = "BRIEFING-ONLY-UAT-MARKER-7F31"
 _CONSOLE_TOOL_NAMES = (
@@ -424,7 +423,7 @@ async def _run_console_round_trip(tmp_path: Path, monkeypatch):
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(
+        agent_runs_db=owned_agent_runs_db(
             tmp_path / "profile" / "agent-runs.sqlite", client_id="uat"
         ),
         store=store,

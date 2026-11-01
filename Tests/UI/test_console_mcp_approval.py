@@ -22,18 +22,20 @@ from unittest.mock import Mock
 import pytest
 from loguru import logger
 from textual import on
+from textual.app import ComposeResult
+from textual.widgets import Button, Select, Static, TextArea
+
+import tldw_chatbook
+from Tests.agent_runs_owner import owned_agent_runs_db
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.app_module_patches import patch_app_global
 from Tests.private_profile import private_profile_test
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
-from textual.app import ComposeResult
-from textual.widgets import Button, Select, Static, TextArea
-
-import tldw_chatbook
-from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Agents.run_context import current_run_id, use_run_id
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
@@ -49,8 +51,6 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
     ChatApprovalCard,
 )
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
-
-from Tests.UI.app_factory import _build_test_app
 
 #: PR2a Task 5: the review hook takes the id of the run whose batch it is
 #: reviewing (both gates key their per-turn verdicts by run). These
@@ -1541,7 +1541,6 @@ async def test_approved_definitive_tool_stays_mounted_until_real_terminal(
     from tldw_chatbook.Agents.agent_service import AgentService
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
     from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
     from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
         WatchlistBundleService,
@@ -1608,7 +1607,7 @@ async def test_approved_definitive_tool_stays_mounted_until_real_terminal(
             ),
         )
         service = AgentService(
-            db=AgentRunsDB(tmp_path / "runs.db", "test"),
+            db=owned_agent_runs_db(tmp_path / "runs.db", "test"),
             registry=registry,
             chat_call=lambda **_kwargs: {"choices": [{"message": {"content": "x"}}]},
             on_tool_terminal=controller.complete_definitive_tool,
@@ -1700,7 +1699,6 @@ def test_run_terminal_sweeps_approved_undispatched_row_after_base_exception(
         ToolCatalogRegistry,
         ToolExecutionPolicy,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     controller, store = _build_controller()
     session = store.ensure_session()
@@ -1758,7 +1756,7 @@ def test_run_terminal_sweeps_approved_undispatched_row_after_base_exception(
         terminal_calls.append(run_id)
         controller.complete_definitive_run(run_id)
 
-    runs = AgentRunsDB(tmp_path / "base-exception-runs.db", "test")
+    runs = owned_agent_runs_db(tmp_path / "base-exception-runs.db", "test")
     runs.create_run(
         conversation_id="conversation",
         agent_kind="primary",

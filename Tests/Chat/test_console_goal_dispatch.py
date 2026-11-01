@@ -606,3 +606,51 @@ async def test_goal_authorization_cannot_bypass_retired_received_claim(
         for claim in claims:
             store.release_received_turn(claim)
         await gateway.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phone_first", [False, True])
+async def test_phone_and_goal_resume_share_stable_owner_and_admitted_iteration(
+    stores, monkeypatch, phone_first
+):
+    from tldw_chatbook.Chat.chat_conversation_scope_service import (
+        ChatConversationScopeService,
+    )
+
+    goal, store, original, controller, coordinator, gateway, calls = build_goal_rig(
+        stores, monkeypatch
+    )
+    runtime = stores[0]._goal_test_runtimes[-1]
+    app = runtime._app
+    app.console_runtime = runtime
+    app.chat_conversation_scope_service = ChatConversationScopeService(
+        local_service=app.local_chat_conversation_service, server_service=None
+    )
+    runtime._provider_gateway = gateway
+    runtime._agent_bridge = controller._agent_bridge
+    runtime._agent_runs_db = stores[0]
+    store.close_session(original.id)
+    try:
+        if phone_first:
+            phone = await runtime.open_remote_conversation(goal.conversation_id)
+            restored = await coordinator.restore_session(goal.id, app=app)
+        else:
+            restored = await coordinator.restore_session(goal.id, app=app)
+            phone = await runtime.open_remote_conversation(goal.conversation_id)
+        assert restored is phone
+        assert phone.id == phone.persisted_conversation_id == goal.conversation_id
+        assert phone.workspace_id == goal.request.binding.workspace_id
+        assert len(store.sessions()) == 1
+        result = await coordinator.dispatch_once(goal.id)
+        assert result.native_run_id and result.outcome.status == "done", result
+        assert len(calls) == 1
+        assert stores[0].automatic_work.snapshot(goal.chain_id).used["generation"] == 1
+        with stores[0].connection() as connection:
+            attempt = connection.execute(
+                "SELECT a.session_id,a.conversation_id FROM automatic_wake_attempts a JOIN goal_iterations i ON i.attempt_id=a.id WHERE i.goal_id = ?",
+                (goal.id,),
+            ).fetchone()
+        assert tuple(attempt) == (phone.id, goal.conversation_id)
+        assert store._sessions[phone.id] is phone
+    finally:
+        await gateway.aclose()

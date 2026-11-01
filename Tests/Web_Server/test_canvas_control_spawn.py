@@ -133,6 +133,9 @@ def test_textual_child_app_starts_and_closes_its_control_client() -> None:
             async def start(self) -> None:
                 self.started.set()
 
+            async def wait_disconnected(self, *, timeout: float) -> None:
+                await asyncio.Event().wait()
+
             async def aclose(self) -> None:
                 self.closed = True
 

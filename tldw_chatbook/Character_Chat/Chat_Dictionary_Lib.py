@@ -30,7 +30,6 @@ from ..Utils.input_validation import validate_text_input
 from ..Utils.path_validation import validate_path
 from ..DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError
 from ..Metrics.metrics import log_counter
-from ..config import get_cli_config_path
 
 #
 #######################################################################################################################
@@ -152,6 +151,8 @@ def _bundle_cache_put(
 
 def _default_dictionary_import_directory() -> Path:
     """Return the active profile directory for default dictionary imports."""
+    from ..config import get_cli_config_path
+
     return get_cli_config_path().parent
 
 

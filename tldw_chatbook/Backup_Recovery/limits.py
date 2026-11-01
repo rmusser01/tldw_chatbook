@@ -40,3 +40,7 @@ class ArchiveLimits:
             or self.reviewed_expanded_bytes < 0
         ):
             raise ValueError("invalid_compression_review")
+
+
+class _TraceReadLimit(RuntimeError):
+    """Body-free materialization refusal shared without importing Chat services."""

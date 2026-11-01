@@ -3,6 +3,7 @@
 import pytest
 from textual.widgets import SelectionList
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_console_agent_progress import _modal_type
@@ -17,7 +18,6 @@ from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Widgets.Console.console_workspace_tree import ConsoleWorkspaceTree
 from tldw_chatbook.Workspaces.conversation_browser_state import (
@@ -33,7 +33,7 @@ async def test_reopened_saved_progress_paints_count_and_explicit_read_discard(
     import asyncio
 
     db = CharactersRAGDB(tmp_path / "chat.sqlite", "progress-ui")
-    runs = AgentRunsDB(tmp_path / "runs.sqlite", client_id="progress-ui")
+    runs = owned_agent_runs_db(tmp_path / "runs.sqlite", client_id="progress-ui")
     try:
         native = ConsoleChatStore(persistence=ChatPersistenceService(db))
         temporary = native.create_session(
@@ -133,7 +133,7 @@ async def test_explicit_progress_retry_loads_deferred_saved_reports_after_capaci
     from tldw_chatbook.UI.Console_Modules.agent import ConsoleAgentController
 
     db = CharactersRAGDB(tmp_path / "chat.sqlite", "progress-ui")
-    runs = AgentRunsDB(tmp_path / "runs.sqlite", client_id="progress-ui")
+    runs = owned_agent_runs_db(tmp_path / "runs.sqlite", client_id="progress-ui")
     try:
         persistence = ChatPersistenceService(db)
         conversation_id = persistence.create_conversation(conversation_title="Saved")
@@ -266,7 +266,7 @@ async def test_durable_discard_contention_keeps_mounted_reads_and_heartbeat_resp
     from tldw_chatbook.UI.Console_Modules.agent import ConsoleAgentController
 
     db = CharactersRAGDB(tmp_path / "chat.sqlite", "progress-ui")
-    runs = AgentRunsDB(tmp_path / "runs.sqlite", client_id="progress-ui")
+    runs = owned_agent_runs_db(tmp_path / "runs.sqlite", client_id="progress-ui")
     entered = threading.Event()
     ready = threading.Event()
     released = threading.Event()

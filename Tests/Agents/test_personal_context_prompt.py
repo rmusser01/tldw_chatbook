@@ -2,19 +2,18 @@ from __future__ import annotations
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Agents.conftest import join_fleet_children
+from Tests.Chat.test_console_agent_bridge import (  # noqa: F401 - owned fixture
+    _retire_original_run_databases,
+)
 from tldw_chatbook.Agents import run_log as run_log_module
-from tldw_chatbook.Agents.agent_models import AgentConfig, RunBudget, SPAWN_TOOL_NAME
+from tldw_chatbook.Agents.agent_models import SPAWN_TOOL_NAME, AgentConfig, RunBudget
 from tldw_chatbook.Agents.agent_service import (
     AgentService,
     append_personal_context,
 )
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from Tests.Agents.conftest import join_fleet_children
-from Tests.Chat.test_console_agent_bridge import (  # noqa: F401 - owned fixture
-    _retire_original_run_databases,
-)
-
 
 # Real config consumers retain the explicitly selected private source.
 pytestmark = pytest.mark.bootstrap_profile
@@ -34,7 +33,7 @@ def _capture_service(tmp_path, calls):
         calls.append(kwargs)
         return {"choices": [{"message": {"content": "done"}}]}
 
-    return AgentService(AgentRunsDB(tmp_path / "runs.db"), registry, chat_call=capture)
+    return AgentService(owned_agent_runs_db(tmp_path / "runs.db"), registry, chat_call=capture)
 
 
 def test_append_helper_is_exact_and_empty_is_byte_identical() -> None:
@@ -101,7 +100,7 @@ def test_spawned_child_inherits_the_exact_profile_block(tmp_path, monkeypatch) -
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
     service = AgentService(
-        AgentRunsDB(tmp_path / "child.db"), registry, chat_call=_Chat()
+        owned_agent_runs_db(tmp_path / "child.db"), registry, chat_call=_Chat()
     )
     service.run_turn(
         conversation_id="c",

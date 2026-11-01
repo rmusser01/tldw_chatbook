@@ -8,6 +8,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
+from tldw_chatbook.Chat.console_trace_read_budget import (
+    _TraceReadBudget,
+    _TraceReadLimit,
+)
 from tldw_chatbook.Utils.log_sanitizer import (
     REDACTION_MARKER,
     sanitize_trace_credentials_v1,
@@ -214,6 +218,7 @@ def apply_pii_mask(
     spans: Sequence[PIIRedactionSpan],
     *,
     marker: str = PII_OMISSION_MARKER,
+    _read_budget: _TraceReadBudget | None = None,
 ) -> str:
     """Return a masked projection while leaving the source string unchanged.
 
@@ -232,6 +237,9 @@ def apply_pii_mask(
 
     if type(value) is not str or type(marker) is not str or not marker:
         raise TypeError("mask_input")
+    if _read_budget is not None:
+        _read_budget.value(value, text_copies=2)
+        _read_budget.reserve((256 + 8 * len(marker)) * len(spans))
     merged = merge_pii_spans(spans)
     if any(span.end_codepoint > len(value) for span in merged):
         raise ValueError("codepoint_range")
@@ -455,6 +463,8 @@ def redact_pii_value(
 def apply_frozen_pii_masks(
     value: object,
     field_masks: Mapping[str, Sequence[PIIRedactionSpan]],
+    *,
+    _read_budget: _TraceReadBudget | None = None,
 ) -> object:
     """Apply persisted masks to a fresh projection without rerunning detection.
 
@@ -471,18 +481,27 @@ def apply_frozen_pii_masks(
             not exactly match the frozen mask metadata.
     """
 
+    if _read_budget is not None:
+        _read_budget.value(field_masks)
+        _read_budget.value(value)
     masks = {path: tuple(spans) for path, spans in field_masks.items()}
     if any(type(path) is not str or not path for path in masks):
         raise ValueError("field_path")
     used: set[str] = set()
 
     def visit(item: object, *, path: str) -> object:
+        if _read_budget is not None:
+            _read_budget.value(path)
         if type(item) is str:
             spans = masks.get(path)
             if spans is None:
                 return item
             used.add(path)
-            return apply_pii_mask(item, spans)
+            return apply_pii_mask(
+                item,
+                spans,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            )
         if isinstance(item, Mapping):
             if any(type(key) is not str for key in item):
                 raise TypeError("unsupported")
@@ -493,7 +512,15 @@ def apply_frozen_pii_masks(
                 key_spans = masks.get(key_path)
                 if key_spans is not None:
                     used.add(key_path)
-                    masked_key = apply_pii_mask(key, key_spans)
+                    masked_key = apply_pii_mask(
+                        key,
+                        key_spans,
+                        **(
+                            {"_read_budget": _read_budget}
+                            if _read_budget is not None
+                            else {}
+                        ),
+                    )
                 else:
                     masked_key = key
                 if masked_key in result:
@@ -565,7 +592,9 @@ class CredentialSanitizer:
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
 
-    def sanitize(self, value: object) -> CredentialSanitizationResult:
+    def sanitize(
+        self, value: object, *, _read_budget: _TraceReadBudget | None = None
+    ) -> CredentialSanitizationResult:
         """Return a sanitized JSON-like value, failing closed without content."""
 
         try:
@@ -574,6 +603,15 @@ class CredentialSanitizer:
                 active=set(),
                 budget=[0],
                 depth=0,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            )
+        except _TraceReadLimit:
+            if _read_budget is not None:
+                raise
+            return CredentialSanitizationResult(
+                available=False,
+                value=None,
+                omission_reason_code=CREDENTIAL_SANITIZER_UNAVAILABLE,
             )
         except Exception:  # noqa: BLE001 - failure details may contain credentials
             return CredentialSanitizationResult(
@@ -595,7 +633,10 @@ class CredentialSanitizer:
         active: set[int],
         budget: list[int],
         depth: int,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> tuple[object, bool]:
+        if _read_budget is not None:
+            _read_budget.container()
         if depth > self._max_depth:
             raise ValueError("work_limit")
         budget[0] += 1
@@ -609,7 +650,10 @@ class CredentialSanitizer:
             return value, False
         if type(value) is str:
             self._check_text(value)
-            sanitized = self._sanitize_text(value)
+            sanitized = self._sanitize_text(
+                value,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            )
             return sanitized, sanitized != value
         if type(value) is bytes:
             raise TypeError("unsupported")
@@ -627,6 +671,8 @@ class CredentialSanitizer:
                     budget[0] += 1
                     if budget[0] > self._max_nodes:
                         raise ValueError("work_limit")
+                    if _read_budget is not None:
+                        _read_budget.value(key, text_copies=4)
                     self._check_text(key)
                     if self._credential_key(key):
                         redacted = True
@@ -634,7 +680,15 @@ class CredentialSanitizer:
                     if self._known_credential_key(key):
                         sanitized_key = _OMITTED_TEXT
                     else:
-                        sanitized_key = self._sanitize_text(key, include_known=False)
+                        sanitized_key = self._sanitize_text(
+                            key,
+                            include_known=False,
+                            **(
+                                {"_read_budget": _read_budget}
+                                if _read_budget is not None
+                                else {}
+                            ),
+                        )
                     redacted = redacted or sanitized_key != key
                     if sanitized_key in result:
                         raise ValueError("sanitized key collision")
@@ -643,6 +697,11 @@ class CredentialSanitizer:
                         active=active,
                         budget=budget,
                         depth=depth + 1,
+                        **(
+                            {"_read_budget": _read_budget}
+                            if _read_budget is not None
+                            else {}
+                        ),
                     )
                     redacted = redacted or item_redacted
                     result[sanitized_key] = sanitized_item
@@ -665,6 +724,11 @@ class CredentialSanitizer:
                         active=active,
                         budget=budget,
                         depth=depth + 1,
+                        **(
+                            {"_read_budget": _read_budget}
+                            if _read_budget is not None
+                            else {}
+                        ),
                     )
                     sequence_result.append(sanitized_item)
                     redacted = redacted or item_redacted
@@ -696,12 +760,23 @@ class CredentialSanitizer:
     def _known_credential_key(self, key: str) -> bool:
         return any(credential in key for credential in self._known_credentials)
 
-    def _sanitize_text(self, value: str, *, include_known: bool = True) -> str:
+    def _sanitize_text(
+        self,
+        value: str,
+        *,
+        include_known: bool = True,
+        _read_budget: _TraceReadBudget | None = None,
+    ) -> str:
+        if _read_budget is not None:
+            # Regex/URL intermediate copies and the fixed omission marker.
+            _read_budget.value(value, text_copies=24)
         if _PRIVATE_KEY_TEXT.search(value):
             return _OMITTED_TEXT
         value = _URL_TEXT.sub(lambda match: self._sanitize_url(match.group()), value)
         if include_known:
             for credential in self._known_credentials:
+                if _read_budget is not None:
+                    _read_budget.reserve(4 * len(value) * len(_OMITTED_TEXT))
                 value = value.replace(credential, _OMITTED_TEXT)
         if _SECRET_TEXT.search(value):
             value = _SECRET_TEXT.sub(_OMITTED_TEXT, value)

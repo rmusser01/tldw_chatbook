@@ -951,6 +951,7 @@ class ConsoleWorkspaceController:
                 revalidate=self._revalidate_character_conversation_target,
                 open_target=self._open_character_conversation_activation,
                 rollback_opened_target=self._rollback_character_conversation_activation,
+                commit_opened_target=self._commit_character_conversation_activation,
                 restore_state=self._restore_character_conversation_prior_session,
                 exact_target_visible=self._character_conversation_target_visible,
                 mutation_lock=getattr(
@@ -5518,6 +5519,7 @@ class ConsoleWorkspaceController:
         row_key: str = "",
         target_workspace_id: str | None = None,
         resume_if: Callable[[], bool] | None = None,
+        restore_cleanup_owner: object | None = None,
     ) -> bool | None:
         """Open a saved conversation while its optional resume claim is current.
 
@@ -5577,6 +5579,7 @@ class ConsoleWorkspaceController:
                         else target_workspace_id
                     ),
                     resume_if=resume_if,
+                    restore_cleanup_owner=restore_cleanup_owner,
                 )
             finally:
                 try:
@@ -5603,6 +5606,11 @@ class ConsoleWorkspaceController:
             return False
         controller = self._ensure_chat_controller_fn()
         store = controller.store
+        candidate = next(row for row in store.sessions() if row.id == session_id)
+        if candidate.persisted_conversation_id is not None:
+            await store.resolve_saved_session(
+                candidate.persisted_conversation_id, cleanup_owner=restore_cleanup_owner
+            )
         prior_active_session_id = store.active_session_id
         visit = (
             await self._begin_manual_read_visit(session_id)
@@ -6442,6 +6450,8 @@ class ConsoleWorkspaceController:
                 ):
                     if finalize_visible is not None:
                         await finalize_visible()
+                    if owned_runtime is not None:
+                        self._commit_character_conversation_activation(owned_runtime)
                     return ConsoleConversationActivationResult(
                         ConsoleActivationResultKind.OPENED,
                         request.target,
@@ -6531,19 +6541,26 @@ class ConsoleWorkspaceController:
             else request
         )
         store = self._ensure_console_chat_store()
-        before = {session.id: session for session in store.sessions()}
+        from ...Chat.console_chat_store import ConsoleSavedSessionCleanup
+
+        cleanup_owner = object()
         opened = bool(
-            await self.open_console_workspace_conversation(target.conversation_id)
+            await self.open_console_workspace_conversation(
+                target.conversation_id, restore_cleanup_owner=cleanup_owner
+            )
         )
-        owned = next(
+        session = next(
             (
-                session
-                for session in store.sessions()
-                if session.id not in before
-                and str(session.persisted_conversation_id or "")
-                == target.conversation_id
+                row
+                for row in store.sessions()
+                if row.persisted_conversation_id == target.conversation_id
             ),
             None,
+        )
+        owned = (
+            ConsoleSavedSessionCleanup(session, cleanup_owner)
+            if session is not None
+            else None
         )
         if opened:
             # Widget.focus() is queued by Textual. This committed Character
@@ -6559,11 +6576,14 @@ class ConsoleWorkspaceController:
             except asyncio.CancelledError:
                 # The caller has not received ownership yet. Settle only this
                 # exact cold runtime synchronously, then let it restore prior UI.
-                if owned is not None:
+                if owned is not None and owned.matches(
+                    store._sessions.get(owned.session.id)
+                ):
                     store.rollback_restored_session(
-                        owned.id,
-                        expected_session=owned,
+                        owned.session.id,
+                        expected_session=owned.session,
                         prior_active_session_id=None,
+                        cleanup_owner=owned.owner,
                     )
                 raise
             except Exception:  # noqa: BLE001 - preserve the owned token for rollback
@@ -6578,15 +6598,33 @@ class ConsoleWorkspaceController:
     ) -> bool:
         """Remove only the exact hydrated runtime owned by this activation."""
 
-        session_id = getattr(owned_runtime, "id", None)
-        if not isinstance(session_id, str) or not session_id:
+        from ...Chat.console_chat_store import ConsoleSavedSessionCleanup
+
+        if not isinstance(owned_runtime, ConsoleSavedSessionCleanup):
             return False
         store = self._ensure_console_chat_store()
+        if not owned_runtime.matches(store._sessions.get(owned_runtime.session.id)):
+            return False
         return store.rollback_restored_session(
-            session_id,
-            expected_session=owned_runtime,
+            owned_runtime.session.id,
+            expected_session=owned_runtime.session,
             prior_active_session_id=None,
+            cleanup_owner=owned_runtime.owner,
         )
+
+    def _commit_character_conversation_activation(self, owned_runtime: object) -> None:
+        """Publish only after the outer exact visibility/focus attempt commits."""
+        from ...Chat.console_chat_store import ConsoleSavedSessionCleanup
+
+        if isinstance(owned_runtime, ConsoleSavedSessionCleanup):
+            store = self._ensure_console_chat_store()
+            if not owned_runtime.matches(store._sessions.get(owned_runtime.session.id)):
+                raise RuntimeError(
+                    "Character conversation owner changed before publication."
+                )
+            store.publish_restored_session(
+                owned_runtime.session, cleanup_owner=owned_runtime.owner
+            )
 
     async def _restore_character_conversation_prior_session(
         self, prior_active_session_id: str | None
@@ -6737,6 +6775,7 @@ class ConsoleWorkspaceController:
         reuse_existing: bool = True,
         preserve_persisted_scope: bool = False,
         resume_if: Callable[[], bool] | None = None,
+        restore_cleanup_owner: object | None = None,
     ) -> bool | None:
         """Load a persisted saved conversation into a native Console session.
 
@@ -6841,6 +6880,7 @@ class ConsoleWorkspaceController:
                 target_workspace_id = conversation.get("workspace_id") or None
                 target_scope_type = "workspace" if target_workspace_id else "global"
             session = None
+            cleanup_owner = restore_cleanup_owner if restore_cleanup_owner is not None else object()
             hydration = self._console_session_settings_for_resume(conversation)
             if not isinstance(hydration, ConsoleGenerationSettingsHydration):
                 raise TypeError(
@@ -6858,6 +6898,7 @@ class ConsoleWorkspaceController:
                     target_scope_type=target_scope_type,
                     target_workspace_id=target_workspace_id,
                     activate=False,
+                    cleanup_owner=cleanup_owner,
                 )
                 # Re-derive display-only agent TOOL markers from AgentRunsDB and
                 # overlay them onto the restored active-path view.
@@ -6913,6 +6954,7 @@ class ConsoleWorkspaceController:
                         session.id,
                         expected_session=session,
                         prior_active_session_id=prior_active_session_id,
+                        cleanup_owner=cleanup_owner,
                     )
                     return None
                 store.switch_session(session.id)
@@ -6933,6 +6975,7 @@ class ConsoleWorkspaceController:
                         session.id,
                         expected_session=session,
                         prior_active_session_id=prior_active_session_id,
+                        cleanup_owner=cleanup_owner,
                     )
                 await self._restore_console_session_after_failed_open(
                     store, prior_active_session_id
@@ -6947,6 +6990,7 @@ class ConsoleWorkspaceController:
                         session.id,
                         expected_session=session,
                         prior_active_session_id=prior_active_session_id,
+                        cleanup_owner=cleanup_owner,
                     )
                 await self._restore_console_session_after_failed_open(
                     store, prior_active_session_id
@@ -6957,6 +7001,8 @@ class ConsoleWorkspaceController:
                     timeout=15,
                 )
                 return None
+            if restore_cleanup_owner is None:
+                store.publish_restored_session(session, cleanup_owner=cleanup_owner)
             if self._complete_manual_read_visit:
                 self._complete_manual_read_visit(visit, session.id)
             return True
@@ -7188,7 +7234,6 @@ class ConsoleWorkspaceController:
             value = getattr(self._screen, "__dict__", {}).get("_console_runtime_fallback")
         return value if isinstance(value, ConsoleRuntime) else None
 
-
     async def _read_owned_workspace_availability(self, registry, database, workspace_ids):
         """Retain the original callback's exact finite DB scopes through cancel."""
         from ...Backup_Recovery.participants import core_operation
@@ -7230,7 +7275,6 @@ class ConsoleWorkspaceController:
             observers=() if runtime is None else (runtime._preparation_reads,),
             require_current=current,
         )
-
 
     def _request_workspace_files_availability_refresh(
         self, workspace_ids: Sequence[str]
@@ -7283,7 +7327,6 @@ class ConsoleWorkspaceController:
             registry, workspace_ids
         )
 
-
     def _capture_workspace_files_availability_for_registry(
         self, registry: Any, workspace_ids: Sequence[str]
     ) -> tuple[dict[str, bool], dict[str, tuple[WorkspaceRuntimeBinding, ...]]]:
@@ -7293,7 +7336,6 @@ class ConsoleWorkspaceController:
             return self._read_workspace_files_availability(
                 registry, database, workspace_ids
             )
-
 
     def _read_workspace_files_availability(
         self, registry: Any, database: object, workspace_ids: Sequence[str]
@@ -7357,7 +7399,6 @@ class ConsoleWorkspaceController:
                 availability[workspace_id] = False
                 bindings_by_id[workspace_id] = ()
         return availability, bindings_by_id
-
 
     async def _refresh_workspace_files_availability_snapshot(self) -> None:
         """Publish only the latest completed folder-availability generation."""
@@ -8918,7 +8959,12 @@ _CONSOLE_BROWSER_CONTROLLER_SOURCE = (
             name,
             inspect.getattr_static(ConsoleWorkspaceController, name),
         )
-        for name in ("__getattribute__", "__dict__", "_persisted_console_browser_rows", "_workspace_availability_runtime")
+        for name in (
+            "__getattribute__",
+            "__dict__",
+            "_persisted_console_browser_rows",
+            "_workspace_availability_runtime",
+        )
     ),
     (("ConsoleWorkspaceController", ConsoleWorkspaceController),),
     tuple(
@@ -8933,8 +8979,10 @@ _CONSOLE_BROWSER_CONTROLLER_SOURCE = (
             tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
             vars(function).get("__wrapped__"),
         )
-        for function in (ConsoleWorkspaceController._persisted_console_browser_rows,
-                         ConsoleWorkspaceController._workspace_availability_runtime)
+        for function in (
+            ConsoleWorkspaceController._persisted_console_browser_rows,
+            ConsoleWorkspaceController._workspace_availability_runtime,
+        )
     ),
 )
 

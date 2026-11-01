@@ -44,6 +44,8 @@ import time
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -97,7 +99,6 @@ from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     ToolCatalogRegistry,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 # LoopDeps plumbing shared with the Task 1 suite (one `make_deps`, one
 # pairing checker idiom) so the two coherence surfaces can never drift.
@@ -113,7 +114,7 @@ from Tests.Agents.test_fleet_steering_mailbox import (
 
 @pytest.fixture()
 def db(tmp_path):
-    database = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    database = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     try:
         yield database
     finally:
@@ -1160,7 +1161,7 @@ def test_resumed_lifecycle_capture_failure_starts_from_actual_diagnostic_after_r
 
     path = db.db_path
     db.close()
-    reopened = AgentRunsDB(path, client_id="resumed-failure-reload")
+    reopened = owned_agent_runs_db(path, client_id="resumed-failure-reload")
     row = reopened.get_run(resumed_id)
     assert row["status"] == RUN_DONE
     steps = row["steps"]
@@ -1531,7 +1532,7 @@ def test_retained_live_send_preserves_its_cause_on_resumed_steering(db):
     assert reserved["parent_event_id"] == resume_event_id
     path = db.db_path
     db.close()
-    reopened = AgentRunsDB(path, client_id="retained-cause-reload")
+    reopened = owned_agent_runs_db(path, client_id="retained-cause-reload")
     reloaded = reopened.get_run(resumed["id"])
     steering = next(
         step

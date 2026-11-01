@@ -65,7 +65,6 @@ from tldw_chatbook.Backup_Recovery.participants import (
 from .private_sqlite import connect_private_sqlite
 from .base_db import BaseDB
 from .sql_validation import get_safe_order_by_clause, validate_identifier
-from ..config import get_cli_setting
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..Utils.fts5_match_forms import quote_fts5_token
 
@@ -312,6 +311,13 @@ def _checkpoint_open_databases_at_exit() -> None:
 def _sqlite_unicode_casefold(value: Any) -> str:
     """Casefold SQLite text without raising on NULL or malformed values."""
     return value.casefold() if isinstance(value, str) else ""
+
+
+def get_cli_setting(*args: Any, **kwargs: Any) -> Any:
+    """Read actual settings lazily while preserving the compatibility name."""
+    from ..config import get_cli_setting as native_get_cli_setting
+
+    return native_get_cli_setting(*args, **kwargs)
 
 
 def _default_auto_pause_threshold() -> int:

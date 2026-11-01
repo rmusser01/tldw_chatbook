@@ -5,17 +5,17 @@ from dataclasses import replace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_goal_iteration_report import report
 from Tests.Agents.test_goal_models import request
 from Tests.Chat.test_console_goal_dispatch import build_goal_rig
 from Tests.Chat.test_goal_conversation_provisioning import stores as _stores_fixture
 
 stores = _stores_fixture
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 def test_launch_payloads_count_toward_aggregate_and_removed_goal_is_tombstone(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     db.goal_runs.payload_limit = 2500
     first = db.goal_runs.create(request(), launch_id="one")
     with pytest.raises(ValueError, match="payload_capacity"):
@@ -134,7 +134,7 @@ def test_source_era_goal_schema_is_not_a_current_version_18_archive(tmp_path):
     from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
 
     path = tmp_path / "source-era.db"
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     db.goal_runs.create(request(), launch_id="source-era")
     with db.transaction() as conn:
         conn.execute("DELETE FROM schema_version WHERE version>18")

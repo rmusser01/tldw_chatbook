@@ -45,6 +45,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_child_run_scope_ordering import _survivor_bridge
 from Tests.Chat.test_console_agent_bridge import (
     _fence,
@@ -85,7 +86,6 @@ from tldw_chatbook.Chat.console_turn_context import (
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
@@ -241,7 +241,7 @@ def _controller_rig(tmp_path, *, session_title="Research", ensure_run_hooks=None
     app = _AppStub(chacha)
     from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
     app.local_chat_conversation_service = ChatConversationService(chacha)
-    runs_db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    runs_db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     # Wire the real ChaChaNotes DB this rig already opens into the store, as
     # production does (`ConsoleRuntime.ensure_chat_store`). A bare store has
     # `persistence is None`, and since `a26cdafd8` a MANUAL or QUEUED send on a

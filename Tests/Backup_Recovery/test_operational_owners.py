@@ -562,9 +562,14 @@ def _run_stable_config_case(tmp_path, name):
     script = """import sys
 from pathlib import Path
 import pytest
+from Tests.real_profile_guard import install as profile_guard, take_violations
+from Tests.network_guard import install as network_guard, blocked_attempts
+profile_guard()
+network_guard()
 from Tests.Backup_Recovery import test_operational_owners as cases
 with pytest.MonkeyPatch.context() as patches:
     getattr(cases, sys.argv[1])(Path(sys.argv[2]), patches)
+assert not take_violations() and not blocked_attempts()
 """
     result = subprocess.run(
         [sys.executable, "-c", script, name, str(tmp_path)],
@@ -1111,7 +1116,11 @@ def test_current_notes_device_authority_is_excluded_from_inventory(tmp_path):
         )
         items = adapter.discover(config)
         assert {item.path for item in items} == {
-            Path(str(database) + suffix) for suffix in ("", "-wal", "-shm", "-journal")
+            *(
+                Path(str(database) + suffix)
+                for suffix in ("", "-wal", "-shm", "-journal")
+            ),
+            profile / "notes_sync_locks",
         }
         assert all(item.status == "intentionally_excluded" for item in items)
         assert adapter.schema_policy() is None

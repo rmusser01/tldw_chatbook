@@ -39,12 +39,13 @@ async def test_disabled_served_child_starts_without_canvas_control_secret() -> N
         "COLUMNS": "100",
         "ROWS": "40",
         "CHATBOOK_SERVED_CHILD": "1",
+        "TEXTUAL_DRIVER": "tldw_chatbook.Web_Server.console_web_driver:ConsoleWebDriver",
     }
     await service.stop()
 
 
 @pytest.mark.asyncio
-async def test_live_disable_revokes_canvas_but_retains_active_terminal_bindings() -> (
+async def test_live_disable_revokes_canvas_gateway_but_retains_console_control() -> (
     None
 ):
     order: list[str] = []
@@ -67,15 +68,15 @@ async def test_live_disable_revokes_canvas_but_retains_active_terminal_bindings(
 
     await serve.ChatbookWebServerMixin._disable_canvas_runtime(owner)
 
-    assert order == ["broker", "gateway"]
-    assert owner._canvas_control_broker is None
+    assert order == ["gateway"]
+    assert isinstance(owner._canvas_control_broker, Broker)
     assert owner._served_canvas_launches == {}
     assert owner._served_browser_children == {"browser": "child"}
     assert owner._canvas_disabled_latched is True
 
 
 @pytest.mark.asyncio
-async def test_policy_watcher_revokes_sibling_controls_but_retains_terminal_bindings() -> (
+async def test_policy_watcher_revokes_sibling_previews_but_retains_runtime_control() -> (
     None
 ):
     enabled = [True]
@@ -107,7 +108,8 @@ async def test_policy_watcher_revokes_sibling_controls_but_retains_terminal_bind
     enabled[0] = False
     await task
 
-    assert order == ["all-child-controls", "all-browser-previews"]
+    assert order == ["all-browser-previews"]
+    assert isinstance(owner._canvas_control_broker, Broker)
     assert owner._served_browser_children == {
         "browser-a": "child-a",
         "browser-b": "child-b",

@@ -568,7 +568,8 @@ def _notes_sync_state_db_has_configured_roots(state_path: Any) -> bool:
 
     from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
 
-    connection = NotesDeviceStateStore(path)._connect(read_only=True, must_exist=True)
+    store = NotesDeviceStateStore(path)
+    connection = store._connect(read_only=True, must_exist=True)
     try:
         row = connection.execute(
             "SELECT 1 FROM notes_sync_roots LIMIT 1"
@@ -578,6 +579,7 @@ def _notes_sync_state_db_has_configured_roots(state_path: Any) -> bool:
         return False
     finally:
         connection.close()
+        store.close()
     return row is not None
 
 
@@ -597,6 +599,36 @@ async def _await_notes_sync_start(pending: Any) -> None:
     from .Notes.notes_sync_startup import _await_notes_sync_start as delegated
 
     return await delegated(pending)
+
+
+def _notes_sync_state_has_imports(state_path: Any, core: Any) -> bool:
+    """Extra start evidence only for an existing exact cutover marker."""
+    import sqlite3
+    from pathlib import Path
+
+    path = Path(state_path)
+    if not path.exists():
+        return False
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    store = NotesDeviceStateStore(path)
+    connection = store._connect(read_only=True, must_exist=True)
+    try:
+        row = connection.execute(
+            "SELECT 1 FROM notes_sync_store_settings WHERE setting_key='cutover_marker' AND setting_value='notes-sync-cutover-v1' LIMIT 1"
+        ).fetchone()
+    except sqlite3.OperationalError as error:
+        if str(error) != "no such table: notes_sync_store_settings":
+            raise
+        return False
+    finally:
+        connection.close()
+        store.close()
+    if row is None:
+        return False
+    from tldw_chatbook.Notes.notes_sync_legacy import _canonical_import_present
+
+    return _canonical_import_present(core)
 
 
 def _notes_sync_boot_start_evidence(app: Any) -> bool:
@@ -627,9 +659,10 @@ def _notes_sync_boot_start_evidence(app: Any) -> bool:
 
     if legacy_sync_directory_configured(app.app_config):
         return True
+    state_path = get_notes_sync_state_db_path()
     return _notes_sync_state_db_has_configured_roots(
-        get_notes_sync_state_db_path()
-    )
+        state_path
+    ) or _notes_sync_state_has_imports(state_path, getattr(app, "chachanotes_db", None))
 
 
 def _wire_notes_sync_services(app: Any) -> None:
@@ -887,6 +920,7 @@ class ServiceWiringMixin(
             legacy_sync_directory_configured,
         )
         from .Notes.notes_sync_runtime import (  # noqa: PLC0415
+            build_notes_sync_import_reviewer,
             build_notes_sync_legacy_migrator,
             build_notes_sync_runtime_owner,
         )
@@ -902,6 +936,7 @@ class ServiceWiringMixin(
         notes_sync_state_path = get_notes_sync_state_db_path()
         local_user_id = self.notes_user_id
         app_config = self.app_config
+        core = self.chachanotes_db
         notes_sync_watcher_interval, notes_sync_watcher_max_interval = (
             get_notes_sync_watcher_intervals(app_config)
         )
@@ -922,11 +957,16 @@ class ServiceWiringMixin(
             profile_process_is_sole=self._instance_lock_status.acquired,
             database_path=notes_sync_state_path,
             migrate_legacy=notes_sync_migrator,
+            review_imported_notes=build_notes_sync_import_reviewer(
+                database_path=notes_sync_state_path,
+                core=core,
+                note_scope_id=ScopeType.LOCAL_NOTE.value,
+                file_notes_binding=self._notes_sync_file_notes_binding,
+                private_paths=(notes_sync_state_path, get_chachanotes_db_path()),
+            ),
             file_notes_binding=self._notes_sync_file_notes_binding,
             local_user_id=local_user_id,
-            recovery_capacity_bytes=get_notes_sync_recovery_capacity_bytes(
-                app_config
-            ),
+            recovery_capacity_bytes=get_notes_sync_recovery_capacity_bytes(app_config),
             # TASK-21112 boot gate: start only on actual configuration — the
             # legacy [notes] sync-directory key (one-time migration path) or
             # a configured root in the state DB already on disk. The
@@ -940,9 +980,10 @@ class ServiceWiringMixin(
             # that deliberately rides the gate's fail-open path — one full
             # start attempt, which is the safe direction and is memoized.
             start_evidence=(
-                lambda settings=app_config, state_path=notes_sync_state_path: (
+                lambda settings=app_config, state_path=notes_sync_state_path, selected_core=core: (
                     legacy_sync_directory_configured(settings)
                     or _notes_sync_state_db_has_configured_roots(state_path)
+                    or _notes_sync_state_has_imports(state_path, selected_core)
                 )
             ),
             watcher_interval_seconds=notes_sync_watcher_interval,
@@ -2177,8 +2218,15 @@ class ServiceWiringMixin(
         self.change_review_consent_service = None
         self._tool_pack_guard_bootstrap = None
         try:
+            from tldw_chatbook.config import preflight_selected_console_stores
+
+            selected_workspace = get_workspaces_db_path()
+            preflight_selected_console_stores(
+                chat_path=getattr(getattr(self, "chachanotes_db", None), "db_path", None),
+                workspace_path=selected_workspace,
+            )
             self.local_workspace_db = WorkspaceDB(
-                get_workspaces_db_path(),
+                selected_workspace,
                 CLI_APP_CLIENT_ID,
             )
             self.workspace_registry_service = LocalWorkspaceRegistryService(

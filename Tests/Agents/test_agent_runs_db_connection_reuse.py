@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 
 
 @pytest.fixture()
@@ -35,7 +35,7 @@ def connection_spy(monkeypatch):
 def test_repeated_reads_open_no_new_connections(
     request, tmp_path: Path, connection_spy
 ):
-    db = AgentRunsDB(tmp_path / "agent_runs.sqlite", client_id="client-1")
+    db = owned_agent_runs_db(tmp_path / "agent_runs.sqlite", client_id="client-1")
     request.addfinalizer(db.close)
     db.create_run(conversation_id="conv-1", agent_kind="primary")  # warm-up
 
@@ -52,7 +52,7 @@ def test_failed_transaction_rolls_back_and_connection_stays_usable(
     request,
     tmp_path: Path,
 ):
-    db = AgentRunsDB(tmp_path / "agent_runs.sqlite", client_id="client-1")
+    db = owned_agent_runs_db(tmp_path / "agent_runs.sqlite", client_id="client-1")
     request.addfinalizer(db.close)
     run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
 
@@ -73,7 +73,7 @@ def test_failed_transaction_rolls_back_and_connection_stays_usable(
 
 
 def test_each_thread_gets_its_own_connection(request, tmp_path: Path):
-    db = AgentRunsDB(tmp_path / "agent_runs.sqlite", client_id="client-1")
+    db = owned_agent_runs_db(tmp_path / "agent_runs.sqlite", client_id="client-1")
     request.addfinalizer(db.close)
     db.create_run(conversation_id="conv-1", agent_kind="primary")
 

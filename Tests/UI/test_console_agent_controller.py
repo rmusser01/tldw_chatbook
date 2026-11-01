@@ -46,13 +46,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.UI.test_console_fleet_panel import _real_fleet_recovery_database
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
@@ -68,7 +68,7 @@ _AGENT_SECTION_SIZE = (180, 48)
 def _bridge_over(db_path) -> ConsoleAgentBridge:
     """A real bridge over a real durable run store -- no fakes anywhere."""
     return ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(db_path, client_id="t"),
+        agent_runs_db=owned_agent_runs_db(db_path, client_id="t"),
         store=None,
         provider_gateway=None,
     )
@@ -76,7 +76,7 @@ def _bridge_over(db_path) -> ConsoleAgentBridge:
 
 def _seed_done_primary_with_subagents(db_path, *, conversation_id="conv-A", tasks=()):
     """Persist one finished primary run plus a sub-agent run per ``tasks``."""
-    db = AgentRunsDB(db_path, client_id="t")
+    db = owned_agent_runs_db(db_path, client_id="t")
     primary_id = db.create_run(conversation_id=conversation_id, agent_kind="primary")
     db.append_steps(
         primary_id,
@@ -411,7 +411,7 @@ async def test_drilldown_header_names_the_resumed_from_run(tmp_path):
         db_path, tasks=("original attempt",)
     )
     original_sub = sub_ids[0]
-    db = AgentRunsDB(db_path, client_id="t")
+    db = owned_agent_runs_db(db_path, client_id="t")
     resumed_sub = db.create_run(
         conversation_id="conv-A",
         agent_kind="subagent",

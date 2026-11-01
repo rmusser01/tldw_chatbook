@@ -20,17 +20,22 @@ from types import SimpleNamespace
 
 import pytest
 
+import tldw_chatbook.Chat.console_agent_bridge as console_agent_bridge_module
+import tldw_chatbook.Workspaces.change_tracking as change_tracking_module
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
 from Tests.Chat.test_console_agent_bridge import _FakeBuiltinGateForRegistry
-from tldw_chatbook.Agents.agent_models import ToolCall
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Agents.agent_models import (
     STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
     TOOL_OUTCOME_SUCCESS,
+    ToolCall,
 )
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
-import tldw_chatbook.Chat.console_agent_bridge as console_agent_bridge_module
-import tldw_chatbook.Workspaces.change_tracking as change_tracking_module
 from tldw_chatbook.Chat.console_agent_bridge import (
     CHANGE_REVIEW_BASELINE_BYPASS_TOOLS,
     CHANGE_REVIEW_BASELINE_WAIT_SECONDS,
@@ -42,25 +47,20 @@ from tldw_chatbook.Chat.console_agent_bridge import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.Workspaces.change_tracking import (
-    ChangeTrackingError,
-    ShadowRepoService,
-)
+from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
 from tldw_chatbook.Workspaces.change_review_finalization import (
     ChangeReviewFinalizationCoordinator,
     ChangeReviewFinalizeResult,
+)
+from tldw_chatbook.Workspaces.change_tracking import (
+    ChangeTrackingError,
+    ShadowRepoService,
 )
 from tldw_chatbook.Workspaces.change_turn_tracker import (
     ChangeTurnTracker,
     TurnChangeRecord,
     TurnHandle,
 )
-from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
-
-# Harness apps load the consolidated widget CSS the real app loads
-# (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 
 @pytest.fixture()
@@ -1448,7 +1448,7 @@ def test_v2_database_gains_the_change_snapshots_table_on_open(tmp_path):
     conn.commit()
     conn.close()
 
-    db = AgentRunsDB(db_path, client_id="t")
+    db = owned_agent_runs_db(db_path, client_id="t")
     run_id = db.create_run(conversation_id="c1", agent_kind="primary")
     db.record_change_snapshot(
         run_id=run_id,
@@ -1469,7 +1469,7 @@ def test_v2_database_gains_the_change_snapshots_table_on_open(tmp_path):
 
 
 def test_change_snapshot_batch_commits_one_complete_window(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     run_id = db.create_run(conversation_id="c1", agent_kind="primary")
     records = [
         {
@@ -1529,7 +1529,7 @@ class _SideEffectGateway:
 
 
 def _bridge_with(tmp_path, gateway, tracker, coordinator=None):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -3864,7 +3864,7 @@ def test_opening_a_window_whose_last_child_already_left_closes_it_at_once(
     it reliably (see PR3a-1 Task 6b's P4: a branch no test can kill should
     be probed directly, not shipped untested).
     """
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     bridge = ConsoleAgentBridge(
@@ -3895,7 +3895,7 @@ def test_shared_pending_scope_count_closes_only_after_each_child_enters(
     tmp_path, monkeypatch
 ):
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "runs.db", client_id="t"),
+        agent_runs_db=owned_agent_runs_db(tmp_path / "runs.db", client_id="t"),
         store=None,
         provider_gateway=None,
     )
@@ -3933,7 +3933,7 @@ def test_final_settle_cleanup_keeps_window_for_other_pending_state(
     tmp_path, monkeypatch
 ):
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "runs.db", client_id="t"),
+        agent_runs_db=owned_agent_runs_db(tmp_path / "runs.db", client_id="t"),
         store=None,
         provider_gateway=None,
     )
