@@ -104,11 +104,12 @@ from Tests.network_guard import install
 install()
 from tldw_chatbook.config import get_user_data_dir
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Backup_Recovery.capture_service import preview_capture
 root=get_user_data_dir();logs=root/'tool_sandbox'/'.agent-runs';logs.mkdir(parents=True)
 (logs/'saved.log').write_bytes(b'accepted terminal log bytes')
-runs=AgentRunsDB(root/'agent_runs.db','fixture');runs.close()
+runs=owned_agent_runs_db(root/'agent_runs.db','fixture');runs.close()
 workspaces=WorkspaceDB(root/'tldw_chatbook_workspaces.db','fixture');workspaces.close()
 route=sys.argv[1]
 if route=='unknown':(logs.parent/'unowned.txt').write_text('unclassified')

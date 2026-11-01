@@ -201,7 +201,7 @@ class _WorkspacesAdapter(_SQLiteDeclaration):
             self.owner_id,
             self.versions,
             self.schemas,
-            ((9, 10, _WORKSPACES_ARCHIVE_V9_TO_V10_SQL),),
+            ((9, 10, _WORKSPACES_ARCHIVE_V9_TO_V10_SQL), (10, 11, WORKSPACE_MIGRATION)),
         )
 
     def validate(self, candidate: Path) -> tuple[str, ...]:
@@ -353,6 +353,8 @@ class _AgentRunsAdapter(_SQLiteDeclaration):
                 (28, 29, WORKFLOW_WINDOW_MIGRATION),
                 (29, 30, WORKFLOW_REPAIR_INPUT_MIGRATION),
                 (30, 31, WORKFLOW_RECOVERY_REVIEW_MIGRATION),
+                (31, 32, COMMAND_RECEIPT_MIGRATION),
+                (32, 33, AGENT_RUNS_MIGRATION),
             ),
         )
 
@@ -1146,8 +1148,10 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
         Archive and publication fingerprints check bytes; this hook checks the
         declared relationship and regular candidate, without opening source paths.
         """
-        import tomllib
-
+        from tldw_chatbook.Backup_Recovery.mobile_preview_budget import table_cost
+        from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+            toml_loads as _budgeted_toml_loads,
+        )
         from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
         from tldw_chatbook.Backup_Recovery.storage_admission import _read_recovery_file
         from tldw_chatbook.DB.private_sqlite import open_recovery_validation
@@ -1168,6 +1172,7 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
             with open_recovery_validation(
                 self.owner_id, candidate, writable=False
             ) as connection:
+                table_cost(connection, "briefing_audio", ("file_path",))
                 paths = tuple(
                     row[0]
                     for row in connection.execute(
@@ -1179,10 +1184,10 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
             config_key = f"profile:{parts[1]}:config"
             if config_key not in item.dependencies or config_key not in candidates:
                 return ("dependency_unavailable",)
-            config = tomllib.loads(
+            config = _budgeted_toml_loads(
                 _read_recovery_file(
                     "config", candidates[config_key], max_bytes=16 * 1024**2
-                ).decode("utf-8")
+                )
             )
             root = user_data_dir(config) / "briefing_audio"
             prefix = f"profile:{parts[1]}:subscriptions.assets:"
@@ -1221,6 +1226,7 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
     def discover(self, config: Mapping[str, object]) -> tuple[StorageItem, ...]:
         from dataclasses import replace
 
+        from tldw_chatbook.Backup_Recovery.mobile_preview_budget import table_cost
         from tldw_chatbook.Backup_Recovery.recovery_files import _tree_member_id
         from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
@@ -1236,6 +1242,7 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
                     "recovery.operations.subscriptions", item.path, read_only=True
                 )
             ) as connection:
+                table_cost(connection, "briefing_audio", ("file_path",))
                 paths = tuple(
                     row[0]
                     for row in connection.execute(
@@ -1325,12 +1332,19 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
         )
         if issues:
             return issues
+        from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+            catalog_cost,
+            scalar_cost,
+        )
+
+        scalar_cost(connection, 2)
         if connection.execute(
             "SELECT 1 FROM sqlite_schema WHERE name='db_schema_version'"
         ).fetchone():
             stamp = connection.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
             ).fetchone()
+            catalog_cost(connection)
             actual = tuple(
                 row[0]
                 for row in connection.execute(
@@ -1388,7 +1402,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.workspaces",
             "workspaces_db_path",
             "tldw_chatbook_workspaces.db",
-            (10, 9, 8),
+            (11, 10, 9, 8),
             _WORKSPACES_SCHEMA,
             (),
         ),
@@ -1396,7 +1410,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.agent_runs",
             None,
             "agent_runs.db",
-            (18, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31),
+            (18, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33),
             (*_AGENT_RUNS_SCHEMA, *_LEGACY_WORKFLOW_SCHEMAS),
             ("db.chachanotes.primary",),
             optional_default=True,
@@ -1519,6 +1533,8 @@ _SUBSCRIPTIONS_SCHEMA += (
 
 def _subscriptions_chachanotes_stamps(schema):
     """Return embedded stamps for a matched complete Subscription catalog."""
+    if schema in _SUBSCRIPTIONS_MOBILE_V87_SCHEMAS:
+        return ((87,),)
     if schema in _SUBSCRIPTIONS_MIXINS_V86_SCHEMAS:
         return ((86,),)
     if schema in _SUBSCRIPTIONS_ARCHIVE_V85_SCHEMAS:
@@ -1767,9 +1783,10 @@ _AGENT_RUNS_SCHEMA += tuple(
 
 # ADR-207: v3 is an atomic provenance data migration, with unchanged exact DDL.
 # Keep every previously qualified physical lineage at both supported versions.
-_SUBSCRIPTIONS_SCHEMA = tuple((3, schema) for version, schema in _SUBSCRIPTIONS_SCHEMA
-                              if version == 2) + _SUBSCRIPTIONS_SCHEMA
-
+_SUBSCRIPTIONS_SCHEMA = (
+    tuple((3, schema) for version, schema in _SUBSCRIPTIONS_SCHEMA if version == 2)
+    + _SUBSCRIPTIONS_SCHEMA
+)
 
 
 _AGENT_RUNS_SCHEMA += tuple(
@@ -1909,3 +1926,73 @@ def _legacy_workflow_upgrade(connection):
         for current in range(26, 32)
     )
     return 31, tuple(statements)
+
+
+def legacy_mobile_declarations(config, *, source_dir: Path | None = None):
+    """Declare three fixed optional legacy files with native capture owners."""
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        LEGACY_STORES,
+        _resource_identity,
+    )
+    from tldw_chatbook.Backup_Recovery.profile_paths import legacy_mobile_dir
+
+    context = discovery_context(config)
+    source = legacy_mobile_dir(config) if source_dir is None else source_dir
+    absent = _resource_identity(source)[-1] == "absent"
+    config_id = storage_logical_id(context, "config")
+    keys = {
+        owner: storage_logical_id(context, owner, "legacy-mobile")
+        for _, owner in LEGACY_STORES
+    }
+    return tuple(
+        StorageItem(
+            owner,
+            keys[owner],
+            source / leaf,
+            "unused"
+            if absent
+            else _sqlite_inventory_status(
+                config, source / leaf, owner=owner, optional_default=True
+            ),
+            (config_id,)
+            + ((keys["db.chachanotes.primary"],) if owner == "db.agent_runs" else ()),
+        )
+        for leaf, owner in LEGACY_STORES
+    )
+
+
+from .mobile_import_authority import AGENT_RUNS_MIGRATION, WORKSPACE_MIGRATION
+from .console_command_receipts import COMMAND_RECEIPT_MIGRATION
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (32, tuple(sorted(catalog + COMMAND_RECEIPT_MIGRATION[:-1], key=_installed_schema_order)))
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 31
+)
+_AGENT_RUNS_SCHEMA += tuple(
+    (
+        33,
+        tuple(sorted(catalog + AGENT_RUNS_MIGRATION[:-1], key=_installed_schema_order)),
+    )
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 32
+)
+_WORKSPACES_SCHEMA += tuple(
+    (11, tuple(sorted(catalog + WORKSPACE_MIGRATION[:-1], key=_installed_schema_order)))
+    for version, catalog in _WORKSPACES_SCHEMA
+    if version == 10
+)
+
+
+# ADR-244: preserve all native shared-file lineages and append only receipts.
+from .mobile_import_authority import CHAT_MIGRATION
+
+_SUBSCRIPTIONS_MOBILE_V87_SCHEMAS = tuple(
+    tuple(sorted(schema + CHAT_MIGRATION, key=_installed_schema_order))
+    for schema in _SUBSCRIPTIONS_MIXINS_V86_SCHEMAS
+)
+_SUBSCRIPTIONS_SCHEMA += tuple(
+    (version, schema)
+    for schema in _SUBSCRIPTIONS_MOBILE_V87_SCHEMAS
+    for version in (2, 3)
+)

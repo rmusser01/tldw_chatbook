@@ -28,6 +28,7 @@ import time
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.conftest import join_fleet_children
 from Tests.Agents.test_agent_service import FleetChat, fence
 from tldw_chatbook.Agents import agent_service
@@ -47,7 +48,6 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
 )
 from tldw_chatbook.Chat import Chat_Functions as chat_functions
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 # Real agent prompt/config readers retain the private profile selected at collection.
 pytestmark = pytest.mark.bootstrap_profile
@@ -91,7 +91,7 @@ CFG = AgentConfig(
 
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    return owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
 
 
 @pytest.fixture(autouse=True)

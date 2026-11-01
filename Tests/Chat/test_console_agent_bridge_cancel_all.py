@@ -31,6 +31,7 @@ import threading
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.conftest import pin_agent_settings
 from Tests.Chat.test_console_agent_bridge import (
     _bridge_with_gateway,
@@ -44,7 +45,6 @@ from Tests.Chat.test_console_agent_bridge import (
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import RUN_DONE
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 def _pin_outlive_on(monkeypatch):
@@ -64,7 +64,7 @@ def _pin_outlive_on(monkeypatch):
 
 def test_cancel_all_returns_zero_for_an_unknown_conversation(tmp_path):
     """Nothing has ever run here -- 0, never a raise."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     assert bridge.cancel_all_subagents("never-seen-conversation") == 0
 
@@ -78,7 +78,7 @@ def test_fence_fleet_blocks_a_late_child_reservation(
     """A close fence wins whether the coordinator exists before or after it."""
 
     _pin_outlive_on(monkeypatch)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     existing = (
         bridge._conversation_fleet_coordinator("closing") if create_first else None
@@ -100,7 +100,7 @@ def test_fleet_reservation_publishes_lifecycle_activity_at_admission(
     """Destructive consent is invalidated before the child thread starts."""
 
     _pin_outlive_on(monkeypatch)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     activity: list[str] = []
     bridge.on_fleet_activity("test", activity.append)
@@ -119,7 +119,7 @@ def test_gracefully_drained_close_releases_fence_for_saved_conversation_reopen(
     """A provisional close fence must not poison a later saved-chat resume."""
 
     _pin_outlive_on(monkeypatch)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     original = bridge._conversation_fleet_coordinator("saved")
     assert original is not None
@@ -142,7 +142,7 @@ def test_latched_fleet_fence_cannot_be_replaced_by_a_later_close_generation(
     """A timed-out incarnation's fence stays authoritative process-wide."""
 
     _pin_outlive_on(monkeypatch)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
 
     bridge.fence_fleet("saved", generation=1)
@@ -158,7 +158,7 @@ def test_terminal_waiters_publish_only_after_stale_drain_consumers_are_fenced(
 ):
     """A graceful close may release its fence only after drain fan-out returns."""
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     order: list[str] = []
     bridge.on_fleet_drained("order", lambda _event: order.append("fanout"))
@@ -182,7 +182,7 @@ def test_terminal_waiters_publish_only_after_stale_drain_consumers_are_fenced(
 
 @pytest.mark.asyncio
 async def test_await_fleet_terminal_returns_immediately_for_idle_conversation(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
 
     assert await bridge.await_fleet_terminal("idle") is True
@@ -192,7 +192,7 @@ async def test_await_fleet_terminal_returns_immediately_for_idle_conversation(tm
 async def test_await_fleet_terminal_registers_before_snapshot_race(tmp_path, monkeypatch):
     """A drain fired by the first snapshot cannot strand the waiter."""
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     snapshots = 0
 
@@ -216,7 +216,7 @@ async def test_await_fleet_terminal_registers_before_snapshot_race(tmp_path, mon
 async def test_await_fleet_terminal_resolves_after_real_coordinator_finish(tmp_path):
     """The child-settled hook observes the already-terminal fleet handle."""
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     fleet = bridge._conversation_fleet_coordinator("conv")
     assert fleet is not None

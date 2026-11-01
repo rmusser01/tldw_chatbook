@@ -38,6 +38,7 @@ import time
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_agent_service import FleetChat, fence
 from Tests.Agents.test_fleet_runtime import (
     _JOIN_TIMEOUT,
@@ -72,7 +73,6 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
 )
 from tldw_chatbook.Chat.trajectory import derive_trajectory
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 #: How long a parked approval card waits for the test to answer it.
 _CARD_TIMEOUT = 10.0
@@ -80,7 +80,7 @@ _CARD_TIMEOUT = 10.0
 
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    return owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
 
 
 def _live_running_handle(coordinator):
@@ -281,7 +281,7 @@ def test_supervisor_steers_a_live_child_end_to_end(db, tmp_path, monkeypatch):
 
     path = db.db_path
     db.close()
-    reopened = AgentRunsDB(path, client_id="handoff-reload")
+    reopened = owned_agent_runs_db(path, client_id="handoff-reload")
     runs = reopened.list_runs("c", include_superseded=True)
     steps = [
         {**step, "run_id": row["id"], "conversation_id": "c"}
@@ -1077,7 +1077,7 @@ def test_subagent_stop_fires_on_child_settle(tmp_path, notify_raises):
         gate=gate,
         needed=1,
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")

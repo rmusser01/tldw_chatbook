@@ -13,12 +13,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.console_provider_doubles import persisted_console_store, provider_resolution
+from Tests.Skills.test_canvas_skill import _import_canvas_skill
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
-from Tests.console_provider_doubles import persisted_console_store
-from Tests.console_provider_doubles import provider_resolution
-from Tests.Skills.test_canvas_skill import _import_canvas_skill
 
 
 class _Skills:
@@ -836,7 +836,6 @@ async def test_real_canvas_skill_stays_inline_with_owning_run_tools(
         ConsoleAgentBridge,
         _BridgeSkillRunner,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     service, trust, _imported = await _import_canvas_skill(tmp_path / "local")
     review = trust.capture_review("canvas")
@@ -892,7 +891,7 @@ async def test_real_canvas_skill_stays_inline_with_owning_run_tools(
         create_canvas=forbidden,
         update_canvas=forbidden,
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="canvas-skill-test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="canvas-skill-test")
     bridge = ConsoleAgentBridge(
         agent_runs_db=db, store=store, provider_gateway=gateway, skills_service=skills
     )

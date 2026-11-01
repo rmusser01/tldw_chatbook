@@ -739,10 +739,13 @@ def _build_notes_scope_service(
 def _open_profile_chachanotes(app_config: Mapping[str, Any]) -> Any:
     """Open the profile ChaChaNotes DB through the shared opener, seeded; None on failure."""
     from .app_services import open_chachanotes_db
+    from .config import preflight_selected_console_stores
 
+    database_path = get_chachanotes_db_path()
+    preflight_selected_console_stores(chat_path=database_path)
     try:
         return open_chachanotes_db(
-            get_chachanotes_db_path(),
+            database_path,
             client_id=CLI_APP_CLIENT_ID,
             check_integrity=app_config.get("database", {}).get("check_integrity_on_startup", False),
             seed_builtin_content=True,
@@ -1070,6 +1073,14 @@ class TldwCli(
     # User ID for notes, will be initialized in __init__
     current_user_id: str = "default_user"  # Will be overridden by self.notes_user_id
 
+    def get_driver_class(self):
+        """Use the retained-terminal driver only for a served child."""
+        if os.environ.get("CHATBOOK_SERVED_CHILD") == "1":
+            from .Web_Server.console_web_driver import ConsoleWebDriver
+
+            return ConsoleWebDriver
+        return super().get_driver_class()
+
     def __init__(self):
         # Track startup timing
         self._startup_start_time = time.perf_counter()
@@ -1144,7 +1155,7 @@ class TldwCli(
                     runtime_snapshot_id=runtime_snapshot_id(
                         self._canvas_profile_snapshot
                     ),
-                    handler=self.served_canvas_handler.handle,
+                    handler=self._handle_served_control_request,
                 )
             except ControlProtocolError:
                 loguru_logger.warning(
@@ -3641,26 +3652,37 @@ class TldwCli(
     def _start_served_canvas_control(self) -> None:
         """Attach this authoritative child to its parent transport."""
         from .app_served import _start_served_canvas_control
+
         return _start_served_canvas_control(self, app_globals=globals())
+
+    async def _handle_served_control_request(self, request):
+        """Route independent Console control before Canvas scope lookup."""
+        from .app_served import _handle_served_control_request
+
+        return await _handle_served_control_request(self, request)
 
     def _served_relay_run_states(self):
         """Current ``{session_id: run state}`` for the relay poller, if built."""
         from .app_served import _served_relay_run_states
+
         return _served_relay_run_states(self)
 
     def served_relay_wrap_pending_approval(self, original):
         """Wrap one ``set_pending_approval`` binding for the relay (served only)."""
         from .app_served import _served_relay_wrap_pending_approval
+
         return _served_relay_wrap_pending_approval(self, original)
 
     def _served_relay_decide(self, round_id, decisions):
         """Apply one phone decision on this child's Console controller."""
         from .app_served import _served_relay_decide
+
         return _served_relay_decide(self, round_id, decisions)
 
     async def _stop_served_canvas_control(self) -> None:
         """Close the private child channel without affecting terminal exit."""
         from .app_served import _stop_served_canvas_control
+
         return await _stop_served_canvas_control(self, app_globals=globals())
 
     @on(ModelCatalogRefreshed)

@@ -394,3 +394,46 @@ copies the registry through its own recovery owner, which only the installed
 
 | C99 | tldw_chatbook/Plugins/backup | _Plugins._inspect | recovery.plugins.registry | private_file, read_only_uri | exact installed v5 registry catalog and live plugin-process check | Migrated via `connect_private_sqlite`. Frozen measured catalog; reads only the `processes` states to refuse capture while a plugin process may run. No runtime owner or registry construction. |
 | B41 | tldw_chatbook/Plugins/backup | _Plugins.capture | recovery.plugins.registry | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Holds the plugin runtime lock and the checked maintenance scope; committed WAL frames fold into the snapshot. Restored plugins stay inactive until plugin authority recovery approves them. |
+
+## Canonical Console Library readers (TASK-36767, ADR-244)
+
+| C100 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB._get_thread_connection | db.chachanotes.read | read_only_uri | existing canonical current schema only | Migrated via `connect_private_sqlite`. Ordinary storage admission and Core participant custody; must-exist SQLite read-only, no migration or execution authority. |
+| C101 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase._get_thread_connection | db.media.read | read_only_uri | existing canonical current schema only | Migrated via `connect_private_sqlite`. Ordinary storage admission and Media participant custody; active/trash filtering and physical retirement remain native. |
+
+| C102 | tldw_chatbook/DB/AgentRuns_DB | AgentRunsDB._open_connection | db.agent_runs.read | read_only_uri | canonical run history without initialization or reconciliation | Migrated via `connect_private_sqlite`. Existing module-owned read role; physical execution fence grants no reader write authority. |
+| C103 | tldw_chatbook/Backup_Recovery/mobile_consolidation | _open_preview_read | recovery.mobile.preview | read_only_uri | native discovery snapshots under maintenance custody | Migrated via `connect_private_sqlite`. Fixed read-only connection; callers retain discovery scope, restrictions, cancellation and exact terminal schema/hash checks. |
+| C104 | tldw_chatbook/Backup_Recovery/mobile_consolidation_recovery | _open_completion_read | recovery.mobile.completion.read | read_only_uri | ordinary admitted canonical completion/schema reads | Migrated via `connect_private_sqlite`. Fixed non-immutable read-only must-exist connection and same accounting/custody; SQLite SHM coordination allowed, no SQL writes, capture or backup authority (ADR-244 R160). |
+
+ADR-244 candidate validation uses `sqlite_validation._open_installed_candidate`:
+resolve a frozen installed owner before the existing restricted read-only seam,
+forward cancellation and physical custody unchanged, and retain caller-owned
+schema/version/hash/citation checks and accounting. The source guard pins the
+helper's complete structure and rejects writable, unrestricted, unqualified,
+cancellation-dropping or custody-dropping variants. It adds no role or budget.
+
+## Fixed incompatible-preview metadata guards (ADR-244 R171–R173)
+
+| C105 | tldw_chatbook/DB/ChaChaNotes_DB | reject_incompatible_preview | db.chachanotes.read | read_only_uri | fixed live metadata refusal before native initialization | Migrated via `connect_private_sqlite`. Existing module-owned read role; must-exist nonimmutable admitted connection, finite SQL/helper deadlines, physical close. |
+| C106 | tldw_chatbook/DB/Workspace_DB | reject_incompatible_preview | db.workspaces.preflight | read_only_uri | fixed live metadata refusal before native initialization | Migrated via `connect_private_sqlite`. Module-owned read-only role; no writer/memory/capture/backup/foreign authority; same admission and retirement. |
+| C107 | tldw_chatbook/DB/AgentRuns_DB | reject_incompatible_preview | db.agent_runs.read | read_only_uri | fixed live metadata refusal before native initialization | Migrated via `connect_private_sqlite`. Existing module-owned read role; no writer getter, migration or execution grant. |
+
+These refusal guards preserve main and pre-existing WAL identity/mode/content.
+Native SQLite SHM coordination and new empty-WAL allocation may occur; files are
+retained. No explicit sidecar manipulation or checkpoint is allowed. Mobile
+custody retains existing require-private-mode validation without hardening;
+ordinary source reads preserve modes. Strict capture/source preservation is unchanged.
+
+## Existing detached normalization exception (ADR-256 / ADR-244 R174)
+
+`Backup_Recovery/detached_layout._normalize_sqlite` retains one raw destination
+connection and one bounded `connection.backup` on disposable private copies.
+This unchanged native dev path is separately qualified; it has no invented SQLite
+owner role or migrated C/B row. Its installed-owner restricted source validation,
+exclusive private destination creation, extension/trusted-schema restrictions,
+64-page cancellation/progress checks, physical close, and final schema validation
+are fixed by the semantic AST guard. The guard also fixes `_owner_items`' hashed
+private target derivation beneath the producer's separate `work/normalized` root.
+Source/WAL acquisition, source evidence and publication remain ADR-256 duties.
+The global census rejects extra/moved/duplicate opens/backups; mutation controls
+reject altered source/target, owner, restriction, cancellation, validation,
+private creation, backup receiver/pages/progress, or caller escape.

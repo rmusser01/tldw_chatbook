@@ -13,6 +13,7 @@ from pytest import MonkeyPatch
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.DB import AgentRuns_DB, store_kernel
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Tools import workspace_file_roots as roots
 from tldw_chatbook.UI.Console_Modules import run_log_probe_scope as scope
@@ -20,7 +21,7 @@ from tldw_chatbook.Backup_Recovery import participants
 
 route, outcome = sys.argv[1:]
 assert outcome == "source"
-runs = AgentRunsDB(Path.home() / "runs.sqlite", client_id="probe-source")
+runs = owned_agent_runs_db(Path.home() / "runs.sqlite", client_id="probe-source")
 try:
     bridge = ConsoleAgentBridge(
         agent_runs_db=runs, store=None, provider_gateway=None

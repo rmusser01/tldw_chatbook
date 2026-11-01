@@ -181,3 +181,14 @@ def test_a_non_string_argument_key_never_crashes_rendering():
 
     assert "/x" in rendered, rendered
     assert isinstance(rendered, str)
+
+
+def test_shared_summary_extraction_preserves_native_public_exports():
+    from tldw_chatbook.Chat.approval_constants import TOOL_DESCRIPTION_CAPTURE_CAP
+    from tldw_chatbook.Widgets.Chat_Widgets import chat_approval_card
+
+    assert (
+        chat_approval_card.TOOL_DESCRIPTION_CAPTURE_CAP == TOOL_DESCRIPTION_CAPTURE_CAP
+    )
+    assert chat_approval_card._is_destination_key("file_path")
+    assert chat_approval_card._snake_case("filePath") == "file_path"

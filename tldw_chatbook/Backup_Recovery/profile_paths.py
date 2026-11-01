@@ -15,6 +15,13 @@ from tldw_chatbook.Utils.platform_files import os
 
 def lexical_path(value: str | Path) -> Path:
     """Expand home and make absolute without resolving links or probing parents."""
+    if isinstance(value, Path) and value.is_absolute() and ".." not in value.parts:
+        return value
+    from .mobile_preview_budget import path_cost, reserve
+
+    reserve(
+        path_cost(value, copies=3) if isinstance(value, Path) else 768 + 48 * len(value)
+    )
     return Path(os.path.abspath(os.path.expanduser(str(value))))
 
 
@@ -222,4 +229,19 @@ def database_path(config: Mapping[str, object], setting_name: str) -> Path:
         lexical_path(selected).resolve()
         if setting_name == "tts_profiles_db_path"
         else lexical_path(selected)
+    )
+
+
+def legacy_mobile_dir(config: Mapping[str, object]) -> Path:
+    """The legacy physical source is independent of canonical DB overrides."""
+    return user_data_dir(config) / "mobile"
+
+
+def canonical_console_paths(config: Mapping[str, object]) -> tuple[Path, Path, Path]:
+    """Resolve native Console stores without constructing a repository."""
+    chat = database_path(config, "chachanotes_db_path")
+    return (
+        chat,
+        database_path(config, "workspaces_db_path"),
+        chat.parent / "agent_runs.db",
     )

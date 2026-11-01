@@ -44,6 +44,8 @@ def received_attachment_metadata(controller, session_id):
     record = _attachment_receipt(controller, session_id)
     if record is None:
         return None
+    if record.request.input_origin == "command":
+        return ()
     if record.inputs.attachments_transferred:
         return record.inputs.attachments
     expected = record.request.attachment_ids
@@ -58,6 +60,8 @@ def admit_received_attachments(controller, session_id):
     record = _attachment_receipt(controller, session_id)
     if record is None:
         return None
+    if record.request.input_origin == "command":
+        return ()
     if not record.inputs.attachments_transferred:
         record.inputs.attachments = record.store.transfer_pending_attachments_to_turn(
             session_id, record.turn_id, record.request.attachment_ids
@@ -227,6 +231,7 @@ def require_received_source(runtime, record, source, *, inputs=True):
         )
         or (
             inputs
+            and record.received_intent.inputs.input_origin == "composer"
             and (
                 runtime.snapshot_console_staged_evidence(record.session_id)[0]
                 is not record.received_intent.staged_evidence_launch
@@ -430,6 +435,8 @@ async def _run_received_intent_bound(runtime, record, source):
             require_received_source(runtime, record, source)
 
         kwargs["_before_admission"] = before_admission
+        if intent.inputs.input_origin == "command":
+            kwargs["_command_inputs"] = intent.inputs
         queued = await method(record.session_id, **kwargs)
         if queued.applied:
             controller.prompt_mixin_service().publish_accepted_usage(
@@ -437,9 +444,10 @@ async def _run_received_intent_bound(runtime, record, source):
                 observed_revision=preferences.revision if preferences is not None else None,
             )
             try:
-                committed = store.commit_session_input_draft(intent.inputs)
-                if committed or intent._pressed_inputs is not None:
-                    runtime._project_received_input(record, draft_committed=committed)
+                if intent.inputs.input_origin == "composer":
+                    committed = store.commit_session_input_draft(intent.inputs)
+                    if committed or intent._pressed_inputs is not None:
+                        runtime._project_received_input(record, draft_committed=committed)
             except Exception:  # noqa: BLE001, S110 - presentation cannot retract an already accepted domain outcome.
                 # Queue admission already won; presentation cannot retract it.
                 pass
@@ -450,7 +458,11 @@ async def _run_received_intent_bound(runtime, record, source):
         claim = store.claim_received_turn(
             record.session_id,
             record.turn_id,
-            draft_revision=intent.inputs.draft_revision,
+            draft_revision=(
+                intent.inputs.draft_revision
+                if intent.inputs.input_origin == "composer"
+                else None
+            ),
             _allow_draft_change=intent._pressed_inputs is not None,
         )
         if claim is None:
@@ -471,6 +483,11 @@ async def _run_received_intent_bound(runtime, record, source):
         one_shot_prefill=intent.inputs.one_shot_prefill,
         one_shot_prefill_revision=intent.inputs.prefill_revision,
         staged_evidence_launch=intent.staged_evidence_launch,
+        input_origin=intent.inputs.input_origin,
+        command_id=intent.inputs.command_id,
+        command_inputs=intent.inputs
+        if intent.inputs.input_origin == "command"
+        else None,
     )
     return await runtime._run_custodied_turn(
         record,
@@ -499,6 +516,8 @@ def accept_received_intent(
 
     if type(intent) is not ConsoleReceivedTurnIntent:
         raise TypeError("intent must be ConsoleReceivedTurnIntent")
+    if intent.inputs.input_origin == "command" and self._workflow_closing:
+        raise RuntimeError("Console owner is shutting down.")
     self._raise_if_disposed_or_session_fenced(intent.session_id)
     store = self._chat_store
     if store is None or self._chat_controller is None:
@@ -535,7 +554,11 @@ def accept_received_intent(
         claim = store.claim_received_turn(
             intent.session_id,
             intent.turn_id,
-            draft_revision=intent.inputs.draft_revision,
+            draft_revision=(
+                intent.inputs.draft_revision
+                if intent.inputs.input_origin == "composer"
+                else None
+            ),
             _allow_draft_change=intent._pressed_inputs is not None,
         )
         if claim is None:
@@ -617,6 +640,13 @@ def accept_turn(
         store = self._chat_store
         if store is None:
             raise RuntimeError("Console chat store is unavailable.")
+        if request.input_origin == "command":
+            if self._workflow_closing:
+                raise RuntimeError("Console owner is shutting down.")
+            if request.command_inputs is None or not store.session_inputs_are_current(
+                request.command_inputs
+            ):
+                raise RuntimeError("Console command target configuration changed.")
         if origin is ConsoleSubmissionOrigin.AGENT_CHAT_START:
             controller = self._chat_controller
             if (
@@ -781,6 +811,9 @@ async def _run_custodied_turn(
 
     def mark_durable_acceptance() -> None:
         publish_received_acceptance(self, record, controller)
+        self._observe_remote_custody(
+            record.turn_id, state="accepted", native_id=record.turn_id
+        )
 
     async def submit() -> native_host.Any:
         require_received()
@@ -797,6 +830,8 @@ async def _run_custodied_turn(
             is ConsoleChatController.submit_draft
             else {}
         )
+        if request.input_origin == "command":
+            shared["preserve_composer"] = True
         issuing_store, issuing_claim = record.store, record.received_claim
         try:
             with bind_received_turn_claim(issuing_store, issuing_claim):
@@ -977,6 +1012,10 @@ def project_received_input(self, record, *, draft_committed=False) -> None:
     """Project a domain CAS into only the original attached composer."""
     intent = record.received_intent
     request = record.request
+    if intent is not None and intent.inputs.input_origin != "composer":
+        return
+    if request is not None and request.input_origin != "composer":
+        return
     if intent is not None:
         inputs, stash = intent._pressed_inputs, intent._pressed_stash
         generation = intent.view_attachment_generation
@@ -1036,7 +1075,7 @@ def publish_received_acceptance(self, record, controller) -> None:
     request = record.request
     captured = intent.inputs if intent is not None else (request._pressed_inputs if request is not None else None)
     pressed = intent._pressed_inputs if intent is not None else captured
-    if captured is not None:
+    if captured is not None and captured.input_origin == "composer":
         try:
             store, claim = record.store, record.received_claim
             # Saved acceptance is a fact even when its original owner

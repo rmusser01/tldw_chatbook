@@ -542,3 +542,23 @@ async def test_owned_prefix_transfer_restores_only_its_exact_revision(input_stor
         assert session.draft == ("captured" if later is None else later)
     finally:
         await controller.shutdown()
+
+
+def test_command_inputs_ignore_desktop_composition_but_keep_native_scope(input_store):
+    store, session = input_store
+    store.set_session_draft(session.id, "desktop first")
+    store.add_pending_attachment(session.id, _attachment("desktop-only"))
+    store.set_session_one_shot_prefill(session.id, "desktop prefill")
+    snapshot = store.command_input_snapshot(
+        session.id,
+        text="phone correction",
+        command_id="command-a",
+    )
+    store.set_session_draft(session.id, "desktop newer")
+    assert store.session_inputs_are_current(snapshot)
+    assert snapshot.draft == "phone correction"
+    assert snapshot.attachments == ()
+    assert snapshot.one_shot_prefill is None
+    assert store.session_draft(session.id) == "desktop newer"
+    assert session.pending_attachments[0].attachment_id == "desktop-only"
+    assert session.one_shot_prefill == "desktop prefill"

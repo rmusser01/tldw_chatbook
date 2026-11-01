@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -25,7 +26,6 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
 from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
@@ -56,7 +56,7 @@ async def _project_console(
     with (
         closing(CharactersRAGDB(tmp_path / "chat.sqlite", "project-trace")) as db,
         closing(
-            AgentRunsDB(tmp_path / "runs.sqlite", client_id="project-trace")
+            owned_agent_runs_db(tmp_path / "runs.sqlite", client_id="project-trace")
         ) as runs,
         closing(
             WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="project-trace")

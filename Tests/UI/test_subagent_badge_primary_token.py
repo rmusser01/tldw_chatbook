@@ -13,6 +13,7 @@ from types import CodeType, MethodType, SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Chat.console_agent_bridge import (
     AgentLiveSnapshot,
     ConsoleAgentBridge,
@@ -229,7 +230,7 @@ async def test_real_badge_count_work_tracks_subagents_not_primary_publication(
     tmp_path, transition, record_property
 ):
     notes = CharactersRAGDB(tmp_path / "notes.db", client_id="badge-primary-proof")
-    runs = AgentRunsDB(
+    runs = owned_agent_runs_db(
         tmp_path / "runs.db", client_id="badge-primary-proof", reconcile_on_init=False
     )
     other = None
@@ -297,7 +298,7 @@ async def test_real_badge_count_work_tracks_subagents_not_primary_publication(
             elif transition == "ttl":
                 await asyncio.sleep(CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS + 0.02)
             else:
-                other = AgentRunsDB(
+                other = owned_agent_runs_db(
                     tmp_path / "other-runs.db",
                     client_id="badge-owner-proof",
                     reconcile_on_init=False,
@@ -352,7 +353,7 @@ async def test_real_badge_count_work_tracks_subagents_not_primary_publication(
     "custom", ["instance", "class", "borrowed", "body", "subclass"]
 )
 def test_custom_primary_token_contract_is_preserved(tmp_path, monkeypatch, custom):
-    runs = AgentRunsDB(
+    runs = owned_agent_runs_db(
         tmp_path / "custom-runs.db",
         client_id="badge-custom-proof",
         reconcile_on_init=False,

@@ -2225,6 +2225,38 @@ configuration consumers; an earlier harness refusal is not the intended RED.
 
 **What to do.** Let layout finish before scrolling, then require the full captured widget inside the transcript viewport and crop there. Keep real hit-tested clicks and content assertions. A coalescible sync call is a request, so wait for its observed view session and completed pass before asserting its publication; do not treat its return as an unconditional completion barrier.
 
+## Native fixture success must include the local-only value (TASK-36766, 2026-10-27)
+
+**Incident.** The mobile integrated-planning qualification reached its Workspace
+assertion with `console_project_context_json` still unset even though the fixture's
+`update_conversation()` returned success. The general synchronized update does not
+write this local-only column. Source inspection also identified the dedicated
+message-metadata path. After using `set_conversation_console_project_context()`
+with a read-back assertion and `update_message_metadata_local()`, both captured
+Workspace/Canvas/fork cases passed, including the raw persona/permission case.
+
+**What to do.** Seed local-only state through its actual owner API and verify the
+value before capture/finalization. A general CRUD success result does not prove
+that every supplied field was persisted. Keep a setup mistake separate from a
+reached planning or native-consumer failure.
+
+## Read-only SQLite census can change reviewed sidecars (TASK-36766, 2026-10-25)
+
+**Incident.** Mobile consolidation had reviewed absent canonical WAL/SHM names,
+then a complete native adapter census opened the live Chat SQLite database for
+inspection and created sidecars. Correct strict custody validation rejected the
+next capture. A separate cold test correctly refused a different scope because
+its fixture patched `profile_paths.default_config_path` after `config_adapter`
+had imported that function; the fresh process observed a different tokenizer root.
+
+**What to do.** Under mobile maintenance, use the existing bounded private SQLite
+copy discovery scope, and assert source/main/WAL/SHM bytes and modes stay identical.
+For cold tests, establish the same isolated defaults at every imported fixture
+boundary. Compare actual inventory items before changing a digest or witness gate.
+The real WAL capture, fresh-process ciphertext recovery, and unchanged-source tests
+in `test_mobile_consolidation_lifecycle.py` exercise these failures.
+
+
 ## Attach completion does not retire queued mount refreshes (TASK-34406.5, 2026-10-16)
 
 **Incident.** PR #3137 hosted UI shard10 timed out while checking response-rule
@@ -24673,6 +24705,7 @@ The persisted Sources test initially timed out even though a direct reply and it
 The same mounted fixture replaced the factory's absent ChaChaNotes DB with a file DB but rewired only conversation services. Its dictionary participant still referred to the original missing owner. Rebinding the real dictionary service to that same DB restored the production composition; a legacy conversation-service stub was also removed. A full reply arriving before a terminal timeout did not prove a citation bug: native stack observations located guarded Windows admission, and the same agent operation later completed. Capture phase/timing evidence before changing watchdogs, and retain the distinction between functional completion and latency qualification.
 
 Final preservation found a second concrete composition trap in `test_console_runtime_rag_capture_wiring.py`: its helper passed a store to `ensure_chat_controller` but never called `runtime.set_chat_store(store)`. Four cases stopped at required hook initialization on both the integrated candidate (r-cf89449e) and pinned a9c base (r-0bcbb613). The hook owner guard compared the controller's store with the runtime's unset store. Adding the real composition call, without replacing hooks or weakening assertions, passed all four cases (r-306266a0). A swallowed initialization message alone did not identify the cause; the exact owner path and controlled fixture correction did. Keep unrelated base-reproduced trace/Stop failures explicit rather than using this fixture fix to imply they passed.
+
 ## On an old commit, a private-profile failure's reason is in the child's pytest.xml, not the parent's output
 
 **TASK-33621.4, 2026-10-29.** AC#6 asked for a test that fails on the review
@@ -24978,6 +25011,150 @@ Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a
 - For a timing window, act with the action itself (`screen.action_focus_previous()`) and plain `asyncio` polling, not `pilot.press`.
 - Pass a diagnostic as a callable (`message=lambda: ...`), so it reports the state at the timeout.
 - Show each case red on the buggy tree before trusting it green.
+
+## Close fixture execution owners before maintenance
+
+**TASK-36765, 2026-10-25.** A legacy mobile fixture created automatic-work and Goal
+ledgers, closed its AgentRunsDB, then attempted public capture. Native maintenance
+timed out after 60 seconds: cached ledger backreferences kept the database alive,
+so the shared test helper's weakref finalizer had not released its execution owner.
+Giving this uniquely owned fixture an explicit ConsoleExecutionOwner lifetime and
+closing every creator DB before that owner made the public capture/WAL/reference
+closure checks pass (4 tests in 28.27 seconds). Do not rely on garbage collection
+for fixtures promising closed writers, and do not bypass admission to hide a
+retained owner.
+
+### Native file custody must include the helpers after rename
+
+**TASK-36766 C2-A-files, 2026-10-25.** A payload-copy close probe passed while
+`native_files.publish_new` could leave its staged-root FD readable after rename
+and release maintenance exclusion. A second reached-phase probe found
+`journal.observe_artifact` retrying an ambiguous parent close after publication.
+Census the connected extraction/staging/publication/observation path before
+freezing final evidence; thread the existing resource owner through those helpers.
+Inject only after real scope issuance: an earlier cold-resume fault stopped at
+`mobile_preview_authority_changed` and proved no FD behavior. The useful witness
+is the actual live FD plus a separately refused native maintenance acquisition,
+followed by successful acquisition after physical process retirement.
+The same increment's self-review caught a traversal mismatch: delegating native
+pinning to bootstrap's descriptor owner admitted the actual root-owned macOS
+`/var` alias. A real-alias RED required retaining native per-component
+`O_NOFOLLOW` traversal and reusing only the owner's FD-close bookkeeping.
+
+### A history-only selector witness does not protect native database owners
+
+**TASK-36766 A-chat selector prerequisite, 2026-10-26.** A-files checked prepared
+selector inode/content witnesses, but native DB owners reached a pending check
+that verified only enrollment content/namespaces. Real no-history legacy81/8/25
+fixtures admitted same-byte source, target and candidate selector replacements
+at all three actual DB admissions and transaction entries (18 reached-boundary
+REDs). Moving one proof to the shared pending owner, removing the file-only copy,
+and exercising actual owner entry rather than a public wrapper closed the gap.
+Use distinct enrolled selector objects and an input without the optional file
+family when qualifying a cross-owner witness contract; same-byte replacement
+must reach the actual protected boundary to count as evidence.
+
+
+## Seed legacy fixtures before their final schema downgrade
+
+During TASK-36766 C2a qualification, the workflow seed in
+`Tests/Backup_Recovery/test_mobile_content_settings.py` reopened CharactersRAGDB
+after `Tests/Backup_Recovery/mobile_consolidation_fixture.py::_seed` had finalized
+legacy schema81. The native constructor
+migrated it back to82, and authenticated capture correctly refused the member
+(expected81, manifest82). Seed linked metadata with actual returned IDs while the
+native owner is still open, before legacy finalization; preserve the admission
+check instead of changing captured versions or weakening schema validation.
+
+
+## Retire capture and fixture admission overrides before a native oracle
+
+**TASK-36766 T, 2026-10-27.** The mapped character-reader oracle first refused
+ordinary DB admission while capture was active (67.73-second epoch), then still
+refused after physical retirement (59.05-second epoch): fixture bootstrap overrides
+continued to select the durable pending operation. Keeping those fixture-only
+patches in `monkeypatch.context()` through capture/no-effects/retirement, then
+restoring the pre-fixture private pytest selector and bootstrap before opening the
+disposable copied canonical DB, reached actual native preview (64.21 seconds).
+Assert the restored paths are the existing private test environment. Preserve the
+pending evidence and ordinary admission guards; a copied DB and constructor do not
+create source authority, and an unreached reader is not reader qualification.
+
+
+### 2026-10-27: Explicit native owners in enrolled RunLog fixtures
+
+The targeted mobile-owner runner23332 stalled after38 progress dots. One bounded
+native sample showed Python lock waits and a GC callback waiting on an RLock;
+a one-level private-fixture listing last reached the second enrolled RunLog case.
+The shared test helper holds its RLock while acquiring a native owner and uses a
+weakref finalizer taking the same lock. This is consistent with a circular wait,
+but the sample did not capture Python frame names and does not prove that cause.
+The new RunLog fixture now acquires a real ConsoleExecutionOwner explicitly and
+closes its DB before closing that owner; all five focused reader cases passed in
+runner94827. The prior PID was retired with one authorized SIGTERM (RC-15,
+source hashes unchanged), which proves process retirement, not clean native close
+or a passing test. Preserve that interrupted evidence separately; do not substitute
+GC cleanup for explicit fixture ownership or infer a cause from elapsed time alone.
+
+### Cold recovery owner imports must be tested outside pytest collection
+
+Task 8's real-home standalone fixture exposed two eager configuration imports hidden by the test suite's preload: Subscriptions' class module imported config for an optional settings getter, and Media's pure template migration imported runtime Chunking package exports. Both retained startup admission and blocked later maintenance. Guarded cold tests reproduced the import boundary and then constructed/closed native owners without loading config after the narrow lazy-import corrections (64101 and 69936). Keep runtime settings/default behavior at actual use; do not retire startup leases or relax admission to make a fixture pass. Existing frozen-default test 70112 separately failed config-selection setup; its origin is unclassified, and the fresh native-source rolling-dispatch control 71245 is a distinct passing scope.
+
+The later FileNotesReplica case (Notes absent epochs13795/32743/46602) exposed the same trap in raw participant selection: eager `_types()` imported unrelated grammar/feedback services and config before reaching the exact File Notes branch. Two fixture-order corrections moved the refusal from initial enrollment to missing-required Complete, then to maintenance after a legitimately retained startup lease; they did not solve that import cause. Deferring only the unrelated lookup to its actual fallback preserved exact source/admission checks. Fresh real-home cold proof63271 verified native schema/read, actual retained SQLite handle closure, config never loaded, no startup leases, both guards and unchanged selector; seventeen native grammar/feedback/FileNotes fallback/pause/close controls63682 passed separately. Preserve those failed setup epochs and avoid a fixture shutdown or admission bypass.
+
+
+### Task36767: qualify an un-warmed viewless native Send
+
+A real App mounted on Library first refused remote Send because the existing
+stock cold configuration proof required the source capsule normally imported by
+CompactModelBar. Warming trust/plugin services in the fixture hid that caller
+dependency. The final control keeps both services cold and loads only the existing
+metadata dependency through native preparation-read lifetime before unchanged
+source checks. The same connected run then exposed an existing project callback
+that unconditionally used Textual `call_from_thread` from its own loop. Preserve
+first failures and distinguish fixture source selection, oracle failures and
+production failures; a successful gateway double alone does not qualify native
+persistence, project review, approval/question, worker execution or physical drain.
+Evidence: Task9 cold-red, agent10 and native-controls packets in the shared
+Console implementation SDD directory.
+
+
+## Native lifetime witnesses must preserve callable identity
+
+**TASK-36769 FIX1, 2026-11-01.** The shared Console fleet qualification initially
+accepted Stop receipts and then closed the whole app with controlled workers
+still unwinding. Positive logs included scratch/run-log failures and a closed
+hook-engine denial, but no timeline established their order. Wrapping native
+log/scratch callbacks to observe them failed frozen callable-provenance admission;
+a broad profiler captured shared context-manager code and distorted timing.
+Those epochs were retained as invalid instrumentation, not production failures.
+Finite Python3.12 local monitoring of exact original code bodies, with primitive
+records and verified removal of its own tool ID, preserved callback identity.
+It showed disposal preceding the failures in the new reproduction; it did not
+retroactively establish the old trace's chronology. The strengthened ordinary
+journey instead witnessed exact corrections consumed, unrelated work remaining
+live, actual worker Threads retired, durable worker results and successful native
+log/hook outcomes before app disposal. A receipt or whole-stack exit is not a
+worker-retirement witness. Generator yield/await events are not final returns.
+
+
+## Outcome uncertainty needs a target-isolation test
+
+**TASK-36769 final whole-feature review, 2026-11-01.** The existing66-case
+portable file passed while a same-target unknown-receipt case expected disabled
+controls. Native discovery actually returns retained pending/unknown receipts
+from the whole profile, including replaced owners. The client's global unknown
+flag consequently disabled unrelated freshly confirmed Chats, exact Stop and
+answerability indefinitely. Receiptless Stop/decision rows also lacked their
+original target, so filtering only received receipt targets would lose custody.
+The final correction retains action/target before the effect, scopes ambiguity
+and labels by applicable identity, preserves historical unknowns/no replay and
+keeps confirmed native Stop available. The93-case final epoch combines90 browser
+cases, actual native owner-replacement/discovery controls and the TLS original-ID
+journey. A same-target test is not cross-target isolation evidence: use a real
+retained predecessor outcome and an independently confirmed current target, and
+prove both old-outcome visibility and current control/decision behavior. Receipt
+delivery negatives must await the specific response and client processing.
 
 ## Review handoff needs an authorized structured read path (TASK-40127, 2026-11-07)
 

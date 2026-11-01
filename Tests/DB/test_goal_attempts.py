@@ -4,9 +4,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_goal_models import request
 from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +21,7 @@ def ready_goal(db):
 
 def test_concurrent_prepares_accept_exactly_one_generation(tmp_path):
     path = tmp_path / "runs.db"
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     goal = ready_goal(db)
     ledger = db.automatic_work
     assert callable(getattr(ledger, "prepare_goal_iteration", None)), (
@@ -29,7 +29,7 @@ def test_concurrent_prepares_accept_exactly_one_generation(tmp_path):
     )
 
     def prepare(_):
-        handle = AgentRunsDB(path)
+        handle = owned_agent_runs_db(path)
         try:
             return handle.automatic_work.prepare_goal_iteration(
                 goal.id, owner_id="owner"
@@ -54,7 +54,7 @@ def test_concurrent_prepares_accept_exactly_one_generation(tmp_path):
 
 
 def test_kinds_owners_and_goal_link_are_checked_at_every_boundary(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     goal = ready_goal(db)
     ledger = db.automatic_work
     assert callable(getattr(ledger, "prepare_goal_iteration", None)), (
@@ -94,7 +94,7 @@ def test_goal_context_requires_current_accepted_attempt_and_independent_settings
 ):
     from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
 
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     goal = ready_goal(db)
     ledger = db.automatic_work
     assert callable(getattr(ledger, "prepare_goal_iteration", None)), (
@@ -127,7 +127,7 @@ def test_goal_context_requires_current_accepted_attempt_and_independent_settings
 def test_goal_api_cannot_consume_a_fleet_claim(tmp_path):
     from Tests.DB.test_automatic_wake_attempts import claim, survivor
 
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     ledger = db.automatic_work
     chain = ledger.create_chain("conversation", root_submission_id="manual")
     claim(db, chain, [survivor(db, chain)])
@@ -146,7 +146,7 @@ def test_goal_api_cannot_consume_a_fleet_claim(tmp_path):
 
 
 def test_refunded_preparations_do_not_count_as_accepted_iterations(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     try:
         goal = ready_goal(db)
         for ordinal in range(1, 4):
@@ -173,7 +173,7 @@ def test_older_launch_without_optional_mcp_bindings_keeps_original_hash(
     from tldw_chatbook.Agents.goal_models import GoalRequest, GoalToolScope
 
     path = tmp_path / "runs.db"
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     req = request()
     canonical = GoalRequest.canonical_json
 
@@ -187,7 +187,7 @@ def test_older_launch_without_optional_mcp_bindings_keeps_original_hash(
         original = db.goal_runs.create(req, launch_id="old-start")
         original_bytes = old_canonical(req)
     db.close()
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     try:
         restored = db.goal_runs.create(req, launch_id="old-start")
         assert restored.id == original.id
@@ -210,7 +210,7 @@ def test_older_launch_without_optional_mcp_bindings_keeps_original_hash(
 
 @pytest.mark.parametrize("corruption", ["session", "goal"])
 def test_goal_attempt_rejects_wrong_session_or_goal_link(tmp_path, corruption):
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     try:
         goal = ready_goal(db)
         attempt = db.automatic_work.prepare_goal_iteration(goal.id, owner_id="owner")
@@ -237,7 +237,7 @@ def test_goal_attempt_rejects_wrong_session_or_goal_link(tmp_path, corruption):
 def test_goal_acceptance_rechecks_live_enablement_inside_ledger(
     tmp_path, monkeypatch, setting
 ):
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     try:
         goal = ready_goal(db)
         attempt = db.automatic_work.prepare_goal_iteration(goal.id, owner_id="owner")

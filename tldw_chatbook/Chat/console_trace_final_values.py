@@ -962,6 +962,8 @@ def reconstruct_provider_gateway_kwargs(
 ) -> dict[str, object]:
     """Independently reconstruct the exact generic gateway boundary values."""
 
+    from tldw_chatbook.Chat.console_provider_support import CUSTOM_OPENAI_EXECUTION_KEYS
+
     execution_key = getattr(resolution, "execution_key")
     base_url = adapter_api_base_url(execution_key, getattr(resolution, "base_url"))
     kwargs: dict[str, object | None] = {

@@ -4,6 +4,9 @@ from dataclasses import replace
 from pathlib import Path
 
 from tldw_chatbook.Backup_Recovery.config_adapter import _Definition
+from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+    json_loads as _budgeted_json_loads,
+)
 from tldw_chatbook.Backup_Recovery.models import (
     OwnerAdapter,
     StorageItem,
@@ -88,7 +91,6 @@ class _Skills(_Definition):
     def _references(self, config, root, entries):
         """Check exact saved bundle/snapshot references without unlocking trust."""
         import hashlib
-        import json
 
         from tldw_chatbook.Backup_Recovery.storage_admission import _read_recovery_file
         from tldw_chatbook.tldw_api.skills_schemas import _normalize_skill_name
@@ -104,7 +106,7 @@ class _Skills(_Definition):
             if catalog is None or catalog.status != "included":
                 continue
             try:
-                document = json.loads(
+                document = _budgeted_json_loads(
                     _read_recovery_file(self.owner_id, path, max_bytes=16 * 1024**2)
                 )
                 records = (

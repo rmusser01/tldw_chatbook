@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_automatic_provider_budget import resolution
 from Tests.Chat.test_console_goal_dispatch import build_goal_rig
 from Tests.Chat.test_console_goal_scheduling import progress
@@ -28,7 +29,6 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_goal_runs import ConsoleGoalCoordinator
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
@@ -148,7 +148,7 @@ async def main():
         await asyncio.Event().wait()
     else:
         state = json.loads((root / "boundary.json").read_text())
-        runs = AgentRunsDB(root / "runs.db")
+        runs = owned_agent_runs_db(root / "runs.db")
         chat = CharactersRAGDB(root / "chat.db", "test")
         registry = LocalWorkspaceRegistryService(WorkspaceDB(root / "workspace.db"))
         persistence = ChatPersistenceService(chat, workspace_registry=registry)

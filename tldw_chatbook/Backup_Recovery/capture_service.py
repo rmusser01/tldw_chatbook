@@ -22,13 +22,22 @@ from .profile_paths import default_config_path, effective_config_path, lexical_p
 from .storage_admission import _preview_reads
 
 
-def _selectors(config_paths, *, include_known_profiles=False):
+def _selectors(
+    config_paths, *, include_known_profiles=False, _budget=None, _custody=None
+):
     """Use checked local selectors as source locators, never saved root authority."""
     if type(config_paths) is not tuple or type(include_known_profiles) is not bool:
         raise TypeError("invalid_capture_selection")
     if config_paths and not include_known_profiles:
         return tuple(lexical_path(path) for path in config_paths)
-    _, profiles = bootstrap._records(bootstrap.default_bootstrap_root())
+    _, profiles = bootstrap._records(
+        bootstrap.default_bootstrap_root(), _budget=_budget, _custody=_custody
+    )
+    if _budget is not None:
+        _budget.value(config_paths, text_copies=8)
+        for row in profiles:
+            _budget.value(row["selector"], text_copies=8)
+        _budget.reserve(8192)
     selected = [effective_config_path()]
     selected.extend(sorted(row["selector"] for row in profiles))
     canonical = default_config_path()
@@ -81,44 +90,96 @@ def preview_capture(
     )
 
 
-def _capture_names(authority, inventory, *, include_absent_sqlite=False):
+def _capture_names(
+    authority,
+    inventory,
+    *,
+    include_absent_sqlite=False,
+    _read_budget=None,
+    _custody=None,
+    cancel=None,
+):
     """Reuse existing physical scopes; register only disjoint new local roots."""
+    from .mobile_preview_budget import path_cost, read_options
     from .storage_admission import (
         _config_capture_bindings,
         _config_capture_item,
         _config_capture_sources,
     )
 
+    _read_budget, _custody = read_options(_read_budget, _custody)
+    if _read_budget is not None:
+        from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+
+        from .storage_admission import _CaptureFileDescriptors
+
+        if (
+            type(_read_budget) is not _TraceReadBudget
+            or type(_custody) is not _CaptureFileDescriptors
+        ):
+            raise ValueError("capture_registration_accounting_changed")
+        _read_budget.reserve(2048)
+        _read_budget.container(6 * len(inventory.items))
+        if include_absent_sqlite:
+            # Preserve the existing complete absence-path forecast.
+            for item in inventory.items:
+                if item.path is not None:
+                    _read_budget.reserve(
+                        path_cost(item.path, copies=8 * (len(item.path.parts) + 1))
+                    )
+    if cancel is not None:
+        from .archive_reader import _check
+
+        _check(cancel)
     selectors = tuple(
         item.path
         for item in inventory.items
         if item.owner == "config" and item.path is not None
     )
-    bindings = _config_capture_bindings(authority.control_root.parent, selectors)
-    siblings = _config_capture_sources(
-        authority.control_root.parent, selectors, bindings
+    bindings = _config_capture_bindings(
+        authority.control_root.parent,
+        selectors,
+        _read_budget=_read_budget,
+        _custody=_custody,
     )
-    registry = bootstrap._registry(authority.control_root.parent)
-    roots = {
-        item.path.resolve(strict=True)
-        for item in inventory.items
-        if item.path is not None
-        and not _config_capture_item(item, inventory, siblings)
-        and (
-            item.status in {"included", "included_directory"}
-            # These exact unused trees need bounded control-file reads during
-            # maintained discovery. Hold their namespace without enrolling any
-            # scaffold as an included capture source.
-            or item.status == "unused"
-            and item.owner in {"research.paste_staging", "collections.archives"}
-            and item.metadata is not None
-            and item.metadata.kind == "directory"
-            and item.metadata.relative_path == ""
-        )
-    }
+    siblings = _config_capture_sources(
+        authority.control_root.parent,
+        selectors,
+        bindings,
+        _read_budget=_read_budget,
+        _custody=_custody,
+    )
+    registry = bootstrap._registry(
+        authority.control_root.parent, _budget=_read_budget, _custody=_custody
+    )
+    roots = set()
+    for item in inventory.items:
+        if (
+            item.path is not None
+            and not _config_capture_item(item, inventory, siblings)
+            and (
+                item.status in {"included", "included_directory"}
+                # These exact unused trees need bounded control-file reads during
+                # maintained discovery. Hold their namespace without enrolling any
+                # scaffold as an included capture source.
+                or item.status == "unused"
+                and item.owner in {"research.paste_staging", "collections.archives"}
+                and item.metadata is not None
+                and item.metadata.kind == "directory"
+                and item.metadata.relative_path == ""
+            )
+        ):
+            if _read_budget is not None and not include_absent_sqlite:
+                from .admission import _price_paths
+
+                _read_budget.container(1)
+                _price_paths((item.path,), _read_budget)
+            roots.add(item.path.resolve(strict=True))
     names = {UNBOUND_NAMESPACE} | {
         name for row, _ in bindings for name in row["namespaces"]
     }
+    if _read_budget is not None:
+        _read_budget.container(len(names))
     if include_absent_sqlite:
         from .preserved_groups import _absence_names
         from .restore_plan import _absent_sqlite_paths
@@ -131,17 +192,41 @@ def _capture_names(authority, inventory, *, include_absent_sqlite=False):
                 names.update(_absence_names(registry, paths))
     from .effective_roots import check_redundant_profiles
 
-    _, profiles = bootstrap._records(authority.control_root.parent)
-    omitted = check_redundant_profiles(registry, profiles)
+    _, profiles = bootstrap._records(
+        authority.control_root.parent, _budget=_read_budget, _custody=_custody
+    )
+    omitted = check_redundant_profiles(
+        registry, profiles, _read_budget=_read_budget, _custody=_custody
+    )
+    if _read_budget is not None:
+        _read_budget.container(3 * len(roots))
     for root in sorted(roots, key=lambda path: (len(path.parts), str(path))):
+        if _read_budget is not None:
+            _read_budget.reserve(1024 + path_cost(root, copies=3))
+        if cancel is not None:
+            _check(cancel)
+        if _read_budget is not None:
+            from .admission import _price_paths
+
+            # Price the actual singleton and native ancestor tuple before creating them.
+            _read_budget.container(1)
+            _price_paths((root,), _read_budget)
+            _read_budget.container(len(root.parts))
+        root_parents = tuple(root.parents)
         covered = False
         narrower = False
         for name, entry in registry.items():
+            if _read_budget is not None and not include_absent_sqlite:
+                # One native parse/strict-resolve/parent pipeline per current row.
+                _price_paths(entry["roots"], _read_budget)
             for raw in entry["roots"]:
-                if Path(raw) in omitted:
+                if _read_budget is not None and include_absent_sqlite:
+                    _read_budget.reserve((raw.count("/") + 2) * (2048 + 128 * len(raw)))
+                lexical = Path(raw)
+                if lexical in omitted:
                     continue
-                registered = Path(raw).resolve(strict=True)
-                if registered == root or registered in root.parents:
+                registered = lexical.resolve(strict=True)
+                if registered == root or registered in root_parents:
                     names.add(name)
                     covered = True
                 elif root in registered.parents:
@@ -152,9 +237,13 @@ def _capture_names(authority, inventory, *, include_absent_sqlite=False):
         if covered or narrower:
             continue
         name = "backup.source." + hashlib.sha256(str(root).encode()).hexdigest()
-        authority.register(name, (root,))
+        authority.register(
+            name, (root,), _read_budget=_read_budget, _custody=_custody, cancel=cancel
+        )
         registry[name] = {"roots": [str(root)]}
         names.add(name)
+    if _read_budget is not None:
+        _read_budget.container(2 * len(names))
     return tuple(sorted(names))
 
 

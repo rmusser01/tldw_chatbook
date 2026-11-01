@@ -10,6 +10,7 @@ from pathlib import Path
 from loguru import logger
 
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider, _default_specs
 from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionChainDelivery,
@@ -24,7 +25,6 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.workspace_tool_executor import (
     WorkspaceToolExecutionError,
@@ -32,7 +32,6 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
 )
 from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
 from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
-
 
 SENTINEL = "CHATBOOK_AGENTS_SENTINEL_7d1e9c"
 EXPLICIT_READ = "EXPLICIT_AGENTS_READ_RETAINS_CONTENT"
@@ -108,7 +107,7 @@ def test_automatic_nested_body_is_absent_from_every_durable_and_diagnostic_surfa
     provider = _ProviderSpy(
         [[_native_fs_read()], [_native_fs_read()], [MODEL_QUOTATION]]
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="read it")
@@ -197,7 +196,7 @@ def test_activation_callback_failure_is_content_free_and_does_not_block_provider
         dispatch_started_wall_ns=time.time_ns(),
     )
     provider = _ProviderSpy([[_native_fs_read()], [_native_fs_read()], ["done"]])
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="read it")

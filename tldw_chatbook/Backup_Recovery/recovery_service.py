@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, RLock
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from tldw_chatbook.Utils.platform_files import os
@@ -17,6 +18,9 @@ from .limits import ArchiveLimits
 from .native_files import create_private_directory, pinned_directory
 from .recovery_copies import hold_recovery_copy, list_recovery_copies
 from .service_storage import default_control_root, ensure_storage
+
+if TYPE_CHECKING:
+    from .mobile_consolidation import MobileConsolidationPreview
 
 __all__ = ["RecoveryService", "default_control_root", "issue_code"]
 
@@ -110,6 +114,7 @@ def owner_label(owner: str) -> str:
 
 
 _ISSUE_MESSAGES = {
+    "mobile_materialization_limit": "This operation reached its bounded inspection limit. Keep the source and recovery files. If recovery is pending, review its status and explicitly choose the available recovery action; otherwise review the selected profile before starting a new operation.",
     "invalid_backup_groups": "Choose at least one available data group, with each group selected once, then review again.",
     "data_group_destination_missing": "Choose destinations for every saved part of the selected data groups, then review again.",
     "archive_group_unavailable": "Choose data groups present in this backup, or inspect another backup containing the groups you need.",
@@ -187,10 +192,14 @@ def issue_message(code: str) -> str:
 
 def issue_code(error: Exception, *, kind: str = "") -> str:
     """Only fixed local codes cross into a view; arbitrary exception text stays out."""
+    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadLimit
+
     from .admission import AdmissionTimeout
     from .capture import CaptureReviewRequired
     from .crypto import CryptoError
 
+    if isinstance(error, _TraceReadLimit):
+        return "mobile_materialization_limit"
     if isinstance(error, AdmissionTimeout):
         return "admission_timeout"
     if isinstance(error, InterruptedError):
@@ -282,6 +291,16 @@ class RecoveryService:
         self._workspaces = {}
         self._retained_workspaces = set()
 
+    def preview_mobile_consolidation(
+        self, source_config: Path, target_config: Path
+    ) -> "MobileConsolidationPreview":
+        """Observe legacy sources selected through the existing local config boundary."""
+        from .mobile_consolidation import preview_selected_mobile
+        from .owner_registry import install_adapters
+
+        install_adapters()
+        return preview_selected_mobile(source_config, target_config)
+
     def _update(self, operation, **changes):
         with self._lock:
             current = dict(self._states[operation])
@@ -289,6 +308,31 @@ class RecoveryService:
                 changes["result"] = MappingProxyType(dict(changes["result"]))
             current.update(changes)
             self._states[operation] = MappingProxyType(current)
+
+    def start_mobile_consolidation(
+        self, preview, *, destination_confirmed, rollback_password
+    ):
+        """Import only an explicitly selected, freshly rechecked native destination."""
+        from .mobile_consolidation import MobileConsolidationPreview
+        from .mobile_consolidation_recovery import _start_mobile
+        from .replacement import require_rollback_password
+
+        if (
+            type(preview) is not MobileConsolidationPreview
+            or destination_confirmed is not True
+        ):
+            raise ValueError("mobile_destination_review_required")
+        if any(
+            issue != "mobile_destination_review_required" for issue in preview.issues
+        ):
+            raise ValueError("mobile_preview_refused")
+        require_rollback_password(rollback_password)
+        return self._start(
+            "mobile_consolidation",
+            lambda operation, cancel: _start_mobile(
+                self, operation, cancel, preview, rollback_password
+            ),
+        )
 
     def _start(self, kind, function):
         from .capture import CaptureReviewRequired
@@ -851,14 +895,55 @@ class RecoveryService:
             raise ValueError("recovery_action_unavailable")
 
         def recover(operation, cancel):
+            from tldw_chatbook.Chat.console_trace_read_budget import (
+                _mobile_operation_budgets,
+            )
+
             from .replacement import recover_replacement
+
+            mobile_budgets = (
+                _mobile_operation_budgets()
+                if state["mode"] == "mobile_consolidation"
+                else None
+            )
 
             self._update(
                 operation,
                 phase="recovery_required",
                 result={"journal_operation_id": operation_id},
             )
-            if state["mode"] == "isolated":
+            if state["mode"] == "mobile_consolidation":
+                from .mobile_consolidation_recovery import (
+                    _finish_import,
+                    _finish_terminal,
+                )
+
+                if action == "rollback":
+                    from .mobile_rollback import _rollback_import
+
+                    _rollback_import(
+                        self,
+                        operation_id,
+                        rollback_password,
+                        cancel,
+                        _budgets=mobile_budgets,
+                    )
+                    outcome = "mobile_rolled_back"
+                elif state["phase"] == "mobile_committed":
+                    _finish_terminal(
+                        self, operation_id, cancel, _budgets=mobile_budgets
+                    )
+                    outcome = "mobile_committed"
+                else:
+                    _finish_import(
+                        self,
+                        operation_id,
+                        rollback_password,
+                        cancel,
+                        _budgets=mobile_budgets,
+                    )
+                    outcome = "mobile_committed"
+            elif state["mode"] == "isolated":
                 from . import bootstrap
                 from .isolated_restore import _finish_isolated
                 from .plan_records import load_plan
@@ -913,7 +998,8 @@ class RecoveryService:
                 result={
                     "journal_operation_id": operation_id,
                     "restoration_validated": outcome == "committed",
-                    "rolled_back": outcome == "rolled_back",
+                    "mobile_consolidated": outcome == "mobile_committed",
+                    "rolled_back": outcome in {"rolled_back", "mobile_rolled_back"},
                     "aborted": outcome == "aborted",
                 },
             )
@@ -1343,8 +1429,11 @@ class RecoveryService:
     def status(self, operation_id):
         """An immutable snapshot remains valid after subsequent worker updates."""
         with self._lock:
-            if operation_id in self._states:
-                return self._states[operation_id]
+            cached = self._states.get(operation_id)
+        if cached is not None and not any(
+            row["operation_id"] == operation_id for row in self.pending_operations()
+        ):
+            return cached
         from .recovery_copies import _journal
 
         journal = _journal(self.control_root, operation_id)
@@ -1357,19 +1446,43 @@ class RecoveryService:
             row["operation_id"] == operation_id for row in self.pending_operations()
         )
         terminal = (
-            phase in {"committed", "rolled_back", "prepublication_aborted"}
+            phase
+            in {
+                "committed",
+                "rolled_back",
+                "prepublication_aborted",
+                "mobile_committed",
+                "mobile_rolled_back",
+            }
             and not pending
         )
         events = {row.event for row in records}
         mode = next(
             (row.evidence["mode"] for row in records if row.event == "prepared"), None
         )
+        if records[0].event == "mobile_prepared":
+            mode = "mobile_consolidation"
         if mode is None:
             from .plan_records import load_plan
 
             mode = load_plan(journal).mode
         actions = ()
-        if pending and mode == "isolated":
+        if mode == "mobile_consolidation" and phase == "mobile_committed":
+            actions = ("finish",)
+        elif pending and mode == "mobile_consolidation":
+            if "mobile_rollback_started" in events:
+                actions = ("rollback",)
+            else:
+                actions = (
+                    ("finish", "rollback")
+                    if any(
+                        row.event == "mobile_capture_verified"
+                        and row.evidence["purpose"] == "canonical"
+                        for row in records
+                    )
+                    else ("finish",)
+                )
+        elif pending and mode == "isolated":
             actions = ("finish",)
         elif (
             pending
@@ -1402,7 +1515,9 @@ class RecoveryService:
                     {
                         "journal_operation_id": operation_id,
                         "restoration_validated": terminal and phase == "committed",
-                        "rolled_back": terminal and phase == "rolled_back",
+                        "mobile_consolidated": terminal and phase == "mobile_committed",
+                        "rolled_back": terminal
+                        and phase in {"rolled_back", "mobile_rolled_back"},
                         "aborted": terminal and phase == "prepublication_aborted",
                     }
                 ),

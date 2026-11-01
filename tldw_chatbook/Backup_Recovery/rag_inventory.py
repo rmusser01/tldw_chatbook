@@ -9,6 +9,9 @@ import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+    json_loads as _budgeted_json_loads,
+)
 from tldw_chatbook.Backup_Recovery.models import (
     StorageItem,
     discovery_context,
@@ -76,12 +79,11 @@ class _Definitions(_RawDeclaration):
     max_bytes: int = 16 * 1024**2
 
     def _document(self, item, candidate):
-        import tomllib
-
         from .credentials import (
             _rag_definition_kind,
             _rag_definition_valid,
         )
+        from .mobile_preview_budget import toml_loads as _budgeted_toml_loads
         from .storage_admission import _read_recovery_file
 
         kind = _rag_definition_kind(item.metadata.relative_path)
@@ -89,9 +91,9 @@ class _Definitions(_RawDeclaration):
             self.owner_id, candidate, max_bytes=self.max_bytes
         )
         data = (
-            tomllib.loads(encoded.decode())
+            _budgeted_toml_loads(encoded)
             if kind == "pipeline"
-            else json.loads(encoded)
+            else _budgeted_json_loads(encoded)
         )
         if not _rag_definition_valid(kind, data):
             raise ValueError("rag_definition_format_unsupported")
@@ -359,7 +361,7 @@ class _Projections(_RawDeclaration):
                     _read_recovery_file,
                 )
 
-                payload = json.loads(
+                payload = _budgeted_json_loads(
                     _read_recovery_file(
                         "rag.definitions", path, max_bytes=16 * 1024**2
                     ),

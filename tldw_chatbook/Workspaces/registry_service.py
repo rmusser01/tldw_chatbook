@@ -2774,6 +2774,11 @@ class LocalWorkspaceRegistryService:
         Caller already holds every native generation capability for the group.
         """
         with self.db.transaction(immediate=True) as conn:
+            from tldw_chatbook.DB.mobile_import_authority import authority_allowed
+
+            if not authority_allowed(conn, "binding", binding_id):
+                yield False
+                return
             witness = conn.execute(
                 "SELECT revision FROM workspace_binding_authority WHERE binding_id=?",
                 (binding_id,),
@@ -2804,6 +2809,11 @@ class LocalWorkspaceRegistryService:
         it for chunking, scanning, worker joins, network calls or cleanup.
         """
         with self.db.transaction(immediate=True) as conn:
+            from tldw_chatbook.DB.mobile_import_authority import authority_allowed
+
+            if not authority_allowed(conn, "binding", binding_id):
+                yield None
+                return
             row = conn.execute(
                 "SELECT b.*,a.revision FROM workspace_runtime_bindings b JOIN workspace_binding_authority a USING(binding_id) JOIN workspace_records w ON w.workspace_id=b.workspace_id WHERE b.binding_id=? AND w.archived=0",
                 (binding_id,),
@@ -3184,7 +3194,9 @@ class LocalWorkspaceRegistryService:
         refreshed: list[WorkspaceRuntimeBinding] = []
         for binding in filtered:
             actual = (
-                RuntimeBindingStatus.MISSING
+                RuntimeBindingStatus.BLOCKED
+                if not self.db.imported_binding_allowed(binding.binding_id)
+                else RuntimeBindingStatus.MISSING
                 if _filesystem_binding_missing(binding.locator)
                 else RuntimeBindingStatus.READY
             )
@@ -3199,6 +3211,7 @@ class LocalWorkspaceRegistryService:
                     metadata=binding.metadata,
                     created_at=binding.created_at,
                     updated_at=binding.updated_at,
+                    import_review_required=binding.import_review_required,
                 )
             )
         return tuple(refreshed)
@@ -3310,6 +3323,19 @@ class LocalWorkspaceRegistryService:
             )
         )
 
+    def _import_binding_projection(
+        self, binding: WorkspaceRuntimeBinding
+    ) -> WorkspaceRuntimeBinding:
+        from dataclasses import replace
+
+        if not self.db.imported_binding_allowed(binding.binding_id):
+            return replace(
+                binding,
+                status=RuntimeBindingStatus.BLOCKED,
+                import_review_required=True,
+            )
+        return binding
+
     def get_runtime_binding(self, binding_id: str) -> WorkspaceRuntimeBinding | None:
         """Return one runtime binding if it exists."""
 
@@ -3332,7 +3358,7 @@ class LocalWorkspaceRegistryService:
             if row["workspace_id"] == DEFAULT_WORKSPACE_ID:
                 self._delete_default_runtime_bindings()
                 return None
-            return _runtime_binding_from_row(row)
+            return self._import_binding_projection(_runtime_binding_from_row(row))
 
     def list_runtime_bindings(
         self,
@@ -3357,7 +3383,10 @@ class LocalWorkspaceRegistryService:
                 ).fetchall()
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
-        return tuple(_runtime_binding_from_row(row) for row in rows)
+        return tuple(
+            self._import_binding_projection(_runtime_binding_from_row(row))
+            for row in rows
+        )
 
     def read_change_review_consent(self, workspace_id: str) -> ChangeReviewConsent:
         """Read explicit per-workspace Change Review consent and revision.

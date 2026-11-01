@@ -8,6 +8,7 @@ sensitive information from log messages.
 import hashlib
 import os
 import re
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List
@@ -404,14 +405,22 @@ _UNDERSCORE_KEY_CREDENTIALS = (
 )
 
 
-def trace_credentials_v2_spans(text: str) -> list[tuple[int, int]]:
+def trace_credentials_v2_spans(
+    text: str, *, reserve_span: Callable[[], None] | None = None
+) -> list[tuple[int, int]]:
     """Code-point spans the v2 projection masks beyond v1 in ``text``.
 
     A stored v1 policy's frozen PII spans are applied to its v1 projection;
     a span that cuts one of these keys is widened over it first, so no key
     fragment survives the v2 masks (TASK-39123).
     """
-    return [m.span() for p in _UNDERSCORE_KEY_CREDENTIALS for m in p.finditer(text)]
+    spans = []
+    for pattern in _UNDERSCORE_KEY_CREDENTIALS:
+        for match in pattern.finditer(text):
+            if reserve_span is not None:
+                reserve_span()
+            spans.append(match.span())
+    return spans
 
 
 def sanitize_trace_credentials_v2(text: str) -> str:

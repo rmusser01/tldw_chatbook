@@ -20,6 +20,7 @@ from typing import ParamSpec, TypeVar
 from tldw_chatbook.Utils.platform_files import fcntl, os
 
 from ..Utils.private_paths import _native_close, _open_verified_parent
+from .limits import _TraceReadLimit
 from .profile_paths import default_config_path, effective_config_path, lexical_path
 
 
@@ -140,8 +141,15 @@ def pinned_directory(root: Path, *, _close: Callable[[int], None] | None = None)
         (_close or _native_close)(parent)
 
 
-def _read(parent: int, name: str, *, max_bytes: int = MAX_RECORD) -> dict:
+def _read(
+    parent: int, name: str, *, max_bytes: int = MAX_RECORD, _budget=None, _custody=None
+) -> dict:
+    from .mobile_preview_budget import read_options
+
+    _budget, _custody = read_options(_budget, _custody)
     fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    if _custody is not None:
+        _custody.fds.append(fd)
     try:
         info = os.fstat(fd)
         if (
@@ -153,6 +161,9 @@ def _read(parent: int, name: str, *, max_bytes: int = MAX_RECORD) -> dict:
             raise ValueError("unsafe_record")
         if info.st_size > max_bytes:
             raise ValueError("oversized_record")
+        if _budget is not None:
+            _budget.reserve(128 + 2 * info.st_size)
+            max_bytes = info.st_size
         data = bytearray()
         while chunk := os.read(fd, min(64 * 1024, max_bytes - len(data) + 1)):
             data.extend(chunk)
@@ -167,7 +178,15 @@ def _read(parent: int, name: str, *, max_bytes: int = MAX_RECORD) -> dict:
                 result[key] = value
             return result
 
-        result = json.loads(data, object_pairs_hook=unique)
+        if _budget is not None:
+            _budget.json(data)
+
+        def invalid_constant(_):
+            raise ValueError("nonfinite_record")
+
+        result = json.loads(
+            data, object_pairs_hook=unique, parse_constant=invalid_constant
+        )
         if (
             type(result) is not dict
             or type(result.get("version")) is not int
@@ -176,7 +195,11 @@ def _read(parent: int, name: str, *, max_bytes: int = MAX_RECORD) -> dict:
             raise ValueError("record_version")
         return result
     finally:
-        os.close(fd)
+        if _custody is None:
+            os.close(fd)
+        else:
+            _custody.close_descriptor(fd)
+            _custody.fds.remove(fd)
 
 
 def _strings(values: object) -> bool:
@@ -199,17 +222,24 @@ def _key(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def _fingerprint(selector: Path) -> str:
+def _fingerprint(selector: Path, *, _budget=None, _custody=None) -> str:
     """Read a bounded ordinary config without parsing or changing its mode."""
-    with pinned_directory(selector.parent) as parent:
+    pin = pinned_directory if _custody is None else _custody.pinned_directory
+    with pin(selector.parent) as parent:
         fd = os.open(
             selector.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
         )
+        if _custody is not None:
+            _custody.fds.append(fd)
         try:
             before = os.fstat(fd)
             if not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid():
                 raise ValueError("selector_unverified")
-            raw = os.read(fd, MAX_RECORD + 1)
+            if _budget is not None:
+                if not 0 <= before.st_size <= MAX_RECORD:
+                    raise ValueError("selector_unverified")
+                _budget.reserve(4096 + before.st_size + 1)
+            raw = os.read(fd, MAX_RECORD + 1 if _budget is None else before.st_size + 1)
             after = os.fstat(fd)
             identity = lambda info: (
                 info.st_dev,
@@ -222,7 +252,11 @@ def _fingerprint(selector: Path) -> str:
                 raise ValueError("selector_unverified")
             return hashlib.sha256(raw).hexdigest()
         finally:
-            os.close(fd)
+            if _custody is None:
+                os.close(fd)
+            else:
+                _custody.close_descriptor(fd)
+                _custody.fds.remove(fd)
 
 
 def _overlap(left: Path, right: Path) -> bool:
@@ -289,20 +323,28 @@ def _validate_ancestry_record(root: Path, parent: int, record: dict) -> None:
 
 
 def _control_records(
-    root: Path, *, activation: bool = True
+    root: Path, *, activation: bool = True, _budget=None, _custody=None
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Read independent fixed evidence; incomplete paired writes remain fenced."""
+    from .mobile_preview_budget import read_options
+
+    _budget, _custody = read_options(_budget, _custody)
     try:
         if stat.S_ISLNK(os.stat(root, follow_symlinks=False).st_mode):
             raise ValueError("bootstrap_linked")
     except FileNotFoundError:
         return [], [], []
     pending, profiles, activations = [], [], []
-    with pinned_directory(root) as parent:
+    pin = pinned_directory if _custody is None else _custody.pinned_directory
+    with pin(root) as parent:
         info = os.fstat(parent)
         if info.st_uid != os.geteuid() or info.st_mode & 0o077:
             raise ValueError("bootstrap_not_private")
-        names = os.listdir(parent)
+        names = (
+            os.listdir(parent)
+            if _budget is None
+            else _bounded_names(parent, MAX_RECORDS, _budget, _custody)
+        )
         if len(names) > MAX_RECORDS:
             raise ValueError("too_many_records")
         for name in names:
@@ -322,7 +364,7 @@ def _control_records(
                     # Fixed activation-only evidence cannot authorize execution
                     # here. Its unavailability must still allow safe inspection.
                     continue
-            record = _read(parent, name)
+            record = _read(parent, name, _budget=_budget, _custody=_custody)
             if name.startswith("activation-update-"):
                 # This is explicit write-intent evidence, never a record to skip
                 # or repair on reads. Even a damaged intent requires recovery.
@@ -380,18 +422,47 @@ def _control_records(
     return pending, profiles, activations
 
 
-def _records(root: Path) -> tuple[list[dict], list[dict]]:
+def _records(
+    root: Path, *, _budget=None, _custody=None
+) -> tuple[list[dict], list[dict]]:
     """Read content admission, leaving activation validation to its read gate."""
-    pending, profiles, _ = _control_records(root, activation=False)
+    pending, profiles, _ = _control_records(
+        root, activation=False, _budget=_budget, _custody=_custody
+    )
     return pending, profiles
 
 
+def _bounded_names(parent, maximum, budget, custody):
+    """Pre-admit this caller's native name census; never retain an unknown tail."""
+    if custody is None:
+        raise ValueError("mobile_native_custody_required")
+    from .journal import _artifact_component_limit
+
+    component = _artifact_component_limit(parent)
+    budget.reserve(1024 + 16 * component)
+    names = []
+    iterator = os.scandir(parent)
+    custody.directory_iterators.append(iterator)
+    try:
+        for entry in iterator:
+            if len(names) >= maximum or len(os.fsencode(entry.name)) > component:
+                raise ValueError("too_many_records")
+            budget.value(entry.name, text_copies=4)
+            budget.container(1)
+            names.append(entry.name)
+    finally:
+        custody.close_directory_iterator(iterator)
+    return names
+
+
 @contextmanager
-def _registry_read_lock(parent: int):
+def _registry_read_lock(parent: int, *, _custody=None):
     """Observe a finished native publication; never create or repair its lock."""
     fd = os.open(
         "registry.lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
     )
+    if _custody is not None:
+        _custody.fds.append(fd)
     try:
         info = os.fstat(fd)
         if (
@@ -407,10 +478,17 @@ def _registry_read_lock(parent: int):
             raise ValueError("registry_lock_changed")
         yield
     finally:
-        os.close(fd)
+        if _custody is None:
+            os.close(fd)
+        else:
+            _custody.close_descriptor(fd)
+            _custody.fds.remove(fd)
 
 
-def _registry(root: Path) -> dict | None:
+def _registry(root: Path, *, _budget=None, _custody=None) -> dict | None:
+    from .mobile_preview_budget import read_options
+
+    _budget, _custody = read_options(_budget, _custody)
     authority = root / "admission"
     try:
         info = os.stat(authority, follow_symlinks=False)
@@ -427,10 +505,16 @@ def _registry(root: Path) -> dict | None:
         or marker_info.st_mode & 0o077
     ):
         raise ValueError("enrollment_marker_unsafe")
-    with pinned_directory(authority) as parent, _registry_read_lock(parent):
-        if "registry.pending.json" in os.listdir(parent):
+    pin = pinned_directory if _custody is None else _custody.pinned_directory
+    with pin(authority) as parent, _registry_read_lock(parent, _custody=_custody):
+        names = (
+            os.listdir(parent)
+            if _budget is None
+            else _bounded_names(parent, MAX_RECORDS, _budget, _custody)
+        )
+        if "registry.pending.json" in names:
             raise ValueError("registry_pending")
-        result = _read(parent, "registry.json")
+        result = _read(parent, "registry.json", _budget=_budget, _custody=_custody)
         if set(result) != {"version", "entries"} or type(result["entries"]) is not dict:
             raise ValueError("invalid_registry")
         for name, entry in result["entries"].items():
@@ -449,7 +533,11 @@ def _registry(root: Path) -> dict | None:
 
 
 def effective_roots(
-    roots: Iterable[str | Path], entries: Iterable[Mapping[str, object]]
+    roots: Iterable[str | Path],
+    entries: Iterable[Mapping[str, object]],
+    *,
+    _read_budget=None,
+    _custody=None,
 ) -> tuple[Path, ...]:
     """Defer absent-alias proof until an enrolled root is actually absent.
 
@@ -461,28 +549,48 @@ def effective_roots(
         Existing roots unchanged, or roots qualified by the native absence proof.
         Consumers still perform their ordinary strict identity validation.
     """
+    if _read_budget is not None:
+        from .admission import _price_paths
+
+        _price_paths(roots, _read_budget, copies=3)
+        _read_budget.container(2 * len(roots))
     roots = tuple(dict.fromkeys(Path(root) for root in roots))
     entries = tuple(entries)
     if all(os.path.lexists(root) for root in roots):
         return roots
     from .effective_roots import effective_roots as prove_absence
 
-    return prove_absence(roots, entries)
+    return prove_absence(roots, entries, _read_budget=_read_budget, _custody=_custody)
 
 
 def _binding(
-    selector: Path, profiles: list[dict], registry: dict | None
+    selector: Path,
+    profiles: list[dict],
+    registry: dict | None,
+    *,
+    _budget=None,
+    _custody=None,
 ) -> dict | None:
+    from .mobile_preview_budget import read_options
+
+    _budget, _custody = read_options(_budget, _custody)
     match = next((r for r in profiles if r["selector"] == str(selector)), None)
     if match is None:
         return None
     try:
-        if _fingerprint(selector) != match["fingerprint"]:
+        if (
+            _fingerprint(selector, _budget=_budget, _custody=_custody)
+            != match["fingerprint"]
+        ):
             return None
     except FileNotFoundError:
         return None
     if registry is None or any(n not in registry for n in match["namespaces"]):
         raise ValueError("binding_authority_missing")
+    if _budget is not None:
+        for name in match["namespaces"]:
+            _budget.value(registry[name], text_copies=8)
+        _budget.reserve(4096)
     roots = sorted({p for n in match["namespaces"] for p in registry[n]["roots"]})
     if roots != match["roots"]:
         raise ValueError("binding_mapping_changed")
@@ -491,7 +599,8 @@ def _binding(
     entries = tuple(registry[name] for name in match["namespaces"])
     for raw in effective_roots(roots, entries):
         path = Path(raw).resolve(strict=True)
-        with pinned_directory(path.parent) as parent:
+        pin = pinned_directory if _custody is None else _custody.pinned_directory
+        with pin(path.parent) as parent:
             info = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
             if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
                 raise ValueError("root_unverified")
@@ -541,6 +650,8 @@ def startup_permission(config_selector: Path, bootstrap_root: Path) -> tuple[boo
             ):
                 return False, "recovery_pending"
         return True, "startup_allowed"
+    except _TraceReadLimit:
+        raise
     except (OSError, ValueError, TypeError, KeyError, RuntimeError, AttributeError):
         return False, "recovery_scope_uncertain"
 

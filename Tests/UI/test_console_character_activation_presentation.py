@@ -673,3 +673,76 @@ async def test_queued_switcher_acknowledges_only_its_own_commit(
             assert len(opens) == 2
             assert host.screen is chat
             assert workspace._character_conversation_target_visible(request)
+
+
+@pytest.mark.asyncio
+async def test_successful_joined_character_adopts_before_original_creator_rollback(
+    activation_library, monkeypatch
+):
+    import tldw_chatbook.UI.Console_Modules.conversation_token_preparation as tokens
+    from tldw_chatbook.Character_Chat.character_conversation_navigation import (
+        LocalCharacterConversationTarget,
+        ResolvedLocalCharacterKey,
+    )
+
+    owner, _, db = activation_library
+    _seed(owner, db)
+    host = ConsoleHarness(owner)
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+    original = tokens.prepare_conversation_tokens
+
+    async def hold_creator(*args, **kwargs):
+        calls.append(True)
+        if len(calls) == 1:
+            entered.set()
+            await release.wait()
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(tokens, "prepare_conversation_tokens", hold_creator)
+    async with host.run_test(size=(120, 50)):
+        chat = host.screen
+        await _until(lambda: chat.query("#console-native-composer"))
+        store = chat._ensure_console_chat_store()
+        current = [True]
+        creator = asyncio.create_task(
+            chat._workspace._resume_console_workspace_conversation(
+                "exact", resume_if=lambda: current[0]
+            )
+        )
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            row = db.get_conversation_by_id("exact")
+            target = LocalCharacterConversationTarget(
+                ResolvedLocalCharacterKey(
+                    db.get_local_authority_id(), int(row["character_id"])
+                ),
+                "exact",
+            )
+            request = CharacterConversationActivationRequest(
+                target,
+                db.get_local_authority_id(),
+                db.get_character_conversation_search_revision(),
+            )
+            exact = next(
+                s for s in store.sessions() if s.persisted_conversation_id == "exact"
+            )
+            result = await chat._workspace.activate_character_conversation_after_commit(
+                request
+            )
+            assert result.kind is ConsoleActivationResultKind.OPENED
+            assert chat._workspace._character_conversation_target_visible(request)
+            assert store._sessions[exact.id] is exact
+            current[0] = False
+            release.set()
+            assert await creator is None
+            assert store._sessions.get(exact.id) is exact
+            assert store.active_session_id == exact.id
+            assert any(
+                m.content == "Exact selected content"
+                for m in store.messages_for_session(exact.id)
+            )
+            assert chat._workspace._character_conversation_target_visible(request)
+        finally:
+            release.set()
+            await asyncio.gather(creator, return_exceptions=True)

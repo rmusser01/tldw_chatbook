@@ -13,12 +13,12 @@ from collections import deque
 import pytest
 
 import tldw_chatbook.config as config_module
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge, _pair_step_diff
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Tools.file_operation_tools import WriteFileTool
 
 
@@ -74,7 +74,7 @@ def diff_execute(monkeypatch):
 
 
 def _make_bridge(tmp_path, scripts):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")

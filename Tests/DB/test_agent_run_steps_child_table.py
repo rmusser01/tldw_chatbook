@@ -21,13 +21,13 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.DB import AgentRuns_DB as agent_runs_db
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "agent_runs.db", client_id="test")
+    return owned_agent_runs_db(tmp_path / "agent_runs.db", client_id="test")
 
 
 # --- Scaling: the defect itself ---------------------------------------
@@ -248,7 +248,7 @@ def test_batch_hydrate_groups_correctly_across_chunk_boundaries(monkeypatch):
     """
     monkeypatch.setattr(agent_runs_db, "_IN_CLAUSE_CHUNK", 2)
     with tempfile.TemporaryDirectory() as tmp:
-        db = AgentRunsDB(Path(tmp) / "chunks.db", client_id="test")
+        db = owned_agent_runs_db(Path(tmp) / "chunks.db", client_id="test")
         run_ids = [
             db.create_run(conversation_id="c", agent_kind="primary") for _ in range(7)
         ]

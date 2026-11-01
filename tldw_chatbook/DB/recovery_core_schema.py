@@ -1212,3 +1212,21 @@ CORE_SCHEMAS = tuple(
 CHACHANOTES_MIXINS_V85_TO_V86_SQL = (
     "UPDATE db_schema_version SET version=86 WHERE schema_name='rag_char_chat_schema' AND version=85",
 )
+
+
+# ADR-244: mobile receipts follow every native prompt-mixin lineage.
+from .mobile_import_authority import CHAT_MIGRATION
+
+CHACHANOTES_V87_SCHEMAS = tuple(
+    tuple(sorted(schema + CHAT_MIGRATION, key=_installed_schema_order))
+    for schema in CHACHANOTES_V86_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V87_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 87, CHACHANOTES_V87_SCHEMAS[0])
+    if owner == "db.chachanotes.primary" else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+CHACHANOTES_MOBILE_V86_TO_V87_SQL = CHAT_MIGRATION + (
+    "UPDATE db_schema_version SET version=87 WHERE schema_name='rag_char_chat_schema' AND version=86",
+)

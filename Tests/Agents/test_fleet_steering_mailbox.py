@@ -32,6 +32,7 @@ import time
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
 from Tests.Agents.test_fleet_runtime import (
     FLEET_CFG,
@@ -47,14 +48,14 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_RUNNING,
     RUN_STUCK,
     SPAWN_TOOL_NAME,
-    WAIT_AGENTS_TOOL_NAME,
+    STEERING_SOURCE_SUPERVISOR,
+    STEERING_SOURCE_USER,
     STEP_ERROR,
     STEP_MODEL,
     STEP_STEERING,
     STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
-    STEERING_SOURCE_SUPERVISOR,
-    STEERING_SOURCE_USER,
+    WAIT_AGENTS_TOOL_NAME,
     AgentConfig,
     ContinuationEventContext,
     FinalContinuation,
@@ -71,7 +72,6 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationRestoreTarget,
@@ -79,7 +79,6 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRound,
     ProviderContinuationCheckpoint,
 )
-
 
 # -- the one formatter (agent_models, pure) -------------------------------
 #
@@ -879,7 +878,7 @@ def test_red_g_a_cycle_stuck_run_leaves_a_late_post_queued():
 
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    return owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
 
 
 @pytest.mark.bootstrap_profile
