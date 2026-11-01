@@ -47,13 +47,19 @@ def _image() -> PendingAttachment:
     )
 
 
-async def _stage_image(console, pilot, draft: str = ""):
+async def _stage_image(
+    console, pilot, draft: str = "", *, strip_reason: str = STRIP_REASON
+):
     composer = console.query_one("#console-native-composer", ConsoleComposerBar)
     store = console._ensure_console_chat_store()
     session_id = store.ensure_session().id
     composer.load_draft(draft)
     assert store.add_pending_attachment(session_id, _image())
     console._sync_console_control_bar()
+    strip = composer.query_one("#console-send-disabled-reason", Static)
+    await _wait_for_render(pilot, lambda: strip.content.plain == strip_reason)
+    # A synchronous control update still needs the original layout yield before
+    # the next test action can hit a button in the newly displayed row.
     await pilot.pause()
     return composer, store, session_id
 
@@ -132,7 +138,7 @@ async def test_switch_model_opens_the_console_model_picker_and_keeps_draft_and_i
             console, pilot, draft="what colour is this leaf?"
         )
 
-        await pilot.click("#console-attachment-block-switch-model")
+        assert await pilot.click("#console-attachment-block-switch-model")
         await pilot.pause()
 
         assert isinstance(host.screen, ConsoleModelPopover), host.screen_stack
@@ -322,15 +328,12 @@ async def test_with_no_model_chosen_setup_owns_the_strip_and_the_row_stays_hidde
         monkeypatch.setattr(
             console, "_build_console_provider_selection", no_model_until_chosen
         )
-        composer, store, session_id = await _stage_image(console, pilot)
+        composer, store, session_id = await _stage_image(
+            console, pilot, strip_reason="Send blocked — choose a model to continue ›"
+        )
 
         assert console._console_setup_blocked_reason()
         strip = composer.query_one("#console-send-disabled-reason", Static)
-        await _wait_for_render(
-            pilot,
-            lambda: strip.content.plain
-            == "Send blocked — choose a model to continue ›",
-        )
         assert strip.content.plain == "Send blocked — choose a model to continue ›"
         assert composer.query_one("#console-send-message", Button).disabled
         block = console.query_one("#console-attachment-block")
@@ -369,7 +372,9 @@ async def test_a_long_model_id_is_ellipsized_and_both_actions_stay_whole_at_80x2
             "_build_console_provider_selection",
             lambda: replace(selection(), explicit_model=long_model),
         )
-        _composer, _store, _session = await _stage_image(console, pilot)
+        _composer, _store, _session = await _stage_image(
+            console, pilot, strip_reason=f"Send blocked — {long_model} can't accept images"
+        )
         await pilot.pause()
 
         block = console.query_one("#console-attachment-block")
