@@ -174,6 +174,7 @@ class ConsoleReadinessConfigRead:
     context_policy: ConsoleContextPolicyOverrides | None = None
     _display_proof: _CheckedDisplayProof | None = None
     pricing: Any = None
+    model_token_caps: tuple[str, str | None, int | None, int | None] | None = None
 
 
 def _readiness_runtime(screen: Any) -> Any:
@@ -182,7 +183,11 @@ def _readiness_runtime(screen: Any) -> Any:
 
     app = getattr(screen, "app_instance", None)
     runtime = vars(app).get(CONSOLE_RUNTIME_ATTR) if app is not None else None
-    return runtime if runtime is not None else vars(screen).get("_console_runtime_fallback")
+    return (
+        runtime
+        if runtime is not None
+        else vars(screen).get("_console_runtime_fallback")
+    )
 
 
 #: TASK-33620.15.4: while the run poll ticks, a projection that finds the
@@ -209,6 +214,7 @@ class ConsoleReadinessConfigProjection:
         self.pending = False
         self.context_policy = None
         self.pricing = None
+        self.model_token_caps = None
         self._display_proof = None
         self._read_request = None
         self._reads = set()
@@ -271,6 +277,40 @@ class ConsoleReadinessConfigProjection:
                         if _pricing_display_sources_current()
                         else None
                     )
+                    model_token_caps = None
+                    settings = request[3] if request is not None else None
+                    if settings is not None and not settings.provider.startswith(
+                        "custom-ep:"
+                    ):
+                        # Local catalog facts only; never resolve readiness or
+                        # schedule serving metadata/provider contact for display.
+                        from ...model_capabilities import get_model_capabilities
+                        from ...Chat.console_prepared_request import positive_token_cap
+
+                        try:
+                            capabilities = (
+                                get_model_capabilities().get_model_capabilities(
+                                    settings.provider, settings.model or ""
+                                )
+                            )
+                            model_token_caps = (
+                                settings.provider,
+                                settings.model,
+                                positive_token_cap(
+                                    capabilities,
+                                    "max_input_tokens",
+                                    "input_token_limit",
+                                    "provider_input_cap",
+                                ),
+                                positive_token_cap(
+                                    capabilities,
+                                    "max_output_tokens",
+                                    "output_token_limit",
+                                    "provider_output_cap",
+                                ),
+                            )
+                        except Exception:  # noqa: BLE001 - unknown metadata is not zero overhead.
+                            pass
                     after = participants.checked_config_identity(config, active)
                     with storage._lock:
                         participant = raw._states[active].participant
@@ -306,7 +346,7 @@ class ConsoleReadinessConfigProjection:
                     )
                     _checked_display_proofs.add(proof)
                 return ConsoleReadinessConfigRead(
-                    before, value, after, policy, proof, pricing
+                    before, value, after, policy, proof, pricing, model_token_caps
                 )
 
             projection = cls(screen, read_current=read_current)
@@ -440,18 +480,38 @@ class ConsoleReadinessConfigProjection:
         reader = self.read_current
         tokenizer_request = self._tokenizer_request
         tokenizer_prepared = False
-        self._read_request = asyncio.get_running_loop(), threading.current_thread(), key
+        store = getattr(self.screen, "_console_chat_store", None)
+        settings_reader = getattr(store, "session_settings", None)
+        settings = (
+            settings_reader(key[5])
+            if callable(settings_reader) and key[5] is not None
+            else None
+        )
+        self._read_request = (
+            asyncio.get_running_loop(),
+            threading.current_thread(),
+            key,
+            settings,
+        )
         from ...Chat.console_preparation_reads import run_preparation_read
         from ...Chat.console_runtime import ConsoleRuntime
 
         runtime = _readiness_runtime(self.screen)
-        observers = (runtime._preparation_reads,) if type(runtime) is ConsoleRuntime else ()
+        observers = (
+            (runtime._preparation_reads,) if type(runtime) is ConsoleRuntime else ()
+        )
         try:
-            if getattr(self.screen, "_closing", False) or getattr(runtime, "_disposed", False):
+            if getattr(self.screen, "_closing", False) or getattr(
+                runtime, "_disposed", False
+            ):
                 return
             result = await run_preparation_read(
-                reader, creator=self, session_id=key[5], reads=self._reads,
-                observers=observers, require_current=lambda: None,
+                reader,
+                creator=self,
+                session_id=key[5],
+                reads=self._reads,
+                observers=observers,
+                require_current=lambda: None,
             )
             read_at = time.monotonic()
             if (
@@ -510,6 +570,7 @@ class ConsoleReadinessConfigProjection:
                 or self.value != value
                 or self.context_policy != result.context_policy
                 or self.pricing != result.pricing
+                or self.model_token_caps != result.model_token_caps
             )
             if (
                 tokenizer_request is self._tokenizer_request
@@ -529,6 +590,7 @@ class ConsoleReadinessConfigProjection:
             self.key, self.value, self.at = current_key, value, read_at
             self.context_policy = result.context_policy
             self.pricing = result.pricing
+            self.model_token_caps = result.model_token_caps
             proof = result._display_proof
             self._display_proof = None
             if (
@@ -855,6 +917,25 @@ def _context_capacity_display_sources(gateway: Any, app: Any) -> Any:
     return refs, methods[2], methods[1], cache, read_cached
 
 
+def model_token_caps_for_display(
+    screen: Any, settings: Any
+) -> tuple[int | None, int | None] | None:
+    """Read only cap facts published for this exact current display owner."""
+    projection = getattr(screen, "_console_readiness_config_projection", None)
+    if (
+        type(projection) is not ConsoleReadinessConfigProjection
+        or projection.screen is not screen
+        or getattr(screen, "_closing", False)
+        or projection._runtime_owner is not _readiness_runtime(screen)
+        or not _same_readiness_key(projection.key, projection._key())
+    ):
+        return None
+    caps = projection.model_token_caps
+    if caps is None or caps[:2] != (settings.provider, settings.model):
+        return None
+    return caps[2:]
+
+
 def cached_context_window_for_display(screen: Any, gateway: Any, settings: Any) -> Any:
     """Use an issued copy for metadata only; custom/direct routes stay fresh."""
     projection = getattr(screen, "_console_readiness_config_projection", None)
@@ -1013,7 +1094,8 @@ def retry_after_config_rebuild(function: Callable) -> Callable:
                 # Retain both locks through this synchronous render: a rebuild
                 # can start after the optimistic cache/probe check above.
                 for lock in (
-                    _tldw_config._settings_rebuild_lock(), _tldw_config._config_file_lock()
+                    _tldw_config._settings_rebuild_lock(),
+                    _tldw_config._config_file_lock(),
                 ):
                     if not lock.acquire(blocking=False):
                         break

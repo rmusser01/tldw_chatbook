@@ -65,6 +65,55 @@ def _read_result(value, before=None):
 
 
 @pytest.mark.asyncio
+async def test_model_caps_publish_only_for_current_chat_and_settings(monkeypatch):
+    """An old finite read cannot publish A's cap facts after switching to B."""
+    screen, owner, _identity, tasks, _published = _screen(monkeypatch)
+    entered, release = threading.Event(), threading.Event()
+    reads = []
+
+    def read():
+        revision = owner.revision
+        reads.append(revision)
+        if revision == 1:
+            entered.set()
+            assert release.wait(3)
+        identity = config.current_config_identity()
+        return spend.ConsoleReadinessConfigRead(
+            identity,
+            {"revision": revision},
+            identity,
+            model_token_caps=(
+                "openai",
+                "gpt-4.1",
+                10000 if revision == 1 else 8000,
+                128,
+            ),
+        )
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    screen._console_readiness_config_projection = projection
+    first = asyncio.create_task(projection._refresh(projection._key()))
+    settings = SimpleNamespace(provider="openai", model="gpt-4.1")
+    try:
+        assert await asyncio.to_thread(entered.wait, 3)
+        owner.id = "second"
+        owner.revision = 2
+        screen._console_chat_store.active_session_id = owner.id
+        release.set()
+        await first
+        assert projection.model_token_caps is None
+        assert spend.model_token_caps_for_display(screen, settings) is None
+        await projection._refresh(projection._key())
+        assert reads == [1, 2]
+        assert spend.model_token_caps_for_display(screen, settings) == (8000, 128)
+        owner.revision = 3
+        assert spend.model_token_caps_for_display(screen, settings) is None
+    finally:
+        release.set()
+        await asyncio.gather(first, *tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_control_bar_helper_refreshes_after_joining_an_old_revision(monkeypatch):
     from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
 

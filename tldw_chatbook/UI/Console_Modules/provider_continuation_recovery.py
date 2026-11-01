@@ -191,6 +191,9 @@ _BLOCKED_TURN_REASONS = {
     # TASK-33621.20 review: a send that re-paused after Retry / Send once.
     ConsolePreparationPauseKind.DESTINATION_CHANGED: "check provider",
     ConsolePreparationPauseKind.PERSISTENCE: "send not saved",
+    # TASK-33621.4: held by the Ask policy, waiting on the card's choice;
+    # "Run: Blocked — compaction ask" fills the 29-column Inspect block.
+    ConsolePreparationPauseKind.CONTEXT_COMPACTION: "compaction ask",
 }
 #: TASK-33621.20 review: the card's Problem line for a send that re-paused.
 _RESEND_PROBLEMS = {
@@ -233,9 +236,16 @@ def blocked_turn_reason(controller: Any) -> str:
         return ""  # Retry or Send without capture is running the turn now.
     preparation = getattr(controller, "trace_call_recovery_preparation", None)
     paused = preparation() if callable(preparation) else None
-    if trace_call_recovery_state(paused) is None:
-        # TASK-33621.6 AC#4: an unresolved response recovery refuses the next
-        # send too; the composer, rail and Inspect said so, the header "Ready".
+    # TASK-33621.4: a compaction hold's card needs the controller's numbers;
+    # without them it projected nothing, and the held send read "Ready".
+    hold_for = getattr(controller, "context_compaction_hold", None)
+    hold = (
+        hold_for(paused.preparation_id)
+        if callable(hold_for) and paused is not None
+        else None
+    )
+    if trace_call_recovery_state(paused, context_hold=hold) is None:
+        # TASK-33621.6: response recovery still blocks without a live hold.
         store = getattr(controller, "store", None)
         blocks = getattr(store, "dispatch_recovery_blocks_submission", None)
         if callable(blocks) and blocks(getattr(store, "active_session_id", None)):
@@ -407,6 +417,8 @@ class TraceCallRecoveryCallout(Vertical):
                 "Send without compacting",
                 id="console-trace-send-uncompacted",
             )
+            # TASK-33621.4 AC#1: the policy is one step away, not in Settings.
+            yield Button("Change policy", id="console-trace-change-policy")
             yield Button(
                 "Send without capture",
                 id="console-trace-send-without",
@@ -465,14 +477,20 @@ class TraceCallRecoveryCallout(Vertical):
                     compaction_hold_detail,
                 )
 
-                usage, choices = compaction_hold_detail(
-                    used_tokens=hold.used_tokens,
-                    budget_tokens=hold.budget_tokens,
-                    estimated=hold.estimated,
-                )
-                _set_copy(detail_rows[1], usage)
-                _set_copy(detail_rows[2], choices)
+                # TASK-33621.4: the numbers lead (the Owner row is a failure
+                # card's), then the choices and where to preview a summary.
+                for row, copy in zip(
+                    detail_rows,
+                    compaction_hold_detail(
+                        used_tokens=hold.used_tokens,
+                        budget_tokens=hold.budget_tokens,
+                        estimated=hold.estimated,
+                        trigger_tokens=hold.trigger_tokens,
+                    ),
+                ):
+                    _set_copy(row, copy)
             else:
+                _set_copy(detail_rows[0], "Owner: This Console send")
                 _set_copy(
                     detail_rows[1],
                     call_copy[1]
@@ -530,15 +548,27 @@ class TraceCallRecoveryCallout(Vertical):
         self.query_one("#console-trace-compact-send", Button).display = (
             hold is not None
         )
-        self.query_one("#console-trace-send-uncompacted", Button).display = (
-            hold is not None
-        )
+        for button_id in (
+            "#console-trace-send-uncompacted",
+            "#console-trace-change-policy",
+        ):
+            self.query_one(button_id, Button).display = hold is not None
         _set_copy(
             self.query_one("#console-trace-status", Static),
             "Working… actions are temporarily disabled."
             if self._busy
             else self._status_copy or "Choose one action.",
         )
+
+    @on(Button.Pressed, "#console-trace-change-policy")
+    def _change_policy(self, event: Button.Pressed) -> None:
+        """Open Chat settings at Context and memory; the send stays held."""
+
+        event.stop()
+        screen = self.screen
+        opener = getattr(screen, "_open_console_settings", None)
+        if callable(opener):  # the screen's worker outlives a card resync
+            screen.run_worker(opener(focus_context=True), exclusive=False)
 
     @on(Button.Pressed)
     def _handle_action(self, event: Button.Pressed) -> None:

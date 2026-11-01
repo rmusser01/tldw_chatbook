@@ -1118,6 +1118,15 @@ def request_safety_margin_tokens(window_tokens: int) -> int:
     return max(MINIMUM_SAFETY_MARGIN_TOKENS, window_tokens // 50)
 
 
+def positive_token_cap(capabilities: Mapping[str, Any], *names: str) -> int | None:
+    """Return the first advertised positive integer cap, excluding booleans."""
+    for name in names:
+        value = capabilities.get(name)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            return value
+    return None
+
+
 def resolve_request_capacity(
     *,
     context_window_tokens: int | None,

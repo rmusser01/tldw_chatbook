@@ -3651,14 +3651,13 @@ class ConsoleCompactionPreflight:
             # compact it anyway (Qodo #2 on PR #3003).
             return flatten_preflight_messages(semantic), None
         if decision is self.read_global_CompactionDecision().ASK:
-            # A composer send is held before it is committed (TASK-34350);
-            # this is the path for sends that cannot show the hold card.
+            # A composer send is held before commit (TASK-34350); Continue,
+            # Regenerate, Retry, Edit & resend, queued and Buddy sends stop
+            # before commit (TASK-33621.4). Left: machine turns, a failed probe.
             result = blocked(
-                (
-                    "Conversation context reached its compaction threshold. "
-                    "Use Compact now in Chat settings ▸ Context and memory "
-                    "(Ctrl+O), then send again."
-                )
+                "Conversation context reached its compaction threshold. Run "
+                "/compact or Compact now in Chat settings ▸ Context and memory "
+                "(Ctrl+O), then send again."
             )
             return provider_messages, result
         if decision in {

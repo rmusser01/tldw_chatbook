@@ -7,17 +7,21 @@ store/controller while making the quick and full settings surfaces agree.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
     from tldw_chatbook.Chat.console_prepared_request import (
         ConsoleRequestTokenAccounting,
     )
 
 from tldw_chatbook.Chat.console_context_compaction import (
+    CompactionDecision,
     EffectiveMemoryKind,
     EffectiveMemoryResult,
+    decide_compaction,
 )
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextCapacity,
@@ -36,7 +40,10 @@ from tldw_chatbook.Chat.console_context_repository import (
     MemoryOriginKind,
 )
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
-from tldw_chatbook.Chat.console_prepared_request import resolve_request_capacity
+from tldw_chatbook.Chat.console_prepared_request import (
+    resolve_request_capacity,
+    tagged_memory_message,
+)
 from tldw_chatbook.Chat.cost_display import format_cost_amount
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -49,6 +56,73 @@ from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingHistoryPolicy,
     normalize_thinking_history_policy,
 )
+
+
+#: TASK-33621.4 AC#3: the header badge and the Context chip's lead, once the
+#: chat is over its Ask trigger (Inspect's Run line spells it out in full).
+COMPACTION_PAUSE_FORECAST_COPY = "Next send pauses to compact"
+
+
+@dataclass(frozen=True, slots=True)
+class CompactionPauseForecast:
+    """The numbers behind a forecast that the next send will pause (Ask)."""
+
+    used_tokens: int
+    trigger_tokens: int
+    budget_tokens: int
+
+
+def compaction_forecast_rows(
+    messages: Sequence["ConsoleChatMessage"],
+    effective_memory: EffectiveMemoryResult,
+) -> tuple[tuple[dict[str, str], ...], int] | None:
+    """Rows the Ask trigger counts for the next send, and its complete turns.
+
+    TASK-33621.4 AC#3. Mirrors the send preflight: conversation tokens are the
+    memory text plus the turns after its boundary; transcript notices and
+    unfinished replies are not history, and the draft is the next request,
+    not history. The preflight never asks under a legacy prefix and plans a
+    range differently, so those shapes (and a boundary that is not on this
+    path) forecast nothing rather than guess.
+
+    Args:
+        messages: The active path's admitted transcript rows, oldest first.
+        effective_memory: The memory the next send would use.
+
+    Returns:
+        ``(rows, complete_turns)`` to count, or None when not modelled.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    rows: list[dict[str, str]] = []
+    start = 0
+    if effective_memory.kind is EffectiveMemoryKind.GENERATED_PREFIX:
+        memory = effective_memory.memory
+        boundary = memory.boundary_message_id if memory is not None else None
+        start = next(
+            (
+                index + 1
+                for index, message in enumerate(messages)
+                if boundary and message.persisted_message_id == boundary
+            ),
+            -1,
+        )
+        if memory is None or start < 0:
+            return None
+        # Wrapped as the send carries it: the wrapper's safety copy counts.
+        rows.append(dict(tagged_memory_message(memory.summary_text)))
+    elif effective_memory.kind is not EffectiveMemoryKind.RAW:
+        return None
+    turns = 0
+    for message in messages[start:]:
+        if message.role is ConsoleMessageRole.SYSTEM or (
+            message.role is ConsoleMessageRole.ASSISTANT
+            and message.status != "complete"
+        ):
+            continue
+        rows.append({"role": message.role.value, "content": message.content})
+        turns += message.role is ConsoleMessageRole.ASSISTANT
+    return tuple(rows), turns
 
 
 _REQUIRED_THINKING_HISTORY_REASON = (
@@ -114,6 +188,39 @@ class ConsoleContextControlState:
     #: accounting; empty until a send has been prepared this session.
     breakdown_rows: tuple["ContextBreakdownRow", ...] = ()
     system_prompt_delta_tokens: int = 0
+    #: TASK-33621.4: the conversation's own tokens and complete turns as the
+    #: next send's preflight counts them (``compaction_forecast_rows``);
+    #: None when not measured.
+    forecast_tokens: int | None = None
+    forecast_units: int = 0
+    forecast_unavailable_reason: str = ""
+    forecast_high_context: bool = False
+
+    @property
+    def compaction_pause_forecast(self) -> CompactionPauseForecast | None:
+        """The numbers when the next send will pause for compaction (Ask).
+
+        The same ``decide_compaction`` the send preflight runs, but on a
+        display estimate (``compaction_forecast_rows``); the hold counts the
+        prepared request. Near the trigger the two can differ by that error.
+        """
+        budget = self.conversation_budget_tokens
+        trigger = self.compaction_trigger_tokens
+        if (
+            self.forecast_tokens is None
+            or self.request_overhead_tokens is None
+            or budget is None
+            or trigger is None
+        ):
+            return None
+        decision = decide_compaction(
+            self.resolved_policy,
+            conversation_tokens=self.forecast_tokens,
+            compactable_units=self.forecast_units,
+        )
+        if decision is not CompactionDecision.ASK:
+            return None
+        return CompactionPauseForecast(self.forecast_tokens, trigger, budget)
 
     @property
     def conversation_budget_tokens(self) -> int | None:
@@ -386,12 +493,16 @@ def build_console_context_control_state(
     conversation_tokens: int | None = None,
     request_overhead_tokens: int | None = None,
     provider_input_cap_tokens: int | None = None,
+    provider_output_cap_tokens: int | None = None,
     safety_margin_tokens: int | None = None,
     busy: bool = False,
     status_message: str = "",
     thinking_history_policy: object = None,
     thinking_history_effective_policy: EffectiveThinkingHistoryPolicy | None = None,
     accounting: "ConsoleRequestTokenAccounting | None" = None,
+    forecast_tokens: int | None = None,
+    forecast_units: int = 0,
+    forecast_unavailable_reason: str = "",
 ) -> ConsoleContextControlState:
     """Build a UI snapshot from the current estimate and owned policy values.
 
@@ -406,6 +517,8 @@ def build_console_context_control_state(
         context_window_tokens=estimate.token_limit,
         requested_response_tokens=settings.max_tokens,
         context_window_verified=estimate.token_limit_verified is not False,
+        provider_input_cap_tokens=provider_input_cap_tokens,
+        provider_output_cap_tokens=provider_output_cap_tokens,
     )
     response_max = request_capacity.effective_response_tokens
     if safety_margin_tokens is None:
@@ -485,6 +598,9 @@ def build_console_context_control_state(
         system_prompt_delta_tokens=(
             accounting.system_prompt_delta_tokens if accounting is not None else 0
         ),
+        forecast_tokens=forecast_tokens,
+        forecast_units=forecast_units,
+        forecast_unavailable_reason=forecast_unavailable_reason,
     )
 
 
@@ -562,6 +678,27 @@ def build_console_context_cost_state(
     # send, and that refusal names the fix; the chip drops the segment.
     context_part = "" if fullness == "unknown" else f"Context {fullness} · "
     compact_part = "" if fullness == "unknown" else f"Ctx {fullness} · "
+    # TASK-33621.4 AC#3: lead with it, so a clipped strip still shows it.
+    forecast = getattr(context, "compaction_pause_forecast", None)
+    if forecast is not None:
+        context_part = f"{COMPACTION_PAUSE_FORECAST_COPY} · {context_part}"
+        compact_part = f"Pauses to compact · {compact_part}"
+        compaction_line += (
+            " Estimated next send pauses for compaction approval: "
+            f"~{format_context_tokens(forecast.used_tokens)} of "
+            f"{format_context_tokens(forecast.budget_tokens)} conversation tokens."
+        )
+    elif context.forecast_unavailable_reason:
+        advisory = (
+            "High context · forecast unavailable"
+            if context.forecast_high_context
+            else "Compaction forecast unavailable"
+        )
+        context_part = f"{advisory} · {context_part}"
+        compact_part = f"{'High context · ' if context.forecast_high_context else ''}Forecast unavailable · {compact_part}"
+        compaction_line += (
+            f" Compaction forecast unavailable: {context.forecast_unavailable_reason}"
+        )
     return replace(
         cost,
         label=(

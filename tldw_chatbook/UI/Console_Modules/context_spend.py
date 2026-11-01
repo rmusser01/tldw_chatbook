@@ -50,6 +50,7 @@ from ...Widgets.Console import ConsoleSettingsSummary
 from ...Widgets.Console.console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
+    compaction_forecast_rows,
 )
 from ...Widgets.Console.console_status_chips import ConsoleStatusChips
 from ..Console_Modules import console_spend_projection as spend
@@ -258,6 +259,7 @@ class ConsoleContextSpendController:
         self._console_estimate_cache = None
         self._console_estimate_cache_owners = None
         self._console_settled_context_cache = None
+        self._console_compaction_forecast_cache = None
         self._console_settled_spend_cache = None
         self._console_cost_projection_tokens_cache = None
         self._last_console_context_control_state = None
@@ -621,7 +623,22 @@ class ConsoleContextSpendController:
             accounting = controller.context_breakdown_accounting(session_id)
         except Exception:  # noqa: BLE001 - Preserve optional accounting display fallback.
             accounting = None
-        return build_console_context_control_state(
+        forecast_tokens, forecast_units = self._console_compaction_forecast_inputs(
+            session_id, settings, overrides, global_overrides, memory
+        )
+        mandatory = self._console_compaction_mandatory_estimate(
+            session_id,
+            settings,
+            estimate,
+            controller=controller,
+        )
+        caps = spend.model_token_caps_for_display(self._screen, settings)
+        unavailable = ""
+        estimated_history = forecast_tokens
+        if forecast_units and (mandatory is None or caps is None):
+            unavailable = "Current mandatory input or tool overhead is not measured."
+            forecast_tokens = None
+        state = build_console_context_control_state(
             settings=settings,
             estimate=estimate,
             overrides=overrides,
@@ -636,7 +653,154 @@ class ConsoleContextSpendController:
                 else "auto"
             ),
             thinking_history_effective_policy=thinking_history_effective_policy,
+            forecast_tokens=forecast_tokens,
+            forecast_units=forecast_units,
+            request_overhead_tokens=mandatory,
+            provider_input_cap_tokens=caps[0] if caps is not None else None,
+            provider_output_cap_tokens=caps[1] if caps is not None else None,
+            forecast_unavailable_reason=unavailable,
         )
+        trigger = state.compaction_trigger_tokens
+        if (
+            unavailable
+            and estimated_history is not None
+            and trigger is not None
+            and estimated_history >= trigger
+        ):
+            # An advisory about the displayed estimate, never an ASK verdict:
+            # unknown mandatory material may make compaction impossible.
+            state = replace(
+                state,
+                forecast_high_context=True,
+                forecast_unavailable_reason=(
+                    "Estimated history reaches the displayed compaction trigger; "
+                    "next-send check unavailable."
+                ),
+            )
+        return state
+
+    def _console_compaction_mandatory_estimate(
+        self,
+        session_id: str,
+        settings: ConsoleSessionSettings,
+        estimate: ConsoleSettingsContextEstimate,
+        *,
+        controller: ConsoleChatController,
+    ) -> int | None:
+        """Separate current static input from history; unknown tools stay unknown.
+
+        Count only the current prompt, greeting, draft and staged evidence,
+        with the existing display estimator's single framing base. Historical
+        text is not re-tokenized here. Last-request accounting cannot qualify
+        an agent's current tool surface.
+        This never runs hooks, permission readers, or request previews.
+        """
+        if estimate.used_tokens is None or not spend.console_tokenizer_display_ready(
+            self._screen, settings.model, settings.provider
+        ):
+            return None
+        if (
+            controller._agent_runtime_enabled and controller._agent_bridge is not None
+        ) or controller._resolve_submit_prefill(session_id)[0]:
+            return None
+        store = self._ensure_console_chat_store()
+        if store.pending_attachments(session_id):
+            return None
+        _key, messages, _history = self._console_display_history(
+            store, session_id, controller
+        )
+        if any(message.attachments for message in messages):
+            return None
+        active = store.active_session_id == session_id
+        composer = self._console_composer_or_none() if active else None
+        draft = composer.draft_text() if composer is not None else ""
+        mandatory = self._build_context_estimate(
+            [{"role": "user", "content": draft}] if draft.strip() else [],
+            settings.provider,
+            settings.model,
+            system_prompt=spend.fold_system_prompt(
+                settings.system_prompt,
+                controller._seeded_greeting_text(session_id, messages),
+            ),
+            staged_text=console_prompted_evidence_text(self._pending_launch())
+            if active
+            else "",
+        )
+        return mandatory.used_tokens
+
+    def _console_compaction_forecast_inputs(
+        self,
+        session_id: str,
+        settings: ConsoleSessionSettings,
+        overrides: Any,
+        global_overrides: Any,
+        memory: Any,
+    ) -> tuple[int | None, int]:
+        """The next send's conversation tokens and turns, under Ask only.
+
+        TASK-33621.4 AC#3. Counted from the rows ``compaction_forecast_rows``
+        selects (memory text plus turns after its boundary, no system prompt,
+        sources or draft), once per transcript/memory/model change. Nothing
+        is measured until the memory read has warmed (``memory`` None).
+        """
+        from ...Chat.console_context_compaction import EffectiveMemoryResult
+        from ...Chat.console_context_policy import (
+            ContextCompactionMode,
+            merge_context_policy,
+        )
+
+        if not spend.console_tokenizer_display_ready(
+            self._screen, settings.model, settings.provider
+        ):
+            return None, 0
+        if not isinstance(memory, EffectiveMemoryResult) or (
+            merge_context_policy(
+                global_overrides=global_overrides, conversation_overrides=overrides
+            ).compaction_mode
+            is not ContextCompactionMode.ASK
+        ):
+            return None, 0
+        store = self._ensure_console_chat_store()
+        history_key, messages, history = self._console_display_history(
+            store, session_id, self._ensure_console_chat_controller()
+        )
+        record = memory.memory
+        key = (
+            history_key,
+            memory.kind,
+            getattr(record, "memory_id", None),
+            getattr(record, "revision", None),
+            settings.provider,
+            settings.model,
+        )
+        cached = self._console_compaction_forecast_cache
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        admitted = [
+            message
+            for message in messages
+            if history.request_ids is None or message.id in history.request_ids
+        ]
+        projected = compaction_forecast_rows(admitted, memory)
+        result: tuple[int | None, int] = (None, 0)
+        if projected is not None:
+            rows, units = projected
+            estimate = self._build_context_estimate(
+                list(rows), settings.provider, settings.model
+            )
+            result = (estimate.used_tokens, units)
+        self._console_compaction_forecast_cache = (key, result)
+        return result
+
+    def compaction_pause_expected(self) -> bool:
+        """Whether the active chat's next send will pause for compaction."""
+        state = self._last_console_context_control_state
+        return state is not None and state.compaction_pause_forecast is not None
+
+    def compaction_forecast_unavailable(self) -> bool:
+        """Whether current tool/input facts cannot qualify a forecast."""
+        state = self._last_console_context_control_state
+        return state is not None and bool(state.forecast_unavailable_reason)
 
     def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:
         """Build compact summary state for the active Console session settings."""
@@ -872,24 +1036,28 @@ class ConsoleContextSpendController:
                 auxiliary_usage=tuple(record.usage for record in helper_usage),
                 **spend.pricing_snapshot_options(catalog),
             )
-            historical_media = tokenizer_ready and any(
-                message.role is ConsoleMessageRole.USER
-                and message.attachments
-                and message.id in history.request_ids
-                for message in messages
-            ) and any(
-                row.attachments
-                for row in controller._lightweight_provider_message_rows(
-                    [
-                        message
-                        for message in messages
-                        if message.id in history.request_ids
-                    ],
-                    skip_failed=True,
-                    session_id=session_id,
-                    turn_context=controller.resolve_turn_configuration_snapshot(
-                        session_id
-                    ),
+            historical_media = (
+                tokenizer_ready
+                and any(
+                    message.role is ConsoleMessageRole.USER
+                    and message.attachments
+                    and message.id in history.request_ids
+                    for message in messages
+                )
+                and any(
+                    row.attachments
+                    for row in controller._lightweight_provider_message_rows(
+                        [
+                            message
+                            for message in messages
+                            if message.id in history.request_ids
+                        ],
+                        skip_failed=True,
+                        session_id=session_id,
+                        turn_context=controller.resolve_turn_configuration_snapshot(
+                            session_id
+                        ),
+                    )
                 )
             )
             self._console_settled_spend_cache = (

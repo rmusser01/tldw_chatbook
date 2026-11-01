@@ -127,6 +127,8 @@ CONSOLE_ACTION_COMMANDS: tuple[tuple[str, str], ...] = (
     ("settings", ""),
     ("context", ""),
     ("endpoint", ""),
+    # TASK-33621.4: Compact now, without opening Chat settings.
+    ("compact", ""),
 )
 
 

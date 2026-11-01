@@ -237,6 +237,27 @@ The extracted `console_interrupt_rounds.build_tool_review_hook` handles search P
 
 Four separately-owned concepts: the model context window (server/model data with a 32,000-token fallback), the request builder's reservation/safety windowing, global defaults in Settings, and per-conversation overrides plus memory records. Compaction is tri-state (`[console] compaction_mode` = ask / automatic / off): trigger at token ratio 0.80, target 0.55; the summarizer runs as a content-free-ledger auxiliary call and is never inserted as a chat message; failure behavior is `stop_and_ask` or `omit_older_context`. Manual `/rewind` summarize actions create immutable prefix/range memory records. Micro-compaction runs fire-and-forget on a per-session cadence (`micro_compaction_every_turns`, 0 = off) with an in-flight guard.
 
+The pre-send compaction forecast is owned by
+`UI/Console_Modules/context_spend.py`: the display estimator counts only current
+static mandatory prompt/greeting/draft/staged input. `ConsoleReadinessConfigProjection`
+carries local model input/output caps through its existing finite, current-owner
+metadata read. The gateway and controls share `resolve_request_capacity` and
+`positive_token_cap`. These remain estimates, not prepared-send authority.
+
+When agent runtime is enabled and a bridge is present, next-send behavior is
+unavailable, including light/plain-chat tool surfaces. Last accounting has no
+positive current tool provenance. History above the displayed estimated trigger
+retains a high-context advisory; it never becomes an ASK or Ready verdict.
+`preview_tool_surface` is not invoked: its stock light path can reach
+`PermissionStore.get_kill_switch -> load/mutation_fence`, including corrupt-store
+backup/reset, despite its no-I/O docstring. No planner/provenance owner is added.
+
+`/compact` captures `CommandOrigin` in its synchronous screen action and rechecks
+chat plus visible-composer ownership before its deferred worker admits a call.
+Started outcomes address that session. Cancellation reporting remains
+TASK33621.102: command work is not accepted-turn custody.
+
+
 ## Crash and dispatch recovery
 
 Interrupted turns persist a `ProviderContinuationCheckpoint`; the resume path validates the target/settings and stamps visible warnings, offering retry or discard. `ConsoleDispatchRecoveryState` plus the recovery region present retry/discard from the durable `ConsoleDispatchCheckpoint`. The 0.2 s transcript sync timer plus a 1 s "survivor tick" keep sub-agent activity visible after the primary turn settles.

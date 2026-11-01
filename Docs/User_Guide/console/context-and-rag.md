@@ -117,20 +117,65 @@ and memory:
 - **Ask** (the default). When a message you send would take the chat past its
   compaction threshold, the message is held before anything is sent or saved.
   A card above the transcript shows how many tokens the chat uses out of its
-  budget, and offers three choices:
+  budget and where compaction starts (the trigger, for example "compaction
+  trigger 1,200 tokens (80%)"), and offers four choices:
   - **Compact and send** summarizes older turns, then sends your message. The
     summary is one extra model call and may be billed. If it fails, the card
     stays, says why, and your message is still held.
   - **Send without compacting** sends this one message as it is. Older turns
     that do not fit the model's context window are left out of the request.
+  - **Change policy** opens Chat settings at Context and memory, where you can
+    set **When limit nears** to Automatic or Off, or raise the budget. Your
+    message stays held until you pick one of the other choices.
   - **Cancel send** sends nothing and compacts nothing; your message goes back
     to the composer.
+
+  To see which turns would be summarized before choosing, use `/rewind` ▸
+  **Summarize up to here**: it shows a preview before anything changes, and
+  it works while the message is held (the held message is not offered as a
+  rewind target, because it is not part of the chat yet).
 - **Automatic** compacts and sends without asking.
 - **Off** never compacts.
 
-A send that cannot show the card (a queued prompt, Retry or Regenerate) stops
-with a note instead: use **Compact now** in Chat settings ▸ Context and
-memory (Ctrl+O), then send again.
+For plain-provider requests with measured inputs, you can see an estimated pause coming. Once the chat's history is over its trigger
+under **Ask**, the header badge reads **Next send pauses to compact** (on
+narrow terminals the badge has no room for it), Inspect's "What happens if I
+send now?" Run line and the run chip at the start of the status strip read
+**Pauses for compaction**, and the Context chip starts with **Next send
+pauses to compact** (its tooltip gives the numbers). While a message is held,
+the badge reads **Blocked** and the Run line and run chip **Blocked —
+compaction ask**. F1 help lists the same in its **Context limit** group.
+
+The estimate includes current prompt/draft overhead and model input/output limits.
+Agent/tool-enabled chats show **Forecast unavailable**, including light chats with
+tools: tool availability can change between sends. Above the displayed estimated
+trigger, the Context chip retains a **High context · forecast unavailable**
+advisory. It does not promise that the next send will pause for compaction; the
+real next-send check still decides. Media, response prefills, unknown limits and
+unsupported memory shapes can also lack a forecast.
+
+To compact without sending, type `/compact` or choose **Console: Compact
+context now** from the command palette (Ctrl+P). Both run the same summary as
+**Compact now** in Chat settings ▸ Context and memory (one model call) and
+report the result in the chat.
+
+**Continue**, **Regenerate**, **Retry** and **Edit & resend** cannot show
+the card. Over the trigger they stop before a reply is started (an edited
+message is not added as a new branch), so nothing is marked Failed, and a note
+gives the numbers and the way on: run `/compact`, then try again, or change
+**When limit nears**.
+A message that starts with `$` (a skill) or `/` while Capture is off cannot
+show the card either. Over the trigger it is not sent: the note starts "Not
+sent", your text stays in the composer, and the shelf above the composer lists
+the message with **Restore** and **Discard**. To go on, clear the composer and
+run `/compact`, then choose **Restore** to put the message back and send it.
+Queued prompts and Buddy replies cannot show it either. A queued prompt that
+reaches the trigger is not sent: it goes back to the front of the queue, the
+queue pauses on **Start refused**, and the note starts "Not sent from the
+queue". Run `/compact`, then **Try again** (compacting changes the context, so
+the queue first asks you to review it), or change **When limit nears**. A
+Buddy reply over the trigger is not sent either; Buddy keeps your text and
+shows the same note, and the Console composer is left as it was.
 
 When compacting cannot make enough room, the message is not sent and the note
 says what fills the window and what to change:
