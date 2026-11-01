@@ -19,7 +19,12 @@ from Tests.UI.test_console_received_intent_feedback import (
 from Tests.UI.test_console_send_admission_off_pump import _allow_second_turns
 from Tests.UI.test_console_temporary_capture_flow import _temporary_tab
 from tldw_chatbook import config as config_module
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleDispatchRecoveryKind,
+    ConsoleMessageRole,
+    ConsoleRunStatus,
+)
+from tldw_chatbook.Chat.console_turn_preparation import ConsoleTurnPreparationState
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
@@ -30,6 +35,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
         "hook",
         "memory",
         "create-chain",
+        "temporary-create-chain",
         "temporary-compose",
         "temporary-dispatch",
         "postwrite",
@@ -51,18 +57,33 @@ async def test_accepted_setup_stop_retires_exact_owner(monkeypatch, window):
         composer = case.console._console_composer_or_none()
         held, release = asyncio.Event(), asyncio.Event()
         composed = []
-        chain_release = threading.Event()
+        chain_release, chain_returned = threading.Event(), threading.Event()
         loop = asyncio.get_running_loop()
         ledger = controller._agent_bridge.runs_db.automatic_work
         original_chain = ledger.create_chain
 
         def create_chain(*args, **kwargs):
-            if window == "create-chain" and not held.is_set():
+            if window.endswith("create-chain") and not held.is_set():
                 loop.call_soon_threadsafe(held.set)
                 assert chain_release.wait(20)
-            return original_chain(*args, **kwargs)
+            result = original_chain(*args, **kwargs)
+            chain_returned.set()
+            return result
 
         monkeypatch.setattr(ledger, "create_chain", create_chain)
+        chain_tasks = []
+        original_retain = controller._retain_maintenance_task
+
+        def retain(coroutine):
+            task = original_retain(coroutine)
+            if (
+                controller._active_stream_tasks.get(session_id)
+                is asyncio.current_task()
+            ):
+                chain_tasks.append(task)
+            return task
+
+        monkeypatch.setattr(controller, "_retain_maintenance_task", retain)
         outcomes = []
         original_finish = case.runtime._finish_custodied_turn
 
@@ -151,7 +172,9 @@ async def test_accepted_setup_stop_retires_exact_owner(monkeypatch, window):
         )
         _send(case, "enter")
         try:
-            assert await _until(held.is_set, 20)
+            # Windows native storage admission has measured up to 48.296s.
+            # This is whole-turn readiness, not the Stop/settlement deadline.
+            assert await _until(held.is_set, 60 if sys.platform == "win32" else 20)
             recovery = store.dispatch_recovery_for_session(session_id)
             assert recovery is not None
             assistant_id = recovery.assistant_message_id
@@ -166,9 +189,30 @@ async def test_accepted_setup_stop_retires_exact_owner(monkeypatch, window):
                     accepted_version = db.execute(
                         "SELECT version FROM messages WHERE id=?", (assistant_id,)
                     ).fetchone()[0]
-            if window == "create-chain":
-                assert session_id in controller._active_stream_tasks
+            if window.endswith("create-chain"):
+                assert preparation.state is ConsoleTurnPreparationState.ACCEPTED
+                assert recovery.kind is (
+                    ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED
+                    if temporary
+                    else ConsoleDispatchRecoveryKind.ACCEPTED
+                )
+                assert recovery.preparation_id == preparation.preparation_id
+                assert recovery.runtime_active and not recovery.recovery_needed
+                assert not recovery.in_flight
+                assert (
+                    controller._active_assistant_message_ids[session_id] == assistant_id
+                )
+                task = controller._active_stream_tasks[session_id]
+                assert (
+                    controller._active_submit_preparations[task]
+                    == preparation.preparation_id
+                )
                 assert session_id not in controller._active_cancel_events
+                assert not chain_returned.is_set()
+                assert len(chain_tasks) == 1
+                chain_task = chain_tasks[0]
+                assert chain_task in controller._maintenance_background
+                assert not chain_task.done()
             assert controller.stop_active_run()
             chain_release.set()
             for _ in range(2):
@@ -176,6 +220,15 @@ async def test_accepted_setup_stop_retires_exact_owner(monkeypatch, window):
                 await asyncio.sleep(0)
             assert await _until(ended, 20)
             assert outcomes == ["returned"]
+            if window.endswith("create-chain"):
+                assert await _until(
+                    lambda: chain_task.done()
+                    and chain_task not in controller._maintenance_background,
+                    20,
+                )
+                assert chain_returned.is_set()
+                assert not chain_task.cancelled() and chain_task.exception() is None
+                assert chain_task not in controller._maintenance_background
             assert case.provider_calls == []
             if window == "prewrite":
                 assert settlements == [False]
@@ -244,7 +297,10 @@ async def test_accepted_setup_stop_retires_exact_owner(monkeypatch, window):
                 5,
             )
             _send(case, "enter")
-            reached_provider = await _until(lambda: len(case.provider_calls) == 1, 45)
+            reached_provider = await _until(
+                lambda: len(case.provider_calls) == 1,
+                60 if sys.platform == "win32" else 45,
+            )
             if not reached_provider:
                 # Content-free evidence before teardown can release or cancel work.
                 stacks = {

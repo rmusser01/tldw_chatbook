@@ -1896,3 +1896,4 @@ Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_e
 Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[temporary-dispatch]
 Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[postwrite]
 Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[prewrite]
+Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[temporary-create-chain]

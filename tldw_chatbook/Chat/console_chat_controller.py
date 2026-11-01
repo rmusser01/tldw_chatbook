@@ -11133,6 +11133,9 @@ class ConsoleChatController:
                     persist=self.store.persistence is not None,
                     metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
                 )
+        from .console_pre_provider_stop import AcceptedStopAuthority
+
+        accepted_authority = AcceptedStopAuthority(self, session.id)
         assistant: ConsoleChatMessage | None = None
         citation_repair_session = (
             ConsoleCitationRepairSession(
@@ -11341,6 +11344,8 @@ class ConsoleChatController:
                     else None
                 ),
             )
+            if not accepted_authority.is_current(self):
+                return replace(stream_result, should_clear_draft=False)
             if not stream_result.accepted and origin not in (
                 ConsoleSubmissionOrigin.AGENT_WAKE,
                 ConsoleSubmissionOrigin.GOAL_ITERATION,
@@ -11351,7 +11356,9 @@ class ConsoleChatController:
                 session_id=session.id,
                 user_message_id=echoed_user.id,
                 assistant_message_id=assistant.id,
-                terminal_status=self.run_state_for(session.id).status,
+                terminal_status=(
+                    stream_result.terminal_status or self.run_state_for(session.id).status
+                ),
                 origin=origin,
                 queue_entry_id=queue_entry_id,
                 committed_context_epoch=committed_context_epoch,
@@ -11475,7 +11482,7 @@ class ConsoleChatController:
             ):
                 self._agent_wake_turn_sessions.discard(session.id)
             if assistant is not None:
-                self.store.clear_terminal_citation_state(assistant.id)
+                accepted_authority.store.clear_terminal_citation_state(assistant.id)
             del terminal_citation_finalizer
             del citation_trace_builder
 
@@ -24575,6 +24582,11 @@ class ConsoleChatController:
             turn_context.resolved_destination,
             assistant_message_id,
         )
+        from .console_pre_provider_stop import AcceptedStopAuthority
+
+        setup_authority = AcceptedStopAuthority(self, owner_id)
+        setup_preparation = self.store.preparation_for_session(owner_id)
+        setup_recovery = self.store.dispatch_recovery_for_session(owner_id)
         active_task = asyncio.current_task()
         with self._active_workspace_roots_lock:
             self._active_workspace_roots_by_session[owner_id] = (
@@ -24737,6 +24749,31 @@ class ConsoleChatController:
         except asyncio.CancelledError:
             cancel_event = self._active_cancel_events.get(owner_id)
             recovery = self.store.dispatch_recovery_for_session(owner_id)
+            if (
+                cancel_event is not None
+                and cancel_event.is_set()
+                and assistant_message_id in self._replies_in_pre_provider_setup
+                and setup_recovery is not None
+                and setup_recovery.kind is ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED
+            ):
+                from .console_pre_provider_stop import PreProviderSetupStop
+
+                if not setup_authority.is_current(self):
+                    self._replies_in_pre_provider_setup.discard(assistant_message_id)
+                    return ConsoleSubmitResult(
+                        True, False, terminal_status=ConsoleRunStatus.BLOCKED,
+                        provider_started=False,
+                    )
+                if not setup_authority.live_ephemeral_acceptance(
+                    setup_preparation, setup_recovery, assistant_message_id
+                ):
+                    self._replies_in_pre_provider_setup.discard(assistant_message_id)
+                    raise ConsoleDispatchSettlementError(
+                        "Stopped temporary turn no longer owns its acceptance."
+                    )
+                return await PreProviderSetupStop(
+                    self, assistant_message_id, cancel_event
+                ).settle(owner_id)
             if (
                 cancel_event is not None
                 and cancel_event.is_set()

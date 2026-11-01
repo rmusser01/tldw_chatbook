@@ -48,3 +48,5 @@ Diagnose and repair obsolete test-owned boundaries in the four original Connecti
 ## Final-review fix wave: Temporary accepted ledger interval
 
 Reproduce the real temporary-create-chain case with accepted ephemeral checkpoint and registered stream task but no cancel event. Retain exact live preparation/assistant/task ownership until real reply takeover, through the existing no-SQL temporary settlement, with normal returned runtime task and successful next send. Preserve durable/failed/restored/in-flight refusal, original authority and physical native retirement. This is the complete Important list from final review; stale timing prose is parent-owned and corrected. ADR required: no new ADR; ADR094/230 govern.
+
+Final-review fix: qualify temporary accepted ledger creation through the existing exact accepted authority and no-SQL settlement; causal RED, four affected mounted paths, native successor/refusal controls, and scoped re-review. Existing ADR094/230 applies; no new ADR. Census adds one verified node, preserving the existing prefix.

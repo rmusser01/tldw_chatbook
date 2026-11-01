@@ -652,3 +652,85 @@ async def test_direct_settlement_error_requires_exact_original_acceptance(
                 store._durable_commit_by_preparation[
                     original_continuation.preparation_id
                 ] = original_continuation.commit
+
+
+@pytest.mark.parametrize("replacement", ["store", "persistence", "database", "session"])
+async def test_temporary_chain_stop_refuses_successor_publication(
+    tmp_path, monkeypatch, owned_console_databases, replacement
+):
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Chat.console_chat_models import ConsoleDispatchRecoveryKind
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    db, store, controller, gateway = _controller(tmp_path)
+    owned_console_databases(db, controller)
+    session = store.create_session(session_id="temporary", title="Temporary", ephemeral=True)
+    gateway.deferred_dispatch_boundary = True
+    runs = AgentRunsDB(tmp_path / "temporary-runs.sqlite", client_id="temporary-stop-test")
+    controller._agent_bridge = ConsoleAgentBridge(
+        agent_runs_db=runs, store=store, provider_gateway=gateway
+    )
+    controller._agent_runtime_enabled = False
+    entered, release = threading.Event(), threading.Event()
+    original_chain = runs.automatic_work.create_chain
+
+    def chain(*args, **kwargs):
+        entered.set()
+        assert release.wait(10)
+        return original_chain(*args, **kwargs)
+
+    monkeypatch.setattr(runs.automatic_work, "create_chain", chain)
+    successor = ConsoleChatStore()
+    next_session = successor.create_session(session_id=session.id, ephemeral=True)
+    next_session.draft = "successor draft"
+    next_state = ConsoleRunState(ConsoleRunStatus.IDLE, "Successor ready")
+    persistence = store.persistence
+    task = asyncio.create_task(controller.submit_draft("temporary stop", session_id=session.id))
+    try:
+        assert await _until(entered.is_set, timeout=5)
+        recovery = store.dispatch_recovery_for_session(session.id)
+        assert recovery.kind is ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED
+        preparation = store.preparation_for_session(session.id)
+        assistant_id = recovery.assistant_message_id
+        assert controller._active_stream_tasks[session.id] is task
+        assert session.id not in controller._active_cancel_events
+        controller._deferred_user_stop_markers.add("other-assistant")
+        assert controller.stop_active_run()
+        if replacement == "store":
+            controller.store = successor
+        elif replacement == "persistence":
+            store.persistence = successor.persistence
+        elif replacement == "database":
+            persistence.db = None
+        else:
+            store._sessions[session.id] = next_session
+        messages = tuple(store.all_messages_for_session(session.id))
+        controller._set_run_state(next_state, session_id=session.id)
+        release.set()
+        result = await asyncio.wait_for(asyncio.shield(task), 5)
+        assert result.accepted and not result.should_clear_draft and not result.provider_started
+        assert result.terminal_status is ConsoleRunStatus.BLOCKED
+        assert gateway.calls == 0
+        assert controller.run_state_for(session.id) == next_state
+        assert successor.messages_for_session(session.id) == []
+        assert tuple(store.all_messages_for_session(session.id)) == messages
+        assert next_session.draft == "successor draft"
+        assert store.dispatch_recovery_for_session(session.id) is recovery
+        assert store.preparation_for_session(session.id) is preparation
+        assert assistant_id not in controller._deferred_user_stop_markers
+        assert "other-assistant" in controller._deferred_user_stop_markers
+        assert session.id not in controller._active_cancel_events
+        assert session.id not in controller._active_stop_reasons
+        assert assistant_id not in controller._replies_in_pre_provider_setup
+        assert await _until(lambda: not controller._maintenance_background, timeout=5)
+        assert db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+        assert db.get_connection().execute(
+            "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+        ).fetchone()[0] == 0
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        controller.store = store
+        store.persistence = persistence
+        persistence.db = db
+        store._sessions[session.id] = session

@@ -77,6 +77,35 @@ class AcceptedStopAuthority:
             and any(row is self.session for row in self.store.sessions())
         )
 
+    def live_ephemeral_acceptance(
+        self, preparation: Any, recovery: Any, assistant_id: str
+    ) -> bool:
+        """Prove this exact process-local acceptance still owns terminalization."""
+        from .console_dispatch_checkpoint import ConsoleDispatchCheckpointState
+        from .console_turn_preparation import ConsoleTurnPreparationState
+
+        if self.session is None or preparation is None or recovery is None:
+            return False
+        store = self.store
+        with store.durable_preparation_lock:
+            return (
+                store.persistence is self.persistence
+                and getattr(self.persistence, "db", None) is self.database
+                and any(row is self.session for row in store.sessions())
+                and self.session.ephemeral
+                and store.preparation_for_session(self.session.id) is preparation
+                and preparation.state is ConsoleTurnPreparationState.ACCEPTED
+                and store.dispatch_recovery_for_session(self.session.id) is recovery
+                and recovery.kind is ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED
+                and recovery.preparation_id == preparation.preparation_id
+                and recovery.assistant_message_id == assistant_id
+                and recovery.runtime_active
+                and not recovery.recovery_needed
+                and not recovery.in_flight
+                and recovery.checkpoint is not None
+                and recovery.checkpoint.state is ConsoleDispatchCheckpointState.ACCEPTED
+            )
+
     def accepted_before_dispatch(self, continuation: Any, assistant_id: str) -> bool:
         """Prove no dispatch from this captured owner's exact ACCEPTED state."""
         from .console_dispatch_checkpoint import ConsoleDispatchCheckpointState
@@ -233,7 +262,13 @@ class PreProviderSetupStop:
                 )
             except KeyError:
                 return controller._session_closed_result(session_id=session_id)
-            return _source_controller.ConsoleSubmitResult(True, True, stopped.content)
+            return _source_controller.ConsoleSubmitResult(
+                True,
+                True,
+                stopped.content,
+                terminal_status=controller.run_state_for(session_id).status,
+                provider_started=False,
+            )
         finally:
             self._registrations().discard(assistant_id)
 
@@ -349,25 +384,32 @@ def request_accepted_pre_stream_stop(
             preparation.preparation_id
         )
         recovery = store.dispatch_recovery_for_session(session_id)
-        if (
-            continuation is None
-            or continuation.session_id != session_id
-            or store.durable_acceptance_fingerprint_for(preparation.preparation_id)
-            != continuation.fingerprint
-            or store.durable_turn_commit_for(
-                preparation.preparation_id, fingerprint=continuation.fingerprint
-            )
-            is not continuation.commit
-            or recovery is None
-            or recovery.kind is not ConsoleDispatchRecoveryKind.ACCEPTED
-            or recovery.assistant_message_id != continuation.commit.assistant_message_id
-            or recovery.preparation_id != preparation.preparation_id
-            or recovery.checkpoint != continuation.commit.checkpoint
-            or recovery.in_flight
-            or not recovery.runtime_active
-            or recovery.recovery_needed
-        ):
-            return False
+        ephemeral = AcceptedStopAuthority(
+            controller, session_id
+        ).live_ephemeral_acceptance(
+            preparation, recovery, recovery.assistant_message_id if recovery else ""
+        )
+        if not ephemeral:
+            if (
+                continuation is None
+                or continuation.session_id != session_id
+                or store.durable_acceptance_fingerprint_for(preparation.preparation_id)
+                != continuation.fingerprint
+                or store.durable_turn_commit_for(
+                    preparation.preparation_id, fingerprint=continuation.fingerprint
+                )
+                is not continuation.commit
+                or recovery is None
+                or recovery.kind is not ConsoleDispatchRecoveryKind.ACCEPTED
+                or recovery.assistant_message_id
+                != continuation.commit.assistant_message_id
+                or recovery.preparation_id != preparation.preparation_id
+                or recovery.checkpoint != continuation.commit.checkpoint
+                or recovery.in_flight
+                or not recovery.runtime_active
+                or recovery.recovery_needed
+            ):
+                return False
         tasks = tuple(
             task
             for task, owner_session in controller._active_submit_tasks.items()
@@ -378,20 +420,23 @@ def request_accepted_pre_stream_stop(
         )
         if len(tasks) != 1 or tasks[0] is asyncio.current_task():
             return False
+        assistant_id = recovery.assistant_message_id
+        if ephemeral and (
+            controller._active_stream_tasks.get(session_id) is not tasks[0]
+            or controller._active_assistant_message_ids.get(session_id) != assistant_id
+            or session_id in controller._active_cancel_events
+        ):
+            return False
     # Stream registration precedes ledger/project startup. Keep this exact
     # accepted task's settlement ownership until the actual reply takes over.
-    controller._replies_in_pre_provider_setup.add(
-        continuation.commit.assistant_message_id
-    )
+    controller._replies_in_pre_provider_setup.add(assistant_id)
     controller._active_cancel_events.setdefault(session_id, threading.Event())
     controller._signal_stop(
         session_id=session_id, reason="user" if record_user_stop else "shutdown"
     )
     controller.prompt_queue_coordinator.pause_for_stop(session_id)
     if record_user_stop:
-        controller._deferred_user_stop_markers.add(
-            continuation.commit.assistant_message_id
-        )
+        controller._deferred_user_stop_markers.add(assistant_id)
     controller._cancel_task_on_owner_loop(tasks[0])
     return True
 

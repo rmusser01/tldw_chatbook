@@ -1,6 +1,6 @@
-# PR3320 integration evidence — final review fix pending
+# PR3320 integration evidence — reviewed for merge
 
-Final integration base: `d424d1b6887a0f834ca4f68bcf2103e869e89a9d`. Original source PR head: `ea80c2427c0c3c92ebfa68ce834ff622bd1aa2d6`. Source and repair commits rebased as `e788e2bc6f744407dbe1ed6129fd9ae50a271ae6`; final verification/documentation commit follows. Hosted CI and size limits are explicitly waived by the user. No release, draft, PR3267 or PR3297 action is part of this work.
+Final integration base: `d424d1b6887a0f834ca4f68bcf2103e869e89a9d`. Original source PR head: `ea80c2427c0c3c92ebfa68ce834ff622bd1aa2d6`. Source and repair commits rebased as `e788e2bc6f744407dbe1ed6129fd9ae50a271ae6`; verification and final-review repair are recorded below. Hosted CI and size limits are explicitly waived by the user. No release, draft, PR3267 or PR3297 action is part of this work.
 
 The repair retains exact accepted cancellation ownership through hooks, memory, ledger creation and direct readiness, until the real stream cancellation/settlement owner takes over. Live temporary settlement remains no-SQL and failed/restored states remain closed. Successful terminal writes followed by cleanup errors reconcile original persisted identity without replay. Original store/persistence/database/session authority fences prevent publication into a successor. Both delivery reports require exact still-ACCEPTED evidence before claiming no provider start; uncertain or dispatched evidence stays conservative. Early settlement retires only its own deferred Stop marker.
 
@@ -24,3 +24,17 @@ Final repair `r-c2684b9b` passed13 reporting/marker/prefix cases with frozen has
 The independent full-branch review approved Task2 but returned C0/I1/M1: an early live temporary accepted turn held in real ledger creation lacks the durable continuation required by the early Stop helper. The current124 passing cases do not cover that cross-combination. Publication is held for a causal temporary-create-chain regression and repair. The stale census timing comment is corrected. Final approval and merge have not occurred. Content-free commands, JUnit identities/outcomes and source hashes are exported locally for independent review; profile/config bodies stay private.
 
 No full-suite, real external-provider, native-device or general performance qualification is claimed. Broader queued/wake/capture-on/close paths remain explicitly tracked by TASK33621.81. Existing native ownership, provenance/security guards and all other PRs' auto-merge settings remain intact.
+
+## Final-review temporary ledger repair
+
+The final I1 regression was reproduced at the real manual Temporary ledger creation await: EPHEMERAL_ACCEPTED live ownership, exact registered task/assistant, no cancel event and no provider entry, but Stop returned False (`r-6afd42a1`,32.23s). Existing accepted ownership now covers that interval through the same signal and no-SQL settlement, retaining original store/persistence/database/session and preparation/recovery identity fences. No native lease or durable temporary record was added.
+
+- `r-28af31dd`:53 passed/1 failed, zero errors/skips,348.33s,frozen sources. All33 native cases and all4 mounted paths passed; the sole failure was a new positive unit fixture that still marked its live turn recovery-needed. Its11 negative passes are not used as proof.
+- `r-94195220`:all12 corrected guard controls passed,zero failures/errors/skips,19.80s,frozen sources. Only the positive fixture setup changed; the explicit recovery-needed refusal remains. Combined final-wave evidence qualifies54 distinct cases:33 native,5 existing guards,4 mounted and12 new request guards. This is not an all-green54-case single invocation.
+- First repair attempt `r-f1b25ccd` remains recorded as failed: Stop and task return succeeded, but a new test checked registry absence before the scheduled done callback. The corrected oracle waits for exact task completion and retirement within the unchanged20s bound.
+- Parent independently verified before/after hashes and current source identity: final preservation differs only in the corrected guard file; the final guard run matches all214 enrolled inputs. All5 amended Python files parse; no introduced Ruff findings against b8cee2dc.
+- Census now appends the proven temporary-create-chain node after the exact1302-entry candidate prefix, for1303. The earlier timing-comment finding is corrected. Final scoped review passed as recorded below; no merge is claimed.
+
+Parent final checks: canonical census checker passes1303; exact1302-entry prior prefix retained. Both amended production diagnostic rows match the already-verified inventory (helper1 call/controller70 calls); no new diagnostic or sink. Final diff check passes.
+
+Final scoped independent re-review: I1 ADDRESSED, M1 ADDRESSED; spec PASS, quality PASS, C0/I0/M0. Reviewer independently matched all10 package hashes, all5 final guard-receipt hashes and the4 unchanged code/UI/native preservation hashes; selected JUnit IDs establish54 distinct final-wave passes. The remaining limitations above remain explicit. Current candidate is approved for exact-head publication under the user CI waiver.
