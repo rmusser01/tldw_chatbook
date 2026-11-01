@@ -29,7 +29,9 @@ toasts, and a free-text reason must not be parsed as markup there.
 from __future__ import annotations
 
 import asyncio
+from contextvars import copy_context
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 from loguru import logger
@@ -175,15 +177,26 @@ async def run_command(screen: Any, parse: Any) -> bool:
     and Send show the hold until it is cleared (TASK-33620.1). The path
     lookup and the fsynced write run off the UI loop.
     """
+    from .command_draft import CAPTURED_COMMAND_DRAFT, take_command_draft
+
+    composer = screen._console_composer_or_none()
+    captured = CAPTURED_COMMAND_DRAFT.get()
+    if captured is None and composer is not None:
+        captured = composer.capture_draft_for_send()
     arg = (parse.args or "").strip()
-    if arg.lower() in CLEAR_ARGUMENTS:
-        if await _write_off_loop(screen, EmergencyStopState(active=False)):
-            screen._clear_console_composer_draft()
+    active = arg.lower() not in CLEAR_ARGUMENTS
+    state = EmergencyStopState(active=active, reason=arg if active else "")
+    if await _write_off_loop(screen, state):
+        if captured is not None and composer is screen._console_composer_or_none():
+            token = CAPTURED_COMMAND_DRAFT.set(captured)
+            try:
+                take_command_draft(composer, screen._clear_console_composer_draft)
+            finally:
+                CAPTURED_COMMAND_DRAFT.reset(token)
+        if active:
+            screen.app_instance.notify(ACTIVATED_NOTICE, severity="warning")
+        else:
             screen.app_instance.notify(CLEARED_NOTICE)
-        return True
-    if await _write_off_loop(screen, EmergencyStopState(active=True, reason=arg)):
-        screen._clear_console_composer_draft()
-        screen.app_instance.notify(ACTIVATED_NOTICE, severity="warning")
     return True
 
 
@@ -199,8 +212,18 @@ async def _write_off_loop(screen: Any, state: EmergencyStopState) -> bool:
     Returns whether the write landed. A refused write (a read-only data
     directory, a full disk) is reported, never raised: raised, it escaped the
     command's worker or the strip's message handler and closed the app. The
-    view then follows what the file actually says.
+    view then follows what the file actually says. One app admits one write
+    at a time, across disposable screens and command/chip entry points. Its
+    native Future remains owned until physical retirement, even if the caller
+    is cancelled; a later instruction must retry after that write finishes.
     """
+    app = screen.app_instance
+    if getattr(app, "_console_emergency_stop_write", None) is not None:
+        app.notify(
+            "Emergency stop is already being changed; wait for it to finish, then retry.",
+            severity="warning",
+        )
+        return False
     known = getattr(screen, "_console_emergency_stop_path", None)
     _note_newer_view(screen)  # An arrival read already in flight is older.
 
@@ -216,16 +239,51 @@ async def _write_off_loop(screen: Any, state: EmergencyStopState) -> bool:
         return path, state, None
 
     verb = "set" if state.active else "clear"
+    context = copy_context()
+    submission = Event()
+    future = None
+
+    def invoke():
+        # Executor submission may enqueue before raising while starting a
+        # thread. Only a successfully returned Future permits the file effect.
+        submission.wait()
+        if future is not None:
+            return context.run(write)
+        return None
+
     try:
-        path, recorded, error = await asyncio.to_thread(write)
-    except Exception as exc:  # noqa: BLE001 -- the path itself did not resolve
+        future = asyncio.get_running_loop().run_in_executor(None, invoke)
+    except Exception as exc:  # noqa: BLE001 -- no write was admitted
         _report_write_failure(screen, verb, exc, None)
         return False
-    note_state(screen, path, recorded)
-    if error is None:
-        return True
-    _report_write_failure(screen, verb, error, recorded)
-    return False
+    finally:
+        submission.set()
+    app._console_emergency_stop_write = future
+    cancelled = False
+    success = False
+    try:
+        while not future.done():
+            try:
+                await asyncio.shield(future)
+            except asyncio.CancelledError:
+                cancelled = True
+            except Exception:  # noqa: BLE001 -- consume the exact outcome below
+                break
+        try:
+            path, recorded, error = future.result()
+        except Exception as exc:  # noqa: BLE001 -- the path itself did not resolve
+            _report_write_failure(screen, verb, exc, None)
+        else:
+            note_state(screen, path, recorded)
+            success = error is None
+            if error is not None:
+                _report_write_failure(screen, verb, error, recorded)
+    finally:
+        if app._console_emergency_stop_write is future:
+            app._console_emergency_stop_write = None
+    if cancelled:
+        raise asyncio.CancelledError
+    return success
 
 
 def _report_write_failure(

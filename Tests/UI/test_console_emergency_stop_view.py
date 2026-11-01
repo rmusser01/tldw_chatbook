@@ -50,6 +50,9 @@ class _Screen:
     def _clear_console_composer_draft(self) -> None:
         self.drafts_cleared += 1
 
+    def _console_composer_or_none(self):
+        return None
+
     def _sync_console_control_bar(self) -> None:
         """The repaint every changed view triggers (a no-op here)."""
 
@@ -100,9 +103,9 @@ async def test_an_arrival_read_older_than_a_write_does_not_overwrite_it(
 
     assert read_emergency_stop(path).active is not stale_read_active
     expected = "" if stale_read_active else emergency_stop_hold.HELD_COPY
-    assert screen._console_emergency_stop_copy == expected, (
-        "an arrival read that started before the write overwrote its state"
-    )
+    assert (
+        screen._console_emergency_stop_copy == expected
+    ), "an arrival read that started before the write overwrote its state"
 
 
 def test_an_unknown_stop_path_is_not_resolved_on_the_ui_loop(

@@ -128,9 +128,9 @@ async def test_a_send_during_a_persisted_stop_never_reaches_the_provider(
         )
         # An accepted send would reach the provider double within this wait.
         await _received_until(lambda: bool(case.provider_calls), 2)
-        assert case.provider_calls == [], (
-            "a send during an active emergency stop reached the provider"
-        )
+        assert (
+            case.provider_calls == []
+        ), "a send during an active emergency stop reached the provider"
         # AC#3: Send is held before anything is pressed. A held button's press
         # is a no-op; Enter still dispatches and is refused with the copy.
         assert held, "Send was not held while the emergency stop was active"
@@ -179,9 +179,9 @@ async def test_a_stop_written_elsewhere_after_arrival_still_holds_the_fast_path(
                 5,
             )
             await _received_until(lambda: bool(case.provider_calls), 2)
-            assert case.provider_calls == [], (
-                "a stop written after arrival did not hold the fast path"
-            )
+            assert (
+                case.provider_calls == []
+            ), "a stop written after arrival did not hold the fast path"
             assert refused, "the held send was not refused with the clear command"
             # The send's own read updated the view: the hold is now shown.
             assert send.disabled
@@ -210,9 +210,9 @@ async def test_a_persisted_stop_shows_its_hold_after_a_restart(
     notices = _record_notices(monkeypatch, app)
     async with app.run_test(size=(160, 45), notifications=True) as pilot:
         chat = await _reach_console(app, pilot, "explore_home")
-        assert await _until(pilot, lambda: "Held" in _header_status(chat)), (
-            f"header still reads {_header_status(chat)!r} during an active stop"
-        )
+        assert await _until(
+            pilot, lambda: "Held" in _header_status(chat)
+        ), f"header still reads {_header_status(chat)!r} during an active stop"
         # AC#1: the header's hold state, in place of the readiness word.
         assert _header_status(chat) == HEADER_HOLD
         # AC#1: the strip's persistent chip and its Clear, on the visible
@@ -230,6 +230,13 @@ async def test_a_persisted_stop_shows_its_hold_after_a_restart(
             for notice in notices
         ), notices
         # AC#4: the empty transcript says the hold, never "Ready - type ...".
+        # Its projection schedules refresh_messages; a painted header does
+        # not mean the asynchronously reconciled empty row is painted yet.
+        assert await _until(
+            pilot,
+            lambda: "Emergency stop is active"
+            in str(chat.query_one("#console-empty-body", Static).content),
+        )
         body = str(chat.query_one("#console-empty-body", Static).content)
         assert "Emergency stop is active" in body, body
         assert "type a message to begin" not in body
@@ -246,7 +253,7 @@ async def test_a_persisted_stop_shows_its_hold_after_a_restart(
 
 @pytest.mark.asyncio
 async def test_the_strip_clear_lifts_the_stop_and_the_next_send_gets_a_reply(
-    tmp_path, persisted_stop: Path
+    tmp_path, persisted_stop: Path, record_property
 ) -> None:
     """AC#2: Clear lifts the stop; the header says Ready; a send gets a reply."""
     app, gateway = _console_app(tmp_path)
@@ -261,22 +268,36 @@ async def test_the_strip_clear_lifts_the_stop_and_the_next_send_gets_a_reply(
             if name == "estop-clear"
         )
         await pilot.click("#console-status-text", offset=(start + 1, 0))
-        assert await _until(pilot, lambda: "Held" not in _header_status(chat)), (
-            "the header kept the hold after Clear"
-        )
+        assert await _until(
+            pilot, lambda: "Held" not in _header_status(chat)
+        ), "the header kept the hold after Clear"
         assert not read_emergency_stop(persisted_stop).active
         assert _header_status(chat).startswith("Ready")
         chips = chat.query_one("#console-status-chips", ConsoleStatusChips)
         assert not chips.segment_visible("estop")
         await _type_and_press_enter(chat, pilot, "say cleared")
         store = chat._console_chat_store
-        assert await _until(
-            pilot,
+        # This checks completed dispatch after Clear, not a latency bound.
+        # Cold native preparation can outlive the short projection poll.
+        import time
+
+        started = time.monotonic()
+        replied = await _received_until(
             lambda: any(
                 "cleared-reply" in message.content
                 for message in store.messages_for_session(store.active_session_id)
             ),
-        ), "the send after Clear got no reply"
+            60,
+        )
+        record_property("post_clear_reply_seconds", time.monotonic() - started)
+        assert replied, (
+            "the send after Clear got no reply",
+            len(gateway.payloads),
+            [
+                message.content
+                for message in store.messages_for_session(store.active_session_id)
+            ],
+        )
         assert len(gateway.payloads) == 1
 
 

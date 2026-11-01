@@ -90,7 +90,11 @@ async def test_completed_command_consumes_only_its_capture(
             if edit == "chat-switch":
                 await _switch_to_new_chat(console)
                 expected = "the other chat draft"
-                await _type_into(app, composer, expected)
+                # A new chat may show its setup modal; seed its saved draft
+                # through the same composer load used by navigation, without
+                # making this ownership assertion depend on keyboard focus.
+                await _load(console, expected)
+                assert composer.draft_text() == expected
             elif edit != "unchanged":
                 _key(app, "ctrl+u")
                 assert await _until(lambda: composer.draft_text() == "", 5)
@@ -184,3 +188,36 @@ async def test_repeated_cancel_retains_physical_write_across_screen_instances(
     finally:
         release.set()
         await asyncio.gather(write, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    "enqueue", [False, True], ids=["rejected", "enqueued-then-rejected"]
+)
+async def test_rejected_executor_submission_cannot_write_and_allows_retry(
+    tmp_path, monkeypatch, enqueue
+):
+    path = tmp_path / "stop.json"
+    screen = _Screen()
+    screen._console_emergency_stop_path = path
+    loop = asyncio.get_running_loop()
+    threads = []
+
+    def reject(_executor, callback):
+        if enqueue:
+            thread = threading.Thread(target=callback)
+            threads.append(thread)
+            thread.start()
+        raise RuntimeError("private executor detail must not be shown")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(loop, "run_in_executor", reject)
+        assert not await stop._write_off_loop(screen, EmergencyStopState(active=True))
+    for thread in threads:
+        await asyncio.to_thread(thread.join, 5)
+        assert not thread.is_alive()
+    assert not path.exists()
+    assert getattr(screen.app_instance, "_console_emergency_stop_write", None) is None
+    assert any("RuntimeError" in message for message in screen.notices)
+    assert all("private executor detail" not in message for message in screen.notices)
+    assert await stop._write_off_loop(screen, EmergencyStopState(active=True))
+    assert read_emergency_stop(path).active
