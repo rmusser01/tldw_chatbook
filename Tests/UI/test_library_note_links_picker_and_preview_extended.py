@@ -25,6 +25,7 @@ from Tests.UI.library_note_links_support import (
     LISBON,
     TWO,
     _app,
+    _library,
     _armed_editor,
     _burst,
     _open_note,
@@ -42,7 +43,6 @@ from Tests.UI.library_note_links_support import (
 )
 from Tests.UI.library_quit_guard_support import (
     SIZE,
-    _library,
     _new_blank_note,
     _record_toasts,
     _type,

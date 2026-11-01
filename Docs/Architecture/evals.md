@@ -63,22 +63,36 @@ Only explicit Rename validates and writes the name; a successful Rename posts
 or unreadable imports leave the name edit unchanged. This follows ADR-033's
 narrow state ownership and the existing ADR-150/161 layout contracts.
 
-## Word-bench Save publication
+## Bench Save publication
 
-`BenchEditor.Saved` carries the successful write's originating editor and raw
-form snapshot. The serialized Evals region swap refreshes Catalog and Inspector
-from persisted data, then replaces the detail only if that editor and bench
-selection still apply and its form is unchanged. Applicability is checked after
-the awaited Catalog replacement, immediately before detail replacement. Save
-refresh shares the current selection revision so it cannot supersede a pending
-user selection whose detail has not mounted yet.
+`BenchEditor.Saved` and `CharacterBenchEditor.Saved` retain separate message
+namespaces and carry the successful write's originating editor, bench identity
+and raw form snapshot. The character snapshot includes all six editable fields,
+the CardPicker search text and selected card ids. The serialized Evals region
+swap refreshes Catalog and Inspector from persisted data, then replaces the
+detail only if that editor and its corresponding bench selection still apply
+and its form is unchanged. Applicability is checked after the awaited Catalog
+replacement, immediately before detail replacement. Save refresh shares the
+current selection revision so it cannot supersede a pending user selection
+whose detail has not mounted yet.
+
+The character snapshot also pins an editor-local publication revision. Each
+successful Save advances it, as do synchronous reactive watches of Input text,
+caret/selection and screen focus. Equal-valued later Saves and input returning
+to its submitted spelling therefore cannot make an older publication apply.
+An unchanged ordinary Save still reloads canonically. The external focus watch
+uses Textual's owner lifecycle: closing editor owners are pruned on the next
+focus change; no private watcher list is edited directly by the editor.
 
 Later accepted input therefore retains the actual child widgets, focus, caret
 and selection; it stays unsaved until another Save. The editor advances its
 dirty baseline on successful writes so later edits are compared with the
-submitted snapshot. An unchanged ordinary Save still reloads cleaned persisted
-values and discards pre-existing uncreated target mini-form text. Validation,
-write failure and explicit Revert retain their existing paths. This follows
+submitted snapshot. Raw spelling changes such as `0.7` to `0.70` preserve the
+editing context even though they are not semantically dirty. An unchanged
+ordinary Save still reloads cleaned persisted values; word benches also discard
+pre-existing uncreated target mini-form text. Validation, write failure,
+explicit Revert and run-completion dirty-editor guards retain their existing
+paths. This follows
 [ADR-011](../../backlog/decisions/011-chatbook-workbench-ui-system.md),
 [ADR-033](../../backlog/decisions/033-application-session-state-ownership.md),
 [ADR-150](../../backlog/decisions/150-design-token-system-and-design-language.md)

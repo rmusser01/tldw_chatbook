@@ -1486,3 +1486,7 @@ the CLI exit. If a captured display ends mid-section, preserve it and direct
 a read-only CLI invocation's stdout to a regular file before comparing the
 full notes and plan. Do not repeat a successful edit to repair its display: an
 append-plan operation could duplicate steps.
+
+## Bound catalog output by fields, not lines (PR3290 CI repair, 2026-10-29)
+
+A root investigation used Get-Content -TotalCount4 on its single-line52MB task-catalog JSON. The line limit emitted the entire corpus and the tool truncated it, producing noisy unusable output. Load the JSON in Python and print only selected IDs/titles/counts or bounded excerpts; keep the corpus private. A line count is not a size bound for machine-generated single-line data.

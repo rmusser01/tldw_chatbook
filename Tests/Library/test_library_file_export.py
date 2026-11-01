@@ -597,8 +597,9 @@ async def test_prompt_export_to_a_new_file_succeeds_where_hard_links_are_unsuppo
         assert _names(destination.parent) == ["Weekly review coach.md"]
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("refusal", LINK_REFUSALS)
-def test_note_export_to_a_new_file_succeeds_where_hard_links_are_unsupported(
+async def test_note_export_to_a_new_file_succeeds_where_hard_links_are_unsupported(
     tmp_path, monkeypatch, refusal
 ):
     from tldw_chatbook.UI.Library_Modules import library_file_export as seam
@@ -608,24 +609,22 @@ def test_note_export_to_a_new_file_succeeds_where_hard_links_are_unsupported(
     destination = _export_folder(tmp_path) / "Reading list.md"
     app = _FakeApp()
     finished: list[tuple[object, dict]] = []
-    screen = SimpleNamespace(
-        app=app,
-        app_instance=SimpleNamespace(notify=app.notify),
-        _finish_library_notes_operation=lambda operation, **kw: finished.append(
-            (operation, kw)
-        ),
-    )
-
-    seam.export_library_note_file(
-        screen,
-        destination,
-        "markdown",
-        "Reading list",
-        "Three books.",
-        "books",
-        "note-1",
-        "operation-token",
-    )
+    async with _prompt_worker_screen(app) as screen:
+        screen.app_instance = SimpleNamespace(notify=app.notify)
+        screen._finish_library_notes_operation = (
+            lambda operation, **kw: finished.append((operation, kw))
+        )
+        seam.export_library_note_file(
+            screen,
+            destination,
+            "markdown",
+            "Reading list",
+            "Three books.",
+            "books",
+            "note-1",
+            "operation-token",
+        )
+        await screen.workers.wait_for_complete()
 
     assert app.notices == [
         ("Note exported successfully to ~/exp/Reading list.md", "information")

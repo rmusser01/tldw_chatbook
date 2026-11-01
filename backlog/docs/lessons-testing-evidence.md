@@ -22457,6 +22457,12 @@ showed the unrelated copy changes. The patch was rebuilt from exact Git bytes
 decoded as UTF-8, all unrelated method/string ASTs were compared again, and the
 intermediate verification runs were excluded from final evidence.
 
+During PR3290 backlog integration (2026-10-31), the same mistake in a follow-up
+test-helper edit changed the expected deleted-note notice while the production
+notice stayed intact. The mouse journey reached its last assertion but timed
+out comparing the corrupted text. Restoring original UTF-8 literals and rerunning
+all three affected link journeys passed; intermediate passes were not reused.
+
 Use explicit `encoding="utf-8"` for repository text reads and writes, including
 small follow-up scripts. For a Unicode-heavy large file, inspect the complete
 diff and compare untouched method/string ASTs before treating targeted green
@@ -22891,6 +22897,7 @@ PR #3283 passed all 23 application test jobs, all 17 UI shards and Perf Guard, t
 PR3283's Media journey saw no highlighted rows after Edit Save even though the Reader had the edited title. A held native Canvas mount reproduced that exact boundary: loading was false and scopes matched, but DOM rows were empty inside Textual's batch; canonical selection/action identity stayed on item3 and the last render-eligible frame retained its cue. Releasing mount published the edited row and cue. The uninstrumented CI interval is inferred from this matching witness, not directly captured.
 
 Wait for the accepted replacement row objects and edited title before the separate semantic cue assertion. Do not treat settled service/controller flags as a DOM publication receipt, wait on the cue itself, or add an arbitrary pause. A cue-removed negative control must still fail after publication. Actual RED03/GREEN source/XML receipts and native hold evidence are retained in the Textual follow-up QA records.
+
 ## Native Windows handle identity must match Python stat widths
 
 **TASK-37174, 2026-10-28.** While validating Console tool-disclosure recovery
@@ -23327,3 +23334,17 @@ shrink their payloads or suppress pytest's environment handling to hide the fail
 ## Installed ALTER statements can reparse another table's pure CHECK
 
 **TASK-34975 qualification, 2026-10-28.** Twenty-one real restricted historical restores returned validation unavailable. An exception/authorizer probe identified an installed portrait ADD COLUMN reparsing the unrelated Canvas payload CHECK while trusted_schema was off. The existing exact-catalog pure-CHECK scope already handled validation but did not cover this installed migration. The first portrait-only correction passed causal success/deny/cancel controls, but the full affected repeat exposed the same CHECK failure during the installed v76 RENAME. The final scope authenticates the complete pre-step catalog and covers each fixed installed migration step, retiring before post-step validation. Current hybrid tests also exposed missing frozen v83/v84 catalog/stamp admissions; exact known lineages were added without broadening SQL or version matching. Pin authority inside the actual ALTER callback as well as before/after the scope, and retain direct-SQL denial and cancellation/rollback controls. A generic unavailable result is a reason to trace the refusal, not permission to weaken archive validation.
+
+## Prepare editing context before holding the parent message pump (TASK-37266, 2026-10-28)
+
+The first Character Bench Save-publication regression run sent special keys while the Screen pump was deliberately held. Binding dispatch reached that held pump and timed out before the intended assertion; shutdown then obscured it as `No screens`. Preparing focus and selection through Pilot before the hold, then posting printable native keys to the focused child, reached the actual draft-replacement assertion. The invalid run was retained separately from intended RED evidence. A later GREEN observer also needed to tolerate zero editor matches during the subsequent explicit Save's legitimate remove/mount gap; its final persistence assertion stayed unchanged. Do not turn harness dispatch or intermediate DOM failures into evidence of the product defect.
+
+
+## Freeze the checkout while partition controls read the live census (TASK-37266..37268, 2026-10-28)
+
+The root rebased after starting the corrected UI partition controls. Two cases captured one census then invoked shard subprocesses while Git temporarily restored the inherited census; they reported missing/extra selectors even though the final ordering conserved all1184. The frozen exact22/23 retries passed without changing product, checker or assertions. Do not rebase or mutate census/workflow sources while controls partition the live checkout; preserve mixed-checkpoint runs as invalid evidence rather than repairing a correct partition.
+
+
+## Preserve the fixture layer when probing native UI controls (PR3290 CI repair, 2026-10-29)
+
+The first held-folder probe was collected from scratch outside Tests/UI. It failed marker registration before App execution, and config import occurred before the UI fixture bootstrap. It was invalid evidence and kept private. Selecting the original Tests/UI node and installing an observation/probe plugin preserved the real UI conftest/bootstrap/profile guards; later native runs reproduced the actual folder-publication and retired-row message gap. Do not mistake a scratch test with the same code for the original collection/fixture environment, and never count its setup failure as product RED.

@@ -275,4 +275,6 @@ async def test_note_export_onto_an_existing_file_asks_escape_keeps_it_replace_wr
             message="the note status did not reach Export complete.",
         )
         success = [m for m in _notice_messages(host) if "exported successfully" in m]
-        assert success and str(destination) in success[-1], _notice_messages(host)
+        assert success and str(destination).replace("\\", "/") in success[-1].replace(
+            "\\", "/"
+        ), _notice_messages(host)

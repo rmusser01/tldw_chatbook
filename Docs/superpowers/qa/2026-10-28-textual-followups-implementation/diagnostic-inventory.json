@@ -1,0 +1,70 @@
+{
+  "base": "3efe8476cebf70eceafa605d1abed76a4aad4e0e",
+  "steps": [
+    {
+      "args": [
+        "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "scripts/check_persistent_diagnostic_inventory.py"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "production diagnostic owners or persistent-sink topology changed; review the diff below before running --write\nowners:\n  ~ changed: tldw_chatbook/UI/Library_Modules/library_file_export.py 4/b4a748817136c4c4f8de -> 4/c352738411d1464094ba  (same count, content changed (reworded / re-levelled / new args / re-indented) -- use --statements to see which)\nNext: read every row above and confirm each change is one you intended.\n  - a call_count delta means a diagnostic was added or deleted;\n  - an unchanged count with a changed digest means one was reworded,\n    re-levelled, given different arguments, or merely RE-INDENTED -- check\n    it does not now interpolate user content, secrets, or paths into a\n    persistent sink;\n  - a sink-topology row means a new file/handler destination appeared.\nThe pin stores only an aggregate per-file digest, so the rows above can name\nWHICH files changed and by how much, never the statement text -- and the\ninterpolation check just above needs that text. Recover it with:\n  base=$(git log -1 --format=%H -- Docs/security/production-diagnostic-inventory.json)\n  python scripts/check_persistent_diagnostic_inventory.py \\\n      --statements <each path listed above> --since $base\nThat prints the added and removed STATEMENTS themselves, and separates the\nones that only moved or re-indented from the ones whose text really changed.\nDo NOT reach for `git diff` here: the digest covers a statement's own source\ntext, indentation included, so a call that merely shifted nesting level\nreports as changed, and a line diff buries it in unrelated edits -- measured\non tldw_chatbook/Chat/console_fleet_wake.py, whose row changed inside a\n328-line diff in which not one statement had actually changed.\nTreat that base revision as a LOWER BOUND, not the truth: the pin has been\ncommitted stale before (TASK-19572 review found two rows whose drift predated\nthe pin's own commit), so if a listed file shows no logger change in that\nrange, widen it rather than assuming the row is noise.\nOnly then run:  python scripts/check_persistent_diagnostic_inventory.py --write\nand commit Docs/security/production-diagnostic-inventory.json with the review recorded in the task/PR notes.\n"
+    },
+    {
+      "args": [
+        "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "scripts/check_persistent_diagnostic_inventory.py",
+        "--statements",
+        "tldw_chatbook/UI/Library_Modules/library_file_export.py",
+        "--since",
+        "3efe8476cebf70eceafa605d1abed76a4aad4e0e"
+      ],
+      "exit_code": 0,
+      "stdout": "tldw_chatbook/UI/Library_Modules/library_file_export.py: 4 -> 4 diagnostic call(s)\n  moved/re-indented only: 1   removed: 0   added: 0\n\n= moved or re-indented -- statement text is unchanged, NO review needed:\n  = warning c3b18c1752435f0a -> e79bd7a1c8641918  (line 388 -> 379)\n",
+      "stderr": ""
+    },
+    {
+      "args": [
+        "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "scripts/check_persistent_diagnostic_inventory.py",
+        "--write"
+      ],
+      "exit_code": 0,
+      "stdout": "wrote Docs\\security\\production-diagnostic-inventory.json\n",
+      "stderr": ""
+    },
+    {
+      "args": [
+        "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "scripts/check_persistent_diagnostic_inventory.py"
+      ],
+      "exit_code": 0,
+      "stdout": "diagnostic inventory verified: 701 owners, 1053 TASK-492 calls, 56 TASK-31551 calls, 7766 TASK-494 calls, 16 sink files\n",
+      "stderr": ""
+    }
+  ],
+  "old_owner": {
+    "call_count": 4,
+    "diagnostic_digest": "b4a748817136c4c4f8de",
+    "owner": "TASK-494",
+    "path": "tldw_chatbook/UI/Library_Modules/library_file_export.py",
+    "reason": "remaining Chatbook production diagnostic owner"
+  },
+  "new_owner": {
+    "call_count": 4,
+    "diagnostic_digest": "c352738411d1464094ba",
+    "owner": "TASK-494",
+    "path": "tldw_chatbook/UI/Library_Modules/library_file_export.py",
+    "reason": "remaining Chatbook production diagnostic owner"
+  },
+  "every_other_owner_privacy_rule_candidate_and_sink_conserved": true,
+  "qualification": "Actual subprocess stdout, stderr and exit codes. The four sanitized calls retain their arguments/messages/severity/multiplicity; one nested owner moves from _write to _fail. No raw exception logging or sink change."
+}

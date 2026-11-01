@@ -355,8 +355,10 @@ def export_library_note_file(
 
     The body ``LibraryScreen._write_library_note_export_file`` carried before
     TASK-34000.3, with the replace prompt in front of the write, the write
-    made atomic, and the receipt naming the full path. The screen keeps the
-    validation step (``validate_path_simple``) and the operation token.
+    made atomic, and the receipt naming the full path. Picker and Replace
+    callbacks admit a native screen worker and return immediately; only the
+    atomic destination write runs off-loop. The screen keeps validation
+    (``validate_path_simple``) and the captured Notes operation token.
 
     Args:
         screen: The Library screen that owns the notes operation.
@@ -373,30 +375,49 @@ def export_library_note_file(
     notify = getattr(screen.app_instance, "notify", None)
     target = resolve_export_destination(validated_path)
 
-    def _write(*, overwrite: bool = True) -> None:
+    def _fail(exc: Exception) -> None:
+        logger.warning(
+            "Failed to export Library note {} (category={}).",
+            note_id,
+            type(exc).__name__,
+        )
+        if callable(notify):
+            notify(f"Error exporting note: {type(exc).__name__}", severity="error")
+        screen._finish_library_notes_operation(
+            operation,
+            success=False,
+            failure_next_action="check the destination and try again",
+        )
+
+    try:
+        payload = build_note_export_content(
+            title, content, keywords_text, note_id, export_format
+        )
+    except Exception as exc:
+        _fail(exc)
+        return
+
+    async def _write(*, overwrite: bool) -> None:
         try:
-            write_export_text(
-                target,
-                build_note_export_content(
-                    title, content, keywords_text, note_id, export_format
-                ),
-                overwrite=overwrite,
-            )
-        except FileExistsError:
-            raise  # the seam asks instead of overwriting a file that appeared
+            try:
+                await asyncio.to_thread(
+                    write_export_text, target, payload, overwrite=overwrite
+                )
+            except FileExistsError:
+                if overwrite:
+                    raise
+                # The metadata recheck and modal publication stay on-loop,
+                # inside the same recoverable error boundary as the write.
+                request_export_write(
+                    screen.app,
+                    target,
+                    on_replace=_start_write,
+                    on_cancel=_keep,
+                    picked=validated_path,
+                )
+                return
         except Exception as exc:
-            logger.warning(
-                "Failed to export Library note {} (category={}).",
-                note_id,
-                type(exc).__name__,
-            )
-            if callable(notify):
-                notify(f"Error exporting note: {type(exc).__name__}", severity="error")
-            screen._finish_library_notes_operation(
-                operation,
-                success=False,
-                failure_next_action="check the destination and try again",
-            )
+            _fail(exc)
             return
         remember_export_directory(screen.app, validated_path)
         if callable(notify):
@@ -405,6 +426,15 @@ def export_library_note_file(
                 severity="information",
             )
         screen._finish_library_notes_operation(operation, success=True)
+
+    def _start_write(*, overwrite: bool) -> None:
+        # Notes' operation token already owns admission. A later worker must
+        # never cancel this accepted write; native modal callbacks return now.
+        screen.run_worker(
+            _write(overwrite=overwrite),
+            group="library-note-export",
+            exclusive=False,
+        )
 
     def _keep() -> None:
         if callable(notify):
@@ -423,7 +453,11 @@ def export_library_note_file(
         )
 
     request_export_write(
-        screen.app, target, on_replace=_write, on_cancel=_keep, picked=validated_path
+        screen.app,
+        target,
+        on_replace=_start_write,
+        on_cancel=_keep,
+        picked=validated_path,
     )
 
 
