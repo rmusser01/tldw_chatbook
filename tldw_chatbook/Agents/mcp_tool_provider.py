@@ -979,6 +979,15 @@ class MCPToolProvider:
         self._entry_by_llm_name = dict(entries)
         self._not_connected_count = not_connected
 
+    def server_key_for(self, tool_name: str) -> str | None:
+        """The MCP server a composed catalog tool comes from, or ``None``.
+
+        TASK-34100.5.3: plain chat's light surface offers tools from servers
+        the user added, but not chatbook's own built-in source.
+        """
+        entry = self._entry_by_llm_name.get(tool_name)
+        return entry[0].server_key if entry is not None else None
+
     @property
     def not_connected_count(self) -> int:
         """Distinct eligible local servers currently disconnected (T6 affordance)."""

@@ -8940,19 +8940,11 @@ class ConsoleChatController:
         if transformed_saved_rows != original_saved_rows:
             requires_pre_dispatch_authority = True
 
+        # TASK-34100.5.3 review: the speculative attempt carries no tools, as
+        # it did while the bridge had no preview_tool_schemas -- light tools
+        # without the plan's "Answer directly" line drew tool calls, each a
+        # second, authoritative request (tests: test_console_light_surface_voice).
         tools: list[Mapping[str, Any]] = []
-        if (
-            self._agent_runtime_enabled
-            and self._agent_bridge is not None
-            and not prefill
-            and session.assistant_kind != "character"
-        ):
-            preview_tools = getattr(self._agent_bridge, "preview_tool_schemas", None)
-            if callable(preview_tools):
-                try:
-                    tools = list(preview_tools())
-                except Exception:
-                    requires_pre_dispatch_authority = True
         from tldw_chatbook.Chat.console_speculative_voice_session import (
             PreparedSpeculativeVoiceAttempt,
             VoicePromotionSeed,
@@ -10923,7 +10915,7 @@ class ConsoleChatController:
                 *provider_messages,
                 {"role": ConsoleMessageRole.USER.value, "content": hook_context},
             ]
-        if _request_fingerprint(provider_messages) != early_request:
+        if _request_fingerprint(provider_messages) != early_request or skill_bindings:
             # Skills, retrieved evidence or hook context grew the request
             # after the early check (Qodo #1 on PR #3003): check again before
             # commit, so a request they push past the limit is refused or
@@ -10938,6 +10930,7 @@ class ConsoleChatController:
                 echoed_user=echoed_user,
                 queue_entry_id=queue_entry_id,
                 after_side_effects=True,
+                turn_skill_bindings=tuple(skill_bindings),
             )
             if stop is not None:
                 return stop
@@ -15151,6 +15144,7 @@ class ConsoleChatController:
         self,
         tool_count: int | None,
         not_connected_count: int | None,
+        session_id: str | None = None,
     ) -> None:
         """Publish this run's MCP catalog counts for the inspector's "MCP" row.
 
@@ -15178,8 +15172,19 @@ class ConsoleChatController:
         """
         if self.app is None:
             return
+        from tldw_chatbook.Agents.plain_chat_tool_surface import offered_builtin_tool_count
+
+        getattr(self.app, "console_selected_tool_counts", {}).pop(session_id, None)
+        self.app.console_tool_count = offered_builtin_tool_count(self._agent_bridge, session_id)
         self.app.console_mcp_tool_count = tool_count
         self.app.console_mcp_not_connected_count = not_connected_count
+
+    def _publish_selected_tool_count(self, session_id: str, count: int) -> None:
+        """Publish the selected first request on the controller loop."""
+        if self.app is not None:
+            counts = getattr(self.app, "console_selected_tool_counts", {})
+            counts[session_id] = count
+            self.app.console_selected_tool_counts = counts
 
     def _console_tool_kill_switch_reader(self) -> Callable[[], bool] | None:
         """Forward to the documented InterruptRoundHost implementation."""
@@ -15348,7 +15353,7 @@ class ConsoleChatController:
             if local_kill_switch is not None and local_kill_switch._current is not None:
                 local_kill_switch._current()
             if publish_counts:
-                self._publish_mcp_inspector_counts(tool_count, not_connected)
+                self._publish_mcp_inspector_counts(tool_count, not_connected, session_id)
 
         service = getattr(self.app, "unified_mcp_service", None)
         if service is None:
@@ -15451,7 +15456,12 @@ class ConsoleChatController:
             if _retain_empty_plugin_providers and plugin_maximum is not None:
                 return provider
             return None
-        publish(len(catalog), provider.not_connected_count)
+        from tldw_chatbook.Agents.plain_chat_tool_surface import offered_mcp_tool_count
+
+        publish(
+            offered_mcp_tool_count(self._agent_bridge, provider, session_id),
+            provider.not_connected_count,
+        )
         return provider
 
     async def _compose_agent_request_providers(
@@ -23892,6 +23902,7 @@ class ConsoleChatController:
         prepare: Callable[..., Any],
         agent_tools_enabled: bool,
         assessment_sink: Callable[..., None],
+        turn_skill_bindings: tuple[str, ...] = (),
     ) -> None:
         """Forward to the documented compaction preflight implementation."""
         return self._compaction_preflight._assess_request_capacity_only(
@@ -23902,6 +23913,7 @@ class ConsoleChatController:
             prepare=prepare,
             agent_tools_enabled=agent_tools_enabled,
             assessment_sink=assessment_sink,
+            turn_skill_bindings=turn_skill_bindings,
         )
 
     async def _compaction_admission_check(
@@ -23916,6 +23928,7 @@ class ConsoleChatController:
         echoed_user: Any,
         queue_entry_id: str | None,
         after_side_effects: bool,
+        turn_skill_bindings: tuple[str, ...] = (),
     ) -> ConsoleSubmitResult | None:
         """Hold or refuse one composer send before commit (TASK-34350).
 
@@ -23936,6 +23949,7 @@ class ConsoleChatController:
             session_id=session.id,
             resolution=resolution,
             provider_messages=provider_messages,
+            turn_skill_bindings=turn_skill_bindings,
             uncommitted_user_message_id=(
                 echoed_user.id if echoed_user is not None else None
             ),
@@ -23975,6 +23989,7 @@ class ConsoleChatController:
         resolution: ConsoleProviderResolution,
         provider_messages: list[dict[str, Any]],
         uncommitted_user_message_id: str | None,
+        turn_skill_bindings: tuple[str, ...] = (),
     ) -> tuple[ContextCompactionHold | None, str | None]:
         """Forward to the documented compaction preflight implementation."""
         return await self._compaction_preflight._assess_context_compaction(
@@ -23982,6 +23997,7 @@ class ConsoleChatController:
             resolution=resolution,
             provider_messages=provider_messages,
             uncommitted_user_message_id=uncommitted_user_message_id,
+            turn_skill_bindings=turn_skill_bindings,
         )
 
     def _hold_send_for_compaction(
@@ -24054,6 +24070,7 @@ class ConsoleChatController:
         assessment_sink: "Callable[[ContextCompactionHold, CompactionDecision, str | None], None] | None" = None,
         uncommitted_user_message_id: str | None = None,
         ask_bypassed: bool = False,
+        turn_skill_bindings: tuple[str, ...] = (),
     ) -> tuple[list[dict[str, Any]], ConsoleSubmitResult | None]:
         """Forward to the documented compaction preflight implementation."""
         return await self._compaction_preflight._apply_conversation_memory_preflight(
@@ -24072,6 +24089,7 @@ class ConsoleChatController:
             assessment_sink=assessment_sink,
             uncommitted_user_message_id=uncommitted_user_message_id,
             ask_bypassed=ask_bypassed,
+            turn_skill_bindings=turn_skill_bindings,
         )
 
     @checked_generation
@@ -24335,6 +24353,7 @@ class ConsoleChatController:
                     and not prefill
                     and not force_plain
                 ),
+                turn_skill_bindings=skill_bindings,
                 continuation_sidecar=continuation_sidecar,
                 continuation_target=continuation_target,
                 thinking_sidecar=thinking_sidecar,
@@ -26894,6 +26913,7 @@ class ConsoleChatController:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
             # completion (the load-bearing write for resume marker anchoring).
+            reply_loop = asyncio.get_running_loop()
             settled_budgets = []
             accepted_chain = self.prompt_queue_coordinator._chains.get(session_id)
             accepted_turn_id = getattr(
@@ -26966,6 +26986,11 @@ class ConsoleChatController:
                 worktree_repo_authority=worktree_repo_authority,
                 change_root_aliases=turn_context.change_review_root_aliases,
                 change_review_skipped_roots=(turn_context.change_review_skipped_roots),
+                on_tool_surface_selected=(
+                    lambda count: reply_loop.call_soon_threadsafe(
+                        self._publish_selected_tool_count, session_id, count
+                    )
+                ),
                 turn_skill_bindings=skill_bindings,
                 turn_bundle_block=skill_bundle_block,
                 skills_context=(

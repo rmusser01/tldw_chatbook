@@ -244,7 +244,8 @@ soon as you edit that field.
 
 - **Quick setup (recommended)** — connect one provider, pick a default model,
   optionally try a voice and protect your keys, done. Everything else stays at
-  recommended defaults (tools off, RAG off, default theme, notes sync off).
+  recommended defaults (light tools only — date and time, calculator and
+  ask-you-a-question — RAG off, default theme, notes sync off).
   The step count never changes mid-run — the key-protection step is always
   shown, and simply says so when there is nothing to protect (the progress
   tracker then marks it – instead of ✓).
@@ -259,31 +260,55 @@ soon as you edit that field.
 | Model | Default chat model | Settings ▸ Providers & Models |
 | RAG | Embedding model (needs the `embeddings_rag` extras) | Settings ▸ RAG |
 | Speech (full track) | Voice-input transcription language and precision | `[transcription]` in config.toml — no Settings category owns it yet |
-| Tools | Built-in tool gates (all off by default) | Settings ▸ Tools & MCP (Ctrl+9) ▸ Servers ▸ built-in row ▸ **Tool gates**, or `[tools]` in config.toml |
+| Tools | Tools beyond chat's light set: **Full agent tools** and the built-in tool gates (all off by default) | Settings ▸ Tools & MCP (Ctrl+9) ▸ Servers ▸ built-in row ▸ **Tool gates**, or `[tools]` in config.toml |
 | Notes sync | Folder + on/off toggle | [Library ▸ Notes](library/notes.md), the toolbar's Sync panel — not in Settings |
 | Appearance | Theme and splash screen card | Settings ▸ Appearance |
 | Voice | Spoken replies — "No voice for now" (the default), PocketTTS (its own local server), OpenAI (your OpenAI key), a Custom endpoint, or OmniVoice (local, installs its model here); sample + "Test and Hear" (endpoint, model, voice and format under Advanced) | Settings ▸ Speech & TTS |
 | Protect keys | Config encryption (password at startup) | Settings ▸ Privacy & Security ▸ **Encryption**: Encrypt keys, Change password, Turn off encryption (each asks for the master password) |
 
-The Tools step is the only place in setup that turns a tool on, and it says
-so up front: "Everything is off by default. Tools that read or change your
-files still show an approval card every time they run." Each row carries the
-tool's plain-language name and one line about what it does — the read-class
-ones (Read file, List directory, Find files, Search in files, Expand
-document) add that they ask before running unless you approve a longer
-scope, and the ones that write are marked with ⚠. Leaving every switch off
-is a supported outcome: the summary then reads "gates off; the assistant
-may still use chatbook's own tools (sub-agents, web search, notes, Watchlists)
-when the model's context window has room. Turn gates on under Settings ▸
-Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates", which is where the same
-switches live after setup (**Ctrl+9** opens Settings ▸ Tools & MCP). The first half is there because
-the switches are not the whole story: Console's assistant also gets the agent
-runtime (sub-agents, skills), the local web and Watchlists tools
-(`[console] local_tools_enabled`) and chatbook's built-in notes and character
-tools, every call still subject to its MCP Ask/Allow/Off permission. The
-app's internal `chat_with_llm` tool, which the in-process server cannot run,
-is never offered. A self-hosted model whose context window the app has not
-read yet gets a plain request with no tools until it can be sized.
+Plain Console chat starts with a **light tool set**: date and time,
+calculator, and ask-you-a-question (the last one follows its own
+`[tools] ask_user_enabled` switch). It offers no sub-agents, skills, web
+search, Watchlists, workspace, character or other autonomous or costly
+tools until you turn them on. The Tools step says so up front — "Chat starts
+with date and time, calculator and ask you a question; a model with a small
+or not-yet-known context window gets no tools. Everything below is off until
+you switch it on; tools that read or change your files ask before they run."
+— and is the place in setup to turn more on:
+
+- **Full agent tools** (`[tools] full_agent_tools_enabled`, off by default)
+  gives chat the whole agent surface: sub-agents, skills, web search and
+  fetch, Watchlists, workspace tools, character cards, Canvas, chat forks
+  and chatbook's own MCP tools. The local workspace, web and Watchlists
+  master and the character switch still decide those groups within it.
+- Each **built-in** row (Read file, List directory, Write file, Create note,
+  Update note, Find files, Search in files, Expand document) turns on just
+  that tool, and plain chat offers it on the next send without the full
+  agent surface. Each row carries the tool's plain-language name and one
+  line about what it does — the read-class ones add that they ask before
+  running unless you approve a longer scope, and the ones that write are
+  marked with ⚠.
+
+The Summary's **Tools** row then names exactly what chat is offered. With
+nothing switched on it reads "on: date and time, calculator and ask you a
+question, plus tools from MCP servers you add and Library tools in chats you
+allow. Sub-agents, skills, web, Watchlists, workspace tools and characters
+stay off until you turn on Full agent tools under Settings ▸ Tools & MCP ▸
+Servers ▸ built-in row ▸ Tool gates. A model with a small or not-yet-known
+context window gets no tools." With tools switched on it lists them (with Deep
+web research on, the off list says "web search and fetch" rather than "web"),
+and with Full agent tools on it names the agent groups. The same switches live
+there after setup (**Ctrl+9** opens Settings ▸ Tools & MCP); a switch flipped
+there shows the same way if you re-run setup in the same session. Tools from
+an MCP server you add yourself, and Library tools in a conversation that
+allows assistant Library access, are offered in plain chat too; a plugin's own
+MCP tools come with its skills and stay off with them. A message that names a
+skill (`$skill`) gets the full agent surface
+for that turn, since you asked for the skill. The app's internal
+`chat_with_llm` tool, which the in-process server cannot run, is never
+offered. A small local model whose context window cannot hold the light set
+(a server whose window the app has not read yet is planned as 4,096 tokens)
+gets a plain request with no tools and a one-line system prompt.
 
 The Voice step's first choice is **No voice for now**, and it is selected
 unless a voice is already saved: Next then writes nothing, and the step says

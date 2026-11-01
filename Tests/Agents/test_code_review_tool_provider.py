@@ -275,6 +275,7 @@ def test_public_authority_failures_do_not_produce_paths(review_case, failure):
 
 
 @pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("source_case", ["catalog_only"], indirect=True)
 @pytest.mark.parametrize("native_tools", [True, False])
 def test_first_request_preview_uses_same_fresh_review_catalog(
     review_case, native_tools
@@ -319,6 +320,13 @@ def test_first_request_preview_uses_same_fresh_review_catalog(
     ) == second.registry.load_schema("code_review:code_review_read")
     assert first.config.system_prompt == second.config.system_prompt
     assert c.store.usage().retained_contexts == 0
+
+    from tldw_chatbook.Chat.console_tool_surface_preview import SchemaCatalog
+
+    frozen = SchemaCatalog.from_registry(first.registry, first.config.allowed_tools)
+    assert frozen.resolve_owner_for_name("code_review_prepare") is not None
+    schema_only = SchemaCatalog.from_schemas(frozen.schemas, source="code_review")
+    assert schema_only.resolve_owner_for_name("code_review_prepare") is None
 
 
 def test_query_pages_are_complete_canonical_and_projection_has_no_bodies(review_case):

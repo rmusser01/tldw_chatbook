@@ -5222,3 +5222,62 @@ recovery fence. Lazy existing Chat exports fixed the pure-model boundary; the
 same staged operation then committed, reopened its real note and retained all
 80 activation requirements. A later move with its old folder absent also passed.
 Never clear leases or ancestry to hide a runtime import crossing recovery.
+
+## See exactly what a llama.cpp request carried: `llama-server --log-prompts-dir`
+
+**TASK-34100.5.3, 2026-10-05.** To prove which tools plain Console chat sends, the
+app log was no help (it records no request bodies), and `llama-server --verbose`
+logged 3,800 lines per request without the prompt. `--log-prompts-dir <dir>` writes
+each request's rendered prompt, system row and tool template included, to one file
+per request. It showed the first send after setup as a 235-byte tool-less prompt,
+and a later send as 3,288 bytes carrying exactly `calculator`,
+`get_current_datetime` and `ask_user` in the model's native `<tools>` block.
+
+**What to do.** Start your own server on a free port with `--log-prompts-dir` inside
+the QA evidence directory (never restart a shared one), clear the directory before
+each send you want to attribute, and stop the server when done. A port in use makes
+`llama-server` exit at once ("exiting due to HTTP server error"), so check
+`lsof -iTCP:<port> -sTCP:LISTEN` first.
+
+## Re-run size-sensitive live checks after a rebase: schemas grow on dev (TASK-34100.5.3, 2026-10-19)
+
+**Incident.** Before the branch was rebased (review round 2, 2026-10-06), switching on Read file on
+an 8,192-token llama.cpp window sent the light set plus `read_file` (captured with
+`--log-prompts-dir`). After the rebase onto a dev ~2,000 commits newer, the same
+steps sent no tools at all: dev had grown `read_file`'s parameter schema, so the
+light set plus `read_file` measured 907 fenced tokens against the planner's
+all-or-nothing direct-disclosure limit of 819 (10% of the window). No test failed;
+only the live request body showed it.
+
+**What to do.** Any claim that depends on a token budget (what a small window
+carries, whether a request is held or refused) is a measurement of today's schemas
+and prompts. After a rebase, re-run those live checks rather than citing earlier
+evidence, and record the measured sizes next to the claim so a later drift is
+visible.
+
+## The meter's tool share is not the planner's measure, and the Context view's window is not the send's (TASK-34100.5.3, 2026-10-27)
+
+**Incident.** To make a llama.cpp send exercise the "safe set outlasts opt-in
+tools" fallback live, I sized a server window from the context meter: it read
+"tool schemas 489" for the light set and 572 with Read file, so a share
+between them meant `-c 5400`. The planner does not use that number. It tests
+`catalog_schema_tokens`, which measures the same schemas at 780 and 907 (under
+the short model id and the full `.gguf` path alike), so the window the meter
+suggested could not even hold the light set. The sends still carried exactly
+the light set, which only happens at a planning window of about 7,800-9,069
+tokens. And at a server-verified, config-pinned 8,192 window (the Context view
+said "8,192 tokens (server metadata)", verified), three sends in a row carried
+all four tools, which needs at least 9,070, while an in-process
+production-bridge send at a verified 8,192 carried three. On llama.cpp the window
+the send is planned against can differ from the one the Context view shows
+(task-33081 / TASK-34100.5 #6). Earlier in the same run, sends alternated
+between no tools (an unverified 4,096) and all four (no window, so the model's
+own limit).
+
+**What to do.** Compute disclosure thresholds with the planner's own measure
+(`catalog_schema_tokens`, or `build_first_request_schema_plan` in a pytest probe
+under `bootstrap_profile`), never from the meter's tool share. Attribute what a
+send carried by its request body (`--log-prompts-dir`), and by outcome where the
+outcome alone proves the path (here, the light set without `read_file` while
+Read file is on). Do not treat the Context view's "Model window" as proof of
+the window that send was planned against.

@@ -316,8 +316,12 @@ def test_service_keeps_the_planned_surface_with_a_live_progress_inbox(
     from tldw_chatbook.Agents.fleet_messages import MessageStore
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+    # The plain arm plans a 384-token input budget. TASK-34100.5.3 plans
+    # within the Console gateway's ceiling (window - reply - max(512,
+    # window/50)), so that budget needs a 1,024-token window: a 512-token
+    # one leaves the gateway no input at all (512 - 128 - 512 < 0).
     plan = _plan(
-        ContextWindowResolution(4096 if compact else 512, "server metadata", True),
+        ContextWindowResolution(4096 if compact else 1024, "server metadata", True),
         max_tokens=1024 if compact else 128,
     )
     replies = (
@@ -428,6 +432,7 @@ def test_compact_request_budget_survives_runtime_context_additions(
     from Tests.Chat.test_console_agent_project_instructions import _candidate
     from tldw_chatbook.Agents.agent_service import AgentService, ModelRequest
     from tldw_chatbook.Agents.fleet_messages import MessageStore
+    from tldw_chatbook.Chat.console_prepared_request import resolve_request_capacity
 
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
@@ -437,8 +442,12 @@ def test_compact_request_budget_survives_runtime_context_additions(
         if addition == "late-inbox"
         else "Reply with just: hi"
     )
+    # A 3,072-token compact budget. TASK-34100.5.3 plans within the Console
+    # gateway's ceiling (window - reply - max(512, window/50)), so that
+    # budget needs a 4,608-token window; on a 4,096 one the gateway accepts
+    # 2,560 and refuses the late-inbox message (~2,616 tokens) outright.
     plan = _plan(
-        ContextWindowResolution(4096, "server metadata", True),
+        ContextWindowResolution(4608, "server metadata", True),
         max_tokens=1024,
         native_tools=native,
         provider=provider,
@@ -447,6 +456,14 @@ def test_compact_request_budget_survives_runtime_context_additions(
     )
     assert plan.schemas.request_fits
     assert plan.schemas.schema_input_budget_tokens == 3072
+    # The ceiling a compact plan carries through runtime additions is the
+    # gateway's own, so nothing it admits is refused at send.
+    assert (
+        plan.schemas.schema_input_budget_tokens
+        == resolve_request_capacity(
+            context_window_tokens=4608, requested_response_tokens=1024
+        ).effective_input_ceiling_tokens
+    )
     candidate = None
     if addition == "startup":
         candidate = _candidate(tmp_path)
@@ -499,3 +516,38 @@ def test_compact_request_budget_survives_runtime_context_additions(
             assert "read_agent_messages" not in str(call)
     finally:
         db.close()
+
+
+@pytest.mark.parametrize(
+    ("tokens", "source", "verified", "provider"),
+    [
+        (8_192, "model catalog", True, "openai"),
+        (8_192, "server metadata", True, "llama_cpp"),
+        (1_047_576, "model catalog", True, "openai"),
+        # A hosted model's unverified provider fallback is planned as is.
+        (200_000, "provider fallback", False, "anthropic"),
+    ],
+)
+def test_a_window_planned_as_is_leaves_the_gateways_safety_margin(
+    tokens, source, verified, provider
+) -> None:
+    """TASK-34100.5.3 review round 2 (V2-2, R2-1): the planner kept tools
+    whenever the request fit ``window - reply reserve``; the Console gateway
+    refuses anything over ``window - reply reserve - safety margin``. So the
+    planner chose surfaces the gateway then refused -- live, Full agent tools
+    on gpt-4 (8k) failed every send with "(4033 > 3584)". A window planned
+    as is now leaves exactly the gateway's ceiling for the request."""
+    from tldw_chatbook.Agents.first_request_window import planning_window
+    from tldw_chatbook.Chat.console_prepared_request import resolve_request_capacity
+
+    window = ContextWindowResolution(tokens, source, verified)
+
+    limit, reserve = planning_window(window, 4096, provider=provider)
+
+    ceiling = resolve_request_capacity(
+        context_window_tokens=tokens,
+        requested_response_tokens=4096,
+        context_window_verified=verified,
+    ).effective_input_ceiling_tokens
+    assert limit == tokens
+    assert limit - reserve == ceiling

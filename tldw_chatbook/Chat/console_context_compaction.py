@@ -3369,6 +3369,7 @@ class ConsoleCompactionPreflight:
         assessment_sink: "Callable[[ContextCompactionHold, CompactionDecision, str | None], None] | None" = None,
         uncommitted_user_message_id: str | None = None,
         ask_bypassed: bool = False,
+        turn_skill_bindings: tuple[str, ...] = (),
     ) -> tuple[list[dict[str, Any]], ConsoleSubmitResult | None]:
         """Revalidate memory and optionally run one automatic summary call.
 
@@ -3433,6 +3434,7 @@ class ConsoleCompactionPreflight:
                     provider_messages=provider_messages,
                     prepare=prepare,
                     agent_tools_enabled=agent_tools_enabled,
+                    turn_skill_bindings=turn_skill_bindings,
                     assessment_sink=assessment_sink,
                 )
             return provider_messages, None
@@ -3449,20 +3451,26 @@ class ConsoleCompactionPreflight:
         retained_messages = list(projection.rows)
         memory_rows = projection.memory
 
-        tools: list[self.read_global_Mapping()[str, self.read_global_Any()]] = []
-        if agent_tools_enabled and self.read_controller__agent_bridge() is not None:
-            preview = getattr(
-                self.read_controller__agent_bridge(), "preview_tool_schemas", None
+        from tldw_chatbook.Chat.console_tool_surface_preview import preflight_tool_surface
+
+        # TASK-34100.5.3 review round 2: the tools the send plans for THIS request.
+        surface = preflight_tool_surface(
+            self.read_controller__agent_bridge() if agent_tools_enabled else None,
+            resolution,
+            session_id=session_id,
+            messages=[*retained_messages, *memory_rows],
+            turn_skill_bindings=turn_skill_bindings,
+        )
+
+        def flatten_preflight_messages(request):
+            return surface.restore_session_prompt(
+                self.read_global__flatten_preflight_messages()(request), provider_messages
             )
-            if callable(preview):
-                try:
-                    tools = list(preview())
-                except Exception:
-                    tools = []
+
         prepared_before = prepare(
             resolution,
-            retained_messages,
-            tools=tools,
+            surface.request_messages(retained_messages),
+            tools=list(surface.tools),
             apply_safety_window=False,
             continuation_target=continuation_target,
             continuation_sidecar=continuation_sidecar,
@@ -3508,9 +3516,28 @@ class ConsoleCompactionPreflight:
         capacity = prepared_before.capacity
         # TASK-26019: this accounting IS the request's own (AC#2); the
         # breakdown surface reads the latest copy, no re-estimation.
-        self.read_controller__context_accounting_by_session()[session_id] = (
-            prepared_before.accounting
-        )
+        accounting = prepared_before.accounting
+        if surface.system_prompt is not None:
+            # Count only the original prompt, never history or a second send.
+            # The live estimate already includes this prompt; remember only
+            # the signed rendering delta (fenced tools/runtime guidance).
+            original_system = []
+            for row in retained_messages:
+                if row.get("role") != "system":
+                    break
+                original_system.append(row)
+            original = prepare(
+                resolution,
+                [*original_system, {"role": "user", "content": ""}],
+                apply_safety_window=False,
+            )
+            accounting = self.read_global_replace()(
+                accounting,
+                system_prompt_delta_tokens=(
+                    accounting.system_tokens - original.accounting.system_tokens
+                ),
+            )
+        self.read_controller__context_accounting_by_session()[session_id] = accounting
         mandatory_tokens = (
             prepared_before.accounting.non_compactable_tokens
             - prepared_before.accounting.memory_tokens
@@ -3582,7 +3609,7 @@ class ConsoleCompactionPreflight:
                 effective_kind=effective.kind,
             )
             if ruling is None:
-                return self.read_global__flatten_preflight_messages()(semantic), None
+                return flatten_preflight_messages(semantic), None
             decision, micro_escalated = ruling
         if assessment_sink is not None:
             budget = resolved.effective_conversation_budget_tokens or 0
@@ -3614,7 +3641,7 @@ class ConsoleCompactionPreflight:
             self.read_global_CompactionDecision().OFF,
             self.read_global_CompactionDecision().BELOW_TRIGGER,
         }:
-            return self.read_global__flatten_preflight_messages()(semantic), None
+            return flatten_preflight_messages(semantic), None
         if ask_bypassed and decision in {
             self.read_global_CompactionDecision().ASK,
             self.read_global_CompactionDecision().AUTOMATIC,
@@ -3622,7 +3649,7 @@ class ConsoleCompactionPreflight:
             # The user's answer was "do not compact this send" (or "compacted
             # already"); a policy changed to Automatic meanwhile must not
             # compact it anyway (Qodo #2 on PR #3003).
-            return self.read_global__flatten_preflight_messages()(semantic), None
+            return flatten_preflight_messages(semantic), None
         if decision is self.read_global_CompactionDecision().ASK:
             # A composer send is held before it is committed (TASK-34350);
             # this is the path for sends that cannot show the hold card.
@@ -3649,7 +3676,7 @@ class ConsoleCompactionPreflight:
                 decision, resolved, capacity, prepared_before, resolution
             )
             if alert is None:
-                return self.read_global__flatten_preflight_messages()(semantic), None
+                return flatten_preflight_messages(semantic), None
             return provider_messages, blocked(alert)
 
         requested_representation = resolved.policy.compaction_representation
@@ -3703,7 +3730,7 @@ class ConsoleCompactionPreflight:
                     visual_fallback_reason = "local_visual_render_failed"
             if visual_plan is not None and visual_plan.plan is not None:
                 self.read_global_logger().info("console_visual_compaction_prepared")
-                return self.read_global__flatten_preflight_messages()(
+                return flatten_preflight_messages(
                     visual_plan.plan.semantic
                 ), None
             effective_representation = (
@@ -3765,13 +3792,13 @@ class ConsoleCompactionPreflight:
             # An unprofitable single-exchange fold (too small to beat the
             # summary cap) just waits for a later tick -- never a blocked
             # notice from a background pass.
-            return self.read_global__flatten_preflight_messages()(semantic), None
+            return flatten_preflight_messages(semantic), None
         if planned.plan is None:
             if not manual_action and (
                 resolved.policy.failure_behavior
                 is self.read_global_CompactionFailureBehavior().OMIT_OLDER_CONTEXT
             ):
-                return self.read_global__flatten_preflight_messages()(semantic), None
+                return flatten_preflight_messages(semantic), None
             # ADR-097: failure copy is first-use work, outside boot/mount.
             from .console_compaction_failure import compaction_failure_copy
 
@@ -3976,7 +4003,7 @@ class ConsoleCompactionPreflight:
                     else None
                 ),
             )
-            return self.read_global__flatten_preflight_messages()(after), None
+            return flatten_preflight_messages(after), None
         omit = not manual_action and (
             resolved.policy.failure_behavior
             is self.read_global_CompactionFailureBehavior().OMIT_OLDER_CONTEXT
@@ -3988,7 +4015,7 @@ class ConsoleCompactionPreflight:
             return provider_messages, blocked(note)
         if transaction.attempted:  # TASK-33621.3: disclose the billed call once.
             self.read_controller__append_failure_system_row()(session_id, note)
-        return self.read_global__flatten_preflight_messages()(semantic), None
+        return flatten_preflight_messages(semantic), None
 
     async def _assess_context_compaction(
         self,
@@ -3997,6 +4024,7 @@ class ConsoleCompactionPreflight:
         resolution: ConsoleProviderResolution,
         provider_messages: list[dict[str, Any]],
         uncommitted_user_message_id: str | None,
+        turn_skill_bindings: tuple[str, ...] = (),
     ) -> tuple[ContextCompactionHold | None, str | None]:
         """Probe whether this exact request would stop at Ask or cannot fit.
 
@@ -4033,6 +4061,7 @@ class ConsoleCompactionPreflight:
                 resolution=resolution,
                 provider_messages=list(provider_messages),
                 assistant_message_id="",
+                turn_skill_bindings=turn_skill_bindings,
                 agent_tools_enabled=(
                     self.read_controller__agent_runtime_enabled()
                     and self.read_controller__agent_bridge() is not None
@@ -4067,21 +4096,24 @@ class ConsoleCompactionPreflight:
         prepare: Callable[..., Any],
         agent_tools_enabled: bool,
         assessment_sink: Callable[..., None],
+        turn_skill_bindings: tuple[str, ...] = (),
     ) -> None:
         """Report a request's capacity verdict when there is no history yet."""
 
-        tools: list[self.read_global_Mapping()[str, self.read_global_Any()]] = []
-        if agent_tools_enabled and self.read_controller__agent_bridge() is not None:
-            preview = getattr(
-                self.read_controller__agent_bridge(), "preview_tool_schemas", None
-            )
-            if callable(preview):
-                try:
-                    tools = list(preview())
-                except Exception:
-                    tools = []
+        from tldw_chatbook.Chat.console_tool_surface_preview import preflight_tool_surface
+
+        surface = preflight_tool_surface(
+            self.read_controller__agent_bridge() if agent_tools_enabled else None,
+            resolution,
+            session_id=session_id,
+            messages=provider_messages,
+            turn_skill_bindings=turn_skill_bindings,
+        )
         prepared = prepare(
-            resolution, list(provider_messages), tools=tools, apply_safety_window=False
+            resolution,
+            surface.request_messages(provider_messages),
+            tools=list(surface.tools),
+            apply_safety_window=False,
         )
         capacity = prepared.capacity
         try:

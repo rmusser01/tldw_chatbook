@@ -10583,6 +10583,10 @@ class ChatScreen(BaseAppScreen):
             # RAG run advertised "Sources: 1 staged".
             staged_source_count=console_staged_source_count(pending_launch),
             tool_count=self._console_tool_count(),
+            tools_estimate=True,
+            selected_tool_count=getattr(self.app_instance, "console_selected_tool_counts", {}).get(
+                getattr(active_session, "id", None)
+            ),
             mcp_tool_count=self._console_mcp_tool_count(),
             approval_count=self._console_pending_approval_count(),
             system_prompt_set=bool(getattr(settings, "system_prompt", None)),

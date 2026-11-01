@@ -653,7 +653,14 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # PR #3259 (2026-10-31): retain all 1187 current-base entries and append ten reviewed Notes selectors.
 # PR3289 (2026-10-31): retain all1197 current-dev entries and the one mounted rule journey.
 # PR #3290 (2026-10-31): retain all1198 current-dev entries and append44 reviewed Textual nodes.
-MINIMUM_FILES = 1242
+
+# TASK-34100.5.3 (rebased 2026-10-29 onto dev's 1140) appends 1 node at the
+# tail: the Tools & MCP Tool gates pane's fit-to-content pin, which the Full
+# agent tools group changed (about 3 s, 3 of 3 serial): 1140 + 1 = 1141. The
+# task's other new files are bootstrap_profile and run in the PR Fast Lane's
+# admission-sensitive job instead.
+# PR3295, 2026-10-31: retain all1242 dev entries plus the Tool gates node.
+MINIMUM_FILES = 1243
 
 
 def read_census(path: Path) -> list[str]:

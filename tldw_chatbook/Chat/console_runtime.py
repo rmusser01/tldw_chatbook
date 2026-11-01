@@ -5034,6 +5034,10 @@ class ConsoleRuntime:
             return self._agent_bridge
         if self.ensure_activity_receipt_service() is None or self._disposed:
             return None
+        from tldw_chatbook.Agents.plain_chat_tool_surface import (
+            light_surface_configured,
+            tool_kill_switch_engaged,
+        )
         from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 
         runs_db = self._agent_runs_db
@@ -5081,6 +5085,11 @@ class ConsoleRuntime:
             # never a view, so headless wake runs reach it identically.
             ensure_run_hooks=self.ensure_run_hooks,
             get_hooks_v2=self.get_hooks_v2,
+            # TASK-34100.5.3: plain chat's light tool surface unless the user
+            # turned on Full agent tools; read per send, so a switch flipped
+            # in setup or the MCP hub applies on the next send.
+            light_tool_surface=light_surface_configured,
+            tool_kill_switch=functools.partial(tool_kill_switch_engaged, self._app),
         )
         # PR3a-2 Task 4: the survivor-completion attention consumer (durable
         # unseen mark + app-wide toast + deep link), registered NEXT TO

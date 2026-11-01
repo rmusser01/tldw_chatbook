@@ -578,6 +578,9 @@ class ConsoleRequestTokenAccounting:
     rag_context_tokens: int = 0
     rag_attributed: bool = False
     attachment_tokens: int = 0
+    # Ephemeral display metadata: rendered minus original system prompt at
+    # preflight. Signed; not a category or part of the authoritative total.
+    system_prompt_delta_tokens: int = 0
 
     @property
     def non_compactable_tokens(self) -> int:
@@ -1103,6 +1106,18 @@ def build_console_request(
     )
 
 
+def request_safety_margin_tokens(window_tokens: int) -> int:
+    """Tokens a request keeps free of a ``window_tokens`` context window.
+
+    The Console gateway refuses a request over ``window - reply reserve -
+    this margin`` (``resolve_request_capacity``); the first-request planner
+    plans within the same ceiling (``first_request_window.planning_window``)
+    so it never picks a tool surface the gateway then refuses
+    (TASK-34100.5.3 review round 2, V2-2).
+    """
+    return max(MINIMUM_SAFETY_MARGIN_TOKENS, window_tokens // 50)
+
+
 def resolve_request_capacity(
     *,
     context_window_tokens: int | None,
@@ -1148,7 +1163,7 @@ def resolve_request_capacity(
     else:
         source = "unknown"
     margin = (
-        max(MINIMUM_SAFETY_MARGIN_TOKENS, effective_window // 50)
+        request_safety_margin_tokens(effective_window)
         if effective_window is not None
         else 0
     )

@@ -23400,3 +23400,84 @@ failures; Protect now checks the existing bootstrap success result.
 failure contract. Exercise swallowed failures with a real malformed file and a
 retained snapshot as well as an empty cache; a raising double only covers the
 exception branch.
+
+## A `git archive` base extracted into a reused directory can be a different tree (TASK-34100.5.3, 2026-10-05)
+
+**Incident.** For RED proof, `git archive 8c4b36bc50 | tar -x -C <scratchpad>/base`
+went into a directory that already existed: the preceding `rm -rf` had failed with
+"Directory not empty" on read-only pytest garbage, and another agent sharing the
+same session scratchpad had left an older tree there (it also overwrote a helper
+script of mine in the same directory). Runs "on base" then failed nine
+`test_first_request_window_honest_plan.py` tests that pass on the branch, and
+`agent_service.py` in the snapshot lacked code that `git show 8c4b36bc50:` has.
+Every base comparison made from that tree had to be redone.
+
+**What to do.** Extract a base into a fresh, uniquely named directory, and before
+trusting any base run, check the modules your claim depends on:
+`git show <base>:<path> | cmp - <snapshot>/<path>`. Keep scratch helpers in a
+subdirectory with a name no other agent will pick; a shared scratchpad is shared.
+
+## A stand-in resolution can hide a planner failure that only the real one triggers (TASK-34100.5.3 review round 1, 2026-10-06)
+
+**Incident.** The context meter's new re-plan (`ToolSurfacePlanInputs.tool_rows`)
+re-runs `build_first_request_schema_plan` with no conversation messages. Its tests
+built resolutions with `SimpleNamespace(provider=..., model=..., context_window=...,
+reasoning_replay=None)` and passed: the light set on a verified 8,192 window, none on
+an unverified one. Live on llama.cpp (own server and the shared 8181) the Context view
+read "Request overhead unknown" while the request, captured with `--log-prompts-dir`,
+carried `calculator`, `get_current_datetime` and `ask_user`. The gateway pins a
+`reasoning_replay` policy on every local resolution; with one, the planner's token
+count projects history around an active user request, so with no messages it raised
+"A Console provider request requires an active request". The planner catches every
+exception and falls back to a tool-less plan, so nothing failed: the meter just
+counted no tools. A probe with a real `ConsoleProviderResolution` plus
+`resolve_reasoning_policy("auto")` reproduced it in one line (fixed in 2f2f76d29d).
+
+**What to do.** When code reuses a seam that swallows errors into a fallback (the
+schema planner, the preflight's optional preview, the provider gateway), test it with
+the resolution type the gateway really produces, carrying the fields it pins for that
+provider family (`reasoning_replay` for llama.cpp and other local servers,
+`context_window` from the window cache), and assert the positive outcome, never only
+"did not raise". If a live readout disagrees with a captured request, reproduce with
+the real object before blaming an adjacent known issue: this one was first written up
+as the window-cache problem.
+
+## A component that predicts another's verdict must share its ceiling and its input (TASK-34100.5.3 review round 2, 2026-10-19)
+
+**Incident.** Three places decide whether a Console request "fits": the first-request
+planner (`_first_request_plan_fits`: `window - reply reserve`), the provider gateway
+(`resolve_request_capacity`: `window - reply reserve - safety margin`, at least 512
+tokens) and the send preflight, which asks the planner (through the meter's
+re-plan) which tools to count. Each was unit-tested against its own formula and
+input, and all passed. Live on gpt-4 (8k) with Full agent tools on, every short send
+failed with "Mandatory Console request material exceeds the effective input ceiling
+(4033 > 3584)": the planner had kept a discovery surface that fit its 4,096 but not
+the gateway's 3,584. The meter re-planned against a one-row stand-in request instead
+of the conversation, so it counted 3,351 tokens of tools the send (planned against
+the real conversation) never carried, and held a four-message chat for compaction;
+OpenAI reported 510 input tokens for that send.
+
+**What to do.** When one component predicts another's verdict, derive both limits
+from one function (`request_safety_margin_tokens` now feeds both the gateway and
+`planning_window`) and give the predictor the exact input the acceptor will see. Test
+the prediction against the real acceptor (`prepare_chat_request(...).known_overflow`)
+and assert "counted rows == dispatched rows" over several input sizes, not each side
+against its own formula.
+
+
+## The pytest profile variable does not isolate standalone imports (PR #3295, 2026-10-31)
+
+A standalone preview diagnostic set `TLDW_TEST_CONFIG_ROOT` and then imported the
+application helper directly. That selector belongs to `Tests/conftest.py`; without
+pytest bootstrap, config loaded the ordinary CLI profile. Existing logs showed the
+load and an ensured chat-dictionaries directory. The source permits directory
+creation/hardening and participant bookkeeping, so those side effects could not
+be excluded; the profile was not reopened to investigate. No provider request was
+reached and no secret values were printed. Use the private pytest harness for
+application probes, with fresh native 0700 config/TEMP roots and the real-profile
+guard installed before importing application modules.
+
+The same repair also produced a mixed-source RED attempt when production edits
+started before the remaining cases finished. That receipt is explicitly
+unqualified. Subsequent campaigns freeze the source and record start/end hashes;
+the independent frozen single-case RED remains the causal omission evidence.

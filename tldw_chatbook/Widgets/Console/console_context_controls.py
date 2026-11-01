@@ -113,10 +113,81 @@ class ConsoleContextControlState:
     #: TASK-26019: named category rows from the LAST prepared request's
     #: accounting; empty until a send has been prepared this session.
     breakdown_rows: tuple["ContextBreakdownRow", ...] = ()
+    system_prompt_delta_tokens: int = 0
 
     @property
     def conversation_budget_tokens(self) -> int | None:
         return self.resolved_policy.effective_conversation_budget_tokens
+
+    @property
+    def tool_schema_tokens(self) -> int:
+        """The last prepared request's tool schemas (0 before any send).
+
+        TASK-34100.5.3 AC#5: read from the breakdown rows, which every
+        rebuild of this state carries over.
+        """
+        return next(
+            (row.tokens for row in self.breakdown_rows if row.label == "Tool schemas"),
+            0,
+        )
+
+    @property
+    def last_request_overhead_tokens(self) -> int | None:
+        """The last prepared request's non-conversation tokens, if known.
+
+        An explicit ``request_overhead_tokens`` wins; otherwise the system
+        prompt, tool schemas and instruction rows of the last request's
+        breakdown, or ``None`` before any send.
+        """
+        if self.request_overhead_tokens is not None:
+            return self.request_overhead_tokens
+        rows = [row for row in self.breakdown_rows if row.label in _OVERHEAD_ROW_LABELS]
+        return sum(row.tokens for row in rows) if rows else None
+
+    @property
+    def next_request_tokens(self) -> int | None:
+        """Current inputs plus remembered tool/prompt overhead, never the old total."""
+        if self.request_tokens is None:
+            return None
+        return max(
+            0,
+            self.request_tokens
+            + self.tool_schema_tokens
+            + self.system_prompt_delta_tokens,
+        )
+
+    def overhead_label(self) -> str:
+        """The "Request overhead" value, naming the tool schemas' share.
+
+        TASK-34100.5.3 AC#5: the overhead comes from the last prepared
+        request, whose accounting now counts the tools the send carries.
+        Display only: the conversation budget does not subtract it (review
+        round 1, F6 -- the Conversation figure already counts the system
+        prompt). An unmeasured overhead reads "unknown", never "unknown
+        tokens", as ``context_token_row`` does (TASK-33007).
+        """
+        overhead = self.last_request_overhead_tokens
+        if overhead is None:
+            return "unknown"
+        text = f"{format_context_tokens(overhead)} tokens"
+        tools = self.tool_schema_tokens
+        return (
+            f"{text} (tool schemas {format_context_tokens(tools)})" if tools else text
+        )
+
+    def request_estimate_label(self, estimate: ConsoleSettingsContextEstimate) -> str:
+        """Keep the current estimate and qualify its remembered overhead."""
+        label = estimate.label.strip() or "Not estimated"
+        used, limit = estimate.used_tokens, estimate.token_limit
+        head = f"{used:,} / {limit:,} tokens" if used is not None and limit else ""
+        if not self.breakdown_rows or not head or not label.startswith(head):
+            return label
+        tools = self.tool_schema_tokens
+        tool_note = f" (tool schemas {tools:,})" if tools else ""
+        return (
+            f"{self.next_request_tokens:,} / {limit:,} tokens{tool_note}"
+            f"{label[len(head):]} (remembered overhead estimate)"
+        )
 
     @property
     def compaction_trigger_tokens(self) -> int | None:
@@ -203,6 +274,19 @@ def build_console_next_send_spend_state(
         "Response/output spend is added after completion.\n"
         "Cache reads may lower it; cache writes may raise it.",
     )
+
+
+#: The breakdown rows that are not conversation -- system prompt, tool schemas
+#: and instructions -- which "Request overhead" sums (TASK-34100.5.3).
+_OVERHEAD_ROW_LABELS = frozenset(
+    {
+        "System prompt",
+        "Tool schemas",
+        "Retrieved context",
+        "Other instructions",
+        "Instructions & context (unattributed)",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -398,6 +482,9 @@ def build_console_context_control_state(
         breakdown_rows=(
             build_context_breakdown(accounting) if accounting is not None else ()
         ),
+        system_prompt_delta_tokens=(
+            accounting.system_prompt_delta_tokens if accounting is not None else 0
+        ),
     )
 
 
@@ -424,7 +511,8 @@ def build_console_context_cost_state(
         "unavailable",
         "On next send: unavailable\nA next-send spend estimate has not been provided.",
     )
-    used = context.request_tokens
+    # TASK-34100.5.3 review round 1 (B-F1): the tools the send carries count.
+    used = context.next_request_tokens
     ceiling = context.safe_input_ceiling_tokens
     if used is None or ceiling is None or ceiling <= 0:
         fullness = "unknown"
@@ -439,6 +527,8 @@ def build_console_context_cost_state(
             f"Context: ~{format_context_tokens(used)} / "
             f"{format_context_tokens(ceiling)} safe input ({fullness} full)"
         )
+        if context.breakdown_rows:
+            context_line += " (remembered overhead estimate)"
         if (
             context.model_window_tokens is not None
             and not context.model_window_verified
@@ -478,9 +568,7 @@ def build_console_context_cost_state(
             f"{context_part}Current {current_label} "
             f"· On next send {next_send.label}"
         ),
-        compact_label=(
-            f"{compact_part}Now {current_label} · Next {next_send.label}"
-        ),
+        compact_label=(f"{compact_part}Now {current_label} · Next {next_send.label}"),
         tooltip="\n".join(
             (
                 context_line,

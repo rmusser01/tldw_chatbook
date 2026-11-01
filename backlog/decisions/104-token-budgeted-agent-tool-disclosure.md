@@ -128,3 +128,43 @@ a separate task.
 ## Links
 
 - [Design specification](../../Docs/superpowers/specs/2026-08-30-token-budgeted-tool-discovery-design.md)
+
+## 2026-10-31 amendment: Console light surface and preview accounting
+
+TASK-34100.5.3 narrows ordinary Console sends to the named light set (date/time,
+calculator and gated ask-user), plus explicitly enabled built-ins and admitted
+user sources. `tools.full_agent_tools_enabled` defaults off when absent, including
+upgraded profiles. Explicitly admitted skill turns, narrow Goal launches, and
+existing live agent work retain their established full-surface exceptions. These
+exceptions do not create permission or folder authority; code-review providers,
+plugin ceilings, continuation custody and every existing gate still apply.
+
+Preflight reuses the selected first-request plan and request composers: native
+schemas remain provider tool rows; fenced schemas and light/runtime guidance are
+counted in their actual system-prompt representation. Mutable session prompts and
+admitted skill bindings are current-turn inputs, separate from remembered catalog
+and runtime capability snapshots. Text that merely mentions a skill grants nothing.
+ADR-253's compact/plain plans remain frozen: previews must not append progress
+schemas or guidance that dispatch would omit.
+
+Remembered source composition is a qualified estimate until dispatch composes the
+current sources. Previewing must not open providers, read secrets or perform network
+I/O. Dispatch remains the authoritative selected tool count and budget check. This
+trades exact early source freshness for a cheap, non-owning preview.
+
+Full mode still tries ordinary discovery, compact discovery, then plain chat. A
+runtime-free direct light tier remains deferred in TASK-34100.5.3.1: enabling full
+mode can therefore yield fewer directly offered tools on a small window. Historical
+no-tools/inbox-only traces predate compact discovery and are not current guarantees.
+No new runtime authority or capacity limit is introduced by these repairs.
+
+The live Next request estimate retains current draft, history and session-prompt
+changes. It adds the last prepared native tool share and signed system-prompt delta
+(rendered prompt minus original prompt), explicitly as remembered overhead. The
+delta is measured once at preflight using the existing pure prompt-only preparation
+seam; the empty user row is counting input, never dispatched. No history reprocessing,
+source discovery, provider transport, reservation or ledger write is introduced.
+This ephemeral display metadata neither changes prepared totals nor persists a new
+format. Unknown current estimates remain unknown; the last-request breakdown remains
+historical. Changed sources or tool selection may make remembered overhead stale
+until another preflight, so dispatch accounting remains authoritative.

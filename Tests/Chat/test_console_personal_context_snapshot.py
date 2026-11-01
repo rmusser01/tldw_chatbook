@@ -199,6 +199,9 @@ def _real_preview_bridge() -> ConsoleAgentBridge:
     bridge._allowed_tools = ()
     bridge._skills_service = None
     bridge._native_tools_enabled = lambda: True
+    # The constructor's default: no light-surface switch, so the preview plans
+    # the full surface these tests pin (TASK-34100.5.3).
+    bridge._light_tool_surface = None
     return bridge
 
 

@@ -162,9 +162,13 @@ class SummaryStep(SetupStep):
             .get("track")
         )
         if track == wizard_state.TRACK_QUICK:
+            # TASK-34100.5.3: the tools part names the real tool surface;
+            # _render_rows re-derives it from the persisted config.
             self.query_one("#setup-summary-defaults-note", Static).update(
-                "Left at recommended defaults: tools off, RAG off, default theme, "
-                "notes sync off — each lives in Settings when you want it."
+                wizard_state.quick_track_defaults_note(
+                    getattr(getattr(self.wizard, "app_instance", None), "app_config", {})
+                    or {}
+                )
             )
         if self._render_worker is not None and self._render_worker.is_running:
             return
@@ -272,6 +276,15 @@ class SummaryStep(SetupStep):
         except NoMatches:
             self._model_catalog_consent_offered = False
 
+        if (
+            (self.wizard.wizard_data or {})
+            .get(wizard_state.STEP_WELCOME, {})
+            .get("track")
+            == wizard_state.TRACK_QUICK
+        ):
+            # After an await: query(), so a removed subtree is a no-op.
+            for note in self.query("#setup-summary-defaults-note").results(Static):
+                note.update(wizard_state.quick_track_defaults_note(config))
         rows = build_summary_rows(
             config,
             dict(os.environ),

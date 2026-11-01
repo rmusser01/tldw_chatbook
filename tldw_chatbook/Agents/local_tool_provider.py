@@ -4233,9 +4233,7 @@ def _default_specs(
         SEARCH_DEFAULT_RESULT_COUNT,
         SEARCH_ENGINES,
         SEARCH_MAX_RESULT_COUNT,
-        _deep_search_settings,
         web_crawl,
-        web_deep_search,
         web_fetch,
         web_search,
     )
@@ -5503,127 +5501,12 @@ def _default_specs(
     if coerce_bool_setting(
         get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
     ):
-        # Double opt-in (Docs/superpowers/specs/2026-08-07-deep-search-tool-
-        # design.md): a [tools] gate on top of the tool's own per-call
-        # permission Ask default, so web_deep_search is absent from BOTH
-        # the Console catalog and MCP exposure (which reuses this same
-        # provider -- MCP/server.py's module docstring) until explicitly
-        # enabled. The provider builds its spec list once at construction
-        # (see the class docstring), so flipping the gate needs an app
-        # restart -- documented below and in the config template comment
-        # ([SearchSettings] block, config.py).
-        #
-        # Fix round 1: the deadline sentence below used to bake in a static
-        # "240s", drifting silently if an operator configured a different
-        # deep_search_timeout_s. Read from the same settings seam the tool
-        # itself (and timeout_for's derived override) use, at spec-
-        # construction time -- consistent with the restart-to-apply note
-        # already on this whole spec (the provider builds its list once).
-        _deep_search_deadline_s = _deep_search_settings()["deep_search_timeout_s"]
-        specs.append(
-            LocalToolSpec(
-                name="web_deep_search",
-                description=(
-                    "Multi-query web research: expands the question into "
-                    "sub-queries (when [SearchSettings] search_enable_subquery "
-                    "is on), searches, scores results for relevance, and "
-                    "synthesizes a cited answer with a Sources list. Costs "
-                    "real money on paid providers -- makes ~2x-results+3 LLM "
-                    "calls plus up to max_results page fetches per call "
-                    "(~25 LLM calls at defaults). Runs under an internal "
-                    f"{_deep_search_deadline_s}s deadline (configurable via "
-                    "[SearchSettings].deep_search_timeout_s; restart to "
-                    "apply); if that deadline fires before synthesis "
-                    "finishes, returns a partial, explicitly labeled answer "
-                    "instead of failing outright. Opt-in: requires [tools] "
-                    "web_deep_search_enabled = true in config.toml and an "
-                    "app restart to take effect."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "question": {
-                            "type": "string",
-                            "description": "The research question.",
-                        },
-                        "engine": {
-                            "type": "string",
-                            "enum": list(SEARCH_ENGINES),
-                            "description": (
-                                "Optional backend for this call only. Omit to use the current "
-                                "[SearchSettings] search_provider_default shared with basic search; "
-                                "DuckDuckGo when no preference is saved."
-                            ),
-                        },
-                        "max_results": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "description": "Results per query, clamped to [SearchSettings] search_result_max (default: that cap).",
-                        },
-                    },
-                    "required": ["question"],
-                },
-                handler=lambda args: web_deep_search(
-                    args["question"],
-                    engine=args.get("engine"),
-                    max_results=args.get("max_results"),
-                ),
-                exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
-                approval_effects=(
-                    LocalApprovalEffect.NETWORK,
-                    LocalApprovalEffect.LLM_SPEND,
-                ),
-                # network-classed: default ask from the permission store's
-                # global default, same as web_fetch/web_search/web_crawl;
-                # read-only (no repository/filesystem mutation), so no risk
-                # tags -- the [tools] gate above is the extra guard this one
-                # gets beyond that shared default.
-                tags=(),
-            )
-        )
+        specs.append(_web_deep_search_spec())
     if ask_user is not None and coerce_bool_setting(
         get_cli_setting("tools", ASK_USER_GATE_KEY, ASK_USER_DEFAULT_ENABLED),
         ASK_USER_DEFAULT_ENABLED,
     ):
-        # PRD Feature A: registered only when the Console supplies an ask
-        # callback (the todo_* pattern -- absent in headless runs, A10),
-        # exempt from the permission layer (A12), imported lazily so the
-        # module stays off the boot path (ADR-097).
-        import os
-
-        from tldw_chatbook.Internal_Prompts import get_internal_prompt
-
-        from .ask_user_questions import (
-            ASK_USER_DESCRIPTION,
-            ASK_USER_DESCRIPTION_ENV_VAR,
-            ASK_USER_PARAMETERS,
-            resolve_tool_description,
-        )
-
-        # task-31420: the description is a registry prompt (its catalog
-        # default is byte-identical to ASK_USER_DESCRIPTION) so a user can
-        # inspect and override the restraint text like any other prompt the
-        # app puts in front of a model. Precedence is env -> config/registry
-        # -> shipped constant, and every candidate is validated through the
-        # Pydantic `ToolDescriptionText` model before it can reach the spec;
-        # a blank, over-long, or non-text override is skipped, never shipped.
-        description = resolve_tool_description(
-            os.environ.get(ASK_USER_DESCRIPTION_ENV_VAR),
-            get_internal_prompt("agents.ask_user_tool_description"),
-            ASK_USER_DESCRIPTION,
-        )
-        specs.append(
-            LocalToolSpec(
-                name="ask_user",
-                description=description,
-                parameters=ASK_USER_PARAMETERS,
-                handler=_make_ask_user_handler(ask_user),
-                exposure=LocalToolExposure.CONSOLE_ONLY,
-                approval_effects=(),
-                tags=(),
-                gate_exempt=True,
-            )
-        )
+        specs.append(_ask_user_spec(ask_user))
     if character_service is not None and coerce_bool_setting(
         get_cli_setting(
             "tools", CHARACTER_TOOLS_GATE_KEY, CHARACTER_TOOLS_DEFAULT_ENABLED
@@ -5637,6 +5520,224 @@ def _default_specs(
         # since every save still asks via the mutates floor regardless).
         specs.extend(_character_specs(character_service))
     return specs
+
+
+def _web_deep_search_spec() -> LocalToolSpec:
+    """The opt-in ``web_deep_search`` spec (its ``[tools]`` gate is checked by
+    the caller). TASK-34100.5.3 moved it out of ``_default_specs`` so plain
+    chat's context meter can count it without composing a provider."""
+    from tldw_chatbook.Tools.web_tool_impls import (
+        SEARCH_ENGINES,
+        _deep_search_settings,
+        web_deep_search,
+    )
+
+    # Double opt-in (Docs/superpowers/specs/2026-08-07-deep-search-tool-
+    # design.md): a [tools] gate on top of the tool's own per-call
+    # permission Ask default, so web_deep_search is absent from BOTH
+    # the Console catalog and MCP exposure (which reuses this same
+    # provider -- MCP/server.py's module docstring) until explicitly
+    # enabled. The provider builds its spec list once at construction
+    # (see the class docstring), so flipping the gate needs an app
+    # restart -- documented below and in the config template comment
+    # ([SearchSettings] block, config.py).
+    #
+    # Fix round 1: the deadline sentence below used to bake in a static
+    # "240s", drifting silently if an operator configured a different
+    # deep_search_timeout_s. Read from the same settings seam the tool
+    # itself (and timeout_for's derived override) use, at spec-
+    # construction time -- consistent with the restart-to-apply note
+    # already on this whole spec (the provider builds its list once).
+    _deep_search_deadline_s = _deep_search_settings()["deep_search_timeout_s"]
+    return LocalToolSpec(
+        name="web_deep_search",
+        description=(
+            "Multi-query web research: expands the question into "
+            "sub-queries (when [SearchSettings] search_enable_subquery "
+            "is on), searches, scores results for relevance, and "
+            "synthesizes a cited answer with a Sources list. Costs "
+            "real money on paid providers -- makes ~2x-results+3 LLM "
+            "calls plus up to max_results page fetches per call "
+            "(~25 LLM calls at defaults). Runs under an internal "
+            f"{_deep_search_deadline_s}s deadline (configurable via "
+            "[SearchSettings].deep_search_timeout_s; restart to "
+            "apply); if that deadline fires before synthesis "
+            "finishes, returns a partial, explicitly labeled answer "
+            "instead of failing outright. Opt-in: requires [tools] "
+            "web_deep_search_enabled = true in config.toml and an "
+            "app restart to take effect."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The research question.",
+                },
+                "engine": {
+                    "type": "string",
+                    "enum": list(SEARCH_ENGINES),
+                    "description": (
+                        "Optional backend for this call only. Omit to use the current "
+                        "[SearchSettings] search_provider_default shared with basic search; "
+                        "DuckDuckGo when no preference is saved."
+                    ),
+                },
+                "max_results": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Results per query, clamped to [SearchSettings] search_result_max (default: that cap).",
+                },
+            },
+            "required": ["question"],
+        },
+        handler=lambda args: web_deep_search(
+            args["question"],
+            engine=args.get("engine"),
+            max_results=args.get("max_results"),
+        ),
+        exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+        approval_effects=(
+            LocalApprovalEffect.NETWORK,
+            LocalApprovalEffect.LLM_SPEND,
+        ),
+        # network-classed: default ask from the permission store's
+        # global default, same as web_fetch/web_search/web_crawl;
+        # read-only (no repository/filesystem mutation), so no risk
+        # tags -- the [tools] gate above is the extra guard this one
+        # gets beyond that shared default.
+        tags=(),
+    )
+
+
+def _ask_user_spec(ask_user: AskUserCallback) -> LocalToolSpec:
+    """The ``ask_user`` spec (its gate and callback are checked by the caller).
+
+    TASK-34100.5.3 moved it out of ``_default_specs``: ``ask_user`` is part of
+    plain chat's light surface, whose context meter counts it.
+    """
+    # PRD Feature A: registered only when the Console supplies an ask
+    # callback (the todo_* pattern -- absent in headless runs, A10),
+    # exempt from the permission layer (A12), imported lazily so the
+    # module stays off the boot path (ADR-097).
+    import os
+
+    from tldw_chatbook.Internal_Prompts import get_internal_prompt
+
+    from .ask_user_questions import (
+        ASK_USER_DESCRIPTION,
+        ASK_USER_DESCRIPTION_ENV_VAR,
+        ASK_USER_PARAMETERS,
+        resolve_tool_description,
+    )
+
+    # task-31420: the description is a registry prompt (its catalog
+    # default is byte-identical to ASK_USER_DESCRIPTION) so a user can
+    # inspect and override the restraint text like any other prompt the
+    # app puts in front of a model. Precedence is env -> config/registry
+    # -> shipped constant, and every candidate is validated through the
+    # Pydantic `ToolDescriptionText` model before it can reach the spec;
+    # a blank, over-long, or non-text override is skipped, never shipped.
+    description = resolve_tool_description(
+        os.environ.get(ASK_USER_DESCRIPTION_ENV_VAR),
+        get_internal_prompt("agents.ask_user_tool_description"),
+        ASK_USER_DESCRIPTION,
+    )
+    return LocalToolSpec(
+        name="ask_user",
+        description=description,
+        parameters=ASK_USER_PARAMETERS,
+        handler=_make_ask_user_handler(ask_user),
+        exposure=LocalToolExposure.CONSOLE_ONLY,
+        approval_effects=(),
+        tags=(),
+        gate_exempt=True,
+    )
+
+
+def _providerless_local_tools() -> dict[
+    str, tuple[str, bool, Callable[[], LocalToolSpec]]
+]:
+    """``{name: (gate key, gate default, spec builder)}`` for the local tools
+    the light surface can describe without composing a provider."""
+    return {
+        "ask_user": (
+            ASK_USER_GATE_KEY,
+            ASK_USER_DEFAULT_ENABLED,
+            lambda: _ask_user_spec(lambda _questions: None),
+        ),
+        "web_deep_search": (WEB_DEEP_SEARCH_GATE_KEY, False, _web_deep_search_spec),
+    }
+
+
+def light_surface_local_gate(name: str) -> tuple[str, bool]:
+    """The ``[tools]`` gate key and default of light-surface local tool ``name``.
+
+    Setup's Summary asks this, so it reads each local member's gate from the
+    same table the meter counts it from (TASK-34100.5.3 review round 2,
+    R2-3).
+
+    Raises:
+        ValueError: ``name`` is not a local tool the light surface can
+            describe -- a name added to the light set without a spec here
+            would be sent but neither counted nor named, so it fails loudly.
+    """
+    known = _providerless_local_tools().get(name)
+    if known is None:
+        raise ValueError(f"{name!r} is not a light-surface local tool")
+    return known[0], known[1]
+
+
+def light_surface_local_schemas(names: Sequence[str]) -> tuple[ToolSchema, ...]:
+    """The light-surface local tools among ``names``, as schemas.
+
+    TASK-34100.5.3 AC#5: plain chat's context meter counts these without
+    composing a provider. Only the local tools that can be described without
+    one are answered for -- ``ask_user`` (its gate defaults on) and
+    ``web_deep_search`` (opt-in) -- each read from its own ``[tools]`` gate
+    the way ``_default_specs`` reads it, and all of them behind the
+    ``[console] local_tools_enabled`` master that composes the local
+    provider at all. The caller names which ones it wants
+    (``plain_chat_tool_surface.light_surface_local_names``), so this module
+    holds no second copy of the light set.
+
+    Args:
+        names: The local tool names the light surface can carry.
+
+    Returns:
+        One schema per named tool that is on, in ``names`` order.
+
+    Raises:
+        ValueError: A name this module cannot describe (review round 2,
+            R2-3: it used to be skipped, so the meter silently undercounted).
+    """
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        LOCAL_TOOLS_DEFAULT_ENABLED,
+        LOCAL_TOOLS_MASTER_KEY,
+    )
+
+    providerless = _providerless_local_tools()
+    for name in names:
+        light_surface_local_gate(name)  # every named tool must be known
+    if not coerce_bool_setting(
+        get_cli_setting("console", LOCAL_TOOLS_MASTER_KEY, LOCAL_TOOLS_DEFAULT_ENABLED),
+        LOCAL_TOOLS_DEFAULT_ENABLED,
+    ):
+        return ()
+    specs: list[LocalToolSpec] = []
+    for name in names:
+        gate_key, default, build = providerless[name]
+        if coerce_bool_setting(get_cli_setting("tools", gate_key, default), default):
+            specs.append(build())
+    return tuple(
+        ToolSchema(
+            id=f"local:{spec.name}",
+            name=spec.name,
+            description=spec.description,
+            parameters=spec.parameters,
+        )
+        for spec in specs
+    )
 
 
 def _character_specs(character_service: CharacterToolService) -> list[LocalToolSpec]:

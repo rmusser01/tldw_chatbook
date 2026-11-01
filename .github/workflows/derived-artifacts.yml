@@ -351,6 +351,10 @@ jobs:
             Tests/Chat/test_console_session_workspace_roots.py \
             Tests/Backup_Recovery/test_prompt_history_path_memo.py \
             Tests/MCP/test_server_manifest_parse_reuse.py \
+            Tests/Agents/test_builtin_tool_gate.py::test_all_tool_gates_enumerates_every_gate_with_sections_and_groups \
+            Tests/Agents/test_builtin_tool_gate.py::test_tool_gate_breadcrumb_names_the_off_count \
+            Tests/Agents/test_builtin_tool_gate.py::test_count_off_tool_gates_constructs_no_tools \
+            Tests/Wizards/test_first_run_setup_state.py::TestSummaryThreeState::test_tools_row_off_detail_names_where_to_enable \
             --timeout=180 \
             --tb=short
 
@@ -470,6 +474,9 @@ jobs:
     # tests), about 10-15 s each serial.
     # TASK-33620.15.1.4 appends the rail edge focus restyle file (two mounted
     # Console tests, ~18 s serial).
+    # TASK-34100.5.3 appends plain chat's
+    # light tool surface suites (six files and three nodes, 76 tests), here
+    # rather than in pr-fast-lane-admission, which keeps dev's targets.
     #
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission, and its own pytest process and bootstrap
@@ -627,6 +634,15 @@ jobs:
             Tests/UI/test_console_environment_root_reads.py \
             Tests/UI/test_console_session_admitted_roots.py \
             Tests/UI/test_console_edge_focus_restyle_scope.py \
+            Tests/Wizards/test_first_run_setup_wizard.py::test_summary_quick_track_shows_defaults_note \
+            Tests/Wizards/test_first_run_setup_wizard.py::test_tools_step_copy_comes_from_the_shared_gate_table \
+            Tests/Chat/test_console_owner_live_bindings.py::test_compaction_reads_replaced_services_globals_and_accounting \
+            Tests/Chat/test_console_light_tool_surface.py \
+            Tests/Chat/test_console_light_surface_context_meter.py \
+            Tests/Chat/test_console_light_surface_voice.py \
+            Tests/Chat/test_console_light_surface_goal_runs.py \
+            Tests/UI/test_mcp_full_agent_tools_gate.py \
+            Tests/Wizards/test_first_run_tool_surface_summary.py \
             --timeout=300 \
             --tb=short
 
